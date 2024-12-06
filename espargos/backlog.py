@@ -22,7 +22,10 @@ class CSIBacklog(object):
         self.enable_ht40 = enable_ht40
         self.calibrate = calibrate
 
-        self.storage_ht40 = np.zeros((size,) + self.pool.get_shape() + ((csi.csi_buf_t.htltf_lower.size + csi.HT40_GAP_SUBCARRIERS * 2 + csi.csi_buf_t.htltf_higher.size) // 2,), dtype = np.complex64)
+        if self.enable_ht40:
+            self.storage_csi = np.zeros((size,) + self.pool.get_shape() + ((csi.csi_buf_t.htltf_lower.size + csi.HT40_GAP_SUBCARRIERS * 2 + csi.csi_buf_t.htltf_higher.size) // 2,), dtype = np.complex64)
+        else:
+            self.storage_csi = np.zeros((size,) + self.pool.get_shape() + ((csi.csi_buf_t.lltf.size) // 2,), dtype = np.complex64)
         self.storage_timestamps = np.zeros((size,) + self.pool.get_shape(), dtype = np.float128)
         self.storage_rssi = np.zeros((size,) + self.pool.get_shape(), dtype = np.float32)
         self.head = 0
@@ -51,7 +54,15 @@ class CSIBacklog(object):
                     assert(self.pool.get_calibration() is not None)
                     csi_ht40 = self.pool.get_calibration().apply_ht40(csi_ht40, sensor_timestamps_raw)
 
+                self.storage_csi[self.head] = csi_ht40
+            elif (not self.enable_ht40) and (not clustered_csi.is_ht40()):
                 self.storage_ht40[self.head] = csi_ht40
+                csi_l20 = clustered_csi.deserialize_csi_lltf()
+                if self.calibrate:
+                    assert(self.pool.get_calibration() is not None)
+                    csi_l20 = self.pool.get_calibration().apply_l20(csi_l20, sensor_timestamps_raw)
+
+                self.storage_csi[self.head] = csi_l20
 
             # Store RSSI
             self.storage_rssi[self.head] = clustered_csi.get_rssi()
@@ -81,7 +92,16 @@ class CSIBacklog(object):
         :return: HT40 CSI data, oldest first
         """
         assert(self.enable_ht40)
-        return np.roll(self.storage_ht40, -self.head, axis = 0)[-self.filllevel:]
+        return np.roll(self.storage_csi, -self.head, axis = 0)[-self.filllevel:]
+    
+
+    def get_csi(self):
+        """
+        Retrieve CSI data from the ringbuffer
+
+        :return: CSI data, oldest first
+        """
+        return np.roll(self.storage_csi, -self.head, axis = 0)[-self.filllevel:]
 
     def get_rssi(self):
         """

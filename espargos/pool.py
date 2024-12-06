@@ -321,6 +321,31 @@ class CSICalibration(object):
         mean_sto = np.angle(np.sum(csi[...,1:] * np.conj(csi[...,:-1]))) / (2 * np.pi)
         mean_sto_correction = np.exp(-1.0j * 2 * np.pi * mean_sto * np.arange(-csi.shape[-1] // 2, csi.shape[-1] // 2))
         return csi * mean_sto_correction[np.newaxis, np.newaxis, np.newaxis, :]
+        
+    def apply_l20(self, values, sensor_timestamps):
+        """
+        Apply phase calibration to the provided L20 CSI data.
+        Also accounts for subcarrier-specific phase offsets, e.g., due to low-pass filter characteristic of baseband signal path inside the ESP32,
+        but can be less accurate if reference channel is not frequency-flat.
+
+        :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, (csi.csi_buf_t.htltf_lower.size + csi.HT40_GAP_SUBCARRIERS * 2 + csi.csi_buf_t.htltf_higher.size) // 2)`
+        :param sampling_times: The precise time when the CSI data was sampled, as a numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)`
+        :return: The phase-calibrated and time offset-calibrated CSI data
+        """
+        # TODO: Check if primary and secondary channel match
+
+        delay = sensor_timestamps - self.timestamp_calibration_values
+        delay = delay - np.mean(delay)
+
+        subcarrier_range = np.arange(-values.shape[-1] // 2, values.shape[-1] // 2)[np.newaxis,np.newaxis,np.newaxis,:]
+        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:,:,:,np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
+
+        csi_vec = np.einsum("bras,bras,bras->bras", values, sto_delay_correction, self.calibration_values_ht40[:,:,:,:(csi.csi_buf_t.lltf.size//2)])
+
+        # Mean delay should be zero
+        mean_sto = np.angle(np.sum(csi_vec[...,1:] * np.conj(csi_vec[...,:-1]))) / (2 * np.pi)
+        mean_sto_correction = np.exp(-1.0j * 2 * np.pi * mean_sto * np.arange(-csi_vec.shape[-1] // 2, csi_vec.shape[-1] // 2))
+        return csi_vec * mean_sto_correction[np.newaxis, np.newaxis, np.newaxis, :]
 
     def apply_ht40_flat(self, values):
         """

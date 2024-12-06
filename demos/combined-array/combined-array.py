@@ -25,6 +25,7 @@ class EspargosDemoCombinedArray(PyQt6.QtWidgets.QApplication):
 		# Parse command line arguments
 		parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Combined ESPARGOS arrays")
 		parser.add_argument("conf", type = str, help = "Path to config file")
+		parser.add_argument("--l20", default = False, help = "Operate on 20MHz band", action = "store_true")
 		parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
 		self.args = parser.parse_args()
 
@@ -58,7 +59,7 @@ class EspargosDemoCombinedArray(PyQt6.QtWidgets.QApplication):
 		self.pool = espargos.Pool([espargos.Board(board["host"]) for board in self.conf["boards"].values()])
 		self.pool.start()
 		self.pool.calibrate(duration = 4, per_board = False, cable_lengths = cable_lengths, cable_velocity_factors = cable_velocity_factors)
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog)
+		self.backlog = espargos.CSIBacklog(self.pool, enable_ht40=not self.args.l20, size = self.args.backlog)
 		self.backlog.start()
 
 		# Qt setup
@@ -78,12 +79,12 @@ class EspargosDemoCombinedArray(PyQt6.QtWidgets.QApplication):
 
 	@PyQt6.QtCore.pyqtSlot()
 	def updateRequest(self):
-		csi_backlog_ht40 = self.backlog.get_ht40()
+		csi_backlog = self.backlog.get_csi()
 
-		csi_ht40_shifted = espargos.util.shift_to_firstpeak(csi_backlog_ht40)
-		csi_ht40_by_array_row_col = np.moveaxis(csi_ht40_shifted, 0, -1)
-		csi_ht40_by_antenna = np.reshape(csi_ht40_by_array_row_col, (csi_ht40_by_array_row_col.shape[0] * csi_ht40_by_array_row_col.shape[1] * csi_ht40_by_array_row_col.shape[2], csi_ht40_by_array_row_col.shape[3], csi_ht40_by_array_row_col.shape[4]))
-		csi_largearray = csi_ht40_by_antenna[self.indexing_matrix]
+		csi_shifted = espargos.util.shift_to_firstpeak(csi_backlog)
+		csi_by_array_row_col = np.moveaxis(csi_shifted, 0, -1)
+		csi_by_antenna = np.reshape(csi_by_array_row_col, (csi_by_array_row_col.shape[0] * csi_by_array_row_col.shape[1] * csi_by_array_row_col.shape[2], csi_by_array_row_col.shape[3], csi_by_array_row_col.shape[4]))
+		csi_largearray = csi_by_antenna[self.indexing_matrix]
 		csi_largearray = np.moveaxis(csi_largearray, -1, 0)
 
 		R = np.einsum("dnis,dmjs->nimj", csi_largearray, np.conj(csi_largearray))

@@ -26,6 +26,7 @@ class EspargosDemoTDOAOverTime(PyQt6.QtWidgets.QApplication):
 		# Parse command line arguments
 		parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Show time difference of arrival over time (single board)")
 		parser.add_argument("hosts", type = str, help = "Comma-separated list of host addresses (IP or hostname) of ESPARGOS controllers")
+		parser.add_argument("--l20", default = False, help = "Operate on 20MHz band", action = "store_true")
 		parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
 		parser.add_argument("-m", "--music", default = False, help = "Use root-MUSIC algorithm to compute more precise ToAs of LoS paths", action = "store_true")
 		parser.add_argument("-a", "--average", default = False, help = "Average TDoAs over all antennas in array", action = "store_true")
@@ -37,7 +38,7 @@ class EspargosDemoTDOAOverTime(PyQt6.QtWidgets.QApplication):
 		self.pool = espargos.Pool([espargos.Board(host) for host in hosts])
 		self.pool.start()
 		self.pool.calibrate(duration = 4, per_board=False)
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog)
+		self.backlog = espargos.CSIBacklog(self.pool, enable_ht40=not self.args.l20, size = self.args.backlog)
 		self.backlog.start()
 
 		# Qt setup
@@ -63,17 +64,18 @@ class EspargosDemoTDOAOverTime(PyQt6.QtWidgets.QApplication):
 			#timestamps = self.backlog.get_timestamps()
 			#tdoas_ns = np.mean(timestamps - np.mean(timestamps, axis = (1, 2, 3))[:,np.newaxis,np.newaxis,np.newaxis], axis = 0) * 1e9
 
-			csi_backlog_ht40 = self.backlog.get_ht40()
-			espargos.util.interpolate_ht40_gap(csi_backlog_ht40)
+			csi_backlog = self.backlog.get_csi()
+			if not self.args.l20:
+				espargos.util.interpolate_ht40_gap(csi_backlog)
 
 			# Do interpolation "by_array" due to Doppler (destroys TDoA for moving targets otherwise)
-			csi_interp_ht40 = espargos.util.csi_interp_iterative_by_array(csi_backlog_ht40, iterations = 5)
+			csi_interp = espargos.util.csi_interp_iterative_by_array(csi_backlog, iterations = 5)
 
 			if self.args.music:
-				tdoas_ns = espargos.util.estimate_toas_rootmusic(csi_backlog_ht40, per_board_average = self.args.average) * 1e9
+				tdoas_ns = espargos.util.estimate_toas_rootmusic(csi_backlog, per_board_average = self.args.average) * 1e9
 			else:
 				sum_axis = -1 if not self.args.average else (1, 2, 3)
-				tdoas_ns = np.angle(np.sum(csi_interp_ht40[...,1:] * np.conj(csi_interp_ht40[...,:-1]), axis = sum_axis)) / (2 * np.pi) / espargos.constants.WIFI_SUBCARRIER_SPACING * 1e9
+				tdoas_ns = np.angle(np.sum(csi_interp[...,1:] * np.conj(csi_interp[...,:-1]), axis = sum_axis)) / (2 * np.pi) / espargos.constants.WIFI_SUBCARRIER_SPACING * 1e9
 
 			mean_rx_timestamp = self.backlog.get_latest_timestamp() - self.startTimestamp
 

@@ -24,6 +24,7 @@ class EspargosDemoMusicSpectrum(PyQt6.QtWidgets.QApplication):
 		parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Show phases over time (single board)")
 		parser.add_argument("host", type = str, help = "Host address (IP or hostname) of ESPARGOS controller")
 		parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
+		parser.add_argument("--l20", default = False, help = "Operate on 20MHz band", action = "store_true")
 		parser.add_argument("-s", "--shift-peak", default = False, help = "Time-shift CSI so that first peaks align", action = "store_true")
 		self.args = parser.parse_args()
 
@@ -31,7 +32,7 @@ class EspargosDemoMusicSpectrum(PyQt6.QtWidgets.QApplication):
 		self.pool = espargos.Pool([espargos.Board(self.args.host)])
 		self.pool.start()
 		self.pool.calibrate(duration = 2)
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog)
+		self.backlog = espargos.CSIBacklog(self.pool, enable_ht40=not self.args.l20, size = self.args.backlog)
 		self.backlog.start()
 
 		# Qt setup
@@ -56,8 +57,8 @@ class EspargosDemoMusicSpectrum(PyQt6.QtWidgets.QApplication):
 
 	@PyQt6.QtCore.pyqtSlot(PyQt6.QtCharts.QLineSeries, PyQt6.QtCharts.QValueAxis)
 	def updateSpatialSpectrum(self, series, axis):
-		csi_backlog_ht40 = self.backlog.get_ht40()
-		csi_ht40_shifted = espargos.util.shift_to_firstpeak(csi_backlog_ht40) if self.args.shift_peak else csi_backlog_ht40
+		csi_backlog = self.backlog.get_csi()
+		csi_ht40_shifted = espargos.util.shift_to_firstpeak(csi_backlog) if self.args.shift_peak else csi_backlog
 
 		# Compute array covariance matrix R over all backlog datapoints, all rows and all subcarriers
 		# TODO: Instead of just using all subcarriers to estimate R, should we extract the LoS component?

@@ -23,6 +23,7 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		parser.add_argument("hosts", type = str, help = "Comma-separated list of host addresses (IP or hostname) of ESPARGOS controllers")
 		parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
 		parser.add_argument("-s", "--shift-peak", default = False, help = "Time-shift CSI so that first peaks align", action = "store_true")
+		parser.add_argument("--l20", default = False, help = "Operate on 20MHz band", action = "store_true")
 		parser.add_argument("-o", "--oversampling", type = int, default = 4, help = "Oversampling factor for time-domain CSI")
 		display_group = parser.add_mutually_exclusive_group()
 		display_group.add_argument("-t", "--timedomain", default = False, help = "Display CSI in time-domain", action = "store_true")
@@ -35,14 +36,15 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		self.pool = espargos.Pool([espargos.Board(host) for host in hosts])
 		self.pool.start()
 		self.pool.calibrate(duration = 2, per_board=False)
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog)
+		self.backlog = espargos.CSIBacklog(self.pool, enable_ht40=not self.args.l20, size = self.args.backlog)
 		self.backlog.start()
 
 		# Qt setup
 		self.aboutToQuit.connect(self.onAboutToQuit)
 		self.engine = PyQt6.QtQml.QQmlApplicationEngine()
-		self.sensor_count = self.backlog.get_ht40().shape[1] * self.backlog.get_ht40().shape[2] * self.backlog.get_ht40().shape[3]
-		self.subcarrier_count = self.backlog.get_ht40().shape[4]
+		data_shape = self.backlog.get_csi().shape
+		self.sensor_count = data_shape[1] * data_shape[2] * data_shape[3]
+		self.subcarrier_count = data_shape[4]
 		self.subcarrier_range = np.arange(-self.subcarrier_count // 2, self.subcarrier_count // 2)
 
 	@PyQt6.QtCore.pyqtProperty(int, constant=True)
@@ -67,22 +69,24 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 	# list parameters contain PyQt6.QtCharts.QLineSeries
 	@PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis)
 	def updateCSI(self, powerSeries, phaseSeries, axis):
-		csi_backlog_ht40 = self.backlog.get_ht40()
 
-		# Fill "gap" in subcarriers with interpolated data
-		espargos.util.interpolate_ht40_gap(csi_backlog_ht40)
+		csi_backlog = self.backlog.get_csi()
+		if not self.args.l20:
+			# Fill "gap" in subcarriers with interpolated data
+			espargos.util.interpolate_ht40_gap(csi_backlog)
 
-		csi_ht40_shifted = espargos.util.shift_to_firstpeak(csi_backlog_ht40) if self.args.shift_peak else csi_backlog_ht40
+
+		csi_shifted = espargos.util.shift_to_firstpeak(csi_backlog) if self.args.shift_peak else csi_backlog
 
 		# TODO: If using per-board calibration, interpolation should also be per-board
-		csi_interp_ht40 = espargos.util.csi_interp_iterative(csi_ht40_shifted, iterations = 5)
-		csi_flat = np.reshape(csi_interp_ht40, (-1, csi_interp_ht40.shape[-1]))
+		csi_interp = espargos.util.csi_interp_iterative(csi_shifted, iterations = 5)
+		csi_flat = np.reshape(csi_interp, (-1, csi_interp.shape[-1]))
 
 		if self.args.mvdr or self.args.music:
 			if self.args.music:
-				superres_delays, superres_pdps = espargos.util.fdomain_to_tdomain_pdp_music(csi_backlog_ht40)
+				superres_delays, superres_pdps = espargos.util.fdomain_to_tdomain_pdp_music(csi_backlog)
 			else:
-				superres_delays, superres_pdps = espargos.util.fdomain_to_tdomain_pdp_mvdr(csi_backlog_ht40)
+				superres_delays, superres_pdps = espargos.util.fdomain_to_tdomain_pdp_mvdr(csi_backlog)
 
 			superres_pdps_flat = np.reshape(superres_pdps, (-1, superres_pdps.shape[-1]))
 
