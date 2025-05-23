@@ -237,10 +237,10 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 				self.beamspace_power_imagedata = np.asarray(np.swapaxes(color_beamspace_rgba, 0, 1).ravel() * 255, dtype = np.uint8)
 			else:
 				power_beamspace = np.sum(np.abs(beam_frequency_space)**2, axis=(0, 3))
-				power_visualization_beamspace = power_beamspace**3
+				power_visualization_beamspace = power_beamspace**2
 
 				if self.args.manual_exposure:
-					color_value = power_visualization_beamspace / (10 ** ((1 - self.exposure) / 0.1) + 1e-8)
+					color_value = power_visualization_beamspace / (10 ** ((1 - self.exposure) / 0.02) + 1e-8)
 				else:
 					color_value = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-6)
 

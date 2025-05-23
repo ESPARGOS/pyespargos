@@ -45,5 +45,5 @@ void main() {
 	if (rawBeamspace)
 		fragmentColor = vColor;
 	else
-		fragmentColor = vec4(gray * 0.25 + 0.25 * s.r, gray * 0.25 + 0.25 * s.g, gray * 0.25 + 0.25 * s.b, s.a) + vColor;
+		fragmentColor = vec4(gray * 0.25 + 0.6 * s.r, gray * 0.25 + 0.6 * s.g, gray * 0.25 + 0.6 * s.b, s.a) + vColor;
 }
