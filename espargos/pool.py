@@ -189,11 +189,11 @@ class ClusteredCSI(object):
 
         :return: A numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)` that contains the sensor timestamps in seconds
         """
-        sensor_timestamps = np.full(self.shape, np.nan, dtype = np.float128)
+        sensor_timestamps = np.full(self.shape, np.nan, dtype = np.float64)
 
         def append_sensor_timestamp(b, r, a, serialized_csi):
-            timestamp_ns = np.float128(self._nanosecond_timestamp(serialized_csi))
-            sensor_timestamps[b, r, a] = np.float128(timestamp_ns) / 1e9
+            timestamp_ns = np.float64(self._nanosecond_timestamp(serialized_csi))
+            sensor_timestamps[b, r, a] = np.float64(timestamp_ns) #/ 1e9
 
         self._foreach_complete_sensor(append_sensor_timestamp)
         return sensor_timestamps
@@ -333,7 +333,7 @@ class CSICalibration(object):
         self.calibration_values_lltf: np.ndarray = np.exp(-1.0j * np.angle(coeffs_without_propdelay_lltf))
         self.calibration_values_ht40: np.ndarray = np.exp(-1.0j * np.angle(coeffs_without_propdelay_ht40))
 
-        self.timestamp_calibration_values = timestamp_calibration_values - prop_delay_each_board[np.newaxis,:,:]
+        self.timestamp_calibration_values = timestamp_calibration_values - prop_delay_each_board[np.newaxis,:,:]*1.0e9
 
     def apply_ht40(self, values: np.ndarray, sensor_timestamps: np.ndarray) -> np.ndarray:
         """
@@ -351,7 +351,7 @@ class CSICalibration(object):
 
         subcarrier_range = np.arange(-values.shape[-1] // 2, values.shape[-1] // 2)[np.newaxis,np.newaxis,np.newaxis,:]
         # 128 bit delay is overkill here, CSI is only 2x32 bit, product would be 2x128 bit
-        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:,:,:,np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range).astype(np.complex64)
+        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:,:,:,np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range / 1.0e9).astype(np.complex64)
         csi = np.einsum("bras,bras,bras->bras", values, sto_delay_correction, self.calibration_values_ht40)
 
         # Mean delay should be zero
@@ -381,7 +381,7 @@ class CSICalibration(object):
         subcarrier_frequency_offsets = util.get_frequencies_lltf(self.channel_primary) - self.receiver_lo_freq
 
         # 128 bit delay is overkill here, CSI is only 2x32 bit, product would be 2x128 bit
-        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:,:,:,np.newaxis] * subcarrier_frequency_offsets).astype(np.complex64)
+        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:,:,:,np.newaxis] * subcarrier_frequency_offsets / 1.0e9).astype(np.complex64)
 
         csi = np.einsum("bras,bras,bras->bras", values, sto_delay_correction, self.calibration_values_lltf)
 
@@ -583,12 +583,14 @@ class Pool(object):
                         complete_clusters_lltf.append(cluster.deserialize_csi_lltf()[board_num])
                         if cluster.is_ht40():
                             complete_clusters_ht40.append(cluster.deserialize_csi_ht40()[board_num])
-                        timestamp_offsets.append(cluster.get_sensor_timestamps()[board_num] - cluster.get_host_timestamp())
+                        timestamp_offsets.append(cluster.get_sensor_timestamps()[board_num])
 
                 self.logger.info(f"Board {board.get_name()}: Collected {any_csi_count} calibration clusters, out of which {len(complete_clusters_lltf)} are complete ({len(complete_clusters_ht40)} are HT40)")
                 if len(complete_clusters_lltf) == 0:
+                    self.stop()
                     raise Exception("ESPARGOS calibration failed, did not receive phase reference signal")
                 if len(complete_clusters_ht40) == 0:
+                    self.stop()
                     raise Exception("ESPARGOS calibration failed, did not receive any HT40 reference signal, currently not supported. Make sure to use 40MHz wide reference signal for calibration.")
                 phase_calibrations_lltf.append(util.csi_interp_iterative(np.asarray(complete_clusters_lltf)))
                 phase_calibrations_ht40.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht40)))
@@ -614,7 +616,7 @@ class Pool(object):
                     complete_clusters_lltf.append(cluster.deserialize_csi_lltf())
                     if cluster.is_ht40():
                         complete_clusters_ht40.append(cluster.deserialize_csi_ht40())
-                    timestamp_offsets.append(cluster.get_sensor_timestamps() - cluster.get_host_timestamp())
+                    timestamp_offsets.append(cluster.get_sensor_timestamps())
 
             self.logger.info(f"Pool: Collected {len(self.cluster_cache_calib)} calibration clusters, out of which {len(complete_clusters_lltf)} are complete ({len(complete_clusters_ht40)} are HT40)")
             if len(complete_clusters_lltf) == 0:

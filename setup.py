@@ -17,7 +17,7 @@ setup(
     ],
     python_requires='>=3.11',
     install_requires=[
-        "websockets>=12.0",
+        "websockets==12.0",
 		"numpy>=1.26.0"
     ],
     include_package_data=True
