@@ -54,7 +54,9 @@ class EspargosDemoPhasesOverSpace(PyQt6.QtWidgets.QApplication):
 
 	@PyQt6.QtCore.pyqtSlot()
 	def updateRequest(self):
+		self.backlog.read_start()
 		csi_backlog = self.backlog.get_lltf() if self.args.lltf else self.backlog.get_ht40()
+		self.backlog.read_finish()
 		R = np.einsum("dbmis,dbnjs->minj", csi_backlog, np.conj(csi_backlog))
 		R = np.reshape(R, (espargos.constants.ANTENNAS_PER_BOARD, espargos.constants.ANTENNAS_PER_BOARD))
 		w, v = np.linalg.eig(R)

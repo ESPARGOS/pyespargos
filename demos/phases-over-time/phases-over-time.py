@@ -58,14 +58,17 @@ class EspargosDemoPhasesOverTime(PyQt6.QtWidgets.QApplication):
 
 	def update(self):
 		if self.backlog.nonempty():
+			self.backlog.read_start()
 			csi_backlog = self.backlog.get_lltf() if self.args.lltf else self.backlog.get_ht40()
+			timestamp = self.backlog.get_latest_timestamp() - self.startTimestamp
+			self.backlog.read_finish()
+
 			csi_shifted = espargos.util.shift_to_firstpeak_sync(csi_backlog) if self.args.shift_peak else csi_backlog
 			csi_interp = espargos.util.csi_interp_iterative(csi_shifted)
 			csi_flat = np.reshape(csi_interp, (-1, csi_interp.shape[-1]))
 
 			# TODO: Deal with non-synchronized multi-board setup
 			csi_by_antenna = espargos.util.csi_interp_iterative(np.transpose(csi_flat))
-			timestamp = self.backlog.get_latest_timestamp() - self.startTimestamp
 			offsets_current_angles = np.angle(csi_by_antenna * np.exp(-1.0j * np.angle(csi_by_antenna[0]))).tolist()
 
 			self.updatePhases.emit(timestamp, offsets_current_angles)

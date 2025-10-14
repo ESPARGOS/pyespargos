@@ -141,10 +141,12 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 
 	@PyQt6.QtCore.pyqtSlot()
 	def updateSpatialSpectrum(self):
+		self.backlog.read_start()
 		csi_backlog = self.backlog.get_lltf() if self.args.lltf else self.backlog.get_ht40()
 		rssi_backlog = self.backlog.get_rssi()
 		timestamp_backlog = self.backlog.get_timestamps()
 		mac_backlog = self.backlog.get_macs()
+		self.backlog.read_finish()
 		mean_timestamp_backlog = np.nanmean(timestamp_backlog, axis = (1, 2, 3))
 
 		if self.args.max_age > 0.0:

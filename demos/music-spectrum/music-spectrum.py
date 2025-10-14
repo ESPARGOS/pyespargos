@@ -55,8 +55,10 @@ class EspargosDemoMusicSpectrum(PyQt6.QtWidgets.QApplication):
 
 	@PyQt6.QtCore.pyqtSlot(PyQt6.QtCharts.QLineSeries, PyQt6.QtCharts.QValueAxis)
 	def updateSpatialSpectrum(self, series, axis):
+		self.backlog.read_start()
 		csi_backlog = self.backlog.get_lltf() if self.args.lltf else self.backlog.get_ht40()
 		rssi_backlog = self.backlog.get_rssi()
+		self.backlog.read_finish()
 
 		# Weight CSI data with RSSI
 		csi_backlog = csi_backlog * 10**(rssi_backlog[..., np.newaxis] / 20)

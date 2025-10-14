@@ -81,8 +81,10 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 	# list parameters contain PyQt6.QtCharts.QLineSeries
 	@PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis)
 	def updateCSI(self, powerSeries, phaseSeries, axis):
+		self.backlog.read_start()
 		csi_backlog = self.backlog.get_lltf() if self.args.lltf else self.backlog.get_ht40()
 		rssi_backlog = self.backlog.get_rssi()
+		self.backlog.read_finish()
 
 		# Weight CSI data with RSSI
 		csi_backlog = csi_backlog * 10**(rssi_backlog[..., np.newaxis] / 20)

@@ -56,7 +56,9 @@ class EspargosDemoCombinedArray(PyQt6.QtWidgets.QApplication):
 
 	@PyQt6.QtCore.pyqtSlot()
 	def updateRequest(self):
+		self.backlog.read_start()
 		csi_backlog = self.backlog.get_lltf() if self.args.lltf else self.backlog.get_ht40()
+		self.backlog.read_finish()
 
 		csi_largearray = espargos.util.build_combined_array_csi(self.indexing_matrix, csi_backlog)
 

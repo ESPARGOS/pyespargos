@@ -66,7 +66,10 @@ class EspargosDemoTDOAOverTime(PyQt6.QtWidgets.QApplication):
 			#timestamps = self.backlog.get_timestamps()
 			#tdoas_ns = np.mean(timestamps - np.mean(timestamps, axis = (1, 2, 3))[:,np.newaxis,np.newaxis,np.newaxis], axis = 0) * 1e9
 
+			self.backlog.read_start()
 			csi_backlog = self.backlog.get_lltf() if self.args.lltf else self.backlog.get_ht40()
+			mean_rx_timestamp = self.backlog.get_latest_timestamp() - self.startTimestamp
+			self.backlog.read_finish()
 
 			if self.args.lltf:
 				espargos.util.interpolate_lltf_gap(csi_backlog)
@@ -84,8 +87,6 @@ class EspargosDemoTDOAOverTime(PyQt6.QtWidgets.QApplication):
 			else:
 				sum_axis = -1 if not self.args.average else (1, 2, 3)
 				tdoas_ns = np.angle(np.sum(csi_interp[...,1:] * np.conj(csi_interp[...,:-1]), axis = sum_axis)) / (2 * np.pi) / espargos.constants.WIFI_SUBCARRIER_SPACING * 1e9
-
-			mean_rx_timestamp = self.backlog.get_latest_timestamp() - self.startTimestamp
 
 			self.updateTDOAs.emit(mean_rx_timestamp, tdoas_ns.astype(float).flatten().tolist())
 

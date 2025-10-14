@@ -28,7 +28,7 @@ class EspargosDemoCombinedArrayCalibration(PyQt6.QtWidgets.QApplication):
 		parser.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
 		self.args = parser.parse_args()
 
-		# Set up ESPARGOS pool and backlog
+		# Set up ESPARGOS pool
 		self.pool = espargos.Pool([espargos.Board(host) for host in self.args.hosts.split(",")])
 		self.pool.start()
 		self.pool.calibrate(duration = 3, per_board = False)

@@ -33,6 +33,8 @@ class CSIBacklog(object):
         self.storage_macs = np.zeros((size, 6), dtype = np.uint8)
         self.head = 0
         self.latest = None
+        self.filllevel = 0
+        self.mac_filter = None
 
         self.running = True
 
@@ -42,61 +44,60 @@ class CSIBacklog(object):
                 if not self.mac_filter.match(clustered_csi.get_source_mac()):
                     return
 
-            # Store timestamp
-            sensor_timestamps_raw = clustered_csi.get_sensor_timestamps()
-            sensor_timestamps = np.copy(sensor_timestamps_raw)
-            if self.calibrate:
-                assert(self.pool.get_calibration() is not None)
-                sensor_timestamps = self.pool.get_calibration().apply_timestamps(sensor_timestamps)
-            self.storage_timestamps[self.head] = sensor_timestamps
-
-            # Store LLTF CSI
-            if self.enable_lltf:
-                csi_lltf = clustered_csi.deserialize_csi_lltf()
+            with self.storage_mutex:
+                # Store timestamp
+                sensor_timestamps_raw = clustered_csi.get_sensor_timestamps()
+                sensor_timestamps = np.copy(sensor_timestamps_raw)
                 if self.calibrate:
                     assert(self.pool.get_calibration() is not None)
-                    csi_lltf = self.pool.get_calibration().apply_lltf(csi_lltf, sensor_timestamps_raw)
+                    sensor_timestamps = self.pool.get_calibration().apply_timestamps(sensor_timestamps)
+                self.storage_timestamps[self.head] = sensor_timestamps
 
-                self.storage_lltf[self.head] = csi_lltf
-            else:
-                self.storage_ht40[self.head] = np.nan
-
-            # Store HT40 CSI if applicable
-            if self.enable_ht40:
-                if clustered_csi.is_ht40():
-                    csi_ht40 = clustered_csi.deserialize_csi_ht40()
+                # Store LLTF CSI
+                if self.enable_lltf:
+                    csi_lltf = clustered_csi.deserialize_csi_lltf()
                     if self.calibrate:
                         assert(self.pool.get_calibration() is not None)
-                        csi_ht40 = self.pool.get_calibration().apply_ht40(csi_ht40, sensor_timestamps_raw)
+                        csi_lltf = self.pool.get_calibration().apply_lltf(csi_lltf, sensor_timestamps_raw)
 
-                    self.storage_ht40[self.head] = csi_ht40
+                    self.storage_lltf[self.head] = csi_lltf
                 else:
-                    self.logger.warning(f"Received non-HT40 frame even though HT40 is enabled")
-            else:
-                self.storage_ht40[self.head] = np.nan
+                    self.storage_lltf[self.head] = np.nan
 
-            # Store RSSI
-            self.storage_rssi[self.head] = clustered_csi.get_rssi()
+                # Store HT40 CSI if applicable
+                if self.enable_ht40:
+                    if clustered_csi.is_ht40():
+                        csi_ht40 = clustered_csi.deserialize_csi_ht40()
 
-            # Store MAC address. mac_str is a hex string without colons, e.g. "00:11:22:33:44:55" -> "001122334455"
-            mac_str = clustered_csi.get_source_mac()
-            mac = np.asarray([int(mac_str[i:i+2], 16) for i in range(0, len(mac_str), 2)])
-            assert(mac.shape == (6,))
-            self.storage_macs[self.head] = mac
+                        if self.calibrate:
+                            assert(self.pool.get_calibration() is not None)
+                            csi_ht40 = self.pool.get_calibration().apply_ht40(csi_ht40, sensor_timestamps_raw)
 
-            # Advance ringbuffer head
-            self.latest = self.head
-            self.head = (self.head + 1) % self.size
-            self.filllevel = min(self.filllevel + 1, self.size)
+                        self.storage_ht40[self.head] = csi_ht40
+                    else:
+                        self.logger.warning(f"Received non-HT40 frame even though HT40 is enabled")
+                else:
+                    self.storage_ht40[self.head] = np.nan
+
+                # Store RSSI
+                self.storage_rssi[self.head] = clustered_csi.get_rssi()
+
+                # Store MAC address. mac_str is a hex string without colons, e.g. "00:11:22:33:44:55" -> "001122334455"
+                mac_str = clustered_csi.get_source_mac()
+                mac = np.asarray([int(mac_str[i:i+2], 16) for i in range(0, len(mac_str), 2)])
+                assert(mac.shape == (6,))
+                self.storage_macs[self.head] = mac
+
+                # Advance ringbuffer head
+                self.latest = self.head
+                self.head = (self.head + 1) % self.size
+                self.filllevel = min(self.filllevel + 1, self.size)
 
             for cb in self.callbacks:
                 cb()
 
         self.pool.add_csi_callback(new_csi_callback, cb_predicate = cb_predicate)
         self.callbacks = []
-        self.filllevel = 0
-
-        self.mac_filter = None
 
     def add_update_callback(self, cb):
         """ Add a callback that is called when new CSI data is added to the backlog """
@@ -108,7 +109,10 @@ class CSIBacklog(object):
 
         :return: LLTF CSI data, oldest first
         """
-        return np.roll(self.storage_lltf, -self.head, axis = 0)[-self.filllevel:]
+        assert(self.enable_lltf)
+        retval = np.copy(np.roll(self.storage_lltf, -self.head, axis = 0)[-self.filllevel:])
+
+        return retval
 
     def get_ht40(self):
         """
@@ -117,7 +121,9 @@ class CSIBacklog(object):
         :return: HT40 CSI data, oldest first
         """
         assert(self.enable_ht40)
-        return np.roll(self.storage_ht40, -self.head, axis = 0)[-self.filllevel:]
+        retval = np.roll(self.storage_ht40, -self.head, axis = 0)[-self.filllevel:]
+
+        return retval
 
     def get_rssi(self):
         """
@@ -125,7 +131,9 @@ class CSIBacklog(object):
 
         :return: RSSI data, oldest first
         """
-        return np.roll(self.storage_rssi, -self.head, axis = 0)[-self.filllevel:]
+        retval = np.copy(np.roll(self.storage_rssi, -self.head, axis = 0)[-self.filllevel:])
+
+        return retval
 
     def get_timestamps(self):
         """
@@ -133,7 +141,9 @@ class CSIBacklog(object):
 
         :return: Timestamps, oldest first, shape (n_packets, n_boards, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
         """
-        return np.roll(self.storage_timestamps, -self.head, axis = 0)[-self.filllevel:]
+        retval = np.copy(np.roll(self.storage_timestamps, -self.head, axis = 0)[-self.filllevel:])
+
+        return retval
 
     def get_latest_timestamp(self):
         """
@@ -144,7 +154,9 @@ class CSIBacklog(object):
         if self.latest is None:
             return None
 
-        return np.mean(self.storage_timestamps[self.latest])
+        retval = np.mean(self.storage_timestamps[self.latest])
+
+        return retval
 
     def get_macs(self):
         """
@@ -152,7 +164,9 @@ class CSIBacklog(object):
 
         :return: MAC addresses, oldest first
         """
-        return np.roll(self.storage_macs, -self.head, axis = 0)[-self.filllevel:]
+        retval = np.copy(np.roll(self.storage_macs, -self.head, axis = 0)[-self.filllevel:])
+
+        return retval
 
     def nonempty(self):
         """
@@ -162,11 +176,24 @@ class CSIBacklog(object):
         """
         return self.latest is not None
 
+    def read_start(self):
+        """
+        Start a read operation from the backlog, must be called before reading data.
+        """
+        self.storage_mutex.acquire()
+
+    def read_finish(self):
+        """
+        Finish a read operation from the backlog, must be called after reading data.
+        """
+        self.storage_mutex.release()
+
     def start(self):
         """
         Start the CSI backlog thread, must be called before using the backlog
         """
         self.thread = threading.Thread(target=self.__run)
+        self.storage_mutex = threading.Lock()
         self.thread.start()
         self.logger.info(f"Started CSI backlog thread")
 
