@@ -25,8 +25,8 @@ class CSIBacklog(object):
         self.enable_ht40 = enable_ht40
         self.calibrate = calibrate
 
-        self.storage_ht40 = np.zeros((size,) + self.pool.get_shape() + ((csi.csi_buf_t.htltf_lower.size + csi.HT40_GAP_SUBCARRIERS * 2 + csi.csi_buf_t.htltf_higher.size) // 2,), dtype = np.complex64)
-        self.storage_lltf = np.zeros((size,) + self.pool.get_shape() + (csi.csi_buf_t.lltf.size // 2,), dtype = np.complex64)
+        self.storage_ht40 = np.zeros((size,) + self.pool.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL,), dtype = np.complex64)
+        self.storage_lltf = np.zeros((size,) + self.pool.get_shape() + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), dtype = np.complex64)
 
         self.storage_timestamps = np.zeros((size,) + self.pool.get_shape(), dtype = np.float128)
         self.storage_rssi = np.zeros((size,) + self.pool.get_shape(), dtype = np.float32)

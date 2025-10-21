@@ -135,13 +135,12 @@ class Board(object):
         assert(len(message) % pktsize == 0)
         for i in range(0, len(message), pktsize):
             packet = csi.csistream_pkt_t(message[i:i + pktsize])
-            serialized_csi = csi.serialized_csi_t(packet.buf)
+            serialized_csi = csi.deserialize_packet_buffer(packet.buf)
 
-            if serialized_csi.type_header == csi._ESPARGOS_SPI_TYPE_HEADER_CSI:
-                for clist, cv, args in self.consumers:
-                    with cv:
-                        clist.append((packet.esp_num, serialized_csi, *args))
-                        cv.notify()
+            for clist, cv, args in self.consumers:
+                with cv:
+                    clist.append((packet.esp_num, serialized_csi, *args))
+                    cv.notify()
 
     def _csistream_loop(self):
         with websockets.sync.client.connect("ws://" + self.host + "/csi", close_timeout = 0.5) as websocket:

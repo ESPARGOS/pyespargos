@@ -116,8 +116,8 @@ def interpolate_ht40_gap(csi_ht40: np.ndarray):
 	:param csi_ht40: The CSI data for an HT40 channel. Complex-valued NumPy array with arbitrary shape, but the last dimension must be the subcarriers.
 	:return: The CSI data with the values in the gap filled in.
 	"""
-	index_left = csi.csi_buf_t.htltf_lower.size // 2 - 1
-	index_right = csi.csi_buf_t.htltf_lower.size // 2 + csi.HT40_GAP_SUBCARRIERS
+	index_left = csi.HT_COEFFICIENTS_PER_CHANNEL - 1
+	index_right = csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS
 	missing_indices = np.arange(index_left + 1, index_right)
 	left = csi_ht40[..., index_left]
 	right = csi_ht40[..., index_right]

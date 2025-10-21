@@ -50,16 +50,16 @@ class ClusteredCSI(object):
         self.csi_completion_state_all = False
 
         # Allocate memory for the channel coefficients and build views for the different parts of them
-        self.complex_csi_all = np.full(self.shape + (ctypes.sizeof(csi.csi_buf_t) // 2, ), fill_value = np.nan, dtype = np.complex64)
-        self.complex_csi_lltf = self.complex_csi_all[:,:,:,csi.csi_buf_t.lltf.offset // 2:(csi.csi_buf_t.lltf.offset + csi.csi_buf_t.lltf.size) // 2].view()
-        self.complex_csi_htltf_higher = self.complex_csi_all[:,:,:,csi.csi_buf_t.htltf_higher.offset // 2:(csi.csi_buf_t.htltf_higher.offset + csi.csi_buf_t.htltf_higher.size) // 2].view()
-        self.complex_csi_htltf_lower = self.complex_csi_all[:,:,:,csi.csi_buf_t.htltf_lower.offset // 2:(csi.csi_buf_t.htltf_lower.offset + csi.csi_buf_t.htltf_lower.size) // 2].view()
+        #self.complex_csi_all = np.full(self.shape + (ctypes.sizeof(csi.csi_buf_v1_t) // 2, ), fill_value = np.nan, dtype = np.complex64)
+        #self.complex_csi_lltf = self.complex_csi_all[:,:,:,csi.csi_buf_v1_t.lltf.offset // 2:(csi.csi_buf_v1_t.lltf.offset + csi.csi_buf_v1_t.lltf.size) // 2].view()
+        #self.complex_csi_htltf_higher = self.complex_csi_all[:,:,:,csi.csi_buf_v1_t.htltf_higher.offset // 2:(csi.csi_buf_v1_t.htltf_higher.offset + csi.csi_buf_v1_t.htltf_higher.size) // 2].view()
+        #self.complex_csi_htltf_lower = self.complex_csi_all[:,:,:,csi.csi_buf_v1_t.htltf_lower.offset // 2:(csi.csi_buf_v1_t.htltf_lower.offset + csi.csi_buf_v1_t.htltf_lower.size) // 2].view()
 
         # Allocate memory for the RSSI and noise floor values
         self.rssi_all = np.full(self.shape, fill_value = np.nan, dtype = np.float32)
         self.noise_floor_all = np.full(self.shape, fill_value = np.nan, dtype = np.float32)
 
-    def add_csi(self, board_num: int, esp_num: int, serialized_csi: csi.serialized_csi_t, csi_cplx: np.ndarray):
+    def add_csi(self, board_num: int, esp_num: int, serialized_csi: csi.serialized_csi_v1_t | csi.serialized_csi_v3_t):
         """
         Add CSI data to the cluster.
 
@@ -73,23 +73,29 @@ class ClusteredCSI(object):
         assert(serialized_csi.seq_ctrl.seg == self.seq_ctrl.seg)
         assert(serialized_csi.seq_ctrl.frag == self.seq_ctrl.frag)
 
+        # TODO: Assert that esp_num matches self-identified antenna ID
+
         # Compute row and column indices from ESPARGOS sensor number
         row = 1 - esp_num // 4
         column = 3 - esp_num % 4
 
         # Store CSI data to pre-allocated memory
         self.serialized_csi_all[board_num][row][column] = serialized_csi
-        self.complex_csi_all[board_num, row, column] = csi_cplx
+        #self.complex_csi_all[board_num, row, column] = csi_cplx # TODO: Will not work for V3 :(
         self.csi_completion_state[board_num, row, column] = True
         self.csi_completion_state_all = np.all(self.csi_completion_state)
-        self.rssi_all[board_num, row, column] = csi.wifi_pkt_rx_ctrl_t(serialized_csi.rx_ctrl).rssi
-        self.noise_floor_all[board_num, row, column] = csi.wifi_pkt_rx_ctrl_t(serialized_csi.rx_ctrl).noise_floor
+        
+        # Handle signed values for RSSI and noise floor (stored as uint32_t in rx_ctrl due to ctypes packing limitations)
+        rssi = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).rssi
+        noise_floor = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).noise_floor
+        self.rssi_all[board_num, row, column] = (rssi - 0x100) if (rssi & 0x80) else rssi
+        self.noise_floor_all[board_num, row, column] = (noise_floor - 0x100) if (noise_floor & 0x80) else noise_floor
 
     def deserialize_csi_lltf(self):
         """
         Deserialize the L-LTF part of the CSI data.
 
-        :return: The L-LTF part of the CSI data as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.csi_buf_t.lltf.size // 2)`
+        :return: The L-LTF part of the CSI data as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.LEGACY_COEFFICIENTS_PER_CHANNEL)`
         """
         return self.complex_csi_lltf
 
@@ -97,33 +103,78 @@ class ClusteredCSI(object):
         """
         Deserialize the HT-LTF part of the CSI data.
 
-        :return: The HT-LTF part of the CSI data as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, (csi.csi_buf_t.htltf_lower.size + csi.HT40_GAP_SUBCARRIERS * 2 + csi.csi_buf_t.htltf_higher.size) // 2)`
+        :return: The HT-LTF part of the CSI data as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL)`
         """
         assert(self.is_ht40())
         loc = self.get_secondary_channel_relative()
         assert(loc != 0)
 
-        csi_ht40 = np.zeros(self.shape + ((csi.csi_buf_t.htltf_lower.size + csi.HT40_GAP_SUBCARRIERS * 2 + csi.csi_buf_t.htltf_higher.size) // 2,), dtype = np.complex64)
-        csi_higher = csi_ht40[:,:,:,:csi.csi_buf_t.htltf_lower.size // 2].view()
-        csi_lower = csi_ht40[:,:,:,-csi.csi_buf_t.htltf_higher.size // 2:].view()
-        csi_higher[:] = self.complex_csi_htltf_lower
-        csi_lower[:] = self.complex_csi_htltf_higher
+        csi_ht40 = np.zeros(self.shape + (csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL,), dtype = np.complex64)
+
+        def deserialize_ht40_packet(b, r, a, serialized_csi):
+            csi_ht40_sensor = csi_ht40[b,r,a,:].view()
+            csi_ht40_sensor_higher = csi_ht40[b,r,a,:csi.HT_COEFFICIENTS_PER_CHANNEL].view()
+            csi_ht40_sensor_lower = csi_ht40[b,r,a,-csi.HT_COEFFICIENTS_PER_CHANNEL:].view()
+
+            # The ESP32 provides CSI as int8_t values in (im, re) pairs (in this order!)
+            # To go from the (re, im) interpretation to (im, re), compute conjugate and multiply by 1.0j.
+            csi_ht40_sensor_higher[:] = np.asarray(csi.csi_buf_v3_t(serialized_csi.buf).htltf.htltf_higher, dtype = np.int8).astype(np.float32).view(np.complex64)
+            csi_ht40_sensor_lower[:] = np.asarray(csi.csi_buf_v3_t(serialized_csi.buf).htltf.htltf_lower, dtype = np.int8).astype(np.float32).view(np.complex64)
+            csi_ht40_sensor[:] = -1.0j * np.conj(csi_ht40_sensor)
+
+        self._foreach_complete_sensor(deserialize_ht40_packet)
 
         # Secondary channel experiences phase shift by pi / 2
         # This is likely due to the pi / 2 phase shift specified for the pilot symbols,
         # see IEEE 80211-2012 section 20.3.9.3.4 L-LTF definition
+        csi_ht40_higher = csi_ht40[:,:,:,:csi.HT_COEFFICIENTS_PER_CHANNEL].view()
+        csi_ht40_lower = csi_ht40[:,:,:,-csi.HT_COEFFICIENTS_PER_CHANNEL:].view()
+
         if loc == 1:
-            csi_higher[:] = csi_higher * np.exp(-1.0j * np.pi / 2)
+            csi_ht40_higher[:] = csi_ht40_higher * np.exp(-1.0j * np.pi / 2)
         else:
-            csi_lower[:] = csi_lower * np.exp(-1.0j * np.pi / 2)
+            csi_ht40_lower[:] = csi_ht40_lower * np.exp(-1.0j * np.pi / 2)
 
         return csi_ht40
 
+    def is_lltf(self) -> bool:
+        """
+        Check if L-LTF channel estimates are available for all complete sensors.
+
+        :return: True if there is L-LTF CSI data for all complete sensors, False otherwise
+        """
+        have_lltf_all = True
+        def check_lltf(b, r, a, serialized_csi):
+            nonlocal have_lltf_all
+            match type(serialized_csi):
+                case csi.serialized_csi_v1_t:
+                    pass # V1 always has L-LTF
+                case csi.serialized_csi_v3_t:
+                    have_lltf_all = False # TODO: Implement properly...
+
+        self._foreach_complete_sensor(check_lltf)
+
+        return have_lltf_all
+
     def is_ht40(self) -> bool:
         """
-        Check if the packet is a HT40 packet, i.e., if it uses channel bonding and hence occupies two 20 MHz channels.
+        Check if HT40 (HT-LTF with 40MHz channel bonding) channel estimates are available for all complete sensors.
+
+        :return: True if there is HT40 CSI data for all complete sensors, False otherwise
         """
-        return csi.wifi_pkt_rx_ctrl_t(self._first_complete_sensor().rx_ctrl).cwb == 1
+        have_ht40_all = True
+        def check_ht40(b, r, a, serialized_csi):
+            nonlocal have_ht40_all
+            match type(serialized_csi):
+                case csi.serialized_csi_v1_t:
+                    if not csi.wifi_pkt_rx_ctrl_v1_t(serialized_csi.rx_ctrl).cwb == 1:
+                        have_ht40_all = False
+                case csi.serialized_csi_v3_t:
+                    pass # TODO: Implement properly...
+
+        self._foreach_complete_sensor(check_ht40)
+
+        return have_ht40_all
 
     def get_secondary_channel_relative(self):
         """
@@ -131,13 +182,25 @@ class ClusteredCSI(object):
 
         :return: 0 if no secondary channel is used, 1 if the secondary channel is above the primary channel, -1 if the secondary channel is below the primary channel
         """
-        match csi.wifi_pkt_rx_ctrl_t(self._first_complete_sensor().rx_ctrl).secondary_channel:
-            case 0:
-                return 0
-            case 1:
-                return 1
-            case 2:
-                return -1
+        match type(self._first_complete_sensor()):
+            case csi.serialized_csi_v1_t:
+                match csi.wifi_pkt_rx_ctrl_v1_t(self._first_complete_sensor().rx_ctrl).secondary_channel:
+                    case 0:
+                        return 0
+                    case 1:
+                        return 1
+                    case 2:
+                        return -1
+            case csi.serialized_csi_v3_t:
+                match csi.wifi_pkt_rx_ctrl_v3_t(self._first_complete_sensor().rx_ctrl).second:
+                    case 0:
+                        return 0
+                    case 1:
+                        return 1
+                    case 2:
+                        return -1
+                    
+        raise ValueError("Unknown serialized_csi type or secondary channel value")
 
     def get_primary_channel(self) -> int:
         """
@@ -145,7 +208,7 @@ class ClusteredCSI(object):
 
         :return: The primary channel number
         """
-        return csi.wifi_pkt_rx_ctrl_t(self._first_complete_sensor().rx_ctrl).channel
+        return csi.wifi_pkt_rx_ctrl_v3_t(self._first_complete_sensor().rx_ctrl).channel
 
     def get_secondary_channel(self) -> int:
         """
@@ -254,8 +317,8 @@ class ClusteredCSI(object):
         return None
     
     def _nanosecond_timestamp(self, serialized_csi):
-        rxstart_time_cyc = csi.wifi_pkt_rx_ctrl_t(serialized_csi.rx_ctrl).rxstart_time_cyc
-        rxstart_time_cyc_dec = csi.wifi_pkt_rx_ctrl_t(serialized_csi.rx_ctrl).rxstart_time_cyc_dec
+        rxstart_time_cyc = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).rxstart_time_cyc
+        rxstart_time_cyc_dec = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).rxstart_time_cyc_dec
         rxstart_time_cyc_dec = 2048 - rxstart_time_cyc_dec if rxstart_time_cyc_dec >= 1024 else rxstart_time_cyc_dec
 
         # Backwards compatibility: Only use global timestamp if it is nonzero
@@ -290,7 +353,7 @@ class CSICalibration(object):
 
         :param channel_primary: The primary channel number
         :param channel_secondary: The secondary channel number
-        :param calibration_values_ht40: The phase calibration values for the HT40 channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, (csi.csi_buf_t.htltf_lower.size + csi.HT40_GAP_SUBCARRIERS * 2 + csi.csi_buf_t.htltf_higher.size) // 2)`
+        :param calibration_values_ht40: The phase calibration values for the HT40 channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL)`
         :param timestamp_calibration_values: The reception timestamp offset calibration values, as a numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)`
         :param board_cable_lengths: The lengths of the cables that distribute the clock and phase calibration signal to the ESP32 boards, in meters
         :param board_cable_vfs: The velocity factors of the cables that distribute the clock and phase calibration signal to the ESP32 boards
@@ -340,7 +403,7 @@ class CSICalibration(object):
         Apply phase calibration to the provided HT40 CSI data.
         Also accounts for subcarrier-specific phase offsets, e.g., due to low-pass filter characteristic of baseband signal path inside the ESP32.
 
-        :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, (csi.csi_buf_t.htltf_lower.size + csi.HT40_GAP_SUBCARRIERS * 2 + csi.csi_buf_t.htltf_higher.size) // 2)`
+        :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL)`
         :param sensor_timestamps: The precise time when the CSI data was sampled, as a numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)`
         :return: The phase-calibrated and time offset-calibrated CSI data
         """
@@ -364,7 +427,7 @@ class CSICalibration(object):
         Apply phase calibration to the provided L-LTF CSI data.
         Also accounts for subcarrier-specific phase offsets, e.g., due to low-pass filter characteristic of baseband signal path inside the ESP32.
 
-        :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, (csi.csi_buf_t.htltf_lower.size + csi.HT40_GAP_SUBCARRIERS * 2 + csi.csi_buf_t.htltf_higher.size) // 2)`
+        :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL)`
         :param sensor_timestamps: The precise time when the CSI data was sampled, as a numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)`
         :return: The phase-calibrated and time offset-calibrated CSI data
         """
@@ -611,7 +674,8 @@ class Pool(object):
 
                 completion = cluster.get_completion()
                 if np.all(completion):
-                    complete_clusters_lltf.append(cluster.deserialize_csi_lltf())
+                    if cluster.is_lltf():
+                        complete_clusters_lltf.append(cluster.deserialize_csi_lltf())
                     if cluster.is_ht40():
                         complete_clusters_ht40.append(cluster.deserialize_csi_ht40())
                     timestamp_offsets.append(cluster.get_sensor_timestamps() - cluster.get_host_timestamp())
@@ -663,18 +727,7 @@ class Pool(object):
     def _handle_packets(self, packets):
         self.stats["packet_backlog"] = len(packets)
 
-        # Deserialize CSI of all packets
-        csi_bufs_int8 = np.zeros((len(packets), ctypes.sizeof(csi.csi_buf_t)), dtype = np.int8)
-        for i, pkt in enumerate(packets):
-            esp_num, serialized_csi, board_num = pkt[0], pkt[1], pkt[2]
-            csi_bufs_int8[i] = serialized_csi.buf
-
-        # The ESP32 provides CSI as int8_t values in (im, re) pairs (in this order!)
-        # To go from the (re, im) interpretation to (im, re), compute conjugate and multiply by 1.0j.
-        csi_bufs_complex = csi_bufs_int8.astype(np.float32).view(np.complex64)
-        csi_bufs_complex = -1.0j * np.conj(csi_bufs_complex)
-
-        for pkt, csi_cplx in zip(packets, csi_bufs_complex):
+        for pkt in packets:
             esp_num, serialized_csi, board_num = pkt[0], pkt[1], pkt[2]
 
             source_mac_str = binascii.hexlify(bytearray(serialized_csi.source_mac)).decode("utf-8")
@@ -688,7 +741,7 @@ class Pool(object):
                 cluster_cache[cluster_id] = ClusteredCSI(source_mac_str, dest_mac_str, serialized_csi.seq_ctrl, len(self.boards))
 
             # Add received data for the antenna to the current cluster
-            cluster_cache[cluster_id].add_csi(board_num, esp_num, serialized_csi, csi_cplx)
+            cluster_cache[cluster_id].add_csi(board_num, esp_num, serialized_csi)
 
         # Check OTA cluster cache for packets where callback is due and for stale packets
         stale = set()
