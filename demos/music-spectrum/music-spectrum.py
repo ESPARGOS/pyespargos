@@ -64,7 +64,7 @@ class EspargosDemoMusicSpectrum(PyQt6.QtWidgets.QApplication):
 		csi_backlog = csi_backlog * 10**(rssi_backlog[..., np.newaxis] / 20)
 
 		# Shift to first peak if requested
-		csi_shifted = espargos.util.shift_to_firstpeak(csi_backlog, peak_threshold = 0.5) if self.args.shift_peak else csi_backlog
+		csi_shifted = espargos.util.shift_to_firstpeak_sync(csi_backlog, peak_threshold = 0.5) if self.args.shift_peak else csi_backlog
 
 		# Compute array covariance matrix R over all backlog datapoints, all rows and all subcarriers
 		# TODO: Instead of just using all subcarriers to estimate R, should we extract the LoS component?

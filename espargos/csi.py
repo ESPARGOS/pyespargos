@@ -6,8 +6,6 @@ from . import constants
 
 # Internal constants
 _ESPARGOS_SPI_BUFFER_SIZE = 512
-_ESPARGOS_SPI_TYPE_HEADER_CSI = 0x5a1f19b1
-_ESPARGOS_SPI_TYPE_HEADER_CSI_V3 = 0xe4cd0bac
 
 # Other constants
 HT_COEFFICIENTS_PER_CHANNEL = 57
@@ -43,7 +41,7 @@ class seq_ctrl_t(ctypes.LittleEndianStructure):
 class csistream_pkt_t(ctypes.LittleEndianStructure):
     """
     A ctypes structure representing a CSI packet as received from the ESPARGOS controller, i.e.,
-    sensor number and the raw data buffer that should contain the serialized_csi_t structure if the type_header matches.
+    sensor number and the raw data buffer that should contain the serialized_csi_v1_t / serialized_csi_v3_t structure if the type_header matches.
     """
     _pack_ = 1
     _fields_ = [
@@ -211,8 +209,8 @@ class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
 
         ("noise_floor", ctypes.c_uint32, 8),
         ("_reserved8", ctypes.c_uint32, 8),
-        ("_reserved9", ctypes.c_uint32, 8),
-        ("_reserved10", ctypes.c_uint32, 8),
+        ("fft_gain", ctypes.c_uint32, 8),
+        ("agc_gain", ctypes.c_uint32, 8),
 
         ("_reserved11", ctypes.c_uint32, 8),
         ("_reserved12", ctypes.c_uint32, 8),
@@ -360,22 +358,12 @@ class serialized_csi_v3_t(ctypes.LittleEndianStructure):
     def __init__(self, buf=None):
         pass
 
-import binascii # TODO
-
-def deserialize_packet_buffer(pktbuf):
+def deserialize_packet_buffer(revision, pktbuf):
     """
     Deserialize a raw buffer into the appropriate serialized CSI structure based on the type header.
     """
     type_header = int.from_bytes(pktbuf[0:4], byteorder="little")
-    if type_header == _ESPARGOS_SPI_TYPE_HEADER_CSI:
-        return serialized_csi_v1_t(pktbuf)
-    elif type_header == _ESPARGOS_SPI_TYPE_HEADER_CSI_V3:
-        #print(binascii.hexlify(bytearray(pktbuf)))
-        #print(binascii.hexlify(bytearray(serialized_csi_v3_t(pktbuf).rx_ctrl)))
-        #print(wifi_pkt_rx_ctrl_v3_t(serialized_csi_v3_t(pktbuf).rx_ctrl).timestamp, wifi_pkt_rx_ctrl_v3_t(serialized_csi_v3_t(pktbuf).rx_ctrl).noise_floor)
-        #print(wifi_pkt_rx_ctrl_v3_t(serialized_csi_v3_t(pktbuf).rx_ctrl).channel, wifi_pkt_rx_ctrl_v3_t(serialized_csi_v3_t(pktbuf).rx_ctrl).second)
+    assert(type_header == revision.type_header)
 
-        #print(wifi_pkt_rx_ctrl_v3_t(serialized_csi_v3_t(pktbuf).rx_ctrl).rxstart_time_cyc, wifi_pkt_rx_ctrl_v3_t(serialized_csi_v3_t(pktbuf).rx_ctrl).rxstart_time_cyc_dec)
-        return serialized_csi_v3_t(pktbuf)
-    else:
-        raise ValueError(f"Unknown type header: {type_header:#x}")
+    # Maps to the correct csi structure (serialized_csi_v1_t or serialized_csi_v3_t) based on the board revision
+    return revision.serialized_csi_t(pktbuf)

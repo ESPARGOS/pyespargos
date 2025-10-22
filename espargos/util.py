@@ -75,7 +75,7 @@ def get_frequencies_ht40(primary_channel: int, secondary_channel: int):
 	center_primary = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (primary_channel - 1)
 	center_secondary = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (secondary_channel - 1)
 	center_ht40 = (center_primary + center_secondary) / 2
-	ht40_subcarrier_count = (csi.csi_buf_t.htltf_lower.size + csi.HT40_GAP_SUBCARRIERS * 2 + csi.csi_buf_t.htltf_higher.size) // 2
+	ht40_subcarrier_count = csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL
 	assert(ht40_subcarrier_count % 2 == 1)
 	return center_ht40 + np.arange(-ht40_subcarrier_count // 2, ht40_subcarrier_count // 2) * constants.WIFI_SUBCARRIER_SPACING
 
@@ -87,17 +87,8 @@ def get_frequencies_lltf(channel: int):
 	:return: The frequencies of the subcarriers, in Hz, NumPy array.
 	"""
 	center_lltf = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (channel - 1)
-	lltf_subcarrier_count = csi.csi_buf_t.lltf.size // 2
+	lltf_subcarrier_count = csi.LEGACY_COEFFICIENTS_PER_CHANNEL
 	return center_lltf + np.arange(-lltf_subcarrier_count // 2, lltf_subcarrier_count // 2) * constants.WIFI_SUBCARRIER_SPACING
-
-def get_calib_trace_wavelength(frequencies: np.ndarray):
-	"""
-	Returns the wavelength of the subcarriers on the calibration traces on the ESPARGOS sensor board.
-
-	:param frequencies: The frequencies of the subcarriers, in Hz, NumPy array.
-	:return: The wavelengths of the subcarriers, in meters, NumPy array.
-	"""
-	return constants.CALIB_TRACE_GROUP_VELOCITY / frequencies
 
 def get_cable_wavelength(frequencies: np.ndarray, velocity_factors: np.ndarray):
 	"""
@@ -136,30 +127,19 @@ def interpolate_lltf_gap(csi_lltf: np.ndarray):
 	missing_index = csi_lltf.shape[-1] // 2
 	csi_lltf[..., missing_index] = (csi_lltf[..., index_left] + csi_lltf[..., index_right]) / 2
 
-def shift_to_firstpeak(csi_datapoints: np.ndarray, max_delay_taps = 3, search_resolution = 40, peak_threshold = 0.4):
+def remove_mean_sto(csi_datapoint: np.ndarray):
 	"""
-	Shifts the CSI data so that the first peak of the channel impulse response is at time 0.
-	Each CSI datapoint is shifted by a different amount, i.e., can be used to synchronize CSI based on LoS channel.
-	Uses a simple but rather computation-efficient algorithm to find the first peak of the channel impulse response (as opposed to superresolution-based approach).
+	Removes the mean symbol timing offset (STO) from the CSI data by estimating the STO from the phase slope across subcarriers.
 
-	:param csi_datapoints: The CSI data to shift, frequency-domain. Complex-valued NumPy array with shape (datapoints, arrays, rows, columns, subcarriers).
-	:param max_delay_taps: The maximum number of time taps to shift the CSI data by.
-	:param search_resolution: The number of search points (granularity) to use for the time shift.
-	:param peak_threshold: The threshold for the peak detection, as a fraction of the maximum peak power.
+	:param csi_datapoint: The CSI data to remove the mean STO from, frequency-domain. Complex-valued NumPy array with shape (..., subcarriers).
 
-	:return: The frequency-domain CSI data with the first peak of the channel impulse response at time 0.
+	:return: The frequency-domain CSI data with the mean STO removed.
 	"""
-	# Time-shift all collected CSI so that first "peak" is at time 0
-	# CSI datapoints has shape (datapoints, arrays, rows, columns, subcarriers)
-	shifts = np.linspace(-max_delay_taps, 0, search_resolution)
-	subcarrier_range = np.arange(-csi_datapoints.shape[-1] // 2, csi_datapoints.shape[-1] // 2) + 1
-	shift_vectors = np.exp(1.0j * np.outer(shifts, 2 * np.pi * subcarrier_range / csi_datapoints.shape[-1]))
-	powers_by_delay = np.abs(np.einsum("lbrms,ds->lbrmd", csi_datapoints, shift_vectors))
-	max_peaks = np.max(powers_by_delay, axis = -1)
-	first_peak = np.argmax(powers_by_delay > peak_threshold * max_peaks[:,:,:,:,np.newaxis], axis = -1)
-	shift_to_firstpeak = shift_vectors[first_peak]
+	phase_slope = np.angle(np.nansum(csi_datapoint[...,1:] * np.conj(csi_datapoint[...,:-1])))
+	subcarrier_range = np.arange(-csi_datapoint.shape[-1] // 2, csi_datapoint.shape[-1] // 2) + 1
+	mean_sto_correction = np.exp(-1.0j * phase_slope * subcarrier_range)
 
-	return shift_to_firstpeak * csi_datapoints
+	return np.einsum("...s,s->...s", csi_datapoint, mean_sto_correction)
 
 def shift_to_firstpeak_sync(csi_datapoints: np.ndarray, max_delay_taps = 3, search_resolution = 40, peak_threshold = 0.1):
 	"""
@@ -410,3 +390,22 @@ def build_combined_array_csi(indexing_matrix, input_csi):
 	csi_combined = np.moveaxis(csi_combined, -1, 0)
 
 	return csi_combined
+
+def extract_lltf_subcarriers_from_ht40(csi_ht40: np.ndarray, secondary_channel_relative: int):
+	"""
+	Extract the LLTF subcarriers from HT40 CSI data.
+
+	:param csi_ht40: The HT40 CSI data. Complex-valued NumPy array with shape (..., subcarriers).
+	:param secondary_channel_relative: The relative position of the secondary channel to the primary channel. -1 for below, +1 for above.
+
+	:return: The extracted LLTF CSI data. Complex-valued NumPy array with shape (datapoints, arrays, rows, columns, subcarriers).
+	"""
+	base_offset = (csi.HT_COEFFICIENTS_PER_CHANNEL - csi.LEGACY_COEFFICIENTS_PER_CHANNEL) // 2
+	if secondary_channel_relative == -1:
+		# Secondary channel is below primary channel
+		start_index = base_offset
+	else:
+		# Secondary channel is above primary channel
+		start_index = base_offset + csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS
+
+	return csi_ht40[..., start_index:start_index + csi.LEGACY_COEFFICIENTS_PER_CHANNEL]

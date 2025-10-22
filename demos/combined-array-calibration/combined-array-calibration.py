@@ -35,9 +35,9 @@ class EspargosDemoCombinedArrayCalibration(PyQt6.QtWidgets.QApplication):
 		self.pool.add_csi_callback(self.onCSI)
 
 		if self.args.lltf:
-			self.subcarrier_count = espargos.csi.csi_buf_t.lltf.size // 2
+			self.subcarrier_count = espargos.csi.LEGACY_COEFFICIENTS_PER_CHANNEL
 		else:
-			self.subcarrier_count = (espargos.csi.csi_buf_t.htltf_lower.size + espargos.csi.HT40_GAP_SUBCARRIERS * 2 + espargos.csi.csi_buf_t.htltf_higher.size) // 2
+			self.subcarrier_count = espargos.csi.HT_COEFFICIENTS_PER_CHANNEL + espargos.csi.HT40_GAP_SUBCARRIERS + espargos.csi.HT_COEFFICIENTS_PER_CHANNEL
 		self.subcarrier_range = np.arange(-self.subcarrier_count // 2, self.subcarrier_count // 2)
 
 		self.poll_timer = PyQt6.QtCore.QTimer(self)
@@ -75,10 +75,10 @@ class EspargosDemoCombinedArrayCalibration(PyQt6.QtWidgets.QApplication):
 		csi = clustered_csi.deserialize_csi_lltf() if self.args.lltf else clustered_csi.deserialize_csi_ht40()
 		assert(self.pool.get_calibration() is not None)
 		if self.args.lltf:
-			csi = self.pool.get_calibration().apply_lltf(csi, sensor_timestamps_raw)
+			csi = self.pool.get_calibration().apply_lltf(csi)
 			espargos.util.interpolate_lltf_gap(csi)
 		else:
-			csi = self.pool.get_calibration().apply_ht40(csi, sensor_timestamps_raw)
+			csi = self.pool.get_calibration().apply_ht40(csi)
 			espargos.util.interpolate_ht40_gap(csi)
 
 		if self.calibration_values is None:

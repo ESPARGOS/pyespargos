@@ -58,7 +58,7 @@ class CSIBacklog(object):
                     csi_lltf = clustered_csi.deserialize_csi_lltf()
                     if self.calibrate:
                         assert(self.pool.get_calibration() is not None)
-                        csi_lltf = self.pool.get_calibration().apply_lltf(csi_lltf, sensor_timestamps_raw)
+                        csi_lltf = self.pool.get_calibration().apply_lltf(csi_lltf)
 
                     self.storage_lltf[self.head] = csi_lltf
                 else:
@@ -71,7 +71,7 @@ class CSIBacklog(object):
 
                         if self.calibrate:
                             assert(self.pool.get_calibration() is not None)
-                            csi_ht40 = self.pool.get_calibration().apply_ht40(csi_ht40, sensor_timestamps_raw)
+                            csi_ht40 = self.pool.get_calibration().apply_ht40(csi_ht40)
 
                         self.storage_ht40[self.head] = csi_ht40
                     else:

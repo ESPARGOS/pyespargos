@@ -15,32 +15,6 @@ ANTENNAS_PER_BOARD = ANTENNAS_PER_ROW * ROWS_PER_BOARD
 ANTENNA_SEPARATION = 0.06
 "Distance between the centers of two antennas [m]"
 
-CALIB_TRACE_LENGTH = [
-	[0.0708462, 0.0229349, 0.0786856, 0.1423600],
-	[0.0838888, 0.0295291, 0.0671322, 0.1308537]
-]
-"Calibration signal trace lengths on ESPARGOS PCB"
-
-CALIB_TRACE_EMPIRICAL_ERROR = [
-	[0.0000, 0.0025, 0.0007, 0.0047],
-	[0.0023, 0.0055, 0.0018, 0.0016]
-]
-
-CALIB_TRACE_DIELECTRIC_CONSTANT = 4.3
-"Dielectric constant of the sensor PCB material"
-
-CALIB_TRACE_WIDTH = 0.2
-"Width of the calibration signal trace, in m"
-
-CALIB_TRACE_HEIGHT = 0.119
-"Height of the calibration signal trace (distance between GND plane and microstrip), in m"
-
-CALIB_TRACE_EFFECTIVE_DIELECTRIC_CONSTANT: float = (CALIB_TRACE_DIELECTRIC_CONSTANT + 1) / 2 + (CALIB_TRACE_DIELECTRIC_CONSTANT - 1) / 2 * (1 + 12 * (CALIB_TRACE_HEIGHT/CALIB_TRACE_WIDTH))**(-1/2)
-"Effective dielectric constant of the calibration trace"
-
-CALIB_TRACE_GROUP_VELOCITY: float = SPEED_OF_LIGHT / CALIB_TRACE_EFFECTIVE_DIELECTRIC_CONSTANT**0.5
-"Group velocity of signal on the calibration trace"
-
 WIFI_CHANNEL1_FREQUENCY = 2.412e9
 "Frequency of channel 1 in 2.4 GHz WiFi"
 

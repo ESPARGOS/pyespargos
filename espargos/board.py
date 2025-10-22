@@ -6,6 +6,8 @@ import threading
 import logging
 import ctypes
 import json
+
+from . import revisions
 from . import csi
 
 
@@ -40,7 +42,13 @@ class Board(object):
             self.logger.error(f"Could not connect to {self.host}")
             raise TimeoutError
 
-        if identification != "ESPARGOS":
+        self.revision = None
+        for rev in revisions.all_revisions:
+            if identification == rev.identification:
+                self.revision = rev
+                break
+
+        if self.revision is None:
             raise EspargosUnexpectedResponseError
 
         self.netconf = json.loads(self._fetch("get_netconf"))
@@ -135,7 +143,7 @@ class Board(object):
         assert(len(message) % pktsize == 0)
         for i in range(0, len(message), pktsize):
             packet = csi.csistream_pkt_t(message[i:i + pktsize])
-            serialized_csi = csi.deserialize_packet_buffer(packet.buf)
+            serialized_csi = csi.deserialize_packet_buffer(self.revision, packet.buf)
 
             for clist, cv, args in self.consumers:
                 with cv:

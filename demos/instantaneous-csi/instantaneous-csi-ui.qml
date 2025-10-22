@@ -55,12 +55,12 @@ ApplicationWindow {
 				ValueAxis {
 					id: csiAmplitudeSubcarrierAxis
 
-					min: (backend.timeDomain || backend.superResolution) ? -7 : backend.subcarrierRange[0]
-					max: (backend.timeDomain || backend.superResolution) ? 7 : backend.subcarrierRange.slice(-1)[0]
+					min: backend.superResolution ? -7 : backend.subcarrierRange[0]
+					max: backend.superResolution ? 7 : backend.subcarrierRange.slice(-1)[0]
 					titleText: (backend.timeDomain || backend.superResolution) ? "<font color=\"#e0e0e0\">Delay [tap]</font>" : "<font color=\"#e0e0e0\">Subcarrier Index</font>"
 					titleFont.bold: false
 					gridLineColor: "#c0c0c0"
-					tickInterval: (backend.timeDomain || backend.superResolution) ? 1 : 20
+					tickInterval: backend.superResolution ? 1 : 20
 					tickType: ValueAxis.TicksDynamic
 					labelsColor: "#e0e0e0"
 					labelFormat: "%d"
@@ -73,7 +73,7 @@ ApplicationWindow {
 					titleText: (backend.timeDomain || backend.superResolution) ? "<font color=\"#e0e0e0\">Power [linear]</font>" : "<font color=\"#e0e0e0\">Power [dB]</font>"
 					titleFont.bold: false
 					gridLineColor: "#c0c0c0"
-					tickInterval: backend.timeDomain ? 1000 : (backend.superResolution ? 0.5 : 5)
+					tickInterval: backend.timeDomain ? 100000 : (backend.superResolution ? 0.5 : 5)
 					tickType: ValueAxis.TicksDynamic
 					labelsColor: "#e0e0e0"
 				}
@@ -108,12 +108,12 @@ ApplicationWindow {
 				ValueAxis {
 					id: csiPhaseSubcarrierAxis
 
-					min: (backend.timeDomain || backend.superResolution) ? -7 : backend.subcarrierRange[0]
-					max: (backend.timeDomain || backend.superResolution) ? 7 : backend.subcarrierRange.slice(-1)[0]
+					min: (backend.superResolution) ? -7 : backend.subcarrierRange[0]
+					max: (backend.superResolution) ? 7 : backend.subcarrierRange.slice(-1)[0]
 					titleText: (backend.timeDomain || backend.superResolution) ? "<font color=\"#e0e0e0\">Delay [tap]</font>" : "<font color=\"#e0e0e0\">Subcarrier Index</font>"
 					titleFont.bold: false
 					gridLineColor: "#c0c0c0"
-					tickInterval: (backend.timeDomain || backend.superResolution) ? 5 : 20
+					tickInterval: backend.superResolution ? 5 : 20
 					tickType: ValueAxis.TicksDynamic
 					labelsColor: "#e0e0e0"
 					labelFormat: "%d"

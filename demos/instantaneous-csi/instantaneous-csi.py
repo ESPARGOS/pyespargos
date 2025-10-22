@@ -89,13 +89,17 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		# Weight CSI data with RSSI
 		csi_backlog = csi_backlog * 10**(rssi_backlog[..., np.newaxis] / 20)
 
+		if self.args.shift_peak:
+			csi_shifted = espargos.util.remove_mean_sto(csi_backlog)
+			csi_shifted = espargos.util.shift_to_firstpeak_sync(csi_shifted, peak_threshold = 0.9)
+		else:
+			csi_shifted = csi_backlog
+
 		# Fill "gap" in subcarriers with interpolated data
 		if not self.args.lltf:
-			espargos.util.interpolate_ht40_gap(csi_backlog)
+			espargos.util.interpolate_ht40_gap(csi_shifted)
 		else:
-			espargos.util.interpolate_lltf_gap(csi_backlog)
-
-		csi_shifted = espargos.util.shift_to_firstpeak_sync(csi_backlog, peak_threshold = 0.9) if self.args.shift_peak else csi_backlog
+			espargos.util.interpolate_lltf_gap(csi_shifted)
 
 		# TODO: If using per-board calibration, interpolation should also be per-board
 		csi_interp = espargos.util.csi_interp_iterative(csi_shifted, iterations = 5)
@@ -138,6 +142,7 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 			self.stable_power_minimum = self._interpolate_axis_range(self.stable_power_minimum, np.min(csi_power) - 3)
 			self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, np.max(csi_power) + 3)
 			csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, csi_flat.shape[1] // 2])))
+			#csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, :])))
 
 			for pwr_series, phase_series, ant_pwr, ant_phase in zip(powerSeries, phaseSeries, csi_power, csi_phase):
 				pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(self.subcarrier_range, ant_pwr)])
