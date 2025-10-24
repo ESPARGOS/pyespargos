@@ -94,7 +94,7 @@ class Board(object):
 
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller
         """
-        res = self._fetch("set_calib", "1" if calibrate else "0")
+        res = self._fetch("set_calib", "0" if calibrate else "1")
         if res != "ok":
             self.logger.error(f"Invalid response: {res}")
             raise EspargosUnexpectedResponseError
