@@ -103,7 +103,7 @@ class BoardRevisionDensiflorus(BoardRevision):
 		return csi.serialized_csi_v3_t
 
 	def esp_num_to_row_col(self, esp_num: int) -> tuple:
-		row = esp_num // 4
+		row = 1 - esp_num // 4
 		col = 3 - esp_num % 4
 		return (row, col)
 
