@@ -50,12 +50,6 @@ class ClusteredCSI(object):
         self.csi_completion_state = np.full(self.shape, False)
         self.csi_completion_state_all = False
 
-        # Allocate memory for the channel coefficients and build views for the different parts of them
-        #self.complex_csi_all = np.full(self.shape + (ctypes.sizeof(csi.csi_buf_v1_t) // 2, ), fill_value = np.nan, dtype = np.complex64)
-        #self.complex_csi_lltf = self.complex_csi_all[:,:,:,csi.csi_buf_v1_t.lltf.offset // 2:(csi.csi_buf_v1_t.lltf.offset + csi.csi_buf_v1_t.lltf.size) // 2].view()
-        #self.complex_csi_htltf_higher = self.complex_csi_all[:,:,:,csi.csi_buf_v1_t.htltf_higher.offset // 2:(csi.csi_buf_v1_t.htltf_higher.offset + csi.csi_buf_v1_t.htltf_higher.size) // 2].view()
-        #self.complex_csi_htltf_lower = self.complex_csi_all[:,:,:,csi.csi_buf_v1_t.htltf_lower.offset // 2:(csi.csi_buf_v1_t.htltf_lower.offset + csi.csi_buf_v1_t.htltf_lower.size) // 2].view()
-
         # Allocate memory for the RSSI and noise floor values
         self.rssi_all = np.full(self.shape, fill_value = np.nan, dtype = np.float32)
         self.noise_floor_all = np.full(self.shape, fill_value = np.nan, dtype = np.float32)
@@ -97,7 +91,48 @@ class ClusteredCSI(object):
 
         :return: The L-LTF part of the CSI data as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.LEGACY_COEFFICIENTS_PER_CHANNEL)`
         """
-        return self.complex_csi_lltf
+        assert(self.has_lltf())
+
+        csi_lltf = np.zeros(self.shape + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), dtype = np.complex64)
+
+        def deserialize_lltf_packet(b, r, a, serialized_csi):
+            nonlocal csi_lltf
+            csi_lltf_sensor = csi_lltf[b,r,a,:].view()
+
+            # The ESP32 PHY v3 uses the weirdest format for L-LTF CSI.
+            # It is provided as 27 subcarriers, each as a 12-bit signed integer stored in a 16-bit container.
+            lltf_bytes = np.asarray(csi.csi_buf_v3_lltf_t(serialized_csi.buf).lltf, dtype = np.uint8)
+
+            lo = lltf_bytes[0::2].astype(np.int16)
+            hi = lltf_bytes[1::2].astype(np.int16)
+            lltf_all = ((hi << 12) >> 4) | lo
+            lltf_all = np.append(lltf_all, 0)
+            csi_lltf_sensor[0::2] = lltf_all.astype(np.float32).view(np.complex64)
+            csi_lltf_sensor[:] = -1.0j * np.conj(csi_lltf_sensor)
+
+            # Now we don't have the full 54 subcarriers yet, as a quick hack we interpolate the missing ones
+
+            # Real part is missing for last subcarrier, steal it from previous one
+            csi_lltf_sensor[-1] = csi_lltf_sensor[-3].real + 1.0j * csi_lltf_sensor[-1].imag
+
+            # DC subcarrier is not measured, interpolate it
+            csi_lltf_sensor[26] = 0.5 * (csi_lltf_sensor[24] + csi_lltf_sensor[28])
+
+            # Interpolate to get full 54 subcarriers
+            csi_lltf_sensor[1::2] = 0.5 * (csi_lltf_sensor[0:-1:2] + csi_lltf_sensor[2::2])
+
+        self._foreach_complete_sensor(deserialize_lltf_packet)
+
+        # Need to take timestamps into account to provide phase coherence across all sensors
+        # TODO: For timestamp synchronization across datapoints, do not subtract mean, but use known reference point!
+        delay = self.get_sensor_timestamps() - np.mean(self.get_sensor_timestamps())
+
+        subcarrier_range = np.arange(-csi_lltf.shape[-1] // 2, csi_lltf.shape[-1] // 2)[np.newaxis,np.newaxis,np.newaxis,:]
+        # 128 bit delay is overkill here, CSI is only 2x32 bit, product would be 2x128 bit
+        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:,:,:,np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range).astype(np.complex64)
+        csi_lltf = np.einsum("bras,bras->bras", csi_lltf, sto_delay_correction)
+
+        return csi_lltf
 
     def deserialize_csi_ht20ltf(self):
         """
@@ -119,6 +154,15 @@ class ClusteredCSI(object):
 
         self._foreach_complete_sensor(deserialize_ht20_packet)
 
+        # Need to take timestamps into account to provide phase coherence across all sensors
+        # TODO: For timestamp synchronization across datapoints, do not subtract mean, but use known reference point!
+        delay = self.get_sensor_timestamps() - np.mean(self.get_sensor_timestamps())
+
+        subcarrier_range = np.arange(-csi_ht20.shape[-1] // 2, csi_ht20.shape[-1] // 2)[np.newaxis,np.newaxis,np.newaxis,:]
+
+        # 128 bit delay is overkill here, CSI is only 2x32 bit, product would be 2x128 bit
+        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:,:,:,np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range).astype(np.complex64)
+        csi_ht20 = np.einsum("bras,bras->bras", csi_ht20, sto_delay_correction)
         return csi_ht20
 
     def deserialize_csi_ht40ltf(self):
@@ -183,7 +227,9 @@ class ClusteredCSI(object):
                 case csi.serialized_csi_v1_t:
                     pass # V1 always has L-LTF
                 case csi.serialized_csi_v3_t:
-                    have_lltf_all = False # TODO: Implement properly...
+                    # Sensor module is configured to only provide L-LTF if frame is 802.11g
+                    if not csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_11G:
+                        have_lltf_all = False
 
         self._foreach_complete_sensor(check_lltf)
 
@@ -507,9 +553,11 @@ class CSICalibration(object):
         :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL)`
         :return: The phase-calibrated CSI data
         """
+        # TODO: Check if calibration value channel matches OTA channel
+
         return values * np.exp(-1.0j * np.angle(self.calibration_values_ht20))
 
-    def apply_lltf(self, values: np.ndarray, sensor_timestamps: np.ndarray) -> np.ndarray:
+    def apply_lltf(self, values: np.ndarray) -> np.ndarray:
         """
         Apply phase calibration to the provided L-LTF CSI data.
         Also accounts for subcarrier-specific phase offsets, e.g., due to low-pass filter characteristic of baseband signal path inside the ESP32.
@@ -519,25 +567,7 @@ class CSICalibration(object):
         """
         # TODO: Check if calibration value channel matches OTA channel
 
-        # In all steps, we have to account for the csi values and timestamps that are NaN.
-        # Therefore: np.nanmean and np.nansum instead of np.mean and np.sum
-        # This indicates that one particular sensor has not yet provided the packet
-        delay = sensor_timestamps - self.timestamp_calibration_values
-        delay = delay - np.nanmean(delay)
-
-        # Apply phase correction due to CFO. Depends on whether receiver LO is above / below primary channel (assumes HT40 calibration)
-        # TODO: Check if this STO compensation really matches what happens in hardware
-        subcarrier_frequency_offsets = util.get_frequencies_lltf(self.channel_primary) - self.receiver_lo_freq
-
-        # 128 bit delay is overkill here, CSI is only 2x32 bit, product would be 2x128 bit
-        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:,:,:,np.newaxis] * subcarrier_frequency_offsets).astype(np.complex64)
-
-        csi = np.einsum("bras,bras,bras->bras", values, sto_delay_correction, self.calibration_values_lltf)
-
-        # Mean delay should be zero
-        mean_sto = np.angle(np.nansum(csi[...,1:] * np.conj(csi[...,:-1]))) / (2 * np.pi)
-        mean_sto_correction = np.exp(-1.0j * 2 * np.pi * mean_sto * np.arange(-csi.shape[-1] // 2, csi.shape[-1] // 2)).astype(np.complex64)
-        return csi * mean_sto_correction[np.newaxis, np.newaxis, np.newaxis, :]
+        return values * np.exp(-1.0j * np.angle(self.calibration_values_lltf))
 
     def apply_timestamps(self, timestamps: np.ndarray):
         """
@@ -737,21 +767,25 @@ class Pool(object):
                         if cluster.has_ht40ltf():
                             complete_clusters_ht40.append(cluster.deserialize_csi_ht40ltf()[board_num])
 
+                #util.remove_mean_sto(np.asarray(complete_clusters_ht40))
+
                 self.logger.info(f"Board {board.get_name()}: Collected {any_csi_count} calibration clusters, out of which {len(complete_clusters_ht40)} are complete ({len(complete_clusters_lltf)} have L-LTF)")
                 if len(complete_clusters_lltf) == 0 and len(complete_clusters_ht40) > 0:
                     # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for L-LTF calibration
                     self.logger.warning("No L-LTF calibration clusters received, deriving L-LTF calibration from HT40 calibration")
                     complete_clusters_lltf = [util.extract_lltf_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
+                #else:
+                #    util.remove_mean_sto(np.asarray(complete_clusters_lltf))
+
                 if len(complete_clusters_ht20) == 0 and len(complete_clusters_ht40) > 0:
                     # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for HT20 calibration
                     self.logger.warning("No HT20 calibration clusters received, deriving HT20 calibration from HT40 calibration")
                     complete_clusters_ht20 = [util.extract_ht20_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
+                #else:
+                #    util.remove_mean_sto(np.asarray(complete_clusters_ht20))
+
                 if len(complete_clusters_ht40) == 0:
                     raise Exception("ESPARGOS calibration failed, did not receive any HT40 reference signal, currently not supported. Make sure to use 40MHz wide reference signal for calibration.")
-                
-                util.remove_mean_sto(np.asarray(complete_clusters_lltf))
-                util.remove_mean_sto(np.asarray(complete_clusters_ht20))
-                util.remove_mean_sto(np.asarray(complete_clusters_ht40))
 
                 phase_calibrations_lltf.append(util.csi_interp_iterative(np.asarray(complete_clusters_lltf)))
                 phase_calibrations_ht20.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht20)))
@@ -782,21 +816,25 @@ class Pool(object):
                     if cluster.has_ht40ltf():
                         complete_clusters_ht40.append(cluster.deserialize_csi_ht40ltf())
 
+            #util.remove_mean_sto(np.asarray(complete_clusters_ht40))
+
             self.logger.info(f"Pool: Collected {len(self.cluster_cache_calib)} calibration clusters, out of which {len(complete_clusters_ht40)} are complete ({len(complete_clusters_lltf)} have L-LTF)")
             if len(complete_clusters_lltf) == 0 and len(complete_clusters_ht40) > 0:
                 # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for L-LTF calibration
                 self.logger.warning("No L-LTF calibration clusters received, deriving L-LTF calibration from HT40 calibration")
                 complete_clusters_lltf = [util.extract_lltf_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
+            #else:
+            #    util.remove_mean_sto(np.asarray(complete_clusters_lltf))
+
             if len(complete_clusters_ht20) == 0 and len(complete_clusters_ht40) > 0:
                 # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for HT20 calibration
                 self.logger.warning("No HT20 calibration clusters received, deriving HT20 calibration from HT40 calibration")
                 complete_clusters_ht20 = [util.extract_ht20_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
+            #else:
+            #    util.remove_mean_sto(np.asarray(complete_clusters_ht20))
+
             if len(complete_clusters_ht40) == 0:
                 raise Exception("ESPARGOS calibration failed, did not receive any HT40 reference signal, currently not supported. Make sure to use 40MHz wide reference signal for calibration.")
-            
-            util.remove_mean_sto(np.asarray(complete_clusters_lltf))
-            util.remove_mean_sto(np.asarray(complete_clusters_ht20))
-            util.remove_mean_sto(np.asarray(complete_clusters_ht40))
 
             phase_calibrations_lltf = util.csi_interp_iterative(np.asarray(complete_clusters_lltf))
             phase_calibrations_ht20 = util.csi_interp_iterative(np.asarray(complete_clusters_ht20))

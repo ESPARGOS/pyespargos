@@ -118,7 +118,8 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		elif self.args.ht20:
 			espargos.util.interpolate_ht20ltf_gap(csi_backlog)
 		elif self.args.lltf:
-			espargos.util.interpolate_lltf_gap(csi_backlog)
+			pass
+			#espargos.util.interpolate_lltf_gap(csi_backlog)
 
 		# TODO: If using per-board calibration, interpolation should also be per-board
 		csi_interp = espargos.util.csi_interp_iterative(csi_backlog, iterations = 5)
