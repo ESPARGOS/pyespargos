@@ -90,19 +90,16 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		csi_backlog = csi_backlog * 10**(rssi_backlog[..., np.newaxis] / 20)
 
 		if self.args.shift_peak:
-			csi_shifted = espargos.util.remove_mean_sto(csi_backlog)
-			csi_shifted = espargos.util.shift_to_firstpeak_sync(csi_shifted, peak_threshold = 0.9)
-		else:
-			csi_shifted = csi_backlog
+			espargos.util.remove_mean_sto(csi_backlog)
 
 		# Fill "gap" in subcarriers with interpolated data
 		if not self.args.lltf:
-			espargos.util.interpolate_ht40_gap(csi_shifted)
+			espargos.util.interpolate_ht40_gap(csi_backlog)
 		else:
-			espargos.util.interpolate_lltf_gap(csi_shifted)
+			espargos.util.interpolate_lltf_gap(csi_backlog)
 
 		# TODO: If using per-board calibration, interpolation should also be per-board
-		csi_interp = espargos.util.csi_interp_iterative(csi_shifted, iterations = 5)
+		csi_interp = espargos.util.csi_interp_iterative(csi_backlog, iterations = 5)
 		csi_flat = np.reshape(csi_interp, (-1, csi_interp.shape[-1]))
 
 		if self.args.mvdr or self.args.music:

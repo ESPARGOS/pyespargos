@@ -181,6 +181,8 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 		csi_backlog = np.nan_to_num(csi_backlog, nan = 0.0)
 		rssi_backlog = np.nan_to_num(rssi_backlog, nan = -np.inf)
 
+		espargos.util.remove_mean_sto(csi_backlog)
+
 		# Apply additional calibration (only phase)
 		if self.additional_calibration is not None:
 			# TODO: espargos.pool should natively support additional calibration

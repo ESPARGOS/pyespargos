@@ -137,7 +137,8 @@ class ClusteredCSI(object):
             csi_ht40_lower[:] = csi_ht40_lower * np.exp(-1.0j * np.pi / 2)
 
         # Need to take timestamps into account to provide phase coherence across all sensors
-        delay = self.get_sensor_timestamps() #- np.mean(self.get_sensor_timestamps())
+        # TODO: For timestamp synchronization across datapoints, do not subtract mean, but use known reference point!
+        delay = self.get_sensor_timestamps() - np.mean(self.get_sensor_timestamps())
 
         subcarrier_range = np.arange(-csi_ht40.shape[-1] // 2, csi_ht40.shape[-1] // 2)[np.newaxis,np.newaxis,np.newaxis,:]
 
@@ -677,11 +678,11 @@ class Pool(object):
                 if len(complete_clusters_ht40) == 0:
                     raise Exception("ESPARGOS calibration failed, did not receive any HT40 reference signal, currently not supported. Make sure to use 40MHz wide reference signal for calibration.")
                 
-                complete_clusters_lltf_storemoved = [util.remove_mean_sto(csi_lltf) for csi_lltf in complete_clusters_lltf]
-                complete_clusters_ht40_storemoved = [util.remove_mean_sto(csi_ht40) for csi_ht40 in complete_clusters_ht40]
+                util.remove_mean_sto(np.asarray(complete_clusters_lltf))
+                util.remove_mean_sto(np.asarray(complete_clusters_ht40))
 
-                phase_calibrations_lltf.append(util.csi_interp_iterative(np.asarray(complete_clusters_lltf_storemoved)))
-                phase_calibrations_ht40.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht40_storemoved)))
+                phase_calibrations_lltf.append(util.csi_interp_iterative(np.asarray(complete_clusters_lltf)))
+                phase_calibrations_ht40.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht40)))
 
             self.stored_calibration = CSICalibration(self.boards, channel_primary, channel_secondary, np.asarray(phase_calibrations_lltf), np.asarray(phase_calibrations_ht40))
 
@@ -713,11 +714,11 @@ class Pool(object):
             if len(complete_clusters_ht40) == 0:
                 raise Exception("ESPARGOS calibration failed, did not receive any HT40 reference signal, currently not supported. Make sure to use 40MHz wide reference signal for calibration.")
             
-            complete_clusters_lltf_storemoved = [util.remove_mean_sto(csi_lltf) for csi_lltf in complete_clusters_lltf]
-            complete_clusters_ht40_storemoved = [util.remove_mean_sto(csi_ht40) for csi_ht40 in complete_clusters_ht40]
+            util.remove_mean_sto(np.asarray(complete_clusters_lltf))
+            util.remove_mean_sto(np.asarray(complete_clusters_ht40))
 
-            phase_calibrations_lltf = util.csi_interp_iterative(np.asarray(complete_clusters_lltf_storemoved))
-            phase_calibration_ht40 = util.csi_interp_iterative(np.asarray(complete_clusters_ht40_storemoved))
+            phase_calibrations_lltf = util.csi_interp_iterative(np.asarray(complete_clusters_lltf))
+            phase_calibration_ht40 = util.csi_interp_iterative(np.asarray(complete_clusters_ht40))
 
             self.stored_calibration = CSICalibration(self.boards, channel_primary, channel_secondary, phase_calibrations_lltf, phase_calibration_ht40, board_cable_lengths=cable_lengths, board_cable_vfs=cable_velocity_factors)
 

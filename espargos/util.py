@@ -127,19 +127,18 @@ def interpolate_lltf_gap(csi_lltf: np.ndarray):
 	missing_index = csi_lltf.shape[-1] // 2
 	csi_lltf[..., missing_index] = (csi_lltf[..., index_left] + csi_lltf[..., index_right]) / 2
 
-def remove_mean_sto(csi_datapoint: np.ndarray):
+def remove_mean_sto(csi_datapoints: np.ndarray):
 	"""
 	Removes the mean symbol timing offset (STO) from the CSI data by estimating the STO from the phase slope across subcarriers.
+	All datapoints are corrected separately.
 
-	:param csi_datapoint: The CSI data to remove the mean STO from, frequency-domain. Complex-valued NumPy array with shape (..., subcarriers).
-
-	:return: The frequency-domain CSI data with the mean STO removed.
+	:param csi_datapoints: The CSI data (multiple datapoints) to remove the mean STO from, frequency-domain. Complex-valued NumPy array with shape (..., subcarriers).
 	"""
-	phase_slope = np.angle(np.nansum(csi_datapoint[...,1:] * np.conj(csi_datapoint[...,:-1])))
-	subcarrier_range = np.arange(-csi_datapoint.shape[-1] // 2, csi_datapoint.shape[-1] // 2) + 1
-	mean_sto_correction = np.exp(-1.0j * phase_slope * subcarrier_range)
+	phase_slope = np.angle(np.nansum(csi_datapoints[...,1:] * np.conj(csi_datapoints[...,:-1]), axis = (1, 2, 3, 4)))
+	subcarrier_range = np.arange(-csi_datapoints.shape[-1] // 2, csi_datapoints.shape[-1] // 2) + 1
+	mean_sto_correction = np.exp(-1.0j * phase_slope[:,np.newaxis] * subcarrier_range[np.newaxis,:])
 
-	return np.einsum("...s,s->...s", csi_datapoint, mean_sto_correction)
+	csi_datapoints *= mean_sto_correction[:,np.newaxis,np.newaxis,np.newaxis,:]
 
 def shift_to_firstpeak_sync(csi_datapoints: np.ndarray, max_delay_taps = 3, search_resolution = 40, peak_threshold = 0.1):
 	"""
