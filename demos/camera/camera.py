@@ -56,7 +56,6 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 		parser.add_argument("-fe", "--fov-elevation", type = int, default = 41, help = "Camera field of view in elevation direction")
 		parser.add_argument("-md", "--max-delay", type = float, default = 0.2, help = "Maximum delay in samples for colorizing delay")
 		parser.add_argument("-a", "--additional-calibration", type = str, default = "", help = "File to read additional phase calibration results from")
-		parser.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
 		parser.add_argument("-e", "--manual-exposure", default = False, help = "Use manual exposure / brightness control for WiFi overlay", action = "store_true")
 		parser.add_argument("--mac-filter", type = str, default = "", help = "Only display CSI data from given MAC address")
 		parser.add_argument("--max-age", type = float, default = 0.0, help = "Limit maximum age of CSI data to this value (in seconds). Set to 0.0 to disable.")
@@ -67,7 +66,16 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 		display_group = parser.add_mutually_exclusive_group()
 		display_group.add_argument("-f", "--no-beamspace-fft", default = False, help = "Do NOT compute beamspace via FFT, but use steering vectors (usually slower)", action = "store_true")
 		display_group.add_argument("-m", "--music", default = False, help = "Display spatial spectrum computed via MUSIC algorithm", action = "store_true")
+		format_group = parser.add_mutually_exclusive_group()
+		format_group.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
+		format_group.add_argument("-ht40", "--ht40", default = False, help = "Use only CSI from HT40", action = "store_true")
+		format_group.add_argument("-ht20", "--ht20", default = False, help = "Use only CSI from HT20", action = "store_true")
 		self.args = parser.parse_args()
+
+		# Check if at least one format is selected
+		if not (self.args.lltf or self.args.ht40 or self.args.ht20):
+			print("Error: At least one of --lltf, --ht40 or --ht20 must be selected.")
+			sys.exit(1)
 
 		# Load config file
 		self.indexing_matrix, board_names_hosts, cable_lengths, cable_velocity_factors, self.n_rows, self.n_cols = espargos.util.parse_combined_array_config(self.args.conf)
@@ -81,7 +89,7 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 		self.pool = espargos.Pool([espargos.Board(host) for host in board_names_hosts.values()])
 		self.pool.start()
 		self.pool.calibrate(duration = 3, per_board = False, cable_lengths = cable_lengths, cable_velocity_factors = cable_velocity_factors)
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable_lltf = self.args.lltf, enable_ht40 = not self.args.lltf, cb_predicate = self._cb_predicate)
+		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable_lltf = self.args.lltf,  enable_ht40 = self.args.ht40, enable_ht20 = self.args.ht20, cb_predicate = self._cb_predicate)
 		self.backlog.set_mac_filter("^" + self.args.mac_filter.replace(":", "").replace("-", ""))
 		self.backlog.start()
 
@@ -142,7 +150,15 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 	@PyQt6.QtCore.pyqtSlot()
 	def updateSpatialSpectrum(self):
 		self.backlog.read_start()
-		csi_backlog = self.backlog.get_lltf() if self.args.lltf else self.backlog.get_ht40()
+		csi_backlog = None
+
+		if self.args.lltf:
+			csi_backlog = self.backlog.get_lltf()
+		elif self.args.ht40:
+			csi_backlog = self.backlog.get_ht40()
+		else:
+			csi_backlog = self.backlog.get_ht20()
+
 		rssi_backlog = self.backlog.get_rssi()
 		timestamp_backlog = self.backlog.get_timestamps()
 		mac_backlog = self.backlog.get_macs()
@@ -198,8 +214,10 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 		# Get rid of gap in CSI data around DC
 		if self.args.lltf:
 			espargos.util.interpolate_lltf_gap(csi_combined)
-		else:
-			espargos.util.interpolate_ht40_gap(csi_combined)
+		elif self.args.ht20:
+			espargos.util.interpolate_ht20ltf_gap(csi_combined)
+		elif self.args.ht40:
+			espargos.util.interpolate_ht40ltf_gap(csi_combined)
 
 		# Shift all CSI datapoints in time so that LoS component arrives at the same time
 		csi_combined = espargos.util.shift_to_firstpeak_sync(csi_combined, peak_threshold = (0.4 if self.args.lltf else 0.1))

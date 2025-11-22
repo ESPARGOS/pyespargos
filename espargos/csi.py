@@ -1,5 +1,4 @@
-from typing import TypedDict
-import numpy as np
+from enum import IntEnum
 import ctypes
 
 from . import constants
@@ -16,6 +15,20 @@ LEGACY_COEFFICIENTS_PER_CHANNEL = 53
 
 HT40_GAP_SUBCARRIERS = 3
 "Gap between primary and secondary channel in HT40 mode, in subcarriers"
+
+#####################################################
+#       Enums used by multiple PHY versions         #
+#####################################################
+class wifi_rx_bb_format_t(IntEnum):
+    RX_BB_FORMAT_11B     = 0
+    RX_BB_FORMAT_11G     = 1
+    RX_BB_FORMAT_11A     = 1  # Same value as 11G
+    RX_BB_FORMAT_HT      = 2
+    RX_BB_FORMAT_VHT     = 3
+    RX_BB_FORMAT_HE_SU   = 4
+    RX_BB_FORMAT_HE_MU   = 5
+    RX_BB_FORMAT_HE_ERSU = 6
+    RX_BB_FORMAT_HE_TB   = 7
 
 #####################################################
 # Common C Structures used by multiple PHY versions #
@@ -280,7 +293,7 @@ assert(ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t) == 64)
 # 57-59: htltf gap
 # 60-116: htltf secondary
 # 117-192: zeros
-class csi_buf_v3_htltf_t(ctypes.LittleEndianStructure):
+class csi_buf_v3_ht40_t(ctypes.LittleEndianStructure):
     """
     A ctypes structure representing the CSI buffer as produced by the ESP32 PHY V3 if an HT-LTF is recorded.
     """
@@ -290,6 +303,22 @@ class csi_buf_v3_htltf_t(ctypes.LittleEndianStructure):
         ("htltf_gap", ctypes.c_int8 * (3 * 2)), # all zeros
         ("htltf_lower", ctypes.c_int8 * (HT_COEFFICIENTS_PER_CHANNEL * 2)),
         ("reserved", ctypes.c_int8 * (75 * 2))
+    ]
+
+    def __new__(self, buf=None):
+        return self.from_buffer_copy(buf)
+
+    def __init__(self, buf=None):
+        pass
+
+class csi_buf_v3_ht20_t(ctypes.LittleEndianStructure):
+    """
+    A ctypes structure representing the CSI buffer as produced by the ESP32 PHY V3 if an HT20-LTF is recorded.
+    """
+    _pack_ = 1
+    _fields_ = [
+        ("htltf", ctypes.c_int8 * (HT_COEFFICIENTS_PER_CHANNEL * 2)),
+        ("reserved", ctypes.c_int8 * (135 * 2))
     ]
 
     def __new__(self, buf=None):
@@ -316,21 +345,7 @@ class csi_buf_v3_lltf_t(ctypes.LittleEndianStructure):
     def __init__(self, buf=None):
         pass
 
-class csi_buf_v3_t(ctypes.Union):
-    """
-    A ctypes union representing the CSI buffer as produced by the ESP32 PHY V3.
-    Depending on the configuration, different types of channel estimates may be recorded (L-LTF- or HT-LTF-based).
-    """
-    _fields_ = [
-        ("htltf", csi_buf_v3_htltf_t),
-        ("lltf", csi_buf_v3_lltf_t),
-    ]
-
-    def __new__(self, buf=None):
-        return self.from_buffer_copy(buf)
-
-    def __init__(self, buf=None):
-        pass
+assert(ctypes.sizeof(csi_buf_v3_lltf_t) == ctypes.sizeof(csi_buf_v3_ht20_t) == ctypes.sizeof(csi_buf_v3_ht40_t) == 384)
 
 class serialized_csi_v3_t(ctypes.LittleEndianStructure):
     """
@@ -348,7 +363,7 @@ class serialized_csi_v3_t(ctypes.LittleEndianStructure):
         ("timestamp", ctypes.c_uint32),
         ("is_calib", ctypes.c_bool),
         ("first_word_invalid", ctypes.c_bool),
-        ("buf", ctypes.c_int8 * (ctypes.sizeof(csi_buf_v3_t))),
+        ("buf", ctypes.c_int8 * (ctypes.sizeof(csi_buf_v3_lltf_t))),
         ("global_timestamp_us", ctypes.c_uint64)
     ]
 

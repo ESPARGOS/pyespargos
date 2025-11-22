@@ -74,7 +74,7 @@ class EspargosDemoTDOAOverTime(PyQt6.QtWidgets.QApplication):
 			if self.args.lltf:
 				espargos.util.interpolate_lltf_gap(csi_backlog)
 			else:
-				espargos.util.interpolate_ht40_gap(csi_backlog)
+				espargos.util.interpolate_ht40ltf_gap(csi_backlog)
 
 			# Do interpolation "by_array" due to Doppler (destroys TDoA for moving targets otherwise)
 			csi_interp = espargos.util.csi_interp_iterative_by_array(csi_backlog, iterations = 5)

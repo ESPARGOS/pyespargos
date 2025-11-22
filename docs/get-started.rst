@@ -42,7 +42,7 @@ The following code example receives clustered CSI from one ESPARGOS device:
    # Get a callback whenever CSI for one HT40 packet is available from all antennas.
    # The argument to this function clustered_csi is an instance of the "ClusteredCSI" class.
    def handle_csi(clustered_csi):
-       csi_raw = clustered_csi.deserialize_csi_ht40()
+       csi_raw = clustered_csi.deserialize_csi_ht40ltf()
        csi_calibrated = pool.get_calibration().apply_ht40(csi_raw)
        print("Got channel coefficients with shape:", csi_calibrated.shape)
 

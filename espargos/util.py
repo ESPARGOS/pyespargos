@@ -79,6 +79,17 @@ def get_frequencies_ht40(primary_channel: int, secondary_channel: int):
 	assert(ht40_subcarrier_count % 2 == 1)
 	return center_ht40 + np.arange(-ht40_subcarrier_count // 2, ht40_subcarrier_count // 2) * constants.WIFI_SUBCARRIER_SPACING
 
+def get_frequencies_ht20(channel: int):
+	"""
+	Returns the frequencies of the subcarriers in an 2.4GHz 802.11n 20MHz wide WiFi channel.
+
+	:param primary_channel: The primary channel number (= primary channel, but there is only one channel).
+	:return: The frequencies of the subcarriers, in Hz, NumPy array.
+	"""
+	center_ht20 = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (channel - 1)
+	ht20_subcarrier_count = csi.HT_COEFFICIENTS_PER_CHANNEL
+	return center_ht20 + np.arange(-ht20_subcarrier_count // 2, ht20_subcarrier_count // 2) * constants.WIFI_SUBCARRIER_SPACING
+
 def get_frequencies_lltf(channel: int):
 	"""
 	Returns the frequencies of the subcarriers in an 2.4GHz 802.11g 20MHz wide WiFi channel.
@@ -100,7 +111,7 @@ def get_cable_wavelength(frequencies: np.ndarray, velocity_factors: np.ndarray):
 	"""
 	return constants.SPEED_OF_LIGHT / frequencies[np.newaxis, :] * velocity_factors[:, np.newaxis]
 
-def interpolate_ht40_gap(csi_ht40: np.ndarray):
+def interpolate_ht40ltf_gap(csi_ht40: np.ndarray):
 	"""
 	Apply linear interpolation to determine realistic values for the subcarrier channel coefficients in the gap between the bonded channels in an HT40 channel.
 
@@ -115,9 +126,21 @@ def interpolate_ht40_gap(csi_ht40: np.ndarray):
 	interp = (missing_indices - index_left) / (index_right - index_left)
 	csi_ht40[..., missing_indices] = interp * right[..., np.newaxis] + (1 - interp) * left[..., np.newaxis]
 
+def interpolate_ht20ltf_gap(csi_ht20: np.ndarray):
+	"""
+	Apply linear interpolation to determine a realistic value for the DC subcarrier of the HT20-LTF.
+
+	:param csi_ht20: The CSI data for an HT20 channel. Complex-valued NumPy array with arbitrary shape, but the last dimension must be the subcarriers.
+	:return: The CSI data with the values in the gap filled in.
+	"""
+	index_left = csi_ht20.shape[-1] // 2 - 1
+	index_right = csi_ht20.shape[-1] // 2 + 1
+	missing_index = csi_ht20.shape[-1] // 2
+	csi_ht20[..., missing_index] = (csi_ht20[..., index_left] + csi_ht20[..., index_right]) / 2
+
 def interpolate_lltf_gap(csi_lltf: np.ndarray):
 	"""
-	Apply linear interpolation to determine realistic values for the subcarrier channel coefficients in the gap between the two halves of the LLTF.
+	Apply linear interpolation to determine a realistic value for the DC subcarrier of the L-LTF.
 
 	:param csi_lltf: The CSI data for an LLTF channel. Complex-valued NumPy array with arbitrary shape, but the last dimension must be the subcarriers.
 	:return: The CSI data with the values in the gap filled in.
@@ -408,3 +431,21 @@ def extract_lltf_subcarriers_from_ht40(csi_ht40: np.ndarray, secondary_channel_r
 		start_index = base_offset + csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS
 
 	return csi_ht40[..., start_index:start_index + csi.LEGACY_COEFFICIENTS_PER_CHANNEL]
+
+def extract_ht20_subcarriers_from_ht40(csi_ht40: np.ndarray, secondary_channel_relative: int):
+	"""
+	Extract the HT20 subcarriers from HT40 CSI data.
+
+	:param csi_ht40: The HT40 CSI data. Complex-valued NumPy array with shape (..., subcarriers).
+	:param secondary_channel_relative: The relative position of the secondary channel to the primary channel. -1 for below, +1 for above.
+
+	:return: The extracted HT20 CSI data. Complex-valued NumPy array with shape (datapoints, arrays, rows, columns, subcarriers).
+	"""
+	if secondary_channel_relative == -1:
+		# Secondary channel is below primary channel
+		start_index = 0
+	else:
+		# Secondary channel is above primary channel
+		start_index = csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS
+
+	return csi_ht40[..., start_index:start_index + csi.HT_COEFFICIENTS_PER_CHANNEL]

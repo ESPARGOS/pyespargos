@@ -24,13 +24,21 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
 		parser.add_argument("-s", "--shift-peak", default = False, help = "Time-shift CSI so that first peaks align", action = "store_true")
 		parser.add_argument("-o", "--oversampling", type = int, default = 4, help = "Oversampling factor for time-domain CSI")
-		parser.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
 		parser.add_argument("-c", "--no-calib", default = False, help = "Do not calibrate", action = "store_true")
 		display_group = parser.add_mutually_exclusive_group()
 		display_group.add_argument("-t", "--timedomain", default = False, help = "Display CSI in time-domain", action = "store_true")
 		display_group.add_argument("-m", "--music", default = False, help = "Display PDP computed via MUSIC algorithm", action = "store_true")
 		display_group.add_argument("-v", "--mvdr", default = False, help = "Display PDP computed via MVDR algorithm", action = "store_true")
+		format_group = parser.add_mutually_exclusive_group()
+		format_group.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
+		format_group.add_argument("-ht40", "--ht40", default = False, help = "Use only CSI from HT40", action = "store_true")
+		format_group.add_argument("-ht20", "--ht20", default = False, help = "Use only CSI from HT20", action = "store_true")
 		self.args = parser.parse_args()
+
+		# Check if at least one format is selected
+		if not (self.args.lltf or self.args.ht40 or self.args.ht20):
+			print("Error: At least one of --lltf, --ht40 or --ht20 must be selected.")
+			sys.exit(1)
 
 		# Set up ESPARGOS pool and backlog
 		hosts = self.args.hosts.split(",")
@@ -38,7 +46,7 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		self.pool.start()
 		if not self.args.no_calib:
 			self.pool.calibrate(duration = 2, per_board=False)
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable_lltf = self.args.lltf, enable_ht40 = not self.args.lltf, calibrate = not self.args.no_calib)
+		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable_lltf = self.args.lltf, enable_ht40 = self.args.ht40, enable_ht20 = self.args.ht20, calibrate = not self.args.no_calib)
 		self.backlog.start()
 
 		# Value range handling
@@ -48,7 +56,14 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		# Qt setup
 		self.aboutToQuit.connect(self.onAboutToQuit)
 		self.engine = PyQt6.QtQml.QQmlApplicationEngine()
-		csi_shape = self.backlog.get_lltf().shape if self.args.lltf else self.backlog.get_ht40().shape
+		
+		if self.args.lltf:
+			csi_shape = self.backlog.get_lltf().shape
+		elif self.args.ht40:
+			csi_shape = self.backlog.get_ht40().shape
+		else:
+			csi_shape = self.backlog.get_ht20().shape
+
 		self.sensor_count = csi_shape[1] * csi_shape[2] * csi_shape[3]
 		self.subcarrier_count = csi_shape[4]
 		self.subcarrier_range = np.arange(-self.subcarrier_count // 2, self.subcarrier_count // 2)
@@ -82,7 +97,12 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 	@PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis)
 	def updateCSI(self, powerSeries, phaseSeries, axis):
 		self.backlog.read_start()
-		csi_backlog = self.backlog.get_lltf() if self.args.lltf else self.backlog.get_ht40()
+		if self.args.lltf:
+			csi_backlog = self.backlog.get_lltf()
+		elif self.args.ht40:
+			csi_backlog = self.backlog.get_ht40()
+		else:
+			csi_backlog = self.backlog.get_ht20()
 		rssi_backlog = self.backlog.get_rssi()
 		self.backlog.read_finish()
 
@@ -93,9 +113,11 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 			espargos.util.remove_mean_sto(csi_backlog)
 
 		# Fill "gap" in subcarriers with interpolated data
-		if not self.args.lltf:
-			espargos.util.interpolate_ht40_gap(csi_backlog)
-		else:
+		if self.args.ht40:
+			espargos.util.interpolate_ht40ltf_gap(csi_backlog)
+		elif self.args.ht20:
+			espargos.util.interpolate_ht20ltf_gap(csi_backlog)
+		elif self.args.lltf:
 			espargos.util.interpolate_lltf_gap(csi_backlog)
 
 		# TODO: If using per-board calibration, interpolation should also be per-board

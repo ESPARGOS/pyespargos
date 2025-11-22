@@ -66,20 +66,20 @@ class EspargosDemoCombinedArrayCalibration(PyQt6.QtWidgets.QApplication):
 		self.pool.run()
 
 	def onCSI(self, clustered_csi):
-		if not self.args.lltf and not clustered_csi.is_ht40():
+		if not self.args.lltf and not clustered_csi.has_ht40ltf():
 			print("Expected HT40 frame, but got non-HT40 frame, ignoring!")
 			return
 
 		# Store CSI if applicable
 		sensor_timestamps_raw = clustered_csi.get_sensor_timestamps()
-		csi = clustered_csi.deserialize_csi_lltf() if self.args.lltf else clustered_csi.deserialize_csi_ht40()
+		csi = clustered_csi.deserialize_csi_lltf() if self.args.lltf else clustered_csi.deserialize_csi_ht40ltf()
 		assert(self.pool.get_calibration() is not None)
 		if self.args.lltf:
 			csi = self.pool.get_calibration().apply_lltf(csi)
 			espargos.util.interpolate_lltf_gap(csi)
 		else:
 			csi = self.pool.get_calibration().apply_ht40(csi)
-			espargos.util.interpolate_ht40_gap(csi)
+			espargos.util.interpolate_ht40ltf_gap(csi)
 
 		if self.calibration_values is None:
 			self.calibration_values = csi
