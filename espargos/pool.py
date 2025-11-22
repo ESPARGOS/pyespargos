@@ -108,7 +108,6 @@ class ClusteredCSI(object):
             lltf_all = ((hi << 12) >> 4) | lo
             lltf_all = np.append(lltf_all, 0)
             csi_lltf_sensor[0::2] = lltf_all.astype(np.float32).view(np.complex64)
-            csi_lltf_sensor[:] = -1.0j * np.conj(csi_lltf_sensor)
 
             # Now we don't have the full 54 subcarriers yet, as a quick hack we interpolate the missing ones
 
