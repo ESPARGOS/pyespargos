@@ -111,8 +111,8 @@ class ClusteredCSI(object):
 
             # Now we don't have the full 54 subcarriers yet, as a quick hack we interpolate the missing ones
 
-            # Real part is missing for last subcarrier, steal it from previous one
-            csi_lltf_sensor[-1] = csi_lltf_sensor[-3].real + 1.0j * csi_lltf_sensor[-1].imag
+            # Imaginary part is missing for last subcarrier, steal it from previous one
+            csi_lltf_sensor[-1] = csi_lltf_sensor[-1].real + 1.0j * csi_lltf_sensor[-3].imag
 
             # DC subcarrier is not measured, interpolate it
             csi_lltf_sensor[26] = 0.5 * (csi_lltf_sensor[24] + csi_lltf_sensor[28])
@@ -750,19 +750,14 @@ class Pool(object):
         self.logger.info(f"  - {len(complete_clusters_ht20)} complete clusters with HT20-LTF")
         self.logger.info(f"  - {len(complete_clusters_lltf)} complete clusters with L-LTF")
 
-        if len(complete_clusters_lltf) == 0 and len(complete_clusters_ht40) > 0:
-            # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for L-LTF calibration
-            self.logger.warning("No L-LTF calibration clusters received, deriving L-LTF calibration from HT40 calibration")
-            complete_clusters_lltf = [util.extract_lltf_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
-        else:
-            util.remove_mean_sto(np.asarray(complete_clusters_lltf))
-
         if len(complete_clusters_ht20) == 0 and len(complete_clusters_ht40) > 0:
             # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for HT20 calibration
             self.logger.warning("No HT20 calibration clusters received, deriving HT20 calibration from HT40 calibration")
             complete_clusters_ht20 = [util.extract_ht20_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
         else:
             util.remove_mean_sto(np.asarray(complete_clusters_ht20))
+
+        # Deriving L-LTF CSI from HT20 CSI is not supported, there appears to be an unknown phase offset between the two...?
 
         if any_csi_count < 5:
             raise Exception("ESPARGOS calibration failed, did not receive enough calibration clusters.")
@@ -810,8 +805,6 @@ class Pool(object):
                 phase_calibrations_lltf.append(util.csi_interp_iterative(np.asarray(complete_clusters_lltf))) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape()[1:] + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
                 phase_calibrations_ht20.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht20))) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
                 phase_calibrations_ht40.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht40))) if len(complete_clusters_ht40) > 0 else np.full(self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,), np.nan)
-
-                # TODO: Non-40MHz calibration not supported in per_board case yet
 
             self.stored_calibration = CSICalibration(self.boards, channel_primary, channel_secondary, np.asarray(phase_calibrations_lltf), np.asarray(phase_calibrations_ht20), np.asarray(phase_calibrations_ht40))
 

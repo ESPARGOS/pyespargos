@@ -449,3 +449,15 @@ def extract_ht20_subcarriers_from_ht40(csi_ht40: np.ndarray, secondary_channel_r
 		start_index = csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS
 
 	return csi_ht40[..., start_index:start_index + csi.HT_COEFFICIENTS_PER_CHANNEL]
+
+def extract_lltf_subcarriers_from_ht20(csi_ht20: np.ndarray):
+	"""
+	Extract the LLTF subcarriers from HT20 CSI data.
+
+	:param csi_ht20: The HT20 CSI data. Complex-valued NumPy array with shape (..., subcarriers).
+
+	:return: The extracted LLTF CSI data. Complex-valued NumPy array with shape (datapoints, arrays, rows, columns, subcarriers).
+	"""
+	start_index = (csi.HT_COEFFICIENTS_PER_CHANNEL - csi.LEGACY_COEFFICIENTS_PER_CHANNEL) // 2
+
+	return csi_ht20[..., start_index:start_index + csi.LEGACY_COEFFICIENTS_PER_CHANNEL]
