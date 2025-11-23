@@ -5,7 +5,23 @@
 *pyespargos* is the python library for working with the [ESPARGOS](https://espargos.net/) WiFi channel sounder.
 ESPARGOS is a real-time-capable, phase-synchronous 2 &times; 4 WiFi antenna array built from Espressif ESP32 chips that facilities that development and deployment of WiFi sensing applications.
 
-**`pyespargos` is still under development. Currently, only HT40 packets (40MHz wide channels) are supported.**
+**`pyespargos` is still under development**
+
+## Different Hardware Revisions
+<table>
+	<tr>
+		<th>Your ESPARGOS looks like...</th>
+		<th>Your ESPARGOS looks like...</th>
+	</tr>
+	<tr>
+		<td><img src="img/espargosv1.jpg" width="600px"></td>
+		<td><img src="img/espargosv2.jpg" width="600px"></td>
+	</tr>
+	<tr>
+		<td>&rarr; You have a first-generation ESPARGOS, please use the <code>main</code> branch of this repository.</td>
+		<td>&rarr; You have a second-generation ESPARGOS, please use the <code>espargos-next</code> branch of this repository.</td>
+	</tr>
+</table>
 
 ## Demo Applications
 <table style="max-width: 800px;">
