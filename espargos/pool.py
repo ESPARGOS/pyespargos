@@ -127,6 +127,10 @@ class ClusteredCSI(object):
         delay = self.get_sensor_timestamps() - np.mean(self.get_sensor_timestamps())
 
         subcarrier_range = np.arange(-csi_lltf.shape[-1] // 2, csi_lltf.shape[-1] // 2)[np.newaxis,np.newaxis,np.newaxis,:]
+
+        # Need to adjust range if using 40MHz wide channel since LO is either above or below the primary channel that L-LTF is on
+        subcarrier_range -= self.get_secondary_channel_relative() * int(2 * constants.WIFI_CHANNEL_SPACING / constants.WIFI_SUBCARRIER_SPACING)
+
         # 128 bit delay is overkill here, CSI is only 2x32 bit, product would be 2x128 bit
         sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:,:,:,np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range).astype(np.complex64)
         csi_lltf = np.einsum("bras,bras->bras", csi_lltf, sto_delay_correction)
@@ -158,6 +162,9 @@ class ClusteredCSI(object):
         delay = self.get_sensor_timestamps() - np.mean(self.get_sensor_timestamps())
 
         subcarrier_range = np.arange(-csi_ht20.shape[-1] // 2, csi_ht20.shape[-1] // 2)[np.newaxis,np.newaxis,np.newaxis,:]
+
+        # Need to adjust range if using 40MHz wide channel since LO is either above or below the primary channel that HT20 is on
+        subcarrier_range -= self.get_secondary_channel_relative() * int(2 * constants.WIFI_CHANNEL_SPACING / constants.WIFI_SUBCARRIER_SPACING)
 
         # 128 bit delay is overkill here, CSI is only 2x32 bit, product would be 2x128 bit
         sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:,:,:,np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range).astype(np.complex64)
@@ -458,14 +465,13 @@ class CSICalibration(object):
 
         :param revisions: A list of :class:`.revisions.BoardRevision` objects that specify the board revisions of the ESPARGOS boards in the pool
         :param channel_primary: The primary channel number
-        :param channel_secondary: The secondary channel number
+        :param channel_secondary: The secondary channel number. Must be equal to :code:`channel_primary + 4` or :code:`channel_primary - 4` if channel bonding is used, otherwise must be equal to :code:`channel_primary`
         :param calibration_values_lltf: The phase calibration values for the L-LTF channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.LEGACY_COEFFICIENTS_PER_CHANNEL)`
         :param calibration_values_ht20: The phase calibration values for the HT20 channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL)`
         :param calibration_values_ht40: The phase calibration values for the HT40 channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL)`
         :param board_cable_lengths: The lengths of the cables that distribute the clock and phase calibration signal to the ESP32 boards, in meters
         :param board_cable_vfs: The velocity factors of the cables that distribute the clock and phase calibration signal to the ESP32 boards
         """
-        assert(np.abs(channel_primary - channel_secondary) == 4)
         assert(calibration_values_lltf.shape == (len(boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.LEGACY_COEFFICIENTS_PER_CHANNEL))
         assert(calibration_values_ht20.shape == (len(boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL))
         assert(calibration_values_ht40.shape == (len(boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL))
@@ -702,6 +708,67 @@ class Pool(object):
         """
         self.callbacks.append(_CSICallback(cb, cb_predicate))
 
+    def _clusters_to_calibration(self, board_num = None):
+        """
+        Convert collected calibration clusters to phase calibration values.
+
+        :param board_num: If provided, only process calibration clusters for the specified board number
+        """
+        complete_clusters_lltf = []
+        complete_clusters_ht20 = []
+        complete_clusters_ht40 = []
+
+        channel_primary = None
+        channel_secondary = None
+
+        any_csi_count = 0
+        for cluster in self.cluster_cache_calib.values():
+            if channel_primary is None:
+                channel_primary = cluster.get_primary_channel()
+                channel_secondary = cluster.get_secondary_channel()
+            else:
+                assert(channel_primary == cluster.get_primary_channel())
+                assert(channel_secondary == cluster.get_secondary_channel())
+
+            completion = cluster.get_completion()[board_num] if board_num is not None else cluster.get_completion()
+            if np.any(completion):
+                any_csi_count = any_csi_count + 1
+
+            if np.all(completion):
+                if cluster.has_lltf():
+                    complete_clusters_lltf.append(cluster.deserialize_csi_lltf()[board_num] if board_num is not None else cluster.deserialize_csi_lltf())
+                if cluster.has_ht20ltf():
+                    complete_clusters_ht20.append(cluster.deserialize_csi_ht20ltf()[board_num] if board_num is not None else cluster.deserialize_csi_ht20ltf())
+                if cluster.has_ht40ltf():
+                    complete_clusters_ht40.append(cluster.deserialize_csi_ht40ltf()[board_num] if board_num is not None else cluster.deserialize_csi_ht40ltf())
+
+        if board_num is not None:
+            self.logger.info(f"Board {self.boards[board_num].get_name()}: Collected {any_csi_count} calibration clusters:")
+        else:
+            self.logger.info(f"Collected {any_csi_count} calibration clusters:")
+        self.logger.info(f"  - {len(complete_clusters_ht40)} complete clusters with HT40-LTF")
+        self.logger.info(f"  - {len(complete_clusters_ht20)} complete clusters with HT20-LTF")
+        self.logger.info(f"  - {len(complete_clusters_lltf)} complete clusters with L-LTF")
+
+        if len(complete_clusters_lltf) == 0 and len(complete_clusters_ht40) > 0:
+            # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for L-LTF calibration
+            self.logger.warning("No L-LTF calibration clusters received, deriving L-LTF calibration from HT40 calibration")
+            complete_clusters_lltf = [util.extract_lltf_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
+        else:
+            util.remove_mean_sto(np.asarray(complete_clusters_lltf))
+
+        if len(complete_clusters_ht20) == 0 and len(complete_clusters_ht40) > 0:
+            # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for HT20 calibration
+            self.logger.warning("No HT20 calibration clusters received, deriving HT20 calibration from HT40 calibration")
+            complete_clusters_ht20 = [util.extract_ht20_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
+        else:
+            util.remove_mean_sto(np.asarray(complete_clusters_ht20))
+
+        if any_csi_count < 5:
+            raise Exception("ESPARGOS calibration failed, did not receive enough calibration clusters.")
+
+        return complete_clusters_lltf, complete_clusters_ht20, complete_clusters_ht40, channel_primary, channel_secondary
+
     def calibrate(self, per_board = True, duration = 2, exithandler = None, cable_lengths = None, cable_velocity_factors = None):
         """
         Run calibration for a specified duration.
@@ -731,113 +798,29 @@ class Pool(object):
         self.logger.info("Finished calibration")
         self.set_calib(False)
 
-        channel_primary = None
-        channel_secondary = None
-
         # Collect calibration packets and compute calibration phases
         if per_board:
             phase_calibrations_lltf = []
             phase_calibrations_ht20 = []
             phase_calibrations_ht40 = []
 
-            for board_num, board in enumerate(self.boards):
-                complete_clusters_lltf = []
-                complete_clusters_ht20 = []
-                complete_clusters_ht40 = []
+            for board_num in range(len(self.boards)):
+                complete_clusters_lltf, complete_clusters_ht20, complete_clusters_ht40, channel_primary, channel_secondary = self._clusters_to_calibration(board_num)
 
-                any_csi_count = 0
-                for cluster in self.cluster_cache_calib.values():
-                    if channel_primary is None:
-                        channel_primary = cluster.get_primary_channel()
-                        channel_secondary = cluster.get_secondary_channel()
-                    else:
-                        assert(channel_primary == cluster.get_primary_channel())
-                        assert(channel_secondary == cluster.get_secondary_channel())
+                phase_calibrations_lltf.append(util.csi_interp_iterative(np.asarray(complete_clusters_lltf))) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape()[1:] + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
+                phase_calibrations_ht20.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht20))) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
+                phase_calibrations_ht40.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht40))) if len(complete_clusters_ht40) > 0 else np.full(self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,), np.nan)
 
-                    completion = cluster.get_completion()[board_num]
-                    if np.any(completion):
-                        any_csi_count = any_csi_count + 1
-
-                    if np.all(completion):
-                        if cluster.has_lltf():
-                            complete_clusters_lltf.append(cluster.deserialize_csi_lltf()[board_num])
-                        if cluster.has_ht20ltf():
-                            complete_clusters_ht20.append(cluster.deserialize_csi_ht20ltf()[board_num])
-                        if cluster.has_ht40ltf():
-                            complete_clusters_ht40.append(cluster.deserialize_csi_ht40ltf()[board_num])
-
-                #util.remove_mean_sto(np.asarray(complete_clusters_ht40))
-
-                self.logger.info(f"Board {board.get_name()}: Collected {any_csi_count} calibration clusters, out of which {len(complete_clusters_ht40)} are complete ({len(complete_clusters_lltf)} have L-LTF)")
-                if len(complete_clusters_lltf) == 0 and len(complete_clusters_ht40) > 0:
-                    # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for L-LTF calibration
-                    self.logger.warning("No L-LTF calibration clusters received, deriving L-LTF calibration from HT40 calibration")
-                    complete_clusters_lltf = [util.extract_lltf_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
-                #else:
-                #    util.remove_mean_sto(np.asarray(complete_clusters_lltf))
-
-                if len(complete_clusters_ht20) == 0 and len(complete_clusters_ht40) > 0:
-                    # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for HT20 calibration
-                    self.logger.warning("No HT20 calibration clusters received, deriving HT20 calibration from HT40 calibration")
-                    complete_clusters_ht20 = [util.extract_ht20_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
-                #else:
-                #    util.remove_mean_sto(np.asarray(complete_clusters_ht20))
-
-                if len(complete_clusters_ht40) == 0:
-                    raise Exception("ESPARGOS calibration failed, did not receive any HT40 reference signal, currently not supported. Make sure to use 40MHz wide reference signal for calibration.")
-
-                phase_calibrations_lltf.append(util.csi_interp_iterative(np.asarray(complete_clusters_lltf)))
-                phase_calibrations_ht20.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht20)))
-                phase_calibrations_ht40.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht40)))
+                # TODO: Non-40MHz calibration not supported in per_board case yet
 
             self.stored_calibration = CSICalibration(self.boards, channel_primary, channel_secondary, np.asarray(phase_calibrations_lltf), np.asarray(phase_calibrations_ht20), np.asarray(phase_calibrations_ht40))
 
         else:
-            complete_clusters_lltf = []
-            complete_clusters_ht20 = []
-            complete_clusters_ht40 = []
+            complete_clusters_lltf, complete_clusters_ht20, complete_clusters_ht40, channel_primary, channel_secondary = self._clusters_to_calibration()
 
-            for cluster in self.cluster_cache_calib.values():
-                if channel_primary is None:
-                    channel_primary = cluster.get_primary_channel()
-                    channel_secondary = cluster.get_secondary_channel()
-                else:
-                    assert(channel_primary == cluster.get_primary_channel())
-                    assert(channel_secondary == cluster.get_secondary_channel())
-
-                completion = cluster.get_completion()
-
-                if np.all(completion):
-                    if cluster.has_lltf():
-                        complete_clusters_lltf.append(cluster.deserialize_csi_lltf())
-                    if cluster.has_ht20ltf():
-                        complete_clusters_ht20.append(cluster.deserialize_csi_ht20ltf())
-                    if cluster.has_ht40ltf():
-                        complete_clusters_ht40.append(cluster.deserialize_csi_ht40ltf())
-
-            #util.remove_mean_sto(np.asarray(complete_clusters_ht40))
-
-            self.logger.info(f"Pool: Collected {len(self.cluster_cache_calib)} calibration clusters, out of which {len(complete_clusters_ht40)} are complete ({len(complete_clusters_lltf)} have L-LTF)")
-            if len(complete_clusters_lltf) == 0 and len(complete_clusters_ht40) > 0:
-                # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for L-LTF calibration
-                self.logger.warning("No L-LTF calibration clusters received, deriving L-LTF calibration from HT40 calibration")
-                complete_clusters_lltf = [util.extract_lltf_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
-            #else:
-            #    util.remove_mean_sto(np.asarray(complete_clusters_lltf))
-
-            if len(complete_clusters_ht20) == 0 and len(complete_clusters_ht40) > 0:
-                # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for HT20 calibration
-                self.logger.warning("No HT20 calibration clusters received, deriving HT20 calibration from HT40 calibration")
-                complete_clusters_ht20 = [util.extract_ht20_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
-            #else:
-            #    util.remove_mean_sto(np.asarray(complete_clusters_ht20))
-
-            if len(complete_clusters_ht40) == 0:
-                raise Exception("ESPARGOS calibration failed, did not receive any HT40 reference signal, currently not supported. Make sure to use 40MHz wide reference signal for calibration.")
-
-            phase_calibrations_lltf = util.csi_interp_iterative(np.asarray(complete_clusters_lltf))
-            phase_calibrations_ht20 = util.csi_interp_iterative(np.asarray(complete_clusters_ht20))
-            phase_calibration_ht40 = util.csi_interp_iterative(np.asarray(complete_clusters_ht40))
+            phase_calibrations_lltf = util.csi_interp_iterative(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
+            phase_calibrations_ht20 = util.csi_interp_iterative(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
+            phase_calibration_ht40 = util.csi_interp_iterative(np.asarray(complete_clusters_ht40)) if len(complete_clusters_ht40) > 0 else np.full(self.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,), np.nan)
 
             self.stored_calibration = CSICalibration(self.boards, channel_primary, channel_secondary, phase_calibrations_lltf, phase_calibrations_ht20, phase_calibration_ht40, board_cable_lengths=cable_lengths, board_cable_vfs=cable_velocity_factors)
 

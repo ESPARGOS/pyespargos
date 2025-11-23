@@ -300,7 +300,7 @@ class csi_buf_v3_ht40_t(ctypes.LittleEndianStructure):
     _pack_ = 1
     _fields_ = [
         ("htltf_higher", ctypes.c_int8 * (HT_COEFFICIENTS_PER_CHANNEL * 2)),
-        ("htltf_gap", ctypes.c_int8 * (3 * 2)), # all zeros
+        ("htltf_gap", ctypes.c_int8 * (HT40_GAP_SUBCARRIERS * 2)), # all zeros
         ("htltf_lower", ctypes.c_int8 * (HT_COEFFICIENTS_PER_CHANNEL * 2)),
         ("reserved", ctypes.c_int8 * (75 * 2))
     ]
