@@ -32,6 +32,7 @@ class CSIBacklog(object):
         self.storage_lltf = np.zeros((size,) + self.pool.get_shape() + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), dtype = np.complex64)
 
         self.storage_timestamps = np.zeros((size,) + self.pool.get_shape(), dtype = np.float128)
+        self.host_timestamps = np.zeros((size,), dtype = np.float128)
         self.storage_rssi = np.zeros((size,) + self.pool.get_shape(), dtype = np.float32)
         self.storage_macs = np.zeros((size, 6), dtype = np.uint8)
         self.head = 0
@@ -55,6 +56,9 @@ class CSIBacklog(object):
                     assert(self.pool.get_calibration() is not None)
                     sensor_timestamps = self.pool.get_calibration().apply_timestamps(sensor_timestamps)
                 self.storage_timestamps[self.head] = sensor_timestamps
+
+                # Store host timestamp
+                self.host_timestamps[self.head] = clustered_csi.get_host_timestamp()
 
                 # Store LLTF CSI if applicable
                 if self.enable_lltf:
@@ -174,6 +178,16 @@ class CSIBacklog(object):
         :return: Timestamps, oldest first, shape (n_packets, n_boards, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
         """
         retval = np.copy(np.roll(self.storage_timestamps, -self.head, axis = 0)[-self.filllevel:])
+
+        return retval
+
+    def get_host_timestamps(self):
+        """
+        Retrieve host timestamps from the ringbuffer
+
+        :return: Host timestamps, oldest first
+        """
+        retval = np.copy(np.roll(self.host_timestamps, -self.head)[-self.filllevel:])
 
         return retval
 

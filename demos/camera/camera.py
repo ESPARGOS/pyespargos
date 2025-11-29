@@ -160,14 +160,13 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 			csi_backlog = self.backlog.get_ht20()
 
 		rssi_backlog = self.backlog.get_rssi()
-		timestamp_backlog = self.backlog.get_timestamps()
+		timestamp_backlog = self.backlog.get_host_timestamps()
 		mac_backlog = self.backlog.get_macs()
 		self.backlog.read_finish()
-		mean_timestamp_backlog = np.nanmean(timestamp_backlog, axis = (1, 2, 3))
 
 		if self.args.max_age > 0.0:
-			csi_backlog[mean_timestamp_backlog < (time.time() - self.args.max_age),...] = 0
-			recent_rssi_backlog = rssi_backlog[mean_timestamp_backlog > (time.time() - self.args.max_age),...]
+			csi_backlog[timestamp_backlog < (time.time() - self.args.max_age),...] = 0
+			recent_rssi_backlog = rssi_backlog[timestamp_backlog > (time.time() - self.args.max_age),...]
 		else:
 			recent_rssi_backlog = rssi_backlog
 
