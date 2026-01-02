@@ -302,7 +302,7 @@ class csi_buf_v3_ht40_t(ctypes.LittleEndianStructure):
         ("htltf_higher", ctypes.c_int8 * (HT_COEFFICIENTS_PER_CHANNEL * 2)),
         ("htltf_gap", ctypes.c_int8 * (HT40_GAP_SUBCARRIERS * 2)), # all zeros
         ("htltf_lower", ctypes.c_int8 * (HT_COEFFICIENTS_PER_CHANNEL * 2)),
-        ("reserved", ctypes.c_int8 * (75 * 2))
+        ("reserved", ctypes.c_int8 * (11 * 2))
     ]
 
     def __new__(self, buf=None):
@@ -318,7 +318,7 @@ class csi_buf_v3_ht20_t(ctypes.LittleEndianStructure):
     _pack_ = 1
     _fields_ = [
         ("htltf", ctypes.c_int8 * (HT_COEFFICIENTS_PER_CHANNEL * 2)),
-        ("reserved", ctypes.c_int8 * (135 * 2))
+        ("reserved", ctypes.c_int8 * (71 * 2))
     ]
 
     def __new__(self, buf=None):
@@ -336,7 +336,7 @@ class csi_buf_v3_lltf_t(ctypes.LittleEndianStructure):
     _pack_ = 1
     _fields_ = [
         ("lltf", ctypes.c_int8 * (LEGACY_COEFFICIENTS_PER_CHANNEL * 2)),
-        ("reserved", ctypes.c_int8 * (139 * 2))
+        ("reserved", ctypes.c_int8 * (75 * 2))
     ]
 
     def __new__(self, buf=None):
@@ -345,7 +345,7 @@ class csi_buf_v3_lltf_t(ctypes.LittleEndianStructure):
     def __init__(self, buf=None):
         pass
 
-assert(ctypes.sizeof(csi_buf_v3_lltf_t) == ctypes.sizeof(csi_buf_v3_ht20_t) == ctypes.sizeof(csi_buf_v3_ht40_t) == 384)
+assert(ctypes.sizeof(csi_buf_v3_lltf_t) == ctypes.sizeof(csi_buf_v3_ht20_t) == ctypes.sizeof(csi_buf_v3_ht40_t) == 256)
 
 class serialized_csi_v3_t(ctypes.LittleEndianStructure):
     """
