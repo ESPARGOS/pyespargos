@@ -14,7 +14,11 @@ class BoardRevision:
 	@property
 	def type_header(self) -> int:
 		raise NotImplementedError
-	
+
+	@property
+	def csistream_pkt_t(self) -> type:
+		raise NotImplementedError
+
 	@property
 	def serialized_csi_t(self) -> type:
 		raise NotImplementedError
@@ -63,6 +67,10 @@ class BoardRevisionPrototype(BoardRevision):
 		return 0x5a1f19b1
 
 	@property
+	def csistream_pkt_t(self) -> type:
+		return csi.csistream_pkt_v1_t
+
+	@property
 	def serialized_csi_t(self) -> type:
 		return csi.serialized_csi_v1_t
 
@@ -97,6 +105,10 @@ class BoardRevisionDensiflorus(BoardRevision):
 	@property
 	def type_header(self) -> int:
 		return 0xe4cd0bac
+
+	@property
+	def csistream_pkt_t(self) -> type:
+		return csi.csistream_pkt_v3_t
 
 	@property
 	def serialized_csi_t(self) -> type:

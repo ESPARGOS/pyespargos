@@ -4,7 +4,8 @@ import ctypes
 from . import constants
 
 # Internal constants
-_ESPARGOS_SPI_BUFFER_SIZE = 512
+_ESPARGOS_SPI_BUFFER_SIZE_V1 = 512
+_ESPARGOS_SPI_BUFFER_SIZE_V3 = 384
 
 # Other constants
 HT_COEFFICIENTS_PER_CHANNEL = 57
@@ -51,15 +52,32 @@ class seq_ctrl_t(ctypes.LittleEndianStructure):
     def __init__(self, buf=None):
         pass
 
-class csistream_pkt_t(ctypes.LittleEndianStructure):
+class csistream_pkt_v1_t(ctypes.LittleEndianStructure):
     """
     A ctypes structure representing a CSI packet as received from the ESPARGOS controller, i.e.,
-    sensor number and the raw data buffer that should contain the serialized_csi_v1_t / serialized_csi_v3_t structure if the type_header matches.
+    sensor number and the raw data buffer that should contain the serialized_csi_v1_t structure if the type_header matches.
     """
     _pack_ = 1
     _fields_ = [
         ("esp_num", ctypes.c_uint32),
-        ("buf", ctypes.c_uint8 * _ESPARGOS_SPI_BUFFER_SIZE),
+        ("buf", ctypes.c_uint8 * _ESPARGOS_SPI_BUFFER_SIZE_V1),
+    ]
+
+    def __new__(self, buf=None):
+        return self.from_buffer_copy(buf)
+
+    def __init__(self, buf=None):
+        pass
+
+class csistream_pkt_v3_t(ctypes.LittleEndianStructure):
+    """
+    A ctypes structure representing a CSI packet as received from the ESPARGOS controller, i.e.,
+    sensor number and the raw data buffer that should contain the serialized_csi_v3_t structure if the type_header matches.
+    """
+    _pack_ = 1
+    _fields_ = [
+        ("esp_num", ctypes.c_uint32),
+        ("buf", ctypes.c_uint8 * _ESPARGOS_SPI_BUFFER_SIZE_V3),
     ]
 
     def __new__(self, buf=None):

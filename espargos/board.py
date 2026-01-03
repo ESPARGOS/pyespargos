@@ -94,7 +94,7 @@ class Board(object):
 
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller
         """
-        res = self._fetch("set_calib", "0" if calibrate else "1")
+        res = self._fetch("set_calib", "1" if calibrate else "2")
         if res != "ok":
             self.logger.error(f"Invalid response: {res}")
             raise EspargosUnexpectedResponseError
@@ -139,10 +139,10 @@ class Board(object):
         self.consumers.append((clist, cv, args))
 
     def _csistream_handle_message(self, message):
-        pktsize = ctypes.sizeof(csi.csistream_pkt_t)
+        pktsize = ctypes.sizeof(self.revision.csistream_pkt_t)
         assert(len(message) % pktsize == 0)
         for i in range(0, len(message), pktsize):
-            packet = csi.csistream_pkt_t(message[i:i + pktsize])
+            packet = self.revision.csistream_pkt_t(message[i:i + pktsize])
             serialized_csi = csi.deserialize_packet_buffer(self.revision, packet.buf)
 
             for clist, cv, args in self.consumers:
