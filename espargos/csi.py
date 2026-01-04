@@ -383,7 +383,9 @@ class serialized_csi_v3_t(ctypes.LittleEndianStructure):
         ("first_word_invalid", ctypes.c_bool),
         ("buf", ctypes.c_int8 * (ctypes.sizeof(csi_buf_v3_lltf_t))),
         ("global_timestamp_us", ctypes.c_uint64),
-        ("csi_len", ctypes.c_uint16)
+        ("csi_len", ctypes.c_uint16),
+        ("acquire_force_lltf", ctypes.c_bool),
+        ("acquire_val_scale_cfg", ctypes.c_uint8)
     ]
 
     def __new__(self, buf=None):

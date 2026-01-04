@@ -106,16 +106,22 @@ class ClusteredCSI(object):
             lo = lltf_bytes[0::2].astype(np.int16)
             hi = lltf_bytes[1::2].astype(np.int16)
             lltf_all = ((hi << 12) >> 4) | lo
-            lltf_all = np.append(lltf_all, 0)
-            csi_lltf_sensor[0::2] = lltf_all.astype(np.float32).view(np.complex64)
+            lltf_all = lltf_all[:-1] # Last two bytes of buffer are padding
+
+            # Lower half of subcarriers, but only every second one
+            coeffs_half = csi.LEGACY_COEFFICIENTS_PER_CHANNEL//2
+            csi_lltf_sensor[0:coeffs_half:2] = lltf_all.astype(np.float32).view(np.complex64)[:coeffs_half//2]
+
+            # DC subcarrier
+            csi_lltf_sensor[coeffs_half] = 0.0 + 0.0j
+
+            # Upper half of subcarriers, but only every second one
+            csi_lltf_sensor[coeffs_half + 2::2] = lltf_all.astype(np.float32).view(np.complex64)[coeffs_half//2:]
 
             # Now we don't have the full 54 subcarriers yet, as a quick hack we interpolate the missing ones
 
-            # Imaginary part is missing for last subcarrier, steal it from previous one
-            csi_lltf_sensor[-1] = csi_lltf_sensor[-1].real + 1.0j * csi_lltf_sensor[-3].imag
-
             # DC subcarrier is not measured, interpolate it
-            csi_lltf_sensor[26] = 0.5 * (csi_lltf_sensor[24] + csi_lltf_sensor[28])
+            csi_lltf_sensor[csi.LEGACY_COEFFICIENTS_PER_CHANNEL//2] = 0.5 * (csi_lltf_sensor[csi.LEGACY_COEFFICIENTS_PER_CHANNEL//2 - 2] + csi_lltf_sensor[csi.LEGACY_COEFFICIENTS_PER_CHANNEL//2 + 2])
 
             # Interpolate to get full 54 subcarriers
             csi_lltf_sensor[1::2] = 0.5 * (csi_lltf_sensor[0:-1:2] + csi_lltf_sensor[2::2])
@@ -233,9 +239,11 @@ class ClusteredCSI(object):
                 case csi.serialized_csi_v1_t:
                     pass # V1 always has L-LTF
                 case csi.serialized_csi_v3_t:
-                    # Sensor module is configured to only provide L-LTF if frame is 802.11g
-                    if not csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_11G:
-                        have_lltf_all = False
+                    # We only need to check this if acquire_force_lltf is false (otherwise, sensor always provides L-LTF)
+                    if not serialized_csi.acquire_force_lltf:
+                        # If force lltf is false, sensor module is configured to only provide L-LTF if frame is 802.11g
+                        if not csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_11G:
+                            have_lltf_all = False
 
         self._foreach_complete_sensor(check_lltf)
 
@@ -254,6 +262,10 @@ class ClusteredCSI(object):
                 case csi.serialized_csi_v1_t:
                     pass # TODO: Implement properly...
                 case csi.serialized_csi_v3_t:
+                    # If force lltf is true, sensor only provides L-LTF, never HT20-LTF
+                    if serialized_csi.acquire_force_lltf:
+                        have_ht20_all = False
+                    
                     if not csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_HT:
                         have_ht20_all = False
 
@@ -275,9 +287,14 @@ class ClusteredCSI(object):
                     if not csi.wifi_pkt_rx_ctrl_v1_t(serialized_csi.rx_ctrl).cwb == 1:
                         have_ht40_all = False
                 case csi.serialized_csi_v3_t:
+                    # If force lltf is true, sensor only provides L-LTF, never HT40-LTF
+                    if serialized_csi.acquire_force_lltf:
+                        have_ht40_all = False
+
                     # Check if packet is HT (HT20 or HT40)
                     if not csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_HT:
                         have_ht40_all = False
+
                     # Check if channel bonding is used: he_siga1 is actuall ht_sig1, which contains the CWB bit at bit 7
                     if not (csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).he_siga1 & 0x80) != 0:
                         have_ht40_all = False
@@ -754,7 +771,7 @@ class Pool(object):
             # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for HT20 calibration
             self.logger.warning("No HT20 calibration clusters received, deriving HT20 calibration from HT40 calibration")
             complete_clusters_ht20 = [util.extract_ht20_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
-        else:
+        elif len(complete_clusters_ht20) > 0:
             util.remove_mean_sto(np.asarray(complete_clusters_ht20))
 
         # Deriving L-LTF CSI from HT20 CSI is not supported, there appears to be an unknown phase offset between the two...?

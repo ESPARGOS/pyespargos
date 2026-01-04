@@ -106,6 +106,10 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		rssi_backlog = self.backlog.get_rssi()
 		self.backlog.read_finish()
 
+		# If any value is NaN, skip this update (happens if received frame were not of expected type)
+		if np.isnan(csi_backlog).any() or np.isnan(rssi_backlog).any():
+			return
+
 		# Weight CSI data with RSSI
 		csi_backlog = csi_backlog * 10**(rssi_backlog[..., np.newaxis] / 20)
 

@@ -70,6 +70,7 @@ class CSIBacklog(object):
 
                         self.storage_lltf[self.head] = csi_lltf
                     else:
+                        self.storage_lltf[self.head] = np.nan
                         self.logger.warning(f"Received non-LLTF frame even though LLTF is enabled")
                 else:
                     self.storage_lltf[self.head] = np.nan
@@ -85,6 +86,7 @@ class CSIBacklog(object):
 
                         self.storage_ht40[self.head] = csi_ht40
                     else:
+                        self.storage_ht40[self.head] = np.nan
                         self.logger.warning(f"Received non-HT40 frame even though HT40 is enabled")
                 else:
                     self.storage_ht40[self.head] = np.nan
@@ -100,6 +102,7 @@ class CSIBacklog(object):
 
                         self.storage_ht20[self.head] = csi_ht20
                     else:
+                        self.storage_ht20[self.head] = np.nan
                         self.logger.warning(f"Received non-HT20 frame even though HT20 is enabled")
                 else:
                     self.storage_ht20[self.head] = np.nan
