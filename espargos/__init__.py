@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
+from .calibration import CSICalibration
 from .exithandler import ExitHandler
-from .pool import ClusteredCSI
 from .backlog import CSIBacklog
+from .cluster import CSICluster
 from .board import Board
 from .pool import Pool
 import logging

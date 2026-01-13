@@ -5,6 +5,8 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
+from demos.common.poolconfig import PoolConfigManager
+
 import numpy as np
 import espargos
 import argparse
@@ -49,6 +51,9 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable_lltf = self.args.lltf, enable_ht40 = self.args.ht40, enable_ht20 = self.args.ht20, calibrate = not self.args.no_calib)
 		self.backlog.start()
 
+		# Pool configuration manager
+		self.poolconfig = PoolConfigManager(self.pool)
+
 		# Value range handling
 		self.stable_power_minimum = None
 		self.stable_power_maximum = None
@@ -79,6 +84,7 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 	def exec(self):
 		context = self.engine.rootContext()
 		context.setContextProperty("backend", self)
+		context.setContextProperty("poolconfig", self.poolconfig)
 
 		qmlFile = pathlib.Path(__file__).resolve().parent / "instantaneous-csi-ui.qml"
 		self.engine.load(qmlFile.as_uri())

@@ -31,6 +31,13 @@ class wifi_rx_bb_format_t(IntEnum):
     RX_BB_FORMAT_HE_ERSU = 6
     RX_BB_FORMAT_HE_TB   = 7
 
+class rfswitch_state_t(IntEnum):
+    SENSOR_RFSWITCH_ISOLATION = 0
+    SENSOR_RFSWITCH_REFERENCE = 1
+    SENSOR_RFSWITCH_ANTENNA_R = 2
+    SENSOR_RFSWITCH_ANTENNA_L = 3
+    SENSOR_RFSWITCH_ANTENNA_RANDOM = 4
+
 #####################################################
 # Common C Structures used by multiple PHY versions #
 #####################################################

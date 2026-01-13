@@ -40,7 +40,7 @@ The following code example receives clustered CSI from one ESPARGOS device:
    pool.calibrate(2)
 
    # Get a callback whenever CSI for one HT40 packet is available from all antennas.
-   # The argument to this function clustered_csi is an instance of the "ClusteredCSI" class.
+   # The argument to this function clustered_csi is an instance of the "CSICluster" class.
    def handle_csi(clustered_csi):
        csi_raw = clustered_csi.deserialize_csi_ht40ltf()
        csi_calibrated = pool.get_calibration().apply_ht40(csi_raw)

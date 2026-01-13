@@ -2,15 +2,16 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtCharts
+import "../common" as Common
 
-ApplicationWindow {
+Common.DemoApplication {
 	id: window
 	visible: true
 	minimumWidth: 800
 	minimumHeight: 500
 
 	color: "#11191e"
-	title: "Instantaneous CSI"
+	title: "Instantaneous CSI: " + (backend.timeDomain ? "Time Domain" : (backend.superResolution ? "Superresolution Time Domain" : "Frequency Domain"))
 
     // Full screen management
 	visibility: ApplicationWindow.Windowed
@@ -32,14 +33,6 @@ ApplicationWindow {
 	ColumnLayout {
 		height: parent.height
 		width: parent.width
-
-		Text {
-			Layout.alignment: Qt.AlignCenter
-			font.pixelSize: Math.max(24, window.width / 70)
-			text: "Instantaneous CSI: " + (backend.timeDomain ? "Time Domain" : (backend.superResolution ? "Superresolution Time Domain" : "Frequency Domain"))
-			color: "#ffffff"
-			Layout.margins: 6
-		}
 
 		ChartView {
 			id: csiAmplitude

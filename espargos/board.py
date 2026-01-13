@@ -24,6 +24,30 @@ class EspargosUnexpectedResponseError(Exception):
 class Board(object):
     _csistream_timeout = 5
 
+    # Defaults for controller configuration
+    DEFAULT_CSI_ACQUIRE_CONFIG = {
+        "enable": True,
+        "acquire_csi_legacy": True,
+        "acquire_csi_force_lltf": False,
+        "acquire_csi_ht20": True,
+        "acquire_csi_ht40": True,
+        "acquire_csi_vht": True,
+        "acquire_csi_su": True,
+        "acquire_csi_mu": True,
+        "acquire_csi_dcm": True,
+        "acquire_csi_beamformed": True,
+        "acquire_csi_he_stbc_mode": 2,
+        "val_scale_cfg": 0,
+        "dump_ack_en": True,
+    }
+
+    DEFAULT_GAIN_SETTINGS = {
+        "fft_scale_enable": False,
+        "fft_scale_value": 0,
+        "rx_gain_enable": False,
+        "rx_gain_value": 0,
+    }
+
     def __init__(self, host: str):
         """
         Constructor for the Board class. Tries to connect to the ESPARGOS controller at the given host and fetches configuration information.
@@ -31,7 +55,7 @@ class Board(object):
         :param host: The IP address or hostname of the ESPARGOS controller
 
         :raises TimeoutError: If the connection to the ESPARGOS controller times out
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
         self.logger = logging.getLogger("pyespargos.board")
 
@@ -54,9 +78,10 @@ class Board(object):
         self.netconf = json.loads(self._fetch("get_netconf"))
         self.ip_info = json.loads(self._fetch("get_ip_info"))
         self.wificonf = json.loads(self._fetch("get_wificonf"))
+        self.gain_settings = json.loads(self._fetch("get_gain_settings"))
+        self.csi_acquire_config = json.loads(self._fetch("get_csi_acquire_config"))
 
-        self.logger.info(
-            f"Identified ESPARGOS at {self.ip_info['ip']} as {self.get_name()}")
+        self.logger.info(f"Identified ESPARGOS at {self.ip_info['ip']} as {self.get_name()}")
 
         self.csistream_connected = True
         self.consumers = []
@@ -86,16 +111,35 @@ class Board(object):
             self.csistream_thread.join()
             self.logger.info(f"Stopped CSI stream for {self.get_name()}")
 
-    def set_calib(self, calibrate: bool):
+    def set_rfswitch(self, state: csi.rfswitch_state_t):
         """
-        Enables or disables calibration mode on the ESPARGOS controller.
+        Sets the RF switch state on the ESPARGOS controller for reception mode.
 
-        :param calibrate: True to enable calibration mode, False to disable it
+        :param state: The RF switch state to set, must be one of :class:`csi.rfswitch_state_t`
 
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        res = self._fetch("set_calib", "1" if calibrate else "2")
+        res = self._fetch("set_rfswitch", str(int(state)))
         if res != "ok":
+            self.logger.error(f"Invalid response: {res}")
+            raise EspargosUnexpectedResponseError
+
+    def get_rfswitch(self) -> csi.rfswitch_state_t:
+        """
+        Fetches the current RF switch state from the ESPARGOS controller.
+
+        :return: The current RF switch state as one of :class:`csi.rfswitch_state_t`
+
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        res = self._fetch("get_rfswitch")
+        try:
+            state_int = int(res)
+            # Check if valid enum value
+            if state_int not in [e.value for e in csi.rfswitch_state_t]:
+                raise EspargosUnexpectedResponseError("get_rfswitch returned invalid enum value")
+            return csi.rfswitch_state_t(state_int)
+        except (ValueError, KeyError):
             self.logger.error(f"Invalid response: {res}")
             raise EspargosUnexpectedResponseError
 
@@ -105,25 +149,157 @@ class Board(object):
 
         :param mac_filter: The MAC address filter to set (as string, e.g. "00:11:22:33:44:55")
 
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        data = json.dumps({"enable": True, "mac": mac_filter})
-        res = self._fetch("set_mac_filter", data)
-        if res != "ok":
-            self.logger.error(f"Invalid response: {res}")
-            raise EspargosUnexpectedResponseError
+        self._post_json_ok("set_mac_filter", {"enable": True, "mac": mac_filter})
 
     def clear_mac_filter(self):
         """
         Tell ESPARGOS board to receive packets from all transmitters.
 
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        data = json.dumps({"enable": False})
-        res = self._fetch("set_mac_filter", data)
-        if res != "ok":
-            self.logger.error(f"Invalid response: {res}")
-            raise EspargosUnexpectedResponseError
+        self._post_json_ok("set_mac_filter", {"enable": False})
+
+    def set_wificonf(self, wificonf: dict):
+        """
+        Sets WiFi configuration on the ESPARGOS controller.
+
+        The controller expects a Python dict with fixed field names
+        using hyphenated keys. Expected format::
+
+            {
+              "calib-mode": 1,
+              "calib-source": 0,
+              "channel-primary": 13,
+              "channel-secondary": 2,
+              "country-code": "DE",
+              "calib-txpower": 34,
+              "calib-interval": 10
+            }
+
+        Field meanings / types (as used by the controller firmware):
+          - "calib-mode" (int): When to generate phase reference packets:
+            - 0: Never generate calibration packets
+            - 1: Generate calibration packets if receiver RF switch is in reference channel configuration
+            - 2: Always generate calibration packets
+          - "calib-source" (int): Configures REFIN / REFOUT ports of controller:
+            - 0: Use internal clock and phase reference for antennas
+            - 1: Output clock and phase reference on REFOUT port, antennas expect clock and calibration from REFIN port (master mode)
+            - 2: Antennas expect clock and calibration from REFIN port, do not output anything on REFOUT (slave mode)
+          - "channel-primary" (int): Primary WiFi channel.
+          - "channel-secondary" (int): Secondary channel selector (e.g. 0 = None, 1 = Above, 2 = Below).
+          - "country-code" (str): Two-letter country code (e.g. "DE").
+          - "calib-txpower" (int): TX power used for calibration packets (between 8 = 2dBm and 80 = 20dBm).
+          - "calib-interval" (int): Calibration interval (milliseconds).
+
+        :param wificonf: WiFi configuration dict
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        self._post_json_ok("set_wificonf", wificonf)
+
+    def get_wificonf(self) -> dict:
+        """
+        Fetches the current WiFi configuration from the ESPARGOS controller.
+
+        The returned JSON/dict uses the same hyphenated keys as accepted by :meth:`set_wificonf`,
+        e.g. contains fields like "channel-primary", "channel-secondary", "country-code", etc.
+
+        :return: WiFi configuration dict
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        return self._get_json("get_wificonf")
+
+    def set_csi_acquire_config(self, config: dict):
+        """
+        Sets the CSI acquisition configuration on the ESPARGOS controller.
+
+        The controller expects a JSON object (provided here as a Python dict) with integer
+        fields (use 0/1 for booleans). Field names are fixed.
+
+        Boolean toggles:
+          - enable: Enable to acquire CSI.
+          - acquire_csi_legacy: Enable to acquire L-LTF when receiving a 11g PPDU.
+          - acquire_csi_force_lltf: Force receiver to acquire L-LTF, regardless of PPDU type.
+          - acquire_csi_ht20: Enable to acquire HT-LTF when receiving an HT20 PPDU.
+          - acquire_csi_ht40: Enable to acquire HT-LTF when receiving an HT40 PPDU.
+          - acquire_csi_vht: Present in the HTTP API; semantics depend on firmware build / PHY mode support.
+          - acquire_csi_su: Enable to acquire HE-LTF when receiving an HE20 SU PPDU.
+          - acquire_csi_mu: Enable to acquire HE-LTF when receiving an HE20 MU PPDU.
+          - acquire_csi_dcm: Enable to acquire HE-LTF when receiving an HE20 DCM applied PPDU.
+          - acquire_csi_beamformed: Enable to acquire HE-LTF when receiving an HE20 Beamformed applied PPDU.
+          - dump_ack_en: Enable to dump 802.11 ACK frame, default disabled.
+
+        Integer / enum fields:
+          - acquire_csi_he_stbc_mode: When receiving an STBC applied HE PPDU:
+                0 = acquire the complete HE-LTF1
+                1 = acquire the complete HE-LTF2
+                2 = sample evenly among the HE-LTF1 and HE-LTF2.
+          - val_scale_cfg: Value 0-3.
+
+        Example payload::
+            {
+              "enable": true,
+              "acquire_csi_legacy": true,
+              "acquire_csi_force_lltf": false,
+              "acquire_csi_ht20": true,
+              "acquire_csi_ht40": true,
+              "acquire_csi_vht": true,
+              "acquire_csi_su": true,
+              "acquire_csi_mu": true,
+              "acquire_csi_dcm": true,
+              "acquire_csi_beamformed": true,
+              "acquire_csi_he_stbc_mode": 2,
+              "val_scale_cfg": 0,
+              "dump_ack_en": true
+            }
+
+        :param config: CSI acquisition configuration dict (will be JSON-encoded and POSTed to /set_csi_acquire_config)
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        self._post_json_ok("set_csi_acquire_config", config)
+
+    def get_csi_acquire_config(self) -> dict:
+        """
+        Fetches the current CSI acquisition configuration from the ESPARGOS controller.
+
+        :return: CSI acquisition configuration dict
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        return self._get_json("get_csi_acquire_config")
+
+    def set_gain_settings(self, settings: dict):
+        """
+        Sets the gain settings on the ESPARGOS controller.
+
+        The gain settings are provided as a JSON object (here as a Python dict) with fixed field names:
+
+          - fft_scale_enable (bool): Enable manual FFT scaling (false = automatic/firmware default).
+          - fft_scale_value (int): FFT scale value (meaning/range depends on firmware; commonly 0 when disabled).
+          - rx_gain_enable (bool): Enable manual RX gain (false = automatic/firmware default).
+          - rx_gain_value (int): RX gain value (meaning/range depends on firmware; commonly 0 when disabled).
+
+        Example payload::
+            {
+              "fft_scale_enable": false,
+              "fft_scale_value": 0,
+              "rx_gain_enable": false,
+              "rx_gain_value": 0
+            }
+
+        :param settings: Gain settings dict (will be JSON-encoded and POSTed to /set_gain_settings)
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        self._post_json_ok("set_gain_settings", settings)
+
+    def get_gain_settings(self) -> dict:
+        """
+        Fetches the current gain settings from the ESPARGOS controller.
+
+        :return: Gain settings dict
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        return self._get_json("get_gain_settings")
 
     def add_consumer(self, clist: list, cv: threading.Condition, *args):
         """
@@ -186,3 +362,40 @@ class Board(object):
             raise EspargosHTTPStatusError
 
         return res.read().decode("utf-8")
+
+    def _post_json_ok(self, path: str, payload: dict):
+        """
+        POST JSON payload to `/<path>` and require literal response 'ok'.
+        """
+        res = self._fetch(path, json.dumps(payload))
+        if res != "ok":
+            self.logger.error(f"Invalid response: {res}")
+            raise EspargosUnexpectedResponseError
+
+    def _get_json(self, path: str) -> dict:
+        """
+        GET `/<path>` and parse response as JSON.
+        """
+        res = self._fetch(path)
+        try:
+            return json.loads(res)
+        except json.JSONDecodeError:
+            self.logger.error(f"Invalid response: {res}")
+            raise EspargosUnexpectedResponseError
+
+    def get_mac_filter(self) -> dict:
+        """
+        Fetches the current MAC filter configuration from the ESPARGOS controller.
+
+        The returned JSON/dict matches what is configured via :meth:`set_mac_filter` / :meth:`clear_mac_filter`.
+        Format (inferred from setter payloads)::
+
+            {
+              "enable": true|false,
+              "mac": "00:11:22:33:44:55"   # typically present when enable=true
+            }
+
+        :return: MAC filter configuration dict
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        return self._get_json("get_mac_filter")
