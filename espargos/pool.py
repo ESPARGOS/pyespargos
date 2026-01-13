@@ -104,26 +104,37 @@ class ClusteredCSI(object):
             lltf_bytes = np.asarray(csi.csi_buf_v3_lltf_t(serialized_csi.buf).lltf, dtype = np.uint8)
 
             lo = lltf_bytes[0::2].astype(np.int16)
-            hi = lltf_bytes[1::2].astype(np.int16)
+            hi = lltf_bytes[1::2].astype(np.int16) & 0x0f
             lltf_all = ((hi << 12) >> 4) | lo
+            final_re = lltf_all[-1].astype(np.float32)
             lltf_all = lltf_all[:-1] # Last two bytes of buffer are padding
+            lltf_all_cplx = lltf_all.astype(np.float32).view(np.complex64)
 
-            # Lower half of subcarriers, but only every second one
-            coeffs_half = csi.LEGACY_COEFFICIENTS_PER_CHANNEL//2
-            csi_lltf_sensor[0:coeffs_half:2] = lltf_all.astype(np.float32).view(np.complex64)[:coeffs_half//2]
+            # lltf_all_cplx only contains every second subcarrier, starting from the lowest frequency subcarrier
+            # array index = |   0 |   1 |   2 |   3 | ... |     |     |     |  26 |  27 |  28 |  29 | ... |  52 |  50 |   * |   A |
+            # subc. index = | -26 |   * | -24 |   * | ... |   * |  -2 |   * |  DC |  *  |   2 |   * | ... |   * |  24 |   * |   * |
+            # Numbers = existing subcarriers
+            #       * = missing subcarriers that need to be interpolated
+            #      DC = DC subcarrier, only exists in forced L-LTF mode, otherwise needs to be interpolated
+            #       A = only real part provided if acquire_force_lltf is false, not provided at all if acquire_force_lltf is true
+            # Note that the subcarrier with index 26 is *not* measured, so it needs to be *extrapolated*
+            csi_lltf_sensor[:-1:2] = lltf_all_cplx
+
+            # If acquire_force_lltf is false, the real part of the last subcarrier is provided.
+            # In that case, set real part of last subcarrier to the provided value, copy imaginary part from second last subcarrier.
+            # Otherwise, extrapolate last subcarrier.
+            if not serialized_csi.acquire_force_lltf:
+                csi_lltf_sensor[-1] = final_re + 1.0j * csi_lltf_sensor[-3].imag
+            else:
+                csi_lltf_sensor[-1] = 2 * csi_lltf_sensor[-3] - csi_lltf_sensor[-5]
 
             # DC subcarrier
-            csi_lltf_sensor[coeffs_half] = 0.0 + 0.0j
+            # Only provided if acquire_force_lltf is true, otherwise needs to be interpolated
+            if not serialized_csi.acquire_force_lltf:
+                dc_subcarrier_index = csi.LEGACY_COEFFICIENTS_PER_CHANNEL//2
+                csi_lltf_sensor[dc_subcarrier_index] = (csi_lltf_sensor[dc_subcarrier_index - 2] + csi_lltf_sensor[dc_subcarrier_index + 2]) / 2.0
 
-            # Upper half of subcarriers, but only every second one
-            csi_lltf_sensor[coeffs_half + 2::2] = lltf_all.astype(np.float32).view(np.complex64)[coeffs_half//2:]
-
-            # Now we don't have the full 54 subcarriers yet, as a quick hack we interpolate the missing ones
-
-            # DC subcarrier is not measured, interpolate it
-            csi_lltf_sensor[csi.LEGACY_COEFFICIENTS_PER_CHANNEL//2] = 0.5 * (csi_lltf_sensor[csi.LEGACY_COEFFICIENTS_PER_CHANNEL//2 - 2] + csi_lltf_sensor[csi.LEGACY_COEFFICIENTS_PER_CHANNEL//2 + 2])
-
-            # Interpolate to get full 54 subcarriers
+            # Interpolate to get full 53 subcarriers
             csi_lltf_sensor[1::2] = 0.5 * (csi_lltf_sensor[0:-1:2] + csi_lltf_sensor[2::2])
 
         self._foreach_complete_sensor(deserialize_lltf_packet)
