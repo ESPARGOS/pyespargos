@@ -66,10 +66,14 @@ Drawer {
 				property var encode: function(v) { return v + 1 }
 				property var decode: function(v) { return Math.max(0, Math.min(12, parseInt(v||1)-1)) }
 				Component.onCompleted: poolConfigManager.register(this)
-				onCurrentIndexChanged: poolConfigManager.onControlChanged(this)
+				onCurrentIndexChanged: {
+					calibButton.needCalibration = true
+					poolConfigManager.onControlChanged(this)
+				}
 				implicitWidth: 180
 				model: [ "1 (2.412 GHz)", "2 (2.417 GHz)", "3 (2.422 GHz)", "4 (2.427 GHz)", "5 (2.432 GHz)", "6 (2.437 GHz)", "7 (2.442 GHz)", "8 (2.447 GHz)", "9 (2.452 GHz)", "10 (2.457 GHz)", "11 (2.462 GHz)", "12 (2.467 GHz)", "13 (2.472 GHz)" ]
 				currentIndex: 0
+				function isUserActive() { return pressed || popup.visible }
 			}
 
 			Label { text: "Secondary"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -80,15 +84,35 @@ Drawer {
 				property var encode: function(v) { return v }
 				property var decode: function(v) { return Math.max(0, Math.min(3, parseInt(v||0))) }
 				Component.onCompleted: poolConfigManager.register(this)
-				onCurrentIndexChanged: poolConfigManager.onControlChanged(this)
+				onCurrentIndexChanged: {
+					calibButton.needCalibration = true
+					poolConfigManager.onControlChanged(this)
+				}
 				implicitWidth: 180
 				model: [ "None", "Above", "Below" ]
 				currentIndex: 0
+				function isUserActive() { return pressed || popup.visible }
 			}
 
 			// Section: Calibration
 			Label { Layout.columnSpan: 2; text: "Calibration"; color: "#9fb3c8" }
-			Button { Layout.columnSpan: 2; Layout.alignment: Qt.AlignCenter; text: "Trigger Calibration"; onClicked: poolConfigManager.action("calibrate") }
+			Button {
+				id: calibButton
+				Layout.columnSpan: 2;
+				Layout.alignment: Qt.AlignCenter;
+				text: "Trigger Calibration";
+				onClicked: {
+					poolConfigManager.action("calibrate")
+					needCalibration = false
+				}
+				property bool needCalibration: false
+
+				// Button should have red border when calibration is needed
+				Material.foreground: needCalibration ? "#ff4d4d" : "white"
+			}
+
+			// Calibration settings are still TODO
+			/*
 			Label { text: "Per Board"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {
 				id: perBoardCalibSwitch
@@ -110,7 +134,7 @@ Drawer {
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false
-			}
+			}*/
 
 			// Section: Signal Path
 			Label { Layout.columnSpan: 2; text: "Signal Path / Format"; color: "#9fb3c8" }
@@ -126,6 +150,7 @@ Drawer {
 				implicitWidth: 180
 				model: [ "Isolated", "45° Right", "45° Left", "Reference" ]
 				currentIndex: 0
+				function isUserActive() { return pressed || popup.visible }
 			}
 
 			Label { text: "Force L-LTF"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -168,6 +193,7 @@ Drawer {
 					from: 0; to: 64; value: 32; stepSize: 1
 					implicitWidth: 120
 					enabled: !rxGainSwitch.checked
+					function isUserActive() { return pressed }
 				}
 				Label { text: lnaGainSlider.value; color: "#ffffff" }
 			}
@@ -198,6 +224,7 @@ Drawer {
 					from: 0; to: 64; value: 32; stepSize: 1
 					implicitWidth: 120
 					enabled: !fftGainSwitch.checked
+					function isUserActive() { return pressed }
 				}
 				Label { text: fftGainSlider.value; color: "#ffffff" }
 			}
@@ -214,6 +241,9 @@ Drawer {
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false
+
+				// Only enable MAC when address is valid
+				enabled: macAddrInput.isValidMac
 			}
 
 			Label { text: "MAC Address"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -223,10 +253,51 @@ Drawer {
 				property string configProp: "text"
 				property var encode: function(v) { return v.toString() }
 				property var decode: function(v) { return v.toString() }
+				property bool isValidMac: false
+
 				Component.onCompleted: poolConfigManager.register(this)
-				onTextChanged: poolConfigManager.onControlChanged(this)
+
+				// Validate while editing
+				onTextChanged: {
+					isValidMac = poolConfigManager.isValidMacAddress(text)
+					if (isValidMac) {
+						poolConfigManager.onControlChanged(this)
+					} else {
+						macFilterSwitch.checked = false
+					}
+				}
+
+				color: isValidMac ? "#ffffff" : "#ff4d4d"
+
+				Material.accent: isValidMac ? "#227b3d" : "#ff4d4d"
+
 				implicitWidth: 180
 				placeholderText: "e.g., 12:34:56:78:9A:BC"
+				function isUserActive() { return activeFocus }
+			}
+
+			// Spacer
+			Rectangle {
+				Layout.columnSpan: 2
+				width: 1; height: 10
+				color: "transparent"
+			}
+
+			Button {
+				Layout.columnSpan: 2
+				Layout.alignment: Qt.AlignCenter
+				text: "Reload from Board"
+				onClicked: poolConfigManager.fetchAndApply()
+			}
+
+			Button {
+				Layout.columnSpan: 2
+				Layout.alignment: Qt.AlignCenter
+				text: "Reset to Defaults"
+				onClicked: {
+					poolConfigManager.action("reset_config")
+					// Note: UI will be updated via configChangedJson connection
+				}
 			}
 
 			// Spacer

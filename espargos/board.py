@@ -143,15 +143,37 @@ class Board(object):
             self.logger.error(f"Invalid response: {res}")
             raise EspargosUnexpectedResponseError
 
-    def set_mac_filter(self, mac_filter: str):
+    def set_mac_filter(self, mac_filter: dict):
         """
         Tell ESPARGOS board to only receive packets from transmitters with this sender MAC.
 
-        :param mac_filter: The MAC address filter to set (as string, e.g. "00:11:22:33:44:55")
-
+        mac_filter is a dict with the following format::
+            {
+              "enable": true|false,
+              "mac": "00:11:22:33:44:55"
+            }
+        :param mac_filter: MAC filter configuration dict
+        
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        self._post_json_ok("set_mac_filter", {"enable": True, "mac": mac_filter})
+        self._post_json_ok("set_mac_filter", mac_filter)
+
+    def get_mac_filter(self) -> dict:
+        """
+        Fetches the current MAC filter configuration from the ESPARGOS controller.
+
+        The returned JSON/dict matches what is configured via :meth:`set_mac_filter` / :meth:`clear_mac_filter`.
+        Format (inferred from setter payloads)::
+
+            {
+              "enable": true|false,
+              "mac": "00:11:22:33:44:55"   # typically present when enable=true
+            }
+
+        :return: MAC filter configuration dict
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        return self._get_json("get_mac_filter")
 
     def clear_mac_filter(self):
         """
@@ -370,7 +392,7 @@ class Board(object):
         res = self._fetch(path, json.dumps(payload))
         if res != "ok":
             self.logger.error(f"Invalid response: {res}")
-            raise EspargosUnexpectedResponseError
+            raise EspargosUnexpectedResponseError(str(res))
 
     def _get_json(self, path: str) -> dict:
         """
@@ -381,21 +403,4 @@ class Board(object):
             return json.loads(res)
         except json.JSONDecodeError:
             self.logger.error(f"Invalid response: {res}")
-            raise EspargosUnexpectedResponseError
-
-    def get_mac_filter(self) -> dict:
-        """
-        Fetches the current MAC filter configuration from the ESPARGOS controller.
-
-        The returned JSON/dict matches what is configured via :meth:`set_mac_filter` / :meth:`clear_mac_filter`.
-        Format (inferred from setter payloads)::
-
-            {
-              "enable": true|false,
-              "mac": "00:11:22:33:44:55"   # typically present when enable=true
-            }
-
-        :return: MAC filter configuration dict
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        return self._get_json("get_mac_filter")
+            raise EspargosUnexpectedResponseError(str(res))

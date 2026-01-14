@@ -72,6 +72,7 @@ class Pool(object):
         self.ota_cache_timeout = ota_cache_timeout
 
         # We have two caches: One for calibration packets, the other one for over-the-air packets
+        self.cluster_cache_calib_lock = threading.Lock()
         self.cluster_cache_calib = OrderedDict[str, cluster.CSICluster]()
         self.cluster_cache_ota = OrderedDict[str, cluster.CSICluster]()
 
@@ -140,11 +141,11 @@ class Pool(object):
         self._assert_same_across_boards(states, "RF switch state")
         return states[0]
 
-    def set_mac_filter(self, mac_filter: str):
+    def set_mac_filter(self, mac_filter: dict):
         """
         Set the MAC address filter for all boards in the pool. Will only accept packets from the specified MAC address.
 
-        :param mac_filter: The MAC address filter to set (as string, e.g. "00:11:22:33:44:55")
+        This is forwarded to :meth:`pyespargos.board.Board.set_mac_filter` for each board.
         """
         for board in self.boards:
             board.set_mac_filter(mac_filter)
@@ -280,6 +281,10 @@ class Pool(object):
 
         :param board_num: If provided, only process calibration clusters for the specified board number
         """
+        # Take snapshot of current calibration clusters under lock
+        with self.cluster_cache_calib_lock:
+            clusters = list(self.cluster_cache_calib.values())
+
         complete_clusters_lltf = []
         complete_clusters_ht20 = []
         complete_clusters_ht40 = []
@@ -288,7 +293,7 @@ class Pool(object):
         channel_secondary = None
 
         any_csi_count = 0
-        for cluster in self.cluster_cache_calib.values():
+        for cluster in clusters:
             if channel_primary is None:
                 channel_primary = cluster.get_primary_channel()
                 channel_secondary = cluster.get_secondary_channel()
@@ -343,7 +348,12 @@ class Pool(object):
                                        Must be the same length as :code:`cable_lengths`, and all entries should be in the range [0, 1].
         """
         # Clear calibration cache
-        self.cluster_cache_calib.clear()
+        with self.cluster_cache_calib_lock:
+            self.cluster_cache_calib.clear()
+
+        # Back up and clear MAC filter
+        previous_mac_filter = self.get_mac_filter()
+        self.clear_mac_filter()
 
         # Enable calibration mode
         self.logger.info("Starting calibration")
@@ -358,6 +368,7 @@ class Pool(object):
         # Disable calibration mode
         self.logger.info("Finished calibration")
         self.set_rfswitch(previous_rfswitch_state)
+        self.set_mac_filter(previous_mac_filter)
 
         # Collect calibration packets and compute calibration phases
         if per_board:
@@ -425,15 +436,22 @@ class Pool(object):
             source_mac_str = binascii.hexlify(bytearray(serialized_csi.source_mac)).decode("utf-8")
             dest_mac_str = binascii.hexlify(bytearray(serialized_csi.dest_mac)).decode("utf-8")
 
-            cluster_cache = self.cluster_cache_calib if serialized_csi.is_calib else self.cluster_cache_ota
-
-            # Prepare a cache entry for a new cluster with a different identifier (here: MAC address & sequence control number)
+            # Identifier (here: MAC address & sequence control number)
             cluster_id = f"{source_mac_str}-{dest_mac_str}-{serialized_csi.seq_ctrl.seg:03x}-{serialized_csi.seq_ctrl.frag:01x}"
-            if cluster_id not in cluster_cache:
-                cluster_cache[cluster_id] = cluster.CSICluster(source_mac_str, dest_mac_str, serialized_csi.seq_ctrl, [b.revision for b in self.boards])
 
-            # Add received data for the antenna to the current cluster
-            cluster_cache[cluster_id].add_csi(board_num, esp_num, serialized_csi)
+            # Prepare a cache entry for a new cluster with a different and add received data to the current cluster
+            if serialized_csi.is_calib:
+                with self.cluster_cache_calib_lock:
+                    if cluster_id not in self.cluster_cache_calib:
+                        self.cluster_cache_calib[cluster_id] = cluster.CSICluster(source_mac_str, dest_mac_str, serialized_csi.seq_ctrl, [b.revision for b in self.boards])
+
+                    self.cluster_cache_calib[cluster_id].add_csi(board_num, esp_num, serialized_csi)
+            else:
+                if cluster_id not in self.cluster_cache_ota:
+                    self.cluster_cache_ota[cluster_id] = cluster.CSICluster(source_mac_str, dest_mac_str, serialized_csi.seq_ctrl, [b.revision for b in self.boards])
+
+                # Add received data for the antenna to the current cluster
+                self.cluster_cache_ota[cluster_id].add_csi(board_num, esp_num, serialized_csi)
 
         # Check OTA cluster cache for packets where callback is due and for stale packets
         stale = set()

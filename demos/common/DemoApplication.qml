@@ -45,7 +45,7 @@ ApplicationWindow {
 
 			Item { Layout.fillWidth: true }
 
-			ToolButton {
+			/*ToolButton {
 				text: "Demo ⚙"
 				font.pixelSize: Math.max(20, root.width / 80)
 				MouseArea {
@@ -53,7 +53,7 @@ ApplicationWindow {
 					cursorShape: Qt.PointingHandCursor
 					onClicked: demoDrawer.open()
 				}
-			}
+			}*/
 		}
 	}
 

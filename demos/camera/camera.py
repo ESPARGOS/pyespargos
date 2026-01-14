@@ -426,7 +426,7 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 	
 	@PyQt6.QtCore.pyqtSlot(str)
 	def setMacFilter(self, mac):
-		self.pool.set_mac_filter(mac)
+		self.pool.set_mac_filter({"enable": True, "mac": mac})
 
 	@PyQt6.QtCore.pyqtSlot()
 	def clearMacFilter(self):
