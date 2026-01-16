@@ -49,7 +49,7 @@ class seq_ctrl_t(ctypes.LittleEndianStructure):
     """
     _pack_ = 1
     _fields_ = [
-        ("frag", ctypes.c_uint8, 4),
+        ("frag", ctypes.c_uint16, 4),
         ("seg", ctypes.c_uint16, 12)
     ]
 
@@ -392,7 +392,10 @@ class serialized_csi_v3_t(ctypes.LittleEndianStructure):
         ("global_timestamp_us", ctypes.c_uint64),
         ("csi_len", ctypes.c_uint16),
         ("acquire_force_lltf", ctypes.c_bool),
-        ("acquire_val_scale_cfg", ctypes.c_uint8)
+        ("acquire_val_scale_cfg", ctypes.c_uint8),
+        ("rfswitch_state", ctypes.c_uint32),
+        ("is_radar", ctypes.c_bool),
+        ("antid", ctypes.c_uint8)
     ]
 
     def __new__(self, buf=None):
