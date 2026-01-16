@@ -148,7 +148,7 @@ Drawer {
 				Component.onCompleted: poolConfigManager.register(this)
 				onCurrentIndexChanged: poolConfigManager.onControlChanged(this)
 				implicitWidth: 180
-				model: [ "Isolated", "45° Right", "45° Left", "Reference" ]
+				model: [ "Isolated", "Reference", "45° Right", "45° Left", "Random" ]
 				currentIndex: 0
 				function isUserActive() { return pressed || popup.visible }
 			}
