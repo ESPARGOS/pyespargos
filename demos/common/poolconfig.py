@@ -22,7 +22,7 @@ class PoolConfigManager(PyQt6.QtCore.QObject):
 		"secondary_channel": 2,
 		"per_board_calibration": False,
 		"show_calibration": False,
-		"rf_switch": 1,
+		"rf_switch": 2,
 		"acquire_lltf_force": 0,
 		"automatic_rx_gain": 1,
 		"rx_gain": 32,
