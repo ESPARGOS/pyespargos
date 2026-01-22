@@ -236,12 +236,17 @@ class Pool(object):
         This is forwarded to :meth:`pyespargos.board.Board.set_wificonf` for each board.
         For the expected JSON/dict format, refer to that method's documentation.
 
-        Consistency check ignores "calib-source" and "calib-mode" (they may legitimately differ).
+        The values of "calib-source" and "calib-mode" are ignored and not propagated to the pool.
+        If you need to set those, call :meth:`pyespargos.board.Board.set_wificonf` on each board individually.
+        Consistency check also ignores "calib-source" and "calib-mode" (they may legitimately differ).
 
         :param wificonf: WiFi configuration dict to apply to all boards.
         :raises ValueError: If boards in the pool disagree on the resulting config after applying (excluding ignored keys).
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
+        wificonf = dict(wificonf)  # Make a copy
+        wificonf.pop("calib-source", None)
+        wificonf.pop("calib-mode", None)
         for b in self.boards:
             b.set_wificonf(wificonf)
         _ = self.get_wificonf()
@@ -334,7 +339,7 @@ class Pool(object):
 
         return complete_clusters_lltf, complete_clusters_ht20, complete_clusters_ht40, channel_primary, channel_secondary
 
-    def calibrate(self, per_board = True, duration = 2, exithandler = None, cable_lengths = None, cable_velocity_factors = None):
+    def calibrate(self, per_board = True, duration = 2, exithandler = None, cable_lengths = None, cable_velocity_factors = None, run_in_thread = True):
         """
         Run calibration for a specified duration.
 
@@ -346,6 +351,7 @@ class Pool(object):
                               Only needed for phase-coherent multi-board setups, omit if all cables have the same length.
         :param cable_velocity_factors: The velocity factors of the feeder cables that distribute the clock and phase calibration signal to the ESPARGOS boards
                                        Must be the same length as :code:`cable_lengths`, and all entries should be in the range [0, 1].
+        :param run_in_thread: If True, the pool handling will be performed in the current thread. Set to False in case the pool is already running in a separate thread (e.g., backlog is already active).
         """
         # Clear calibration cache
         with self.cluster_cache_calib_lock:
@@ -363,7 +369,10 @@ class Pool(object):
         # Run calibration for specified duration
         start = time.time()
         while (time.time() - start < duration) and (exithandler is None or exithandler.running):
-            self.run()
+            if run_in_thread:
+                self.run()
+            else:
+                time.sleep(0.01)
 
         # Disable calibration mode
         self.logger.info("Finished calibration")

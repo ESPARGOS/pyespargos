@@ -182,7 +182,7 @@ class PoolConfigManager(PyQt6.QtCore.QObject):
 				raise RuntimeError("Failed to reset pool configuration to defaults") from e
 		elif action_name == "calibrate":
 			# TODO: Calibrate parameters
-			self.pool.calibrate(per_board=False, duration=1)
+			self.pool.calibrate(per_board=False, duration=1, run_in_thread=False)
 			return True
 		raise ValueError(f"Unknown action: {action_name}")
 
