@@ -22,6 +22,7 @@ Rectangle {
 		width: videoOutput.contentRect.width
 		height: videoOutput.contentRect.height
 		anchors.verticalCenter: videoOutput.verticalCenter
+		anchors.horizontalCenter: videoOutput.horizontalCenter
 
 		// This is the source for the beamspace canvas.
 		// It is unused if MUSIC mode is enabled.
@@ -91,11 +92,6 @@ Rectangle {
 			hideSource: true
 			smooth: false
 		}
-	}
-
-	Logo {
-		source: "img/espargos_logo.svg"
-		anchors.bottom: spatialSpectrumShader.bottom
 	}
 
 	Image {

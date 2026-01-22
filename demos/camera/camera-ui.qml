@@ -4,8 +4,9 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtCharts
+import "../common" as Common
 
-ApplicationWindow {
+Common.DemoApplication {
 	id: window
 	visible: true
 	minimumWidth: 800

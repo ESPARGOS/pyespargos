@@ -5,8 +5,9 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
+from demos.common.poolconfig import PoolConfigManager
+
 import matplotlib.colors
-import espargos.constants
 import videocamera
 import numpy as np
 import espargos
@@ -15,7 +16,6 @@ import time
 
 import PyQt6.QtMultimedia
 import PyQt6.QtWidgets
-import PyQt6.QtCharts
 import PyQt6.QtCore
 import PyQt6.QtQml
 
@@ -93,6 +93,9 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 		self.backlog.set_mac_filter("^" + self.args.mac_filter.replace(":", "").replace("-", ""))
 		self.backlog.start()
 
+		# Pool configuration manager
+		self.poolconfig = PoolConfigManager(self.pool)
+
 		# Qt setup
 		self.aboutToQuit.connect(self.onAboutToQuit)
 		self.engine = PyQt6.QtQml.QQmlApplicationEngine()
@@ -134,6 +137,7 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 	def exec(self):
 		context = self.engine.rootContext()
 		context.setContextProperty("backend", self)
+		context.setContextProperty("poolconfig", self.poolconfig)
 		context.setContextProperty("WebCam", self.videocamera)
 
 		qmlFile = pathlib.Path(__file__).resolve().parent / "camera-ui.qml"
