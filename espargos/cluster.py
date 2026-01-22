@@ -133,7 +133,7 @@ class CSICluster(object):
 
         # Need to take timestamps into account to provide phase coherence across all sensors
         # TODO: For timestamp synchronization across datapoints, do not subtract mean, but use known reference point!
-        delay = self.get_sensor_timestamps() - np.mean(self.get_sensor_timestamps())
+        delay = self.get_sensor_timestamps() - np.nanmean(self.get_sensor_timestamps())
 
         subcarrier_range = np.arange(-csi_lltf.shape[-1] // 2, csi_lltf.shape[-1] // 2)[np.newaxis,np.newaxis,np.newaxis,:]
 
@@ -168,7 +168,7 @@ class CSICluster(object):
 
         # Need to take timestamps into account to provide phase coherence across all sensors
         # TODO: For timestamp synchronization across datapoints, do not subtract mean, but use known reference point!
-        delay = self.get_sensor_timestamps() - np.mean(self.get_sensor_timestamps())
+        delay = self.get_sensor_timestamps() - np.nanmean(self.get_sensor_timestamps())
 
         subcarrier_range = np.arange(-csi_ht20.shape[-1] // 2, csi_ht20.shape[-1] // 2)[np.newaxis,np.newaxis,np.newaxis,:]
 
@@ -219,7 +219,7 @@ class CSICluster(object):
 
         # Need to take timestamps into account to provide phase coherence across all sensors
         # TODO: For timestamp synchronization across datapoints, do not subtract mean, but use known reference point!
-        delay = self.get_sensor_timestamps() - np.mean(self.get_sensor_timestamps())
+        delay = self.get_sensor_timestamps() - np.nanmean(self.get_sensor_timestamps())
 
         subcarrier_range = np.arange(-csi_ht40.shape[-1] // 2, csi_ht40.shape[-1] // 2)[np.newaxis,np.newaxis,np.newaxis,:]
 
