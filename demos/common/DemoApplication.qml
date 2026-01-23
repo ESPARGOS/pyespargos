@@ -28,32 +28,6 @@ ApplicationWindow {
 		onActivated: window.close()
 	}
 
-	property Component demoDrawerComponent: null
-	property var demoDrawer: null
-
-	function createDemoDrawer() {
-		if (!demoDrawerComponent || demoDrawer) {
-			return
-		}
-		if (demoDrawerComponent.status !== Component.Ready) {
-			if (demoDrawerComponent.status === Component.Error) {
-				console.error("Demo drawer component error:", demoDrawerComponent.errorString())
-			}
-			return
-		}
-		var drawerParent = root.contentItem
-		if (!drawerParent) {
-			return
-		}
-		demoDrawer = demoDrawerComponent.createObject(root)
-		if (!demoDrawer) {
-			return
-		}
-		if (demoDrawer.parent !== drawerParent) {
-			demoDrawer.parent = drawerParent
-		}
-	}
-
 	Material.theme: Material.Dark
 	Material.accent: "#227b3d"
 	Material.roundedScale: Material.notRounded
@@ -62,6 +36,7 @@ ApplicationWindow {
 	color: "#11191e"
 	title: "ESPARGOS Demo"
 
+	/** Header toolbar with title and buttons to open config drawers **/
 	header: ToolBar {
 		id: header
 		RowLayout {
@@ -73,7 +48,13 @@ ApplicationWindow {
 				MouseArea {
 					anchors.fill: parent
 					cursorShape: Qt.PointingHandCursor
-					onClicked: poolDrawer.open()
+					onClicked: {
+						if (poolDrawer.visible) {
+							poolDrawer.close()
+						} else {
+							poolDrawer.open()
+						}
+					}
 				}
 			}
 
@@ -97,10 +78,9 @@ ApplicationWindow {
 					anchors.fill: parent
 					cursorShape: Qt.PointingHandCursor
 					onClicked: {
-						if (!demoDrawer) {
-							root.createDemoDrawer()
-						}
-						if (demoDrawer) {
+						if (demoDrawer.visible) {
+							demoDrawer.close()
+						} else {
 							demoDrawer.open()
 						}
 					}
@@ -109,42 +89,23 @@ ApplicationWindow {
 		}
 	}
 
+	/** RX pool configuration drawer **/
 	Common.PoolConfigDrawer {
 		id: poolDrawer
 		headerHeight: header.height
 	}
 
+	/** Demo-specific configuration drawer **/
+	property Component demoDrawerComponent: null
+	property var demoDrawer: null
+
 	onDemoDrawerComponentChanged: {
-		if (demoDrawer) {
-			demoDrawer.destroy()
-			demoDrawer = null
-		}
-		if (!demoDrawerComponent) {
-			return
-		}
-		Qt.callLater(createDemoDrawer)
+		// defer creation to avoid header height being 0 at this point
+		Qt.callLater( () => {
+			demoDrawer = demoDrawerComponent.createObject(root.contentItem)
+			demoDrawer.headerHeight = header.height
+		})
 	}
-
-	Connections {
-		target: header
-		function onHeightChanged() {
-			// No-op for demo drawer; contentItem size updates handle header height.
-		}
-	}
-
-	Connections {
-		target: demoDrawerComponent
-		function onStatusChanged() {
-			if (!demoDrawerComponent) return
-			if (demoDrawerComponent.status === Component.Ready) {
-				root.createDemoDrawer()
-			} else if (demoDrawerComponent.status === Component.Error) {
-				console.error("Demo drawer component error:", demoDrawerComponent.errorString())
-			}
-		}
-	}
-
-	Component.onCompleted: Qt.callLater(createDemoDrawer)
 
 	// Logo
 	Image {

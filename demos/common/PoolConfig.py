@@ -12,9 +12,6 @@ import espargos.csi
 from . import ConfigManager
 
 class PoolConfigManager(ConfigManager.ConfigManager):
-	configChanged = PyQt6.QtCore.pyqtSignal(str)
-	# QML hook (ConfigManager.qml listens via Connections.onShowError)
-	showError = PyQt6.QtCore.pyqtSignal(str, str)
 	# Internal: schedule starting the QTimer on the QObject's thread
 	_scheduleApplyTimer = PyQt6.QtCore.pyqtSignal()
 
@@ -186,11 +183,11 @@ class PoolConfigManager(ConfigManager.ConfigManager):
 				self.config.update(self._read_config_from_pool())
 
 				# Emit from worker thread; delivery to QML will be queued.
-				self.configChanged.emit(json.dumps(self.config))
+				self.emitConfigChanged()
 
 			except Exception as e:
 				err_str = str(e)
-				self.showError.emit("Failed to apply configuration", err_str)
+				self.emitShowError("Failed to apply configuration", err_str)
 
 			finally:
 				with self._apply_lock:
@@ -209,7 +206,7 @@ class PoolConfigManager(ConfigManager.ConfigManager):
 			with self._apply_lock:
 				self._pending_cfg = self.DEFAULT_CONFIG.copy()
 
-			self.configChanged.emit(json.dumps(self.config))
+			self.emitConfigChanged()
 			self._apply_timer.start(0)
 		except Exception as e:
 			raise RuntimeError("Failed to reset pool configuration to defaults") from e

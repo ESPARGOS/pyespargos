@@ -9,6 +9,11 @@ import json
 # - define DEFAULT_CONFIG as a dict of config keys to default values
 # - implement get_config() -> dict
 # - implement set_config(newcfg: dict) -> None
+# - optionally implement _action_{action_name}() methods for actions
+# It may then
+# - use self.logger for logging
+# - use emitConfigChanged() to notify QML of config changes
+# - use emitShowError(title: str, message: str) to notify QML of errors
 
 class ConfigManager(PyQt6.QtCore.QObject):
 	configChanged = PyQt6.QtCore.pyqtSignal(str)
@@ -21,6 +26,12 @@ class ConfigManager(PyQt6.QtCore.QObject):
 
 		self.logger = logging.getLogger("demo.ConfigManager")
 		self.config = self.DEFAULT_CONFIG.copy()
+
+	def emitConfigChanged(self):
+		self.configChanged.emit(json.dumps(self.config))
+
+	def emitShowError(self, title: str, message: str):
+		self.showError.emit(title, message)
 
 	@PyQt6.QtCore.pyqtSlot(str, result=bool)
 	def action(self, action_name):

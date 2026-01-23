@@ -49,8 +49,9 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 			"camera_device" : 0
 		}
 
-		def __init__(self, parent=None):
+		def __init__(self, parent=None, default_camera_index: int = 0):
 			super().__init__(parent)
+			self.config["camera_device"] = default_camera_index if default_camera_index is not None else 0
 
 		def get_config(self) -> dict:
 			return dict(self.config)
@@ -128,7 +129,7 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 
 		# Pool configuration manager
 		self.poolconfig = PoolConfigManager(self.pool)
-		self.democonfig = self.CameraDemoConfigManager(self)
+		self.democonfig = self.CameraDemoConfigManager(self, default_camera_index = self.args.camera_index)
 
 		# Qt setup
 		self.aboutToQuit.connect(self.onAboutToQuit)

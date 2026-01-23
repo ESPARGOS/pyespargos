@@ -4,7 +4,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Controls.Material
-import QtCharts
 import "../common" as Common
 
 Common.DemoApplication {
@@ -21,12 +20,6 @@ Common.DemoApplication {
 			id: demoDrawer
 			title: "Demo Settings"
 			endpoint: democonfig
-
-			// Match app-wide Material settings
-			Material.theme: Material.Dark
-			Material.primary: "#227b3d"
-			Material.accent: "#227b3d"
-			Material.roundedScale: Material.notRounded
 
 			Label { Layout.columnSpan: 2; text: "Camera Input"; color: "#9fb3c8" }
 			Label { text: "Device"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }

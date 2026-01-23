@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import "." as Common
 
 Drawer {
-	id: drawerRoot
+	id: demodrawer
 
 	property int headerHeight: 0
 	property string title: "Demo Settings"
@@ -12,8 +12,8 @@ Drawer {
 	property alias configManager: demoConfigManager
 	property var endpoint: null
 
-	implicitHeight: parent ? parent.height : 0
-	y: 0
+	implicitHeight: parent ? parent.height - headerHeight : 0
+	y: headerHeight
 	implicitWidth: 350
 	edge: Qt.RightEdge
 	dragMargin: 50
@@ -46,7 +46,7 @@ Drawer {
 
 			Label {
 				Layout.columnSpan: 2
-				text: drawerRoot.title
+				text: demodrawer.title
 				font.pixelSize: 18
 				color: "#ffffff"
 				horizontalAlignment: Text.AlignHCenter
@@ -57,18 +57,10 @@ Drawer {
 
 	Common.ConfigManager {
 		id: demoConfigManager
-		endpoint: drawerRoot ? drawerRoot.endpoint : null
-	}
-
-	onEndpointChanged: {
-		if (demoConfigManager && endpoint) {
-			demoConfigManager.fetchAndApply()
-		}
+		endpoint: demodrawer.endpoint
 	}
 
 	Component.onCompleted: {
-		if (demoConfigManager && demoConfigManager.endpoint) {
-			demoConfigManager.fetchAndApply()
-		}
+		demoConfigManager.fetchAndApply()
 	}
 }
