@@ -5,7 +5,8 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common.poolconfig import PoolConfigManager
+from demos.common.PoolConfig import PoolConfigManager
+from demos.common.ConfigManager import ConfigManager
 
 import matplotlib.colors
 import videocamera
@@ -39,6 +40,38 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 	activeAntennasChanged = PyQt6.QtCore.pyqtSignal(float)
 	beamspacePowerImagedataChanged = PyQt6.QtCore.pyqtSignal(list)
 	recentMacsChanged = PyQt6.QtCore.pyqtSignal(list)
+
+	class CameraDemoConfigManager(ConfigManager):
+		DEFAULT_CONFIG = {
+			"camera_flip" : False,
+			"beamformer_type" : "FFT",
+			"camera_format" : 0,
+			"camera_device" : 0
+		}
+
+		def __init__(self, parent=None):
+			super().__init__(parent)
+
+		def get_config(self) -> dict:
+			return dict(self.config)
+		
+		def set_config(self, newcfg: dict):
+			# Update camera settings immediately
+			if "camera_device" in newcfg and newcfg["camera_device"] != self.config["camera_device"]:
+				try:
+					self.parent().videocamera.setDevice(newcfg["camera_device"])
+				except Exception as e:
+					self.logger.error(f"Error setting camera device: {e}")
+					self.showError.emit("Camera Error", f"Could not set camera device: {e}")
+
+			if "camera_format" in newcfg and newcfg["camera_format"] != self.config["camera_format"]:
+				try:
+					self.parent().videocamera.setFormat(newcfg["camera_format"])
+				except Exception as e:
+					self.logger.error(f"Error setting camera format: {e}")
+					self.showError.emit("Camera Error", f"Could not set camera format: {e}")
+
+			self.config.update(newcfg)
 
 	def __init__(self, argv):
 		super().__init__(argv)
@@ -95,6 +128,7 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 
 		# Pool configuration manager
 		self.poolconfig = PoolConfigManager(self.pool)
+		self.democonfig = self.CameraDemoConfigManager(self)
 
 		# Qt setup
 		self.aboutToQuit.connect(self.onAboutToQuit)
@@ -138,6 +172,7 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 		context = self.engine.rootContext()
 		context.setContextProperty("backend", self)
 		context.setContextProperty("poolconfig", self.poolconfig)
+		context.setContextProperty("democonfig", self.democonfig)
 		context.setContextProperty("WebCam", self.videocamera)
 
 		qmlFile = pathlib.Path(__file__).resolve().parent / "camera-ui.qml"

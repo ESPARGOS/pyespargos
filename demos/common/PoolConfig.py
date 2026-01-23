@@ -2,16 +2,17 @@
 
 import PyQt6.QtCore
 
-import logging
+import threading
 import json
 import re
-import threading
 
 import espargos.pool
 import espargos.csi
 
-class PoolConfigManager(PyQt6.QtCore.QObject):
-	configChangedJson = PyQt6.QtCore.pyqtSignal(str)
+from . import ConfigManager
+
+class PoolConfigManager(ConfigManager.ConfigManager):
+	configChanged = PyQt6.QtCore.pyqtSignal(str)
 	# QML hook (ConfigManager.qml listens via Connections.onShowError)
 	showError = PyQt6.QtCore.pyqtSignal(str, str)
 	# Internal: schedule starting the QTimer on the QObject's thread
@@ -40,17 +41,13 @@ class PoolConfigManager(PyQt6.QtCore.QObject):
 
 	def __init__(self, pool : espargos.pool.Pool, parent=None):
 		super().__init__(parent)
-		self.logger = logging.getLogger("demo.poolconfig")
 		self.pool = pool
-
-		# Base defaults (also used as fallback on pool read errors)
-		self.config = dict(self.DEFAULT_CONFIG)
 
 		# Populate from pool (authoritative for non-UI fields)
 		self.config.update(self._read_config_from_pool())
 
 		# Async apply state
-		self._pending_cfg: dict | None = None  # delta dict; newest wins per key
+		self._pending_cfg: dict = dict()
 		self._apply_lock = threading.Lock()
 		self._apply_in_flight = False
 		self._apply_timer = PyQt6.QtCore.QTimer(self)
@@ -110,6 +107,11 @@ class PoolConfigManager(PyQt6.QtCore.QObject):
 		if not delta:
 			return
 
+		# Apply UI-only keys locally
+		for k in self.UI_ONLY_KEYS:
+			if k in delta:
+				self.config[k] = delta[k]
+
 		# WiFi channels
 		if "channel" in delta or "secondary_channel" in delta:
 			wc = self.pool.get_wificonf()
@@ -163,122 +165,28 @@ class PoolConfigManager(PyQt6.QtCore.QObject):
 				"mac": mac_address
 			})
 
-	@PyQt6.QtCore.pyqtSlot(str, result=bool)
-	def action(self, action_name):
-		if action_name == "reset_config":
-			try:
-				# Enqueue defaults (device-backed keys only)
-				with self._apply_lock:
-					self._pending_cfg = {k: v for k, v in self.DEFAULT_CONFIG.items() if k not in self.UI_ONLY_KEYS}
-
-				# Update UI-only immediately
-				for k in self.UI_ONLY_KEYS:
-					self.config[k] = int(self.DEFAULT_CONFIG[k])
-
-				self.configChangedJson.emit(json.dumps(self.config))
-				self._apply_timer.start(0)
-				return True
-			except Exception as e:
-				raise RuntimeError("Failed to reset pool configuration to defaults") from e
-		elif action_name == "calibrate":
-			# TODO: Calibrate parameters
-			self.pool.calibrate(per_board=False, duration=1, run_in_thread=False)
-			return True
-		raise ValueError(f"Unknown action: {action_name}")
-
-	@PyQt6.QtCore.pyqtSlot(result=str)
-	def get_config_json(self):
-		self.config.update(self._read_config_from_pool())
-		return json.dumps(self.config)
-
-	@PyQt6.QtCore.pyqtSlot(str)
-	def set_config_json(self, config_json):
-		incoming = json.loads(config_json)
-		if not isinstance(incoming, dict):
-			raise ValueError("config_json must decode to an object")
-
-		# Merge with current config; ignore unknown keys (forward-compat)
-		newcfg = dict(self.config)
-		for k, v in incoming.items():
-			if k in newcfg:
-				newcfg[k] = v
-
-		def as_int(v, *, minv=None, maxv=None):
-			iv = int(v)
-			if minv is not None and iv < minv:
-				raise ValueError(f"value {iv} < {minv}")
-			if maxv is not None and iv > maxv:
-				raise ValueError(f"value {iv} > {maxv}")
-			return iv
-
-		def as_bool01(v):
-			return 1 if bool(int(v)) else 0
-
-		# Canonicalize / validate
-		newcfg["channel"] = as_int(newcfg["channel"], minv=1, maxv=14)
-		newcfg["secondary_channel"] = as_int(newcfg["secondary_channel"], minv=0, maxv=14)
-		newcfg["per_board_calibration"] = as_bool01(newcfg["per_board_calibration"])
-		newcfg["show_calibration"] = as_bool01(newcfg["show_calibration"])
-		newcfg["rf_switch"] = as_int(newcfg["rf_switch"], minv=0)
-		newcfg["acquire_lltf_force"] = as_bool01(newcfg["acquire_lltf_force"])
-		newcfg["automatic_rx_gain"] = as_bool01(newcfg["automatic_rx_gain"])
-		newcfg["rx_gain"] = as_int(newcfg["rx_gain"], minv=0, maxv=127)
-		newcfg["automatic_fft_gain"] = as_bool01(newcfg["automatic_fft_gain"])
-		newcfg["fft_gain"] = as_int(newcfg["fft_gain"], minv=0, maxv=127)
-		newcfg["mac_filter_enable"] = as_bool01(newcfg["mac_filter_enable"])
-		newcfg["mac_address"] = (str(newcfg["mac_address"] or "")).strip()
-
-		if newcfg["mac_address"]:
-			if not re.fullmatch(r"(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}", newcfg["mac_address"]):
-				raise ValueError("mac_address must be in format 00:11:22:33:44:55")
-
-		# Update UI-only fields immediately
-		for k in self.UI_ONLY_KEYS:
-			self.config[k] = int(newcfg[k])
-
-		# Notify UI immediately for UI-only changes / optimistic state
-		self.configChangedJson.emit(json.dumps(self.config))
-
-		# Queue device-backed changes as *delta* (newest wins per key)
-		delta: dict = {}
-		for k, v in newcfg.items():
-			if k in self.UI_ONLY_KEYS:
-				continue
-			if self.config.get(k) != v:
-				delta[k] = v
-
-		# (keep as-is, but ensure delta only contains device-backed keys)
-		if delta:
-			with self._apply_lock:
-				if self._pending_cfg is None:
-					self._pending_cfg = {}
-				self._pending_cfg.update(delta)
-			self._apply_timer.start(0)
-
 	def _async_apply(self):
 		# Ensure only one background applier runs at a time; coalesce pending updates.
 		with self._apply_lock:
+			# Nothing to do if an apply is already in flight (will re-trigger on finish)
 			if self._apply_in_flight:
 				return
+			
+			# Nothing to do if there are no pending changes
 			if not self._pending_cfg:
 				return
+
 			delta_snapshot = dict(self._pending_cfg)
-			self._pending_cfg = None
+			self._pending_cfg = {}
 			self._apply_in_flight = True
 
 		def worker(delta: dict):
 			try:
 				self._apply_config_to_pool(delta)
-				readback = self._read_config_from_pool()
-
-				# Keep UI-only keys as-is.
-				with self._apply_lock:
-					ui_only = {k: self.config.get(k) for k in self.UI_ONLY_KEYS}
-					self.config.update(readback)
-					self.config.update(ui_only)
+				self.config.update(self._read_config_from_pool())
 
 				# Emit from worker thread; delivery to QML will be queued.
-				self.configChangedJson.emit(json.dumps(self.config))
+				self.configChanged.emit(json.dumps(self.config))
 
 			except Exception as e:
 				err_str = str(e)
@@ -294,3 +202,35 @@ class PoolConfigManager(PyQt6.QtCore.QObject):
 					self._scheduleApplyTimer.emit()
 
 		threading.Thread(target=worker, args=(delta_snapshot,), daemon=True).start()
+
+	def _action_reset_config(self):
+		try:
+			# Enqueue defaults (device-backed keys only)
+			with self._apply_lock:
+				self._pending_cfg = self.DEFAULT_CONFIG.copy()
+
+			self.configChanged.emit(json.dumps(self.config))
+			self._apply_timer.start(0)
+		except Exception as e:
+			raise RuntimeError("Failed to reset pool configuration to defaults") from e
+
+	def _action_calibrate(self):
+		self.pool.calibrate(per_board=False, duration=1, run_in_thread=False)
+
+	def get_config(self) -> dict:
+		self.config.update(self._read_config_from_pool())
+		return dict(self.config)
+
+	def set_config(self, newcfg: dict):
+		# Validate mac_address format if present
+		if newcfg.get("mac_address"):
+			if not re.fullmatch(r"(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}", newcfg["mac_address"]):
+				raise ValueError("mac_address must be in format 00:11:22:33:44:55")
+
+		# Queue pending changes (newest wins per key)
+		with self._apply_lock:
+			for k, v in newcfg.items():
+				if self.config.get(k) != v:
+					self._pending_cfg[k] = v
+
+			self._apply_timer.start(0)	

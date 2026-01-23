@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common.poolconfig import PoolConfigManager
+from demos.common.PoolConfig import PoolConfigManager
 
 import numpy as np
 import espargos

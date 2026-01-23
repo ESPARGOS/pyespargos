@@ -15,17 +15,33 @@ class VideoCamera(QCamera):
 
 		if not videoDevice.isNull():
 			availableFormats = videoDevice.videoFormats()
-			fmt = availableFormats[-1] # last is best here: JPEG 1920x1080
+			fmt = availableFormats[-1]
 			self.setCameraFormat(fmt)
 
-	@pyqtProperty(str, constant=True)
-	def description(self) -> str:
-		return self.cameraDevice().description()
+	def setDevice(self, cameraId: int):
+		"Set the camera device by its index in QMediaDevices.videoInputs()."
+		videoDevices = QMediaDevices.videoInputs()
+		if cameraId < 0 or cameraId >= len(videoDevices):
+			raise ValueError(f"Invalid cameraId {cameraId}, must be between 0 and {len(videoDevices)-1}")
 
-	@pyqtProperty(QSize, constant=True)
-	def resolution(self) -> QSize:
-		return self.cameraFormat().resolution()
+		videoDevice = videoDevices[cameraId]
+		self.setCameraDevice(videoDevice)
 
-	@pyqtProperty(bool, constant=True)
-	def hasVideoInput(self) -> bool:
-		return self.isAvailable()
+	def setFormat(self, formatIndex: int):
+		"Set the camera format by its index in the list of available formats."
+		formats = self.cameraDevice().videoFormats()
+		if formatIndex < 0 or formatIndex >= len(formats):
+			raise ValueError(f"Invalid formatIndex {formatIndex}, must be between 0 and {len(formats)-1}")
+
+		fmt = formats[formatIndex]
+		self.setCameraFormat(fmt)
+
+	@pyqtProperty(list, constant=True)
+	def availableDevices(self) -> list:
+		devices = QMediaDevices.videoInputs()
+		return [device.description() for device in devices]
+
+	@pyqtProperty(list, constant=False)
+	def availableFormats(self) -> list[str]:
+		formats = self.cameraDevice().videoFormats()
+		return [f"{fmt.resolution().width()}x{fmt.resolution().height()} @ {fmt.maxFrameRate():.2f} FPS" for fmt in formats]

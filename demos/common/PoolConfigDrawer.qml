@@ -144,7 +144,7 @@ Drawer {
 				property string configKey: "rf_switch"
 				property string configProp: "currentIndex"
 				property var encode: function(v) { return v }
-				property var decode: function(v) { return Math.max(0, Math.min(2, parseInt(v||0))) }
+				property var decode: function(v) { return Math.max(0, Math.min(4, parseInt(v||0))) }
 				Component.onCompleted: poolConfigManager.register(this)
 				onCurrentIndexChanged: poolConfigManager.onControlChanged(this)
 				implicitWidth: 180
@@ -296,7 +296,7 @@ Drawer {
 				text: "Reset to Defaults"
 				onClicked: {
 					poolConfigManager.action("reset_config")
-					// Note: UI will be updated via configChangedJson connection
+					// Note: UI will be updated via configChanged connection
 				}
 			}
 

@@ -161,7 +161,7 @@ Item {
 			configManager.showError(title, message)
 		}
 
-		function onConfigChangedJson(jsonStr) {
+		function onConfigChanged(jsonStr) {
 			try {
 				if (jsonStr && jsonStr.length) configManager.applyConfig(JSON.parse(jsonStr))
 			} catch (e) {
