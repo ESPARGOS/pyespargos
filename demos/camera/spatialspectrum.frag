@@ -9,15 +9,13 @@ layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
     float qt_Opacity;
 
-	bool musicMode;
-	bool fftMode;
 	bool rawBeamspace;
+	bool flip;
 	vec2 fov;
 };
 
 void main() {
-	// flip camera image
-	vec2 sourceCoord = vec2(1 - qt_TexCoord0.x, qt_TexCoord0.y);
+	vec2 sourceCoord = vec2(flip ? qt_TexCoord0.x : 1 - qt_TexCoord0.x, qt_TexCoord0.y);
 
 	vec4 s = texture(cameraImage, sourceCoord);
 

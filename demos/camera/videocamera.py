@@ -1,8 +1,9 @@
-from PyQt6.QtCore import pyqtProperty, QSize
+import PyQt6.QtCore
 from PyQt6.QtMultimedia import QMediaDevices, QCamera
 
 class VideoCamera(QCamera):
 	"QCamera which exposes relevant properties for QML."
+	availableFormatsChanged = PyQt6.QtCore.pyqtSignal()
 
 	def __init__(self, cameraId = None):
 		videoDevices = QMediaDevices.videoInputs()
@@ -27,6 +28,9 @@ class VideoCamera(QCamera):
 		videoDevice = videoDevices[cameraId]
 		self.setCameraDevice(videoDevice)
 
+		# Notify that available formats may have changed
+		self.availableFormatsChanged.emit()
+
 	def setFormat(self, formatIndex: int):
 		"Set the camera format by its index in the list of available formats."
 		formats = self.cameraDevice().videoFormats()
@@ -36,12 +40,12 @@ class VideoCamera(QCamera):
 		fmt = formats[formatIndex]
 		self.setCameraFormat(fmt)
 
-	@pyqtProperty(list, constant=True)
+	@PyQt6.QtCore.pyqtProperty(list, constant=True)
 	def availableDevices(self) -> list:
 		devices = QMediaDevices.videoInputs()
 		return [device.description() for device in devices]
 
-	@pyqtProperty(list, constant=False)
+	@PyQt6.QtCore.pyqtProperty(list, constant=False)
 	def availableFormats(self) -> list[str]:
 		formats = self.cameraDevice().videoFormats()
 		return [f"{fmt.resolution().width()}x{fmt.resolution().height()} @ {fmt.maxFrameRate():.2f} FPS" for fmt in formats]

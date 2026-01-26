@@ -158,6 +158,8 @@ Drawer {
 				id: forceAcquireLLTFSwitch
 				property string configKey: "acquire_lltf_force"
 				property string configProp: "checked"
+				property var encode: function(v) { return v ? 1 : 0 }
+				property var decode: function(v) { return !!v }
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false
@@ -170,6 +172,8 @@ Drawer {
 				id: rxGainSwitch
 				property string configKey: "rx_gain.automatic"
 				property string configProp: "checked"
+				property var encode: function(v) { return v ? 1 : 0 }
+				property var decode: function(v) { return !!v }
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: true
@@ -200,6 +204,8 @@ Drawer {
 				id: fftGainSwitch
 				property string configKey: "fft_gain.automatic"
 				property string configProp: "checked"
+				property var encode: function(v) { return v ? 1 : 0 }
+				property var decode: function(v) { return !!v }
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: true
@@ -230,6 +236,8 @@ Drawer {
 				id: macFilterSwitch
 				property string configKey: "mac_filter.enable"
 				property string configProp: "checked"
+				property var encode: function(v) { return !!v }
+				property var decode: function(v) { return !!v }
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false

@@ -60,7 +60,5 @@ Drawer {
 		endpoint: demodrawer.endpoint
 	}
 
-	Component.onCompleted: {
-		demoConfigManager.fetchAndApply()
-	}
+	Component.onCompleted: demoConfigManager.fetchAndApply()
 }

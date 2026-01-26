@@ -90,7 +90,7 @@ ApplicationWindow {
 	}
 
 	/** RX pool configuration drawer **/
-	Common.PoolConfigDrawer {
+	Common.PoolDrawer {
 		id: poolDrawer
 		headerHeight: header.height
 	}

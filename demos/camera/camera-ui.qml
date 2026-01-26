@@ -25,16 +25,10 @@ Common.DemoApplication {
 			Label { text: "Device"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			ComboBox {
 				id: cameraDevice
-				property string configKey: "camera_device"
+				property string configKey: "camera.device"
 				property string configProp: "currentIndex"
 				Component.onCompleted: demoDrawer.configManager.register(this)
-				onCurrentIndexChanged: {
-					demoDrawer.configManager.onControlChanged(this)
-
-					// Update formats when device changes, always pick last available format by default
-					cameraFormat.model = WebCam.availableFormats
-					cameraFormat.currentIndex = cameraFormat.model.length - 1
-				}
+				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
 				implicitWidth: 210
 				model: WebCam.availableDevices
 				currentIndex: 0
@@ -44,7 +38,7 @@ Common.DemoApplication {
 			Label { text: "Format"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			ComboBox {
 				id: cameraFormat
-				property string configKey: "camera_format"
+				property string configKey: "camera.format"
 				property string configProp: "currentIndex"
 				Component.onCompleted: {
 					demoDrawer.configManager.register(this)
@@ -59,12 +53,21 @@ Common.DemoApplication {
 				model: []
 				currentIndex: 0
 				function isUserActive() { return pressed || popup.visible }
+
+				Connections {
+					target: WebCam
+					function onAvailableFormatsChanged() {
+						// Update formats when available formats change, always pick last available format by default
+						cameraFormat.model = WebCam.availableFormats
+						cameraFormat.currentIndex = cameraFormat.model.length - 1
+					}
+				}
 			}
 
-			/*Label { text: "Flip"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "Flip"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {
 				id: cameraFlip
-				property string configKey: "camera_flip"
+				property string configKey: "camera.flip"
 				property string configProp: "checked"
 				Component.onCompleted: demoDrawer.configManager.register(this)
 				onCheckedChanged: demoDrawer.configManager.onControlChanged(this)
@@ -76,8 +79,8 @@ Common.DemoApplication {
 			Label { Layout.columnSpan: 2; text: "Beamforming"; color: "#9fb3c8" }
 			Label { text: "Method"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			ComboBox {
-				id: beamformerMode
-				property string configKey: "beamformer_type"
+				id: beamformerType
+				property string configKey: "beamformer.type"
 				property string configProp: "currentIndex"
 				property var encode: function(v) { return ["FFT", "Bartlett", "MVDR", "MUSIC"][v] }
 				property var decode: function(v) {
@@ -87,10 +90,18 @@ Common.DemoApplication {
 				Component.onCompleted: demoDrawer.configManager.register(this)
 				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
 				implicitWidth: 210
-				model: [ "FFT", "Bartlett", "MVDR", "MUSIC" ]
+				// Different internal representation than displayed strings
+				model: [
+					{ value: "FFT", text: "FFT"},
+					{ value: "Bartlett", text: "Bartlett (like FFT)"},
+					{ value: "MVDR", text: "MVDR"},
+					{ value: "MUSIC", text: "MUSIC"}
+				]
+				textRole: "text"
+				valueRole: "value"
 				currentIndex: 0
 				function isUserActive() { return pressed || popup.visible }
-			}*/
+			}
 		}
 	}
 

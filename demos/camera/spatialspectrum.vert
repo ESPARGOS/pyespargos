@@ -9,9 +9,8 @@ layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
     float qt_Opacity;
 
-	bool musicMode;
-	bool fftMode;
 	bool rawBeamspace;
+	bool flip;
 	vec2 fov;
 };
 
@@ -26,13 +25,12 @@ vec2 toFFTBeamspace(vec2 angles) {
 }
 
 void main() {
-	const int spectrumResolution = 8 * 16;
+	vec2 coord = vec2(flip ? 1.0 - qt_MultiTexCoord0.x : qt_MultiTexCoord0.x, qt_MultiTexCoord0.y);
 
-	vec2 angles = toAngles(qt_MultiTexCoord0);
-	vec2 textureCoords = rawBeamspace ? qt_MultiTexCoord0 : (fftMode ? (toFFTBeamspace(angles) + 0.5) : ((degrees(angles) + 90) / 180));
+	vec2 angles = toAngles(coord);
+	vec2 textureCoords = rawBeamspace ? coord : (toFFTBeamspace(angles) + 0.5);
 
-	vec4 spatialSpectrumPixel = texture(spatialSpectrumCanvasSource, textureCoords);
-	vColor = spatialSpectrumPixel;
+	vColor = texture(spatialSpectrumCanvasSource, textureCoords);
 
     gl_Position = qt_Matrix * qt_Vertex;
     qt_TexCoord0 = qt_MultiTexCoord0;
