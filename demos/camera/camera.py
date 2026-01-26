@@ -83,7 +83,6 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 		parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
 		parser.add_argument("-c", "--camera-index", type = int, help = "Index of the camera, if multiple cameras are available")
 		parser.add_argument("-d", "--colorize-delay", default = False, help = "Visualize delay of beamspace components using colors", action = "store_true")
-		parser.add_argument("-i", "--no-interpolation", default = False, help = "Do not use datapoint interpolation to reduce computational complexity (can slightly improve appearance)", action = "store_true")
 		parser.add_argument("-ra", "--resolution-azimuth", type = int, default = 64, help = "Beamspace resolution for azimuth angle")
 		parser.add_argument("-re", "--resolution-elevation", type = int, default = 32, help = "Beamspace resolution for elevation angle")
 		parser.add_argument("-fa", "--fov-azimuth", type = int, default = 72, help = "Camera field of view in azimuth direction")
@@ -260,104 +259,112 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 
 		# Shift all CSI datapoints in time so that LoS component arrives at the same time
 		csi_combined = espargos.util.shift_to_firstpeak_sync(csi_combined, peak_threshold = (0.4 if self.args.lltf else 0.1))
+		
+		# Option 1: MUSIC spatial spectrum
+		# Multipath can be resolved due to multiple subcarriers, which provide sufficient decorelation
+		# between different paths if delay spread is sufficiently large.
+		if self.args.music:
+			# Compute array covariance matrix R. Flatten CSI over horizontal and vertical dimensions of array.
+			csi_flat = csi_combined.reshape(csi_combined.shape[0], csi_combined.shape[1], csi_combined.shape[2] * csi_combined.shape[3], csi_combined.shape[4])
+			R = np.einsum("dbis,dbjs->ij", csi_flat, np.conj(csi_flat))
+			self.beamspace_power = self._music_algorithm(R)
 
-		# For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
-		if not self.args.no_interpolation:
+		# Option 2: Beamspace via FFT
+		elif not self.args.no_beamspace_fft:
+			# For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
+			# This assumes a constant channel except for CFO-induced phase rotations and noise
 			csi_combined = np.asarray([espargos.util.csi_interp_iterative(csi_combined, iterations = 5)])
 
-		# Option 1: MUSIC spatial spectrum (simplest)
-		if self.args.music:
-			# Compute array covariance matrix R over all backlog datapoints, all rows and all subcarriers
-			R_h = np.einsum("dbris,dbrjs->ij", csi_combined, np.conj(csi_combined))
-			R_v = np.einsum("dbics,dbjcs->ij", csi_combined, np.conj(csi_combined))
-			self.spatial_spectra_db["horizontal"] = self._music_algorithm(R_h)
-			self.spatial_spectra_db["vertical"] = self._music_algorithm(R_v)
-			spatial_spectra_max = np.max(list(self.spatial_spectra_db.values()))
-			self.spatial_spectra_db["horizontal"] = self.spatial_spectra_db["horizontal"] - spatial_spectra_max
-			self.spatial_spectra_db["vertical"] = self.spatial_spectra_db["vertical"] - spatial_spectra_max
+			# Exploit time-domain sparsity to reduce number of 2D FFTs from antenna space to beamspace
+			csi_tdomain = np.fft.ifftshift(np.fft.ifft(np.fft.fftshift(csi_combined, axes = -1), axis = -1), axes = -1)
+			tap_count = csi_tdomain.shape[-1]
+			csi_tdomain_cut = csi_tdomain[...,tap_count//2 + 1 - 16:tap_count//2 + 1 + 17]
+			csi_fdomain_cut = np.fft.ifftshift(np.fft.fft(np.fft.fftshift(csi_tdomain_cut, axes = -1), axis = -1), axes = -1)
+
+			# Here, we only go to DFT beamspace, not directly azimuth / elevation space,
+			# but the shader can take care of fixing the distortion.
+			# csi_zeropadded has shape (datapoints, azimuth / row, elevation / column, subcarriers)				
+			csi_zeropadded = np.zeros((csi_fdomain_cut.shape[0], self.args.resolution_azimuth, self.args.resolution_elevation, csi_fdomain_cut.shape[-1]), dtype = csi_fdomain_cut.dtype)
+			real_rows_half = csi_fdomain_cut.shape[2] // 2
+			real_cols_half = csi_fdomain_cut.shape[3] // 2
+			zeropadded_rows_half = csi_zeropadded.shape[2] // 2
+			zeropadded_cols_half = csi_zeropadded.shape[1] // 2
+			csi_zeropadded[:,zeropadded_cols_half-real_cols_half:zeropadded_cols_half+real_cols_half,zeropadded_rows_half-real_rows_half:zeropadded_rows_half+real_rows_half,:] = np.swapaxes(csi_fdomain_cut[:,0,:,:,:], 1, 2)
+			csi_zeropadded = np.fft.ifftshift(csi_zeropadded, axes = (1, 2))
+			beam_frequency_space = np.fft.fft2(csi_zeropadded, axes = (1, 2))
+			beam_frequency_space = np.fft.fftshift(beam_frequency_space, axes = (1, 2))
+		
+		# Option 3: Azimuth / elevation space via 2D steering vectors
 		else:
-			# Option 2: Beamspace via FFT
-			if not self.args.no_beamspace_fft:
-				# Exploit time-domain sparsity to reduce number of 2D FFTs from antenna space to beamspace
-				csi_tdomain = np.fft.ifftshift(np.fft.ifft(np.fft.fftshift(csi_combined, axes = -1), axis = -1), axes = -1)
-				tap_count = csi_tdomain.shape[-1]
-				csi_tdomain_cut = csi_tdomain[...,tap_count//2 + 1 - 16:tap_count//2 + 1 + 17]
-				csi_fdomain_cut = np.fft.ifftshift(np.fft.fft(np.fft.fftshift(csi_tdomain_cut, axes = -1), axis = -1), axes = -1)
+			# For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
+			# This assumes a constant channel except for CFO-induced phase rotations and noise
+			csi_combined = np.asarray([espargos.util.csi_interp_iterative(csi_combined, iterations = 5)])
 
-				# Here, we only go to DFT beamspace, not directly azimuth / elevation space,
-				# but the shader can take care of fixing the distortion.
-				# csi_zeropadded has shape (datapoints, azimuth / row, elevation / column, subcarriers)				
-				csi_zeropadded = np.zeros((csi_fdomain_cut.shape[0], self.args.resolution_azimuth, self.args.resolution_elevation, csi_fdomain_cut.shape[-1]), dtype = csi_fdomain_cut.dtype)
-				real_rows_half = csi_fdomain_cut.shape[2] // 2
-				real_cols_half = csi_fdomain_cut.shape[3] // 2
-				zeropadded_rows_half = csi_zeropadded.shape[2] // 2
-				zeropadded_cols_half = csi_zeropadded.shape[1] // 2
-				csi_zeropadded[:,zeropadded_cols_half-real_cols_half:zeropadded_cols_half+real_cols_half,zeropadded_rows_half-real_rows_half:zeropadded_rows_half+real_rows_half,:] = np.swapaxes(csi_fdomain_cut[:,0,:,:,:], 1, 2)
-				csi_zeropadded = np.fft.ifftshift(csi_zeropadded, axes = (1, 2))
-				beam_frequency_space = np.fft.fft2(csi_zeropadded, axes = (1, 2))
-				beam_frequency_space = np.fft.fftshift(beam_frequency_space, axes = (1, 2))
-			
-			# Option 3: Azimuth / elevation space via 2D steering vectors
+			# Compute sum of received power per steering angle over all datapoints and subcarriers
+			# real 2d spatial spectrum is too slow...
+			# we can use 2D FFT to get to beamspace, which of course is technically not correct
+			# (cannot separate 2D steering vector into Kronecker product of azimuth / elevation steering vectors)
+			beam_frequency_space = np.einsum("rcae,dbrcs->daes", self.steering_vectors_2d, csi_combined, optimize = True)
+
+		if self.args.raw_power:
+			if self.args.music:
+				raise NotImplementedError("Raw power visualization not supported in MUSIC mode")
+			db_beamspace = 10 * np.log10(np.sum(np.abs(beam_frequency_space)**2, axis=(0, 3)))
+			db_beamspace_norm = (db_beamspace - np.max(db_beamspace) + 15) / 15
+			db_beamspace_norm = np.clip(db_beamspace_norm, 0, 1)
+			color_beamspace = self._viridis(db_beamspace_norm)
+		
+			alpha_channel = np.ones((*color_beamspace.shape[:2], 1))
+			color_beamspace_rgba = np.clip(np.concatenate((color_beamspace, alpha_channel), axis=-1), 0, 1)
+			self.beamspace_power_imagedata = np.asarray(np.swapaxes(color_beamspace_rgba, 0, 1).ravel() * 255, dtype = np.uint8)
+		else:
+			if not self.args.music:
+				self.beamspace_power = np.sum(np.abs(beam_frequency_space)**2, axis = (0, 3))
+
+			power_visualization_beamspace = self.beamspace_power**3
+
+			if self.args.manual_exposure:
+				color_value = power_visualization_beamspace / (10 ** ((1 - self.exposure) / 0.1) + 1e-8)
 			else:
-				# Compute sum of received power per steering angle over all datapoints and subcarriers
-				# real 2d spatial spectrum is too slow...
-				# we can use 2D FFT to get to beamspace, which of course is technically not correct
-				# (cannot separate 2D steering vector into Kronecker product of azimuth / elevation steering vectors)
-				beam_frequency_space = np.einsum("rcae,dbrcs->daes", self.steering_vectors_2d, csi_combined, optimize = True)
+				color_value = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-6)
 
-			if self.args.raw_power:
-				db_beamspace = 10 * np.log10(np.sum(np.abs(beam_frequency_space)**2, axis=(0, 3)))
-				db_beamspace_norm = (db_beamspace - np.max(db_beamspace) + 15) / 15
-				db_beamspace_norm = np.clip(db_beamspace_norm, 0, 1)
-				color_beamspace = self._viridis(db_beamspace_norm)
-			
-				alpha_channel = np.ones((*color_beamspace.shape[:2], 1))
-				color_beamspace_rgba = np.clip(np.concatenate((color_beamspace, alpha_channel), axis=-1), 0, 1)
-				self.beamspace_power_imagedata = np.asarray(np.swapaxes(color_beamspace_rgba, 0, 1).ravel() * 255, dtype = np.uint8)
+			if self.args.colorize_delay:
+				if self.args.music:
+					raise NotImplementedError("Delay colorization not supported in MUSIC mode")
+
+				# Compute beam powers and delay. Beam power is value, delay is hue.
+				beamspace_weighted_delay_phase = np.sum(beam_frequency_space[...,1:] * np.conj(beam_frequency_space[...,:-1]), axis=(0, 3))
+				delay_by_beam = np.angle(beamspace_weighted_delay_phase)
+				mean_delay = np.angle(np.sum(beamspace_weighted_delay_phase))
+
+				hsv = np.zeros((beam_frequency_space.shape[1], beam_frequency_space.shape[2], 3))
+				hsv[:,:,0] = (np.clip((delay_by_beam - mean_delay) / self.args.max_delay, 0, 1) + 1/3) % 1.0
+				hsv[:,:,1] = 0.8
+				hsv[:,:,2] = color_value
+
+				wifi_image_rgb = matplotlib.colors.hsv_to_rgb(hsv)
+				alpha_channel = np.ones((*wifi_image_rgb.shape[:2], 1))
+				wifi_image_rgba = np.clip(np.concatenate((wifi_image_rgb, alpha_channel), axis=-1), 0, 1)
+				self.beamspace_power_imagedata = np.asarray(np.swapaxes(wifi_image_rgba, 0, 1).ravel() * 255, dtype = np.uint8)
 			else:
-				power_beamspace = np.sum(np.abs(beam_frequency_space)**2, axis=(0, 3))
-				power_visualization_beamspace = power_beamspace**3
+				self.beamspace_power_imagedata = np.zeros(4 * self.beamspace_power.size, dtype = np.uint8)
+				self.beamspace_power_imagedata[1::4] = np.clip(np.swapaxes(color_value, 0, 1).ravel(), 0, 1) * 255
+				self.beamspace_power_imagedata[3::4] = 255
 
-				if self.args.manual_exposure:
-					color_value = power_visualization_beamspace / (10 ** ((1 - self.exposure) / 0.1) + 1e-8)
-				else:
-					color_value = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-6)
-
-				if self.args.colorize_delay:
-					# Compute beam powers and delay. Beam power is value, delay is hue.
-					beamspace_weighted_delay_phase = np.sum(beam_frequency_space[...,1:] * np.conj(beam_frequency_space[...,:-1]), axis=(0, 3))
-					delay_by_beam = np.angle(beamspace_weighted_delay_phase)
-					mean_delay = np.angle(np.sum(beamspace_weighted_delay_phase))
-
-					hsv = np.zeros((beam_frequency_space.shape[1], beam_frequency_space.shape[2], 3))
-					hsv[:,:,0] = (np.clip((delay_by_beam - mean_delay) / self.args.max_delay, 0, 1) + 1/3) % 1.0
-					hsv[:,:,1] = 0.8
-					hsv[:,:,2] = color_value
-
-					wifi_image_rgb = matplotlib.colors.hsv_to_rgb(hsv)
-					alpha_channel = np.ones((*wifi_image_rgb.shape[:2], 1))
-					wifi_image_rgba = np.clip(np.concatenate((wifi_image_rgb, alpha_channel), axis=-1), 0, 1)
-					self.beamspace_power_imagedata = np.asarray(np.swapaxes(wifi_image_rgba, 0, 1).ravel() * 255, dtype = np.uint8)
-				else:
-					self.beamspace_power = np.sum(np.abs(beam_frequency_space)**2, axis = (0, 3))
-					self.beamspace_power_imagedata = np.zeros(4 * self.beamspace_power.size, dtype = np.uint8)
-					self.beamspace_power_imagedata[1::4] = np.clip(np.swapaxes(color_value, 0, 1).ravel(), 0, 1) * 255
-					self.beamspace_power_imagedata[3::4] = 255
-
-			self.beamspacePowerImagedataChanged.emit(self.beamspace_power_imagedata.tolist())
+		self.beamspacePowerImagedataChanged.emit(self.beamspace_power_imagedata.tolist())
 
 	def _music_algorithm(self, R):
-		steering_vectors = np.exp(1.0j * np.outer(self.k, np.arange(R.shape[0])))
-
 		# Compute spatial spectrum using MUSIC algorithm based on R
+		# For the relatively small arrays, eig is faster than eigh
+		steering_vectors_2d_flat = self.steering_vectors_2d.reshape(-1, self.steering_vectors_2d.shape[2], self.steering_vectors_2d.shape[3])
 		eig_val, eig_vec = np.linalg.eig(R)
 		order = np.argsort(eig_val)[::-1]
 		Qn = eig_vec[:,order][:,1:]
-		spatial_spectrum = 1 / np.linalg.norm(np.einsum("ae,ra->er", np.conj(Qn), steering_vectors), axis = 0)
-		spatial_spectrum /= 2
+		spatial_spectrum = 1 / np.linalg.norm(np.einsum("ae,a...->e...", Qn, steering_vectors_2d_flat), axis = 0)
+		#print(spatial_spectrum.shape, spatial_spectrum)
 
-		return 20 * np.log10(spatial_spectrum)
-	
+		return spatial_spectrum - np.min(spatial_spectrum)
+
 	def _viridis(self, values):
 		viridis_colormap = np.asarray([
 			(0.267004, 0.004874, 0.329415),
@@ -396,22 +403,6 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 	def scanningAngles(self):
 		return self.scanning_angles.tolist()
 	
-	@PyQt6.QtCore.pyqtProperty(list)
-	def horizontalSpectrum(self):
-		try:
-			spectrum = self.spatial_spectra_db["horizontal"]
-		except:
-			spectrum = -np.inf * np.ones(self.scanning_angles.shape[0])
-		return spectrum.tolist()
-
-	@PyQt6.QtCore.pyqtProperty(list)
-	def verticalSpectrum(self):
-		try:
-			spectrum = self.spatial_spectra_db["vertical"]
-		except:
-			spectrum = -np.inf * np.ones(self.scanning_angles.shape[0])
-		return spectrum.tolist()
-	
 	@PyQt6.QtCore.pyqtProperty(bool, constant=True)
 	def music(self):
 		return self.args.music
@@ -434,7 +425,7 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 
 	@PyQt6.QtCore.pyqtProperty(bool, constant=True)
 	def isFFTBeamspace(self):
-		return not self.args.no_beamspace_fft
+		return not self.args.no_beamspace_fft and not self.args.music
 
 	@PyQt6.QtCore.pyqtProperty(bool, constant=True)
 	def manualExposure(self):

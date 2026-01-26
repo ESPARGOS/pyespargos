@@ -9,25 +9,6 @@ layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
     float qt_Opacity;
 
-	// Hack to get spatial spectra from QML to GLSL
-	mat4 verticalSpatialSpectrum0;
-	mat4 verticalSpatialSpectrum1;
-	mat4 verticalSpatialSpectrum2;
-	mat4 verticalSpatialSpectrum3;
-	mat4 verticalSpatialSpectrum4;
-	mat4 verticalSpatialSpectrum5;
-	mat4 verticalSpatialSpectrum6;
-	mat4 verticalSpatialSpectrum7;
-
-	mat4 horizontalSpatialSpectrum0;
-	mat4 horizontalSpatialSpectrum1;
-	mat4 horizontalSpatialSpectrum2;
-	mat4 horizontalSpatialSpectrum3;
-	mat4 horizontalSpatialSpectrum4;
-	mat4 horizontalSpatialSpectrum5;
-	mat4 horizontalSpatialSpectrum6;
-	mat4 horizontalSpatialSpectrum7;
-
 	bool musicMode;
 	bool fftMode;
 	bool rawBeamspace;
