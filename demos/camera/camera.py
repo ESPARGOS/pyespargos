@@ -5,22 +5,23 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common.PoolDrawer import PoolDrawer
-from demos.common.ConfigManager import ConfigManager
+from demos.common import PoolDrawer
+from demos.common import ConfigManager
+from demos.common import DemoApplication
 
 import matplotlib.colors
-import videocamera
 import numpy as np
 import espargos
 import argparse
 import time
 
 import PyQt6.QtMultimedia
-import PyQt6.QtWidgets
 import PyQt6.QtCore
 import PyQt6.QtQml
 
-class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
+import videocamera
+
+class EspargosDemoCamera(DemoApplication):
     rssiChanged = PyQt6.QtCore.pyqtSignal(float)
     activeAntennasChanged = PyQt6.QtCore.pyqtSignal(float)
     beamspacePowerImagedataChanged = PyQt6.QtCore.pyqtSignal(list)
@@ -30,8 +31,8 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
     DEFAULT_CONFIG = {
             "camera" : {
                 "flip" : False,
-                "format" : 0,
-                "device" : 1
+                "format" : None, # will be populated by app, can take values like "1920x1080 @ 30.00 FPS",
+                "device" : None # will be populated by app, can take values like "/dev/video0"
             },
             "beamformer" : {
                 "type" : "FFT"
@@ -42,10 +43,8 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
         super().__init__(argv)
 
         # Parse command line arguments
-        parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Overlay received power on top of camera image")
-        parser.add_argument("conf", type = str, help = "Path to config file")
+        parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Overlay received power on top of camera image", parents = [self.common_args])
         parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
-        parser.add_argument("-c", "--camera-index", type = int, help = "Index of the camera, if multiple cameras are available")
         parser.add_argument("-d", "--colorize-delay", default = False, help = "Visualize delay of beamspace components using colors", action = "store_true")
         parser.add_argument("-ra", "--resolution-azimuth", type = int, default = 64, help = "Beamspace resolution for azimuth angle")
         parser.add_argument("-re", "--resolution-elevation", type = int, default = 32, help = "Beamspace resolution for elevation angle")
@@ -64,45 +63,42 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
         format_group.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
         format_group.add_argument("-ht40", "--ht40", default = False, help = "Use only CSI from HT40", action = "store_true")
         format_group.add_argument("-ht20", "--ht20", default = False, help = "Use only CSI from HT20", action = "store_true")
-        self.args = parser.parse_args()
+        self.args = self.parse_args(parser)
 
         # Check if at least one format is selected
         if not (self.args.lltf or self.args.ht40 or self.args.ht20):
             print("Error: At least one of --lltf, --ht40 or --ht20 must be selected.")
             sys.exit(1)
 
-        # Load config file
-        self.indexing_matrix, board_names_hosts, cable_lengths, cable_velocity_factors, self.n_rows, self.n_cols = espargos.util.parse_combined_array_config(self.args.conf)
-
         # Load additional calibration data from file, if provided
         self.additional_calibration = None
         if len(self.args.additional_calibration) > 0:
             self.additional_calibration = np.load(self.args.additional_calibration)
 
-        # Set up ESPARGOS pool and backlog
-        self.pool = espargos.Pool([espargos.Board(host) for host in board_names_hosts.values()])
-        self.pool.start()
-        self.pool.calibrate(duration = 3, per_board = False, cable_lengths = cable_lengths, cable_velocity_factors = cable_velocity_factors)
-        self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable_lltf = self.args.lltf,  enable_ht40 = self.args.ht40, enable_ht20 = self.args.ht20, cb_predicate = self._cb_predicate)
-        self.backlog.set_mac_filter("^" + self.args.mac_filter.replace(":", "").replace("-", ""))
-        self.backlog.start()
+        # Initialize combined array setup
+        self.initialize_combined_array(enable_backlog = True, backlog_cb_predicate = self._cb_predicate)
 
-        # Pool configuration manager
-        self.pooldrawer = PoolDrawer(self.pool, parent = self)
+        # Demo configuration manager
         self.democonfig = ConfigManager(self.DEFAULT_CONFIG, parent = self)
-        self.democonfig.uiChangedConfig.connect(self.onUIChangedConfig)
+        self.democonfig.updateAppState.connect(self.onUpdateAppState)
+
+        # Apply optional YAML config to pool/demo config managers
+        self.democonfig.set(self.get_initial_config("demo", default = {}))
 
         # Qt setup
         self.aboutToQuit.connect(self.onAboutToQuit)
         self.engine = PyQt6.QtQml.QQmlApplicationEngine()
 
         # Camera setup
-        self.videocamera = videocamera.VideoCamera(self.args.camera_index)
+        self.videocamera = videocamera.VideoCamera(self.democonfig.get("camera", "device"), self.democonfig.get("camera", "format"))
 
-        # ESPARGOS is a UPA with half-wavelength antenna separation
-        self.scanning_angles = np.linspace(np.deg2rad(-90), np.deg2rad(90), 128)
-        self.k = np.pi * np.sin(self.scanning_angles)
-        self.spatial_spectra_db = dict()
+        # Let UI know about currently selected camera device and format
+        self.democonfig.set({
+            "camera" : {
+                "device" : self.videocamera.getDevice(),
+                "format" : self.videocamera.getFormat()
+            }
+        })
 
         # Pre-compute 2d steering vectors (array manifold)
         phase_c = np.outer(np.arange(self.n_cols), np.linspace(-np.pi, np.pi, self.args.resolution_azimuth))
@@ -139,6 +135,10 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 
     @PyQt6.QtCore.pyqtSlot()
     def updateSpatialSpectrum(self):
+        if not hasattr(self, "backlog"):
+            # No backlog available yet, demo has not fully initialized
+            return
+
         self.backlog.read_start()
         csi_backlog = None
 
@@ -173,7 +173,7 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
         # Only send signal if list of MAC addresses has changed
         # mac_backlog is a numpy array of shape (n_packets, 6) of data type uint8, where each row is a MAC address
         if self.args.mac_list:
-            mac_strings = ["{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}".format(*mac) for mac in mac_backlog]
+            mac_strings = ["{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}".forat(*mac) for mac in mac_backlog]
             mac_strings_set = set(mac_strings)
 
             # Check if set of stored recent MACs match current MACs exactly, including contents
@@ -363,12 +363,11 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
 
     def onAboutToQuit(self):
         self.videocamera.stop()
-        self.pool.stop()
-        self.backlog.stop()
+        super().onAboutToQuit()
         self.engine.deleteLater()
 
     @PyQt6.QtCore.pyqtSlot(dict)
-    def onUIChangedConfig(self, newcfg):
+    def onUpdateAppState(self, newcfg):
         camera_cfg = newcfg.get("camera", {}) if isinstance(newcfg, dict) else {}
         if not isinstance(camera_cfg, dict):
             camera_cfg = {}
@@ -393,12 +392,8 @@ class EspargosDemoCamera(PyQt6.QtWidgets.QApplication):
                 print(f"Error setting camera flip: {e}")
 
         # Let configmanager know we're done
-        self.democonfig.uiChangedConfigHandled.emit()
+        self.democonfig.updateAppStateHandled.emit()
 
-    @PyQt6.QtCore.pyqtProperty(list, constant=True)
-    def scanningAngles(self):
-        return self.scanning_angles.tolist()
-    
     @PyQt6.QtCore.pyqtProperty(bool, constant=True)
     def music(self):
         return self.democonfig.get("beamformer", "type") == "MUSIC"

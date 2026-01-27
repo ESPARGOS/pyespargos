@@ -205,7 +205,7 @@ Item {
 			configManager.showError(title, message)
 		}
 
-		function onAppChangedConfig(jsonStr) {
+		function onUpdateUIState(jsonStr) {
 			try {
 				if (jsonStr === undefined || jsonStr === null) return
 				if (typeof jsonStr === "string") {
@@ -213,8 +213,8 @@ Item {
 				} else if (typeof jsonStr === "object") {
 					configManager.applyConfig(jsonStr)
 				}
-				if (endpoint && typeof endpoint.appChangedConfigHandled === "function") {
-					endpoint.appChangedConfigHandled()
+				if (endpoint && typeof endpoint.updateUIStateHandled === "function") {
+					endpoint.updateUIStateHandled()
 				}
 			} catch (e) {
 				console.log("Config push-update failed:", e)

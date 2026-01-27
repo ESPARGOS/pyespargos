@@ -296,7 +296,7 @@ Drawer {
 				text: "Reset to Defaults"
 				onClicked: {
 					poolConfigManager.action("reset_config")
-					// Note: UI will be updated via appChangedConfig connection
+					// Note: UI will be updated via updateUIState connection
 				}
 			}
 

@@ -294,17 +294,19 @@ class Pool(object):
         complete_clusters_ht20 = []
         complete_clusters_ht40 = []
 
-        channel_primary = None
-        channel_secondary = None
+        # Read wificonf to determine primary/secondary channel
+        wificonf = self.get_wificonf()
+        channel_primary = wificonf.get("channel-primary", None)
+        channel_secondary = wificonf.get("channel-secondary", None)
+        channel_secondary = -1 if channel_secondary == 2 else channel_secondary
 
         any_csi_count = 0
         for cluster in clusters:
-            if channel_primary is None:
-                channel_primary = cluster.get_primary_channel()
-                channel_secondary = cluster.get_secondary_channel()
-            else:
-                assert(channel_primary == cluster.get_primary_channel())
-                assert(channel_secondary == cluster.get_secondary_channel())
+            cluster_channel_primary = cluster.get_primary_channel()
+            cluster_channel_secondary = cluster.get_secondary_channel_relative()
+            if (channel_primary != cluster_channel_primary or channel_secondary != cluster_channel_secondary):
+                self.logger.warning(f"Calibration cluster with differing channel settings detected (most likely stale data), expected primary channel {channel_primary} and secondary channel {channel_secondary}, but got primary channel {cluster_channel_primary} and secondary channel {cluster_channel_secondary}. Skipping cluster.")
+                continue
 
             completion = cluster.get_completion()[board_num] if board_num is not None else cluster.get_completion()
             if np.any(completion):

@@ -350,11 +350,11 @@ def estimate_toas_rootmusic(csi_fdomain: np.ndarray, max_source_count = 2, chunk
 
 	return toas_by_antenna
 
-def parse_combined_array_config(config_file):
+def parse_combined_array_config(config_dict: dict):
 	"""
 	Parse the configuration file for demos that use combined array.
 
-	:param config_file: The path to the configuration file.
+	:param config_dict: The configuration dictionary to parse.
 	:return indexing_matrix: The indexing matrix to map the CSI data of the subarrays to the CSI data of the large array.
 	:return board_names_hosts: The names of the boards and their hostnames.
 	:return cable_lengths: The lengths of the cables connecting the boards.
@@ -362,8 +362,7 @@ def parse_combined_array_config(config_file):
 	:return n_rows: The number of rows in the array.
 	:return n_cols: The number of columns in the array.
 	"""
-	with open(config_file, "r") as conffile:
-		config = yaml.safe_load(conffile)
+	config = config_dict.copy()
 
 	# Make sure array is square
 	n_rows = len(config["array"])

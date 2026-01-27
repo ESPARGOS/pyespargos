@@ -3,13 +3,12 @@
 import PyQt6.QtCore
 
 import threading
-import json
 import re
 
 import espargos.pool
 import espargos.csi
 
-from . import ConfigManager
+from .config_manager import ConfigManager
 
 class PoolDrawer(PyQt6.QtCore.QObject):
     DEFAULT_CONFIG = {
@@ -35,24 +34,35 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         },
     }
 
+    # Init complete signal
+    initComplete = PyQt6.QtCore.pyqtSignal()
+
     def __init__(self, pool : espargos.pool.Pool, force_config = None, parent = None):
         # Note that the current pool config is authoritative, the default config is just for UI initialization
         # However, if force_config is given, it takes precedence
         super().__init__(parent=parent)
-        self.configmanager = ConfigManager.ConfigManager(self.DEFAULT_CONFIG, parent=self)
+        self.cfgman = ConfigManager(self.DEFAULT_CONFIG, parent=self)
         self.pool = pool
 
-        # Populate from pool (authoritative for non-UI fields)
-        if force_config:
-            self.configmanager.set(force_config)
-        else:
-            self.configmanager.set(self._read_config_from_pool())
-
         # Connect to UI changes
-        self.configmanager.uiChangedConfig.connect(self._write_config_to_pool)
+        self.cfgman.updateAppState.connect(self._write_config_to_pool)
+
+        # Two initialization options:
+        # * If force_config is given, apply it to both UI and Pool (config is authoritative)
+        # * Otherwise, read current Pool config from devices and set UI accordingly (devices are authoritative)
+        # Apply later
+        def apply_initial_config():
+            if force_config:
+                self.cfgman.forceConfigApplied.connect(self.initComplete)
+                self.cfgman.force(force_config)
+            else:
+                self.initComplete.emit()
+                self.cfgman.set(self._read_config_from_pool())
+
+        PyQt6.QtCore.QTimer.singleShot(0, apply_initial_config)
 
         # Connect actions
-        self.configmanager.action.connect(lambda action_name: {
+        self.cfgman.action.connect(lambda action_name: {
             "reset_config": self._action_reset_config,
             "reload_config": self._action_reload_config,
             "calibrate": self._action_calibrate,
@@ -61,7 +71,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         self.calibration_running = False
 
     def configManager(self):
-        return self.configmanager
+        return self.cfgman
 
     def _read_config_from_pool(self) -> dict:
         """
@@ -187,17 +197,17 @@ class PoolDrawer(PyQt6.QtCore.QObject):
                     self.pool.set_mac_filter(mac_filter)
             except Exception as e:
                 err_str = str(e)
-                self.configmanager.emitShowError("Failed to apply configuration", err_str)
+                self.cfgman.emitShowError("Failed to apply configuration", err_str)
 
             try:
                 # Read back device-backed config to sync UI state
-                self.configmanager.set(self._read_config_from_pool())
+                self.cfgman.set(self._read_config_from_pool())
             except Exception as e:
                 err_str = str(e)
-                self.configmanager.emitShowError("Failed to read back configuration", err_str)
+                self.cfgman.emitShowError("Failed to read back configuration", err_str)
                 
             # Let configmanager know we're done
-            self.configmanager.uiChangedConfigHandled.emit()
+            self.cfgman.updateAppStateHandled.emit()
 
         threading.Thread(target=worker, args=(delta,), daemon=True).start()
 
@@ -205,7 +215,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         self._write_config_to_pool(self.DEFAULT_CONFIG)
 
     def _action_reload_config(self):
-        self.configmanager.set(self._read_config_from_pool())
+        self.cfgman.set(self._read_config_from_pool())
 
     def _action_calibrate(self):
         if self.calibration_running:

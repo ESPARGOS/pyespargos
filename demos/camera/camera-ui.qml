@@ -27,12 +27,24 @@ Common.DemoApplication {
 				id: cameraDevice
 				property string configKey: "camera.device"
 				property string configProp: "currentIndex"
+				property var encode: function(v) { return cameraDevice.model[v] }
+				property var decode: function(v) {
+					let idx = cameraDevice.model.indexOf(v)
+					return idx >= 0 ? idx : 0
+				}
 				Component.onCompleted: demoDrawer.configManager.register(this)
 				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
 				implicitWidth: 210
 				model: WebCam.availableDevices
 				currentIndex: 0
 				function isUserActive() { return pressed || popup.visible }
+				delegate: ItemDelegate {
+					width: cameraDevice.width
+					text: modelData
+
+					ToolTip.visible: hovered
+					ToolTip.text: modelData
+				}
 			}
 
 			Label { text: "Format"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -40,12 +52,16 @@ Common.DemoApplication {
 				id: cameraFormat
 				property string configKey: "camera.format"
 				property string configProp: "currentIndex"
+				property var encode: function(v) { return cameraFormat.model[v] }
+				property var decode: function(v) {
+					let idx = cameraFormat.model.indexOf(v)
+					return idx >= 0 ? idx : 0
+				}
 				Component.onCompleted: {
 					demoDrawer.configManager.register(this)
 
 					// Populate formats for initial device
 					cameraFormat.model = WebCam.availableFormats
-					cameraFormat.currentIndex = cameraFormat.model.length - 1
 				}
 				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
 				implicitWidth: 210

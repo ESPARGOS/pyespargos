@@ -13,7 +13,7 @@ import copy
 # program state changes (e.g., due to external events).
 
 # A class deriving from ConfigManager must
-# - hook up to uiChangedConfig signal to receive config changes from UI
+# - hook up to updateAppState signal to receive config changes from UI
 #   * delta contains only keys to change
 #   * if the desired state cannot be achieved, the difference must be
 #     provided back via set(), an error (emitShowError) may optionally be emitted
@@ -42,14 +42,14 @@ class ConfigManager(PyQt6.QtCore.QObject):
     # Internal: schedule starting the QTimer on the QObject's thread
     _scheduleApplyTimer = PyQt6.QtCore.pyqtSignal()
 
-    # QML hook (ConfigManager.qml listens via Connections.onAppChangedConfig)
+    # QML hook (ConfigManager.qml listens via Connections.onUpdateUIState)
     # Emitted when the application triggered a config update
-    appChangedConfig = PyQt6.QtCore.pyqtSignal(str)
-    appChangedConfigHandled = PyQt6.QtCore.pyqtSignal()
+    updateUIState = PyQt6.QtCore.pyqtSignal(str)
+    updateUIStateHandled = PyQt6.QtCore.pyqtSignal()
 
     # Emitted when the UI triggered a config update
-    uiChangedConfig = PyQt6.QtCore.pyqtSignal(dict)
-    uiChangedConfigHandled = PyQt6.QtCore.pyqtSignal()
+    updateAppState = PyQt6.QtCore.pyqtSignal(dict)
+    updateAppStateHandled = PyQt6.QtCore.pyqtSignal()
 
     # Emitted when UI requests an action
     action = PyQt6.QtCore.pyqtSignal(str)
@@ -57,35 +57,48 @@ class ConfigManager(PyQt6.QtCore.QObject):
     # QML hook (ConfigManager.qml listens via Connections.onShowError)
     showError = PyQt6.QtCore.pyqtSignal(str, str)
 
-    def __init__(self, default_config: dict = None, parent=None):
+    # Emitted when a forceful config application has completed
+    forceConfigApplied = PyQt6.QtCore.pyqtSignal()
+
+    def __init__(self, default_ui_config: dict = None, parent=None):
+        """
+        Initialize ConfigManager with optional default configuration.
+
+        :param default_ui_config: Default configuration for UI initialization. If app state is authoritative, this is just for initial UI state, the app should call set() to provide true state later on.
+        """
         super().__init__(parent=parent)
 
         self.logger = logging.getLogger("demo.ConfigManager")
-        if default_config is not None:
-            self.config = copy.deepcopy(default_config)
-        else:
-            self.config = dict()
+        # Keep separate copies of the app and UI state
+        self.app_config: dict = dict()
+        self.ui_config: dict = dict()
 
-        # Async apply state
-        self._pending_from_ui: dict = dict()
-        self._pending_from_app: dict = dict()
+        # Initialize asynchronous apply machinery
+        self._pending_to_app: dict = dict()
+        self._pending_to_ui: dict = dict()
         self._apply_lock = threading.Lock()
         self._apply_in_flight = False
         self._apply_timer = PyQt6.QtCore.QTimer(self)
         self._apply_timer.setSingleShot(True)
         self._apply_timer.timeout.connect(self._async_apply)
         self._scheduleApplyTimer.connect(lambda: self._apply_timer.start(0))
+        self.is_force_apply = False
 
         # Signal handled synchronization
-        self._ui_changed_handled_event = threading.Event()
-        self._app_changed_handled_event = threading.Event()
-        self.uiChangedConfigHandled.connect(lambda: self._ui_changed_handled_event.set())
-        self.appChangedConfigHandled.connect(lambda: self._app_changed_handled_event.set())
-        self._handled_wait_timeout = 20.0
+        self._update_app_handled_event = threading.Event()
+        self._update_ui_handled_event = threading.Event()
+        self.updateAppStateHandled.connect(lambda: self._update_app_handled_event.set())
+        self.updateUIStateHandled.connect(lambda: self._update_ui_handled_event.set())
+        self._handled_wait_timeout = 5.0
+
+        # Initialize config with defaults
+        # Note: UI must fetch initial config itself once ready
+        if default_ui_config:
+            deep_update(self.ui_config, default_ui_config)
 
     def _wait_for_handled(self, event: threading.Event, name: str):
         if not event.wait(timeout=self._handled_wait_timeout):
-            self.logger.warning(f"Timed out waiting for {name}ChangedConfigHandled")
+            self.logger.warning(f"Timed out waiting for {name} update to be handled")
 
     def _split_path(self, key: str):
         if key is None:
@@ -133,8 +146,25 @@ class ConfigManager(PyQt6.QtCore.QObject):
         self.showError.emit(title, message)
 
     def set(self, new_config: dict):
-        # Queue pending changes (newest wins per key)
-        deep_update(self._pending_from_app, new_config)
+        """
+        Update configuration from application.
+        """
+        # Update app-side state immediately, queue changes to UI
+        deep_update(self.app_config, new_config)
+        deep_update(self._pending_to_ui, new_config)
+        self._scheduleApplyTimer.emit()
+
+    def force(self, new_config: dict):
+        """
+        Forcefully set the configuration to new_config, updating both UI and app state.
+        """
+        if new_config is None:
+            return
+
+        # Queue pending changes for both sides (applied asynchronously)
+        deep_update(self._pending_to_ui, new_config)
+        deep_update(self._pending_to_app, new_config)
+        self.is_force_apply = True
         self._scheduleApplyTimer.emit()
 
     def _async_apply(self):
@@ -145,17 +175,17 @@ class ConfigManager(PyQt6.QtCore.QObject):
                 return
             
             # Nothing to do if there are no pending changes
-            if not self._pending_from_ui and not self._pending_from_app:
+            if not self._pending_to_app and not self._pending_to_ui:
                 return
 
             # Pending config changes from app always take precedence over UI changes
-            pending = self._pending_from_app
-            self._pending_from_app = {}
+            pending = self._pending_to_ui
+            self._pending_to_ui = {}
             pending_source = "app"
 
             if not pending:
-                pending = dict(self._pending_from_ui)
-                self._pending_from_ui = {}
+                pending = dict(self._pending_to_app)
+                self._pending_to_app = {}
                 pending_source = "ui"
 
             self._apply_in_flight = True
@@ -163,29 +193,33 @@ class ConfigManager(PyQt6.QtCore.QObject):
         def worker(pending: dict, pending_source: str):
             try:
                 # Determine actual delta between current config and desired state
+                target_cfg = self.app_config if pending_source == "ui" else self.ui_config
                 delta = {}
                 for k, v in pending.items():
-                    if k not in self.config or self.config[k] != v:
+                    if k not in target_cfg or target_cfg[k] != v:
                         delta[k] = v
 
-                # Changes are applied to self.config *before* handlers are called,
+                # Changes are applied to the target config (app/ui) *before* handlers are called,
                 # so that handlers always see the latest state (the values that
                 # changed are in delta).
-                deep_update(self.config, delta)
+                deep_update(target_cfg, delta)
 
                 if pending_source == "ui":
-                    self._ui_changed_handled_event.clear()
-                    self.uiChangedConfig.emit(delta)
-                    self._wait_for_handled(self._ui_changed_handled_event, "ui")
+                    self._update_app_handled_event.clear()
+                    self.updateAppState.emit(delta)
+                    self._wait_for_handled(self._update_app_handled_event, "ui")
+                    if self.is_force_apply:
+                        self.is_force_apply = False
+                        self.forceConfigApplied.emit()
                 else:
-                    self._app_changed_handled_event.clear()
-                    self.appChangedConfig.emit(json.dumps(delta))
-                    self._wait_for_handled(self._app_changed_handled_event, "app")
+                    self._update_ui_handled_event.clear()
+                    self.updateUIState.emit(json.dumps(delta))
+                    self._wait_for_handled(self._update_ui_handled_event, "app")
 
             finally:
                 with self._apply_lock:
                     self._apply_in_flight = False
-                    has_more = bool(self._pending_from_ui) or bool(self._pending_from_app)
+                    has_more = bool(self._pending_to_app) or bool(self._pending_to_ui)
 
                 # Trigger next run if more deltas arrived meanwhile (must be on QObject thread)
                 if has_more:
@@ -193,11 +227,6 @@ class ConfigManager(PyQt6.QtCore.QObject):
 
         threading.Thread(target=worker, args=(pending, pending_source), daemon=True).start()
 
-    @PyQt6.QtCore.pyqtSlot(result=str)
-    def getConfigFromUI(self):
-        return json.dumps(self.config)
-    
-    @PyQt6.QtCore.pyqtSlot(str, result="QVariant")
     def get(self, *path_parts):
         # path_parts can be either
         # * none (returns whole config)
@@ -206,10 +235,14 @@ class ConfigManager(PyQt6.QtCore.QObject):
         if len(path_parts) == 1 and isinstance(path_parts[0], str):
             path_parts = self._split_path(path_parts[0])
 
-        found, value = self._get_path(self.config, list(path_parts))
+        found, value = self._get_path(self.app_config, list(path_parts))
         if not found:
             return None
         return copy.deepcopy(value)
+
+    @PyQt6.QtCore.pyqtSlot(result=str)
+    def getConfigFromUI(self):
+        return json.dumps(self.ui_config)
 
     @PyQt6.QtCore.pyqtSlot(str)
     def setConfigFromUI(self, config_json):
@@ -223,10 +256,13 @@ class ConfigManager(PyQt6.QtCore.QObject):
         for path_parts, v in self._flatten_incoming(incoming):
             if not path_parts:
                 continue
-            found, current = self._get_path(self.config, path_parts)
-            if not found:
+            found_ui, current_ui = self._get_path(self.ui_config, path_parts)
+            found_app, current_app = self._get_path(self.app_config, path_parts)
+            if not found_ui and not found_app:
                 self.logger.warning(f"Ignoring unknown config key: {'.'.join(path_parts)}")
                 continue
+
+            current = current_ui if found_ui else current_app
 
             type_ = type(current)
             if type_ is bool:
@@ -250,6 +286,8 @@ class ConfigManager(PyQt6.QtCore.QObject):
 
         # Queue pending changes (newest wins per key)
         if delta:
-            deep_update(self._pending_from_ui, delta)
+            # Update UI state immediately, queue changes to app
+            deep_update(self.ui_config, delta)
+            deep_update(self._pending_to_app, delta)
 
         self._scheduleApplyTimer.emit()

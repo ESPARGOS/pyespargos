@@ -118,4 +118,25 @@ ApplicationWindow {
 		antialiasing: true
 		z: 10
 	}
+
+	Rectangle {
+		anchors.centerIn: parent
+		width: Math.min(parent.width * 0.5, 420)
+		height: 100
+		radius: 12
+		color: "#80000000"
+		border.color: "#40ffffff"
+		border.width: 2
+		z: 100
+
+		visible: backend.initializing
+
+		Text {
+			anchors.centerIn: parent
+			text: "Initializing..."
+			color: "#ffffff"
+			font.pixelSize: 26
+			font.bold: true
+		}
+	}
 }

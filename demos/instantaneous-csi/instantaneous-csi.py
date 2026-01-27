@@ -5,28 +5,27 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common.PoolDrawer import PoolDrawer
+from demos.common import PoolDrawer, DemoApplication
 
 import numpy as np
 import espargos
 import argparse
 
-import PyQt6.QtWidgets
 import PyQt6.QtCharts
 import PyQt6.QtCore
 import PyQt6.QtQml
 
-class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
+class EspargosDemoInstantaneousCSI(DemoApplication):
 	def __init__(self, argv):
 		super().__init__(argv)
 
 		# Parse command line arguments
-		parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Show instantaneous CSI over subcarrier index (single board)")
+		parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Show instantaneous CSI over subcarrier index (single board)", parents = [self.common_args])
 		parser.add_argument("hosts", type = str, help = "Comma-separated list of host addresses (IP or hostname) of ESPARGOS controllers")
 		parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
 		parser.add_argument("-s", "--shift-peak", default = False, help = "Time-shift CSI so that first peaks align", action = "store_true")
 		parser.add_argument("-o", "--oversampling", type = int, default = 4, help = "Oversampling factor for time-domain CSI")
-		parser.add_argument("-c", "--no-calib", default = False, help = "Do not calibrate", action = "store_true")
+		parser.add_argument("--no-calib", default = False, help = "Do not calibrate", action = "store_true")
 		display_group = parser.add_mutually_exclusive_group()
 		display_group.add_argument("-t", "--timedomain", default = False, help = "Display CSI in time-domain", action = "store_true")
 		display_group.add_argument("-m", "--music", default = False, help = "Display PDP computed via MUSIC algorithm", action = "store_true")
@@ -35,7 +34,7 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		format_group.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
 		format_group.add_argument("-ht40", "--ht40", default = False, help = "Use only CSI from HT40", action = "store_true")
 		format_group.add_argument("-ht20", "--ht20", default = False, help = "Use only CSI from HT20", action = "store_true")
-		self.args = parser.parse_args()
+		self.args = self.parse_args(parser)
 
 		# Check if at least one format is selected
 		if not (self.args.lltf or self.args.ht40 or self.args.ht20):
@@ -44,12 +43,7 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 
 		# Set up ESPARGOS pool and backlog
 		hosts = self.args.hosts.split(",")
-		self.pool = espargos.Pool([espargos.Board(host) for host in hosts])
-		self.pool.start()
-		if not self.args.no_calib:
-			self.pool.calibrate(duration = 2, per_board=False)
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable_lltf = self.args.lltf, enable_ht40 = self.args.ht40, enable_ht20 = self.args.ht20, calibrate = not self.args.no_calib)
-		self.backlog.start()
+		self.initialize_pool(hosts, enable_backlog = True, calibrate = not self.args.no_calib)
 
 		# Pool configuration manager
 		self.pooldrawer = PoolDrawer(self.pool, parent = self)
@@ -63,14 +57,13 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 		self.engine = PyQt6.QtQml.QQmlApplicationEngine()
 		
 		if self.args.lltf:
-			csi_shape = self.backlog.get_lltf().shape
+			self.subcarrier_count = espargos.csi.LEGACY_COEFFICIENTS_PER_CHANNEL
 		elif self.args.ht40:
-			csi_shape = self.backlog.get_ht40().shape
+			self.subcarrier_count = 2 * espargos.csi.HT_COEFFICIENTS_PER_CHANNEL + espargos.csi.HT40_GAP_SUBCARRIERS
 		else:
-			csi_shape = self.backlog.get_ht20().shape
+			self.subcarrier_count = espargos.csi.HT_COEFFICIENTS_PER_CHANNEL
 
-		self.sensor_count = csi_shape[1] * csi_shape[2] * csi_shape[3]
-		self.subcarrier_count = csi_shape[4]
+		self.sensor_count = len(hosts) * espargos.constants.ANTENNAS_PER_BOARD
 		self.subcarrier_range = np.arange(-self.subcarrier_count // 2, self.subcarrier_count // 2)
 
 	@PyQt6.QtCore.pyqtProperty(int, constant=True)
@@ -102,6 +95,10 @@ class EspargosDemoInstantaneousCSI(PyQt6.QtWidgets.QApplication):
 	# list parameters contain PyQt6.QtCharts.QLineSeries
 	@PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis)
 	def updateCSI(self, powerSeries, phaseSeries, axis):
+		if not hasattr(self, "backlog"):
+			# Backlog not yet initialized
+			return
+
 		self.backlog.read_start()
 		if self.args.lltf:
 			csi_backlog = self.backlog.get_lltf()
