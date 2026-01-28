@@ -151,7 +151,13 @@ class Board(object):
             {
               "enable": true|false,
               "mac": "00:11:22:33:44:55"
+              "mac_mask": "ff:ff:ff:ff:ff:ff"
             }
+        The "enable" field toggles MAC filtering. When enabled, only packets from transmitters
+        whose MAC address matches the given "mac" (applying the "mac_mask") will be received.
+        "mac_mask" is a bitmask applied to both the configured MAC and the sender MAC before comparison.
+        Only provided fields will be changed; others will remain as previously configured.
+
         :param mac_filter: MAC filter configuration dict
         
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
@@ -167,7 +173,8 @@ class Board(object):
 
             {
               "enable": true|false,
-              "mac": "00:11:22:33:44:55"   # typically present when enable=true
+              "mac": "00:11:22:33:44:55",
+              "mac_mask": "ff:ff:ff:ff:ff:ff"
             }
 
         :return: MAC filter configuration dict

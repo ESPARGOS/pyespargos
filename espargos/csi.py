@@ -395,7 +395,8 @@ class serialized_csi_v3_t(ctypes.LittleEndianStructure):
         ("acquire_val_scale_cfg", ctypes.c_uint8),
         ("rfswitch_state", ctypes.c_uint32),
         ("is_radar", ctypes.c_bool),
-        ("antid", ctypes.c_uint8)
+        ("antid", ctypes.c_uint8),
+        ("acquire_lltf_bit_mode", ctypes.c_bool)
     ]
 
     def __new__(self, buf=None):
