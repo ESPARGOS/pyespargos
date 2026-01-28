@@ -1,18 +1,19 @@
 # Use this configuration if you only have one ESPARGOS board
 
-boards:
-  espargoscam:
-    host: 192.168.1.2
-    cable:
-      length: 0.0
-      velocity_factor: 0.76
+combined-array:
+  boards:
+    espargoscam:
+      host: 192.168.1.2
+      cable:
+        length: 0.0
+        velocity_factor: 0.76
 
-array:
-  - - "espargoscam.0.0"
-    - "espargoscam.0.1"
-    - "espargoscam.0.2"
-    - "espargoscam.0.3"
-  - - "espargoscam.1.0"
-    - "espargoscam.1.1"
-    - "espargoscam.1.2"
-    - "espargoscam.1.3"
+  array:
+    - - "espargoscam.0.0"
+      - "espargoscam.0.1"
+      - "espargoscam.0.2"
+      - "espargoscam.0.3"
+    - - "espargoscam.1.0"
+      - "espargoscam.1.1"
+      - "espargoscam.1.2"
+      - "espargoscam.1.3"

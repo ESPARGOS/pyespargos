@@ -78,5 +78,4 @@ class VideoCamera(QCamera):
 	@PyQt6.QtCore.pyqtProperty(list, constant=False)
 	def availableFormats(self) -> list[str]:
 		formats = self.cameraDevice().videoFormats()
-		print(type(formats[0]))
 		return [self._format_to_string(fmt) for fmt in formats]

@@ -100,6 +100,12 @@ class EspargosDemoCamera(DemoApplication):
             }
         })
 
+        if self.democonfig.get("camera", "flip") is None:
+            self.democonfig.set({"camera": {"flip": self.DEFAULT_CONFIG["camera"]["flip"]}})
+
+        if self.democonfig.get("beamformer", "type") is None:
+            self.democonfig.set({"beamformer": {"type": self.DEFAULT_CONFIG["beamformer"]["type"]}})
+
         # Pre-compute 2d steering vectors (array manifold)
         phase_c = np.outer(np.arange(self.n_cols), np.linspace(-np.pi, np.pi, self.args.resolution_azimuth))
         phase_r = np.outer(np.arange(self.n_rows), np.linspace(-np.pi, np.pi, self.args.resolution_elevation))
