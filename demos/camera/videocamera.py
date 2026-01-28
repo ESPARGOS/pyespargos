@@ -1,5 +1,5 @@
 import PyQt6.QtCore
-from PyQt6.QtMultimedia import QMediaDevices, QCameraDevice, QCamera
+from PyQt6.QtMultimedia import QMediaDevices, QCameraDevice, QCameraFormat, QCamera
 
 class VideoCamera(QCamera):
 	"QCamera which exposes relevant properties for QML."
@@ -41,7 +41,7 @@ class VideoCamera(QCamera):
 	def _device_to_string(self, device: QCameraDevice) -> str:
 		return bytes(device.id()).decode("utf-8") + ": " + device.description()
 	
-	def _format_to_string(self, fmt: QMediaDevices.VideoFormat) -> str:
+	def _format_to_string(self, fmt: QCameraFormat) -> str:
 		return f"{fmt.resolution().width()}x{fmt.resolution().height()} @ {fmt.maxFrameRate():.2f} FPS"
 
 	def _find_device(self, device_str: str) -> QCameraDevice:
@@ -57,10 +57,10 @@ class VideoCamera(QCamera):
 				return device
 		raise ValueError(f"No camera device matching '{device_str}' found")
 
-	def _find_format(self, format_str: str) -> QMediaDevices.VideoFormat:
+	def _find_format(self, format_str: str) -> QCameraFormat:
 		"""
-		Find a QMediaDevices.VideoFormat by its string representation.
-		Returns the first matching QMediaDevices.VideoFormat.
+		Find a QCameraFormat by its string representation.
+		Returns the first matching QCameraFormat.
 		A match is found if format_str is *contained* (no exact match required) in the string "<resolution> @ <framerate>".
 		Raises ValueError if no matching format is found.
 		"""
@@ -78,4 +78,5 @@ class VideoCamera(QCamera):
 	@PyQt6.QtCore.pyqtProperty(list, constant=False)
 	def availableFormats(self) -> list[str]:
 		formats = self.cameraDevice().videoFormats()
+		print(type(formats[0]))
 		return [self._format_to_string(fmt) for fmt in formats]
