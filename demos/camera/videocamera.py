@@ -1,5 +1,5 @@
 import PyQt6.QtCore
-from PyQt6.QtMultimedia import QMediaDevices, QCamera
+from PyQt6.QtMultimedia import QMediaDevices, QCameraDevice, QCamera
 
 class VideoCamera(QCamera):
 	"QCamera which exposes relevant properties for QML."
@@ -38,16 +38,16 @@ class VideoCamera(QCamera):
 	def getFormat(self) -> str:
 		return self._format_to_string(self.cameraFormat())
 
-	def _device_to_string(self, device: QMediaDevices.VideoInput) -> str:
+	def _device_to_string(self, device: QCameraDevice) -> str:
 		return bytes(device.id()).decode("utf-8") + ": " + device.description()
 	
 	def _format_to_string(self, fmt: QMediaDevices.VideoFormat) -> str:
 		return f"{fmt.resolution().width()}x{fmt.resolution().height()} @ {fmt.maxFrameRate():.2f} FPS"
 
-	def _find_device(self, device_str: str) -> QMediaDevices.VideoInput:
+	def _find_device(self, device_str: str) -> QCameraDevice:
 		"""
-		Find a QMediaDevices.VideoInput by its string representation.
-		Returns the first matching QMediaDevices.VideoInput.
+		Find a QCameraDevice by its string representation.
+		Returns the first matching QCameraDevice.
 		A match is found if device_str is *contained* (no exact match required) in the string "<id>: <description>".
 		Raises ValueError if no matching device is found.
 		"""
