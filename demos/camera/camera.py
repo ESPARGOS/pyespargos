@@ -175,7 +175,7 @@ class EspargosDemoCamera(DemoApplication):
         # Only send signal if list of MAC addresses has changed
         # mac_backlog is a numpy array of shape (n_packets, 6) of data type uint8, where each row is a MAC address
         if self.args.mac_list:
-            mac_strings = ["{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}".forat(*mac) for mac in mac_backlog]
+            mac_strings = ["{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}".format(*mac) for mac in mac_backlog]
             mac_strings_set = set(mac_strings)
 
             # Check if set of stored recent MACs match current MACs exactly, including contents
