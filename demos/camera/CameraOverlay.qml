@@ -77,7 +77,7 @@ Rectangle {
 
 	Image {
 		source: "img/beamspace_transform.png"
-    	anchors.fill: parent
+    	anchors.fill: spatialSpectrumShader
 	    fillMode: Image.Stretch
 		visible: backend.rawBeamspace === "Beamspace"
     }
