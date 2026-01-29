@@ -5,7 +5,6 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import PoolDrawer
 from demos.common import ConfigManager
 from demos.common import DemoApplication
 
@@ -27,6 +26,7 @@ class EspargosDemoCamera(DemoApplication):
     beamspacePowerImagedataChanged = PyQt6.QtCore.pyqtSignal(list)
     recentMacsChanged = PyQt6.QtCore.pyqtSignal(list)
     cameraFlipChanged = PyQt6.QtCore.pyqtSignal()
+    rawBeamspaceChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
             "camera" : {
@@ -36,6 +36,10 @@ class EspargosDemoCamera(DemoApplication):
             },
             "beamformer" : {
                 "type" : "FFT"
+            },
+            "visualization" : {
+                "space" : "Angles",
+                "overlay" : "Default"
             }
         }
 
@@ -55,8 +59,6 @@ class EspargosDemoCamera(DemoApplication):
         parser.add_argument("-e", "--manual-exposure", default = False, help = "Use manual exposure / brightness control for WiFi overlay", action = "store_true")
         parser.add_argument("--mac-filter", type = str, default = "", help = "Only display CSI data from given MAC address")
         parser.add_argument("--max-age", type = float, default = 0.0, help = "Limit maximum age of CSI data to this value (in seconds). Set to 0.0 to disable.")
-        parser.add_argument("--raw-beamspace", default = False, help = "Display raw beamspace data instead of camera overlay", action = "store_true")
-        parser.add_argument("--raw-power", default = False, help = "Display raw beamspace power data instead of processed version", action = "store_true")
         parser.add_argument("--csi-completion-timeout", type = float, default = 0.2, help = "Time after which CSI cluster is considered complete even if not all antennas have provided data. Set to zero to disable processing incomplete clusters.")
         parser.add_argument("--mac-list", default = False, help = "Display list of MAC addresses of available transmitters", action = "store_true")
         format_group = parser.add_mutually_exclusive_group()
@@ -211,20 +213,16 @@ class EspargosDemoCamera(DemoApplication):
         # Shift all CSI datapoints in time so that LoS component arrives at the same time
         csi_combined = espargos.util.shift_to_firstpeak_sync(csi_combined, peak_threshold = (0.4 if self.args.lltf else 0.1))
         
-        match self.democonfig.get("beamformer", "type"):
-            case "MUSIC":
-                # Option 1: MUSIC spatial spectrum
+        beamformer_type = self.democonfig.get("beamformer", "type")
+        match beamformer_type:
+            case "MUSIC" | "MVDR":
+                # Option 1: MUSIC or MVDR spatial spectrum
                 # Multipath can be resolved due to multiple subcarriers, which pfrovide sufficient decorelation
                 # between different paths if delay spread is sufficiently large.
                 # Compute array covariance matrix R. Flatten CSI over horizontal and vertical dimensions of array.
                 csi_flat = csi_combined.reshape(csi_combined.shape[0], csi_combined.shape[1], csi_combined.shape[2] * csi_combined.shape[3], csi_combined.shape[4])
                 R = np.einsum("dbis,dbjs->ij", csi_flat, np.conj(csi_flat))
-                self.beamspace_power = self._music_algorithm(R)
-
-            case "MVDR":
-                csi_flat = csi_combined.reshape(csi_combined.shape[0], csi_combined.shape[1], csi_combined.shape[2] * csi_combined.shape[3], csi_combined.shape[4])
-                R = np.einsum("dbis,dbjs->ij", csi_flat, np.conj(csi_flat))
-                self.beamspace_power = self._mvdr_algorithm(R)
+                self.beamspace_power = self._music_algorithm(R) if beamformer_type == "MUSIC" else self._mvdr_algorithm(R)
 
             # Option 2: Beamspace via FFT
             case "FFT":
@@ -250,6 +248,7 @@ class EspargosDemoCamera(DemoApplication):
                 csi_zeropadded = np.fft.ifftshift(csi_zeropadded, axes = (1, 2))
                 beam_frequency_space = np.fft.fft2(csi_zeropadded, axes = (1, 2))
                 beam_frequency_space = np.fft.fftshift(beam_frequency_space, axes = (1, 2))
+                self.beamspace_power = np.sum(np.abs(beam_frequency_space)**2, axis = (0, 3))
 
             case "Bartlett":
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
@@ -261,11 +260,10 @@ class EspargosDemoCamera(DemoApplication):
                 # we can use 2D FFT to get to beamspace, which of course is technically not correct
                 # (cannot separate 2D steering vector into Kronecker product of azimuth / elevation steering vectors)
                 beam_frequency_space = np.einsum("rcae,dbrcs->daes", np.conj(self.steering_vectors_2d), csi_combined, optimize = True)
+                self.beamspace_power = np.sum(np.abs(beam_frequency_space)**2, axis = (0, 3))
 
-        if self.args.raw_power:
-            if self.democonfig.get("beamformer", "type") in ["MUSIC", "MVDR"]:
-                raise NotImplementedError("Raw power visualization not supported in MUSIC or MVDR mode")
-            db_beamspace = 10 * np.log10(np.sum(np.abs(beam_frequency_space)**2, axis=(0, 3)))
+        if self.democonfig.get("visualization", "overlay") == "Power":
+            db_beamspace = 10 * np.log10(self.beamspace_power)
             db_beamspace_norm = (db_beamspace - np.max(db_beamspace) + 15) / 15
             db_beamspace_norm = np.clip(db_beamspace_norm, 0, 1)
             color_beamspace = self._viridis(db_beamspace_norm)
@@ -274,9 +272,6 @@ class EspargosDemoCamera(DemoApplication):
             color_beamspace_rgba = np.clip(np.concatenate((color_beamspace, alpha_channel), axis=-1), 0, 1)
             self.beamspace_power_imagedata = np.asarray(np.swapaxes(color_beamspace_rgba, 0, 1).ravel() * 255, dtype = np.uint8)
         else:
-            if not self.democonfig.get("beamformer", "type") in ["MUSIC", "MVDR"]:
-                self.beamspace_power = np.sum(np.abs(beam_frequency_space)**2, axis = (0, 3))
-
             power_visualization_beamspace = self.beamspace_power**3
 
             if self.args.manual_exposure:
@@ -313,25 +308,27 @@ class EspargosDemoCamera(DemoApplication):
         # Compute spatial spectrum using MUSIC algorithm based on R
         # For the relatively small arrays, eig is faster than eigh
         steering_vectors_2d_flat = self.steering_vectors_2d.reshape(-1, self.steering_vectors_2d.shape[2], self.steering_vectors_2d.shape[3])
+        R = (R + np.conj(R.T)) / 2
         eig_val, eig_vec = np.linalg.eig(R)
         order = np.argsort(eig_val)[::-1]
         Qn = eig_vec[:,order][:,1:]
         spatial_spectrum = 1 / np.linalg.norm(np.einsum("ae,a...->e...", Qn, np.conj(steering_vectors_2d_flat)), axis = 0)
 
-        return spatial_spectrum - np.min(spatial_spectrum)
+        return spatial_spectrum - np.min(spatial_spectrum) + 1e-6
 
     def _mvdr_algorithm(self, R):
         # Compute spatial spectrum using MVDR algorithm based on R
         steering_vectors_2d_flat = self.steering_vectors_2d.reshape(-1, self.steering_vectors_2d.shape[2], self.steering_vectors_2d.shape[3])
 
-        # MVDR is sensitive to ill-conditioned covariance; use diagonal loading
-        loading = 1e-2 * np.trace(R) / R.shape[0]
+        # MVDR is sensitive to ill-conditioned covariance; use diagonal loading and symmetrization
+        R = (R + np.conj(R.T)) / 2
+        loading = 0.1 * np.trace(R) / R.shape[0]
         R_loaded = R + loading * np.eye(R.shape[0])
-        R_inv = np.linalg.inv(R_loaded)
+        R_inv = np.linalg.pinv(R_loaded)
         denom = np.einsum("a...,ab,b...->...", np.conj(steering_vectors_2d_flat), R_inv, steering_vectors_2d_flat)
-        spatial_spectrum = 1.0 / np.maximum(np.abs(denom), 1e-12)
+        spatial_spectrum = 1.0 / np.maximum(np.real(denom), 1e-12)
 
-        return spatial_spectrum - np.min(spatial_spectrum)
+        return spatial_spectrum - np.min(spatial_spectrum) + 1e-6
 
     def _viridis(self, values):
         viridis_colormap = np.asarray([
@@ -391,6 +388,12 @@ class EspargosDemoCamera(DemoApplication):
             except Exception as e:
                 print(f"Error setting camera flip: {e}")
 
+        if "visualization" in newcfg and "space" in newcfg["visualization"]:
+            try:
+                self.rawBeamspaceChanged.emit()
+            except Exception as e:
+                print(f"Error setting raw beamspace: {e}")
+
         # Let configmanager know we're done
         self.democonfig.updateAppStateHandled.emit()
 
@@ -422,9 +425,9 @@ class EspargosDemoCamera(DemoApplication):
     def adjustExposure(self, exposure):
         self.exposure = exposure
 
-    @PyQt6.QtCore.pyqtProperty(bool, constant=True)
+    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify = rawBeamspaceChanged)
     def rawBeamspace(self):
-        return self.args.raw_beamspace
+        return self.democonfig.get("visualization", "space")
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify = rssiChanged)
     def rssi(self):

@@ -118,6 +118,42 @@ Common.DemoApplication {
 				currentIndex: 0
 				function isUserActive() { return pressed || popup.visible }
 			}
+
+			Label { text: "Space"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			ComboBox {
+				id: spaceMode
+				property string configKey: "visualization.space"
+				property string configProp: "currentIndex"
+				property var encode: function(v) { return spaceMode.model[v] }
+				property var decode: function(v) {
+					let idx = spaceMode.model.indexOf(v)
+					return idx >= 0 ? idx : 0
+				}
+				Component.onCompleted: demoDrawer.configManager.register(this)
+				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+				model: ["Angles", "Beamspace"]
+				currentIndex: 0
+				function isUserActive() { return pressed || popup.visible }
+			}
+
+			Label { text: "Overlay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			ComboBox {
+				id: overlayMode
+				property string configKey: "visualization.overlay"
+				property string configProp: "currentIndex"
+				property var encode: function(v) { return overlayMode.model[v] }
+				property var decode: function(v) {
+					let idx = overlayMode.model.indexOf(v)
+					return idx >= 0 ? idx : 0
+				}
+				Component.onCompleted: demoDrawer.configManager.register(this)
+				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+				model: ["Default", "Power"]
+				currentIndex: 0
+				function isUserActive() { return pressed || popup.visible }
+			}
 		}
 	}
 
