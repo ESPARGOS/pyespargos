@@ -15,20 +15,21 @@ layout(std140, binding = 0) uniform buf {
 };
 
 // Converts cartesian coordinates of the camera projection into a pair of azimuth and elevation angle (in radians).
-vec2 toAngles(vec2 projection) {
+vec2 cameraPixelToAngles(vec2 projection) {
 	return atan(2 * (projection - 0.5) * tan(radians(fov) / 2));
 	//return (projection - 0.5) * radians(fov);
 }
 
-vec2 toFFTBeamspace(vec2 angles) {
+// Converts azimuth and elevation angles (in radians) into FFT beamspace coordinates (ranging from -0.5 to 0.5).
+vec2 anglesToFFTBeamspace(vec2 angles) {
 	return 0.5 * vec2(cos(angles.y) * sin(angles.x), sin(angles.y));
 }
 
 void main() {
 	vec2 coord = vec2(flip ? 1.0 - qt_MultiTexCoord0.x : qt_MultiTexCoord0.x, qt_MultiTexCoord0.y);
 
-	vec2 angles = toAngles(coord);
-	vec2 textureCoords = rawBeamspace ? coord : (toFFTBeamspace(angles) + 0.5);
+	vec2 angles = cameraPixelToAngles(coord);
+	vec2 textureCoords = rawBeamspace ? coord : (anglesToFFTBeamspace(angles) + 0.5);
 
 	vColor = texture(spatialSpectrumCanvasSource, textureCoords);
 
