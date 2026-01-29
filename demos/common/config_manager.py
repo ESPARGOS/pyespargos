@@ -60,18 +60,22 @@ class ConfigManager(PyQt6.QtCore.QObject):
     # Emitted when a forceful config application has completed
     forceConfigApplied = PyQt6.QtCore.pyqtSignal()
 
-    def __init__(self, default_ui_config: dict = None, parent=None):
+    def __init__(self, default_ui_config: dict = None, default_app_config: dict = None, parent=None):
         """
         Initialize ConfigManager with optional default configuration.
+        Configuration keys that are not present in the default will remain None, i.e., uninitialized.
 
         :param default_ui_config: Default configuration for UI initialization. If app state is authoritative, this is just for initial UI state, the app should call set() to provide true state later on.
+        :param default_app_config: Default configuration for application initialization.
         """
         super().__init__(parent=parent)
 
         self.logger = logging.getLogger("demo.ConfigManager")
-        # Keep separate copies of the app and UI state
-        self.app_config: dict = dict()
-        self.ui_config: dict = dict()
+
+        # Keep separate copies of the app and UI state, which may diverge temporarily during updates
+        # Both UI and app are responsible for fetching initial state, they will not receive signals initially.
+        self.app_config: dict = default_app_config or dict()
+        self.ui_config: dict = default_ui_config or dict()
 
         # Initialize asynchronous apply machinery
         self._pending_to_app: dict = dict()
@@ -89,12 +93,7 @@ class ConfigManager(PyQt6.QtCore.QObject):
         self._update_ui_handled_event = threading.Event()
         self.updateAppStateHandled.connect(lambda: self._update_app_handled_event.set())
         self.updateUIStateHandled.connect(lambda: self._update_ui_handled_event.set())
-        self._handled_wait_timeout = 5.0
-
-        # Initialize config with defaults
-        # Note: UI must fetch initial config itself once ready
-        if default_ui_config:
-            deep_update(self.ui_config, default_ui_config)
+        self._handled_wait_timeout = 20.0
 
     def _wait_for_handled(self, event: threading.Event, name: str):
         if not event.wait(timeout=self._handled_wait_timeout):

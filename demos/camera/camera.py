@@ -79,7 +79,7 @@ class EspargosDemoCamera(DemoApplication):
         self.initialize_combined_array(enable_backlog = True, backlog_cb_predicate = self._cb_predicate)
 
         # Demo configuration manager
-        self.democonfig = ConfigManager(self.DEFAULT_CONFIG, parent = self)
+        self.democonfig = ConfigManager(self.DEFAULT_CONFIG, self.DEFAULT_CONFIG, parent = self)
         self.democonfig.updateAppState.connect(self.onUpdateAppState)
 
         # Apply optional YAML config to pool/demo config managers
@@ -99,12 +99,6 @@ class EspargosDemoCamera(DemoApplication):
                 "format" : self.videocamera.getFormat()
             }
         })
-
-        if self.democonfig.get("camera", "flip") is None:
-            self.democonfig.set({"camera": {"flip": self.DEFAULT_CONFIG["camera"]["flip"]}})
-
-        if self.democonfig.get("beamformer", "type") is None:
-            self.democonfig.set({"beamformer": {"type": self.DEFAULT_CONFIG["beamformer"]["type"]}})
 
         # Pre-compute 2d steering vectors (array manifold)
         phase_c = np.outer(np.arange(self.n_cols), np.linspace(-np.pi, np.pi, self.args.resolution_azimuth))
