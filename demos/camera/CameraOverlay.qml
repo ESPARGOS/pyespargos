@@ -38,6 +38,8 @@ Rectangle {
 			}
 
 			onAvailableChanged: if(available) createImageData();
+			onWidthChanged: if(available) createImageData();
+			onHeightChanged: if(available) createImageData();
 
 			onPaint: {
 				if(imageData) {

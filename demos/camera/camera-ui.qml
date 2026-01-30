@@ -21,6 +21,15 @@ Common.DemoApplication {
 			title: "Demo Settings"
 			endpoint: democonfig
 
+			CheckBox {
+				id: advancedSettings
+				Layout.columnSpan: 2
+				text: "Show advanced"
+				checked: false
+				indicator.width: 18
+				indicator.height: 18
+			}
+
 			Label { Layout.columnSpan: 2; text: "Camera Input"; color: "#9fb3c8" }
 			Label { text: "Device"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			ComboBox {
@@ -91,7 +100,7 @@ Common.DemoApplication {
 				checked: false
 			}
 
-			Label { text: "FOV Azi"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "FOV Azi"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
 			Slider {
 				id: fovAzimuth
 				property string configKey: "camera.fov_azimuth"
@@ -107,9 +116,10 @@ Common.DemoApplication {
 				value: 72
 				ToolTip.visible: hovered
 				ToolTip.text: "" + Math.round(value) + "°"
+				visible: advancedSettings.checked
 			}
 
-			Label { text: "FOV Ele"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "FOV Ele"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
 			Slider {
 				id: fovElevation
 				property string configKey: "camera.fov_elevation"
@@ -125,6 +135,7 @@ Common.DemoApplication {
 				value: 41
 				ToolTip.visible: hovered
 				ToolTip.text: "" + Math.round(value) + "°"
+				visible: advancedSettings.checked
 			}
 
 			Label { Layout.columnSpan: 2; text: "Beamforming"; color: "#9fb3c8" }
@@ -157,6 +168,44 @@ Common.DemoApplication {
 				textRole: "text"
 				valueRole: "value"
 				currentIndex: 0
+			}
+
+			Label { text: "Res Azi"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
+			Slider {
+				id: resolutionAzimuth
+				property string configKey: "beamformer.resolution_azimuth"
+				property string configProp: "value"
+				property var encode: function(v) { return Math.round(v) }
+				property var decode: function(v) { return Number(v) }
+				from: 4
+				to: 128
+				stepSize: 1
+				implicitWidth: 210
+				Component.onCompleted: demoDrawer.configManager.register(this)
+				onValueChanged: demoDrawer.configManager.onControlChanged(this)
+				value: 64
+				ToolTip.visible: hovered
+				ToolTip.text: "" + Math.round(value)
+				visible: advancedSettings.checked
+			}
+
+			Label { text: "Res Ele"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
+			Slider {
+				id: resolutionElevation
+				property string configKey: "beamformer.resolution_elevation"
+				property string configProp: "value"
+				property var encode: function(v) { return Math.round(v) }
+				property var decode: function(v) { return Number(v) }
+				from: 4
+				to: 128
+				stepSize: 1
+				implicitWidth: 210
+				Component.onCompleted: demoDrawer.configManager.register(this)
+				onValueChanged: demoDrawer.configManager.onControlChanged(this)
+				value: 32
+				ToolTip.visible: hovered
+				ToolTip.text: "" + Math.round(value)
+				visible: advancedSettings.checked
 			}
 
 			// colorize delay only makes sense for FFT beamformer

@@ -29,6 +29,8 @@ class EspargosDemoCamera(DemoApplication):
     rawBeamspaceChanged = PyQt6.QtCore.pyqtSignal()
     fovAzimuthChanged = PyQt6.QtCore.pyqtSignal()
     fovElevationChanged = PyQt6.QtCore.pyqtSignal()
+    resolutionAzimuthChanged = PyQt6.QtCore.pyqtSignal()
+    resolutionElevationChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
             "camera" : {
@@ -41,7 +43,9 @@ class EspargosDemoCamera(DemoApplication):
             "beamformer" : {
                 "type" : "FFT",
                 "colorize_delay" : False,
-                "max_delay" : 0.2
+                "max_delay" : 0.2,
+                "resolution_azimuth" : 64,
+                "resolution_elevation" : 32
             },
             "visualization" : {
                 "space" : "Camera",
@@ -55,8 +59,6 @@ class EspargosDemoCamera(DemoApplication):
         # Parse command line arguments
         parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Overlay received power on top of camera image", parents = [self.common_args])
         parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
-        parser.add_argument("-ra", "--resolution-azimuth", type = int, default = 64, help = "Beamspace resolution for azimuth angle")
-        parser.add_argument("-re", "--resolution-elevation", type = int, default = 32, help = "Beamspace resolution for elevation angle")
         parser.add_argument("-a", "--additional-calibration", type = str, default = "", help = "File to read additional phase calibration results from")
         parser.add_argument("-e", "--manual-exposure", default = False, help = "Use manual exposure / brightness control for WiFi overlay", action = "store_true")
         parser.add_argument("--mac-filter", type = str, default = "", help = "Only display CSI data from given MAC address")
@@ -105,9 +107,7 @@ class EspargosDemoCamera(DemoApplication):
         })
 
         # Pre-compute 2d steering vectors (array manifold)
-        phase_c = np.outer(np.arange(self.n_cols), np.linspace(-np.pi, np.pi, self.args.resolution_azimuth))
-        phase_r = np.outer(np.arange(self.n_rows), np.linspace(-np.pi, np.pi, self.args.resolution_elevation))
-        self.steering_vectors_2d = np.exp(1.0j * (phase_c[np.newaxis,:, :, np.newaxis] + phase_r[:,np.newaxis,np.newaxis,:]))
+        self._update_steering_vectors()
 
         # Manual exposure control (only used if manual exposure is enabled)
         self.exposure = 0
@@ -241,7 +241,12 @@ class EspargosDemoCamera(DemoApplication):
                 # Here, we only go to DFT beamspace, not directly azimuth / elevation space,
                 # but the shader can take care of fixing the distortion.
                 # csi_zeropadded has shape (datapoints, azimuth / row, elevation / column, subcarriers)                
-                csi_zeropadded = np.zeros((csi_fdomain_cut.shape[0], self.args.resolution_azimuth, self.args.resolution_elevation, csi_fdomain_cut.shape[-1]), dtype = csi_fdomain_cut.dtype)
+                csi_zeropadded = np.zeros((
+                    csi_fdomain_cut.shape[0],
+                    self.democonfig.get("beamformer", "resolution_azimuth"),
+                    self.democonfig.get("beamformer", "resolution_elevation"),
+                    csi_fdomain_cut.shape[-1]
+                ), dtype = csi_fdomain_cut.dtype)
                 real_rows_half = csi_fdomain_cut.shape[2] // 2
                 real_cols_half = csi_fdomain_cut.shape[3] // 2
                 zeropadded_rows_half = csi_zeropadded.shape[2] // 2
@@ -353,6 +358,13 @@ class EspargosDemoCamera(DemoApplication):
 
         return c0 * (1 - t[:,:,np.newaxis]) + c1 * t[:,:,np.newaxis]
 
+    def _update_steering_vectors(self):
+        resolution_azimuth = self.democonfig.get("beamformer", "resolution_azimuth")
+        resolution_elevation = self.democonfig.get("beamformer", "resolution_elevation")
+        phase_c = np.outer(np.arange(self.n_cols), np.linspace(-np.pi, np.pi, resolution_azimuth))
+        phase_r = np.outer(np.arange(self.n_rows), np.linspace(-np.pi, np.pi, resolution_elevation))
+        self.steering_vectors_2d = np.exp(1.0j * (phase_c[np.newaxis,:, :, np.newaxis] + phase_r[:,np.newaxis,np.newaxis,:]))
+
     def _cb_predicate(self, csi_completion_state, csi_age):
         timeout_condition = False
         if self.args.csi_completion_timeout > 0:
@@ -402,6 +414,18 @@ class EspargosDemoCamera(DemoApplication):
             except Exception as e:
                 print(f"Error setting camera fov elevation: {e}")
 
+        if "beamformer" in newcfg:
+            beamformer_cfg = newcfg.get("beamformer", {}) if isinstance(newcfg.get("beamformer", {}), dict) else {}
+            if "resolution_azimuth" in beamformer_cfg or "resolution_elevation" in beamformer_cfg:
+                try:
+                    self._update_steering_vectors()
+                    if "resolution_azimuth" in beamformer_cfg:
+                        self.resolutionAzimuthChanged.emit()
+                    if "resolution_elevation" in beamformer_cfg:
+                        self.resolutionElevationChanged.emit()
+                except Exception as e:
+                    print(f"Error setting beamformer resolution: {e}")
+
         if "visualization" in newcfg and "space" in newcfg["visualization"]:
             try:
                 self.rawBeamspaceChanged.emit()
@@ -415,13 +439,13 @@ class EspargosDemoCamera(DemoApplication):
     def music(self):
         return self.democonfig.get("beamformer", "type") == "MUSIC"
 
-    @PyQt6.QtCore.pyqtProperty(int, constant=True)
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = resolutionAzimuthChanged)
     def resolutionAzimuth(self):
-        return self.args.resolution_azimuth
+        return self.democonfig.get("beamformer", "resolution_azimuth")
 
-    @PyQt6.QtCore.pyqtProperty(int, constant=True)
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = resolutionElevationChanged)
     def resolutionElevation(self):
-        return self.args.resolution_elevation
+        return self.democonfig.get("beamformer", "resolution_elevation")
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = fovAzimuthChanged)
     def fovAzimuth(self):
