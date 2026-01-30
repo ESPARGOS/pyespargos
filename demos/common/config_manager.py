@@ -74,8 +74,8 @@ class ConfigManager(PyQt6.QtCore.QObject):
 
         # Keep separate copies of the app and UI state, which may diverge temporarily during updates
         # Both UI and app are responsible for fetching initial state, they will not receive signals initially.
-        self.app_config: dict = default_app_config or dict()
-        self.ui_config: dict = default_ui_config or dict()
+        self.app_config: dict = copy.deepcopy(default_app_config) if default_app_config is not None else dict()
+        self.ui_config: dict = copy.deepcopy(default_ui_config) if default_ui_config is not None else dict()
 
         # Initialize asynchronous apply machinery
         self._pending_to_app: dict = dict()
@@ -124,22 +124,6 @@ class ConfigManager(PyQt6.QtCore.QObject):
                 cur[part] = {}
             cur = cur[part]
         cur[path_parts[-1]] = value
-
-    def _flatten_incoming(self, incoming: dict, prefix=None):
-        if prefix is None:
-            prefix = []
-        items = []
-        if not isinstance(incoming, dict):
-            return items
-
-        for k, v in incoming.items():
-            key_parts = self._split_path(k)
-            path_parts = prefix + key_parts
-            if isinstance(v, dict):
-                items.extend(self._flatten_incoming(v, path_parts))
-            else:
-                items.append((path_parts, v))
-        return items        
 
     def emitShowError(self, title: str, message: str):
         self.showError.emit(title, message)
@@ -227,13 +211,7 @@ class ConfigManager(PyQt6.QtCore.QObject):
         threading.Thread(target=worker, args=(pending, pending_source), daemon=True).start()
 
     def get(self, *path_parts):
-        # path_parts can be either
-        # * none (returns whole config)
-        # * multiple string arguments
-        # * a single dot-separated string
-        if len(path_parts) == 1 and isinstance(path_parts[0], str):
-            path_parts = self._split_path(path_parts[0])
-
+        # path_parts are multiple arguments that form the path in the config dict
         found, value = self._get_path(self.app_config, list(path_parts))
         if not found:
             return None
@@ -245,53 +223,13 @@ class ConfigManager(PyQt6.QtCore.QObject):
 
     @PyQt6.QtCore.pyqtSlot(str)
     def setConfigFromUI(self, config_json):
-        incoming = json.loads(config_json)
-        if not isinstance(incoming, dict):
+        delta = json.loads(config_json)
+        if not isinstance(delta, dict):
             raise ValueError("config_json must decode to an object")
 
-        # Build a minimal delta from incoming changes (supports nested keys with dot notation)
-        delta = dict()
-
-        for path_parts, v in self._flatten_incoming(incoming):
-            if not path_parts:
-                continue
-            found_ui, current_ui = self._get_path(self.ui_config, path_parts)
-            found_app, current_app = self._get_path(self.app_config, path_parts)
-            if not found_ui and not found_app:
-                self.logger.warning(f"Ignoring unknown config key: {'.'.join(path_parts)}")
-                continue
-
-            current = current_ui if found_ui else current_app
-
-            type_ = type(current)
-            if type_ is bool:
-                try:
-                    value = bool(v)
-                except Exception:
-                    raise ValueError(f"Invalid bool value for {'.'.join(path_parts)}: {v}")
-            elif type_ is int:
-                try:
-                    value = int(v)
-                except Exception:
-                    raise ValueError(f"Invalid int value for {'.'.join(path_parts)}: {v}")
-            elif type_ is float:
-                try:
-                    value = float(v)
-                except Exception:
-                    raise ValueError(f"Invalid float value for {'.'.join(path_parts)}: {v}")
-            elif type_ is str:
-                value = (str(v) or "").strip()
-            else:
-                value = v
-
-
-            if current != value:
-                self._set_path(delta, path_parts, value)
-
         # Queue pending changes (newest wins per key)
-        if delta:
-            # Update UI state immediately, queue changes to app
-            deep_update(self.ui_config, delta)
-            deep_update(self._pending_to_app, delta)
+        # Update UI state immediately, queue changes to app
+        deep_update(self.ui_config, delta)
+        deep_update(self._pending_to_app, delta)
 
         self._scheduleApplyTimer.emit()

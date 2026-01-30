@@ -31,8 +31,12 @@ class EspargosDemoCamera(DemoApplication):
     fovElevationChanged = PyQt6.QtCore.pyqtSignal()
     resolutionAzimuthChanged = PyQt6.QtCore.pyqtSignal()
     resolutionElevationChanged = PyQt6.QtCore.pyqtSignal()
+    macListEnabledChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
+            "receiver" : {
+                "mac_list_enabled" : False
+            },
             "camera" : {
                 "flip" : False,
                 "format" : None, # will be populated by app, can take values like "1920x1080 @ 30.00 FPS",
@@ -61,10 +65,8 @@ class EspargosDemoCamera(DemoApplication):
         parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
         parser.add_argument("-a", "--additional-calibration", type = str, default = "", help = "File to read additional phase calibration results from")
         parser.add_argument("-e", "--manual-exposure", default = False, help = "Use manual exposure / brightness control for WiFi overlay", action = "store_true")
-        parser.add_argument("--mac-filter", type = str, default = "", help = "Only display CSI data from given MAC address")
         parser.add_argument("--max-age", type = float, default = 0.0, help = "Limit maximum age of CSI data to this value (in seconds). Set to 0.0 to disable.")
         parser.add_argument("--csi-completion-timeout", type = float, default = 0.2, help = "Time after which CSI cluster is considered complete even if not all antennas have provided data. Set to zero to disable processing incomplete clusters.")
-        parser.add_argument("--mac-list", default = False, help = "Display list of MAC addresses of available transmitters", action = "store_true")
         format_group = parser.add_mutually_exclusive_group()
         format_group.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
         format_group.add_argument("-ht40", "--ht40", default = False, help = "Use only CSI from HT40", action = "store_true")
@@ -176,7 +178,7 @@ class EspargosDemoCamera(DemoApplication):
         # Update list of recent MAC addresses
         # Only send signal if list of MAC addresses has changed
         # mac_backlog is a numpy array of shape (n_packets, 6) of data type uint8, where each row is a MAC address
-        if self.args.mac_list:
+        if self.democonfig.get("receiver", "mac_list_enabled"):
             mac_strings = ["{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}".format(*mac) for mac in mac_backlog]
             mac_strings_set = set(mac_strings)
 
@@ -414,6 +416,14 @@ class EspargosDemoCamera(DemoApplication):
             except Exception as e:
                 print(f"Error setting camera fov elevation: {e}")
 
+        if "receiver" in newcfg:
+            receiver_cfg = newcfg.get("receiver", {}) if isinstance(newcfg.get("receiver", {}), dict) else {}
+            if "mac_list_enabled" in receiver_cfg:
+                try:
+                    self.macListEnabledChanged.emit()
+                except Exception as e:
+                    print(f"Error setting mac list feature: {e}")
+
         if "beamformer" in newcfg:
             beamformer_cfg = newcfg.get("beamformer", {}) if isinstance(newcfg.get("beamformer", {}), dict) else {}
             if "resolution_azimuth" in beamformer_cfg or "resolution_elevation" in beamformer_cfg:
@@ -475,9 +485,9 @@ class EspargosDemoCamera(DemoApplication):
     def activeAntennas(self):
         return self.mean_active_antennas
     
-    @PyQt6.QtCore.pyqtProperty(bool, constant=True)
+    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify = macListEnabledChanged)
     def macListEnabled(self):
-        return self.args.mac_list
+        return self.democonfig.get("receiver", "mac_list_enabled")
     
     @PyQt6.QtCore.pyqtProperty(list, constant=False, notify = recentMacsChanged)
     def macList(self):
@@ -486,10 +496,21 @@ class EspargosDemoCamera(DemoApplication):
     @PyQt6.QtCore.pyqtSlot(str)
     def setMacFilter(self, mac):
         self.pool.set_mac_filter({"enable": True, "mac": mac})
+        self.pooldrawer.configManager().set({
+            "mac_filter" : {
+                "enable" : True,
+                "mac" : mac
+            }
+        })
 
     @PyQt6.QtCore.pyqtSlot()
     def clearMacFilter(self):
         self.pool.clear_mac_filter()
+        self.pooldrawer.configManager().set({
+            "mac_filter" : {
+                "enable" : False
+            }
+        })
 
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify = cameraFlipChanged)
     def cameraFlip(self):

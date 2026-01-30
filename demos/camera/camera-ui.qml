@@ -100,6 +100,18 @@ Common.DemoApplication {
 				checked: false
 			}
 
+			Label { Layout.columnSpan: 2; text: "Receiver"; color: "#9fb3c8" }
+			Label { text: "MAC List"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: macListEnabled
+				property string configKey: "receiver.mac_list_enabled"
+				property string configProp: "checked"
+				Component.onCompleted: demoDrawer.configManager.register(this)
+				onCheckedChanged: demoDrawer.configManager.onControlChanged(this)
+				implicitWidth: 80
+				checked: false
+			}
+
 			Label { text: "FOV Azi"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
 			Slider {
 				id: fovAzimuth
@@ -274,6 +286,13 @@ Common.DemoApplication {
 				implicitWidth: 210
 				model: ["Default", "Power"]
 				currentIndex: 0
+			}
+
+			// Spacer
+			Rectangle {
+				Layout.columnSpan: 2
+				width: 1; height: 30
+				color: "transparent"
 			}
 		}
 	}
