@@ -16,7 +16,8 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         "secondary_channel": 2,
         "calibration": {
             "per_board": False,
-            "show_csi": False
+            "show_csi": False,
+            "duration": 1.0
         },
         "rf_switch": 2,
         "acquire_lltf_force": False,
@@ -41,7 +42,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         # Note that the current pool config is authoritative, the default config is just for UI initialization
         # However, if force_config is given, it takes precedence
         super().__init__(parent=parent)
-        self.cfgman = ConfigManager(self.DEFAULT_CONFIG, parent=self)
+        self.cfgman = ConfigManager(self.DEFAULT_CONFIG, self.DEFAULT_CONFIG, parent=self)
         self.pool = pool
 
         # Connect to UI changes
@@ -222,9 +223,10 @@ class PoolDrawer(PyQt6.QtCore.QObject):
             return  # Avoid multiple concurrent calibrations
 
         self.calibration_running = True
+        duration = self.cfgman.get("calibration", "duration")
 
         def _calibrate_thread():
-            self.pool.calibrate(per_board=False, duration=1, run_in_thread=False)
+            self.pool.calibrate(per_board=False, duration=duration, run_in_thread=False)
             self.calibration_running = False
 
         # Perform calibration in separate thread to avoid blocking UI

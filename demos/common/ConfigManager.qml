@@ -61,6 +61,13 @@ Item {
 		cur[parts[parts.length - 1]] = value
 	}
 
+	function getCachedValue(key, defaultValue) {
+		if (cache === undefined || cache === null) return defaultValue
+		if (!_hasPath(cache, key)) return defaultValue
+		let val = _getPath(cache, key)
+		return val === undefined ? defaultValue : val
+	}
+
 	function register(ctrl) {
 		if (!ctrl || !ctrl.configKey || !ctrl.configProp) return
 		controls.push(ctrl)

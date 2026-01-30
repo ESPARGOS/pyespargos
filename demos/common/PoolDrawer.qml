@@ -8,6 +8,30 @@ Drawer {
 	id: root
 
 	property int headerHeight: 0
+	property bool calibrationInProgress: false
+	property real calibrationStart: 0.0
+	property real calibrationProgress: 0.0
+
+	function updateCalibrationProgress() {
+		if (!calibrationInProgress) {
+			calibrationProgress = 0.0
+			return
+		}
+		var elapsed = Math.max(0, (Date.now() / 1000) - calibrationStart)
+		calibrationProgress = Math.min(1.0, elapsed / Math.max(0.001, poolConfigManager.getCachedValue("calibration.duration", 1.0)))
+		if (calibrationProgress >= 1.0) {
+			calibrationInProgress = false
+		}
+	}
+
+	Timer {
+		id: calibrationTimer
+		interval: 20
+		repeat: true
+		running: root.calibrationInProgress
+		onTriggered: root.updateCalibrationProgress()
+		onRunningChanged: root.updateCalibrationProgress()
+	}
 
 	// Match app-wide Material settings
 	Material.theme: Material.Dark
@@ -102,13 +126,26 @@ Drawer {
 				Layout.alignment: Qt.AlignCenter;
 				text: "Trigger Calibration";
 				onClicked: {
+					if (root.calibrationInProgress) return
 					poolConfigManager.action("calibrate")
 					needCalibration = false
+					root.calibrationStart = Date.now() / 1000
+					root.calibrationInProgress = true
+					root.calibrationProgress = 0.0
 				}
 				property bool needCalibration: false
 
 				// Button should have red border when calibration is needed
 				Material.foreground: needCalibration ? "#ff4d4d" : "white"
+			}
+
+			ProgressBar {
+				Layout.columnSpan: 2
+				Layout.fillWidth: true
+				from: 0
+				to: 1
+				value: root.calibrationProgress
+				visible: root.calibrationInProgress
 			}
 
 			// Calibration settings are still TODO
