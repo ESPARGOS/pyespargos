@@ -89,7 +89,6 @@ Common.DemoApplication {
 				onCheckedChanged: demoDrawer.configManager.onControlChanged(this)
 				implicitWidth: 80
 				checked: false
-				function isUserActive() { return pressed }
 			}
 
 			Label { Layout.columnSpan: 2; text: "Beamforming"; color: "#9fb3c8" }
@@ -104,7 +103,13 @@ Common.DemoApplication {
 					return idx >= 0 ? idx : 0
 				}
 				Component.onCompleted: demoDrawer.configManager.register(this)
-				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
+				onCurrentIndexChanged: {
+					// colorize_delay only makes sense for FFT beamformer, set to false when changing away
+					if (beamformerType.currentIndex !== 0) {
+						colorizeDelay.currentIndex = 0
+					}
+					demoDrawer.configManager.onControlChanged(this)
+				}
 				implicitWidth: 210
 				// Different internal representation than displayed strings
 				model: [
@@ -116,9 +121,42 @@ Common.DemoApplication {
 				textRole: "text"
 				valueRole: "value"
 				currentIndex: 0
-				function isUserActive() { return pressed || popup.visible }
 			}
 
+			// colorize delay only makes sense for FFT beamformer
+			Label { text: "Color"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 }
+			ComboBox {
+				id: colorizeDelay
+				property string configKey: "beamformer.colorize_delay"
+				property string configProp: "currentIndex"
+				property var encode: function(v) { return colorizeDelay.currentIndex === 1 }
+				property var decode: function(v) { return v ? 1 : 0 }
+				Component.onCompleted: demoDrawer.configManager.register(this)
+				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+				model: ["Default", "Show Delay"]
+				currentIndex: 0
+				visible: beamformerType.currentIndex === 0
+			}
+
+			Label { text: "Max Delay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && colorizeDelay.currentIndex === 1 }
+			Slider {
+				id: maxDelay
+				property string configKey: "beamformer.max_delay"
+				property string configProp: "value"
+				from: 0.01
+				to: 0.8
+				stepSize: 0.01
+				implicitWidth: 210
+				Component.onCompleted: demoDrawer.configManager.register(this)
+				onValueChanged: demoDrawer.configManager.onControlChanged(this)
+				value: 0.2
+				visible: beamformerType.currentIndex === 0 && colorizeDelay.currentIndex === 1
+				ToolTip.visible: hovered
+				ToolTip.text: "In samples. Color hue indicates relative delay up to this maximum. Current value: " + value.toFixed(2)
+			}
+
+			Label { Layout.columnSpan: 2; text: "Visualization"; color: "#9fb3c8" }
 			Label { text: "Space"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			ComboBox {
 				id: spaceMode
@@ -134,7 +172,6 @@ Common.DemoApplication {
 				implicitWidth: 210
 				model: ["Angles", "Beamspace"]
 				currentIndex: 0
-				function isUserActive() { return pressed || popup.visible }
 			}
 
 			Label { text: "Overlay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -152,7 +189,6 @@ Common.DemoApplication {
 				implicitWidth: 210
 				model: ["Default", "Power"]
 				currentIndex: 0
-				function isUserActive() { return pressed || popup.visible }
 			}
 		}
 	}

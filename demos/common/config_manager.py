@@ -274,6 +274,11 @@ class ConfigManager(PyQt6.QtCore.QObject):
                     value = int(v)
                 except Exception:
                     raise ValueError(f"Invalid int value for {'.'.join(path_parts)}: {v}")
+            elif type_ is float:
+                try:
+                    value = float(v)
+                except Exception:
+                    raise ValueError(f"Invalid float value for {'.'.join(path_parts)}: {v}")
             elif type_ is str:
                 value = (str(v) or "").strip()
             else:

@@ -35,7 +35,9 @@ class EspargosDemoCamera(DemoApplication):
                 "device" : None # will be populated by app, can take values like "/dev/video0"
             },
             "beamformer" : {
-                "type" : "FFT"
+                "type" : "FFT",
+                "colorize_delay" : False,
+                "max_delay" : 0.2
             },
             "visualization" : {
                 "space" : "Angles",
@@ -49,12 +51,10 @@ class EspargosDemoCamera(DemoApplication):
         # Parse command line arguments
         parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Overlay received power on top of camera image", parents = [self.common_args])
         parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
-        parser.add_argument("-d", "--colorize-delay", default = False, help = "Visualize delay of beamspace components using colors", action = "store_true")
         parser.add_argument("-ra", "--resolution-azimuth", type = int, default = 64, help = "Beamspace resolution for azimuth angle")
         parser.add_argument("-re", "--resolution-elevation", type = int, default = 32, help = "Beamspace resolution for elevation angle")
         parser.add_argument("-fa", "--fov-azimuth", type = int, default = 72, help = "Camera field of view in azimuth direction")
         parser.add_argument("-fe", "--fov-elevation", type = int, default = 41, help = "Camera field of view in elevation direction")
-        parser.add_argument("-md", "--max-delay", type = float, default = 0.2, help = "Maximum delay in samples for colorizing delay")
         parser.add_argument("-a", "--additional-calibration", type = str, default = "", help = "File to read additional phase calibration results from")
         parser.add_argument("-e", "--manual-exposure", default = False, help = "Use manual exposure / brightness control for WiFi overlay", action = "store_true")
         parser.add_argument("--mac-filter", type = str, default = "", help = "Only display CSI data from given MAC address")
@@ -279,7 +279,7 @@ class EspargosDemoCamera(DemoApplication):
             else:
                 color_value = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-6)
 
-            if self.args.colorize_delay:
+            if self.democonfig.get("beamformer", "colorize_delay"):
                 if self.democonfig.get("beamformer", "type") in ["MUSIC", "MVDR"]   :
                     raise NotImplementedError("Delay colorization not supported in MUSIC or MVDR mode")
 
@@ -289,7 +289,7 @@ class EspargosDemoCamera(DemoApplication):
                 mean_delay = np.angle(np.sum(beamspace_weighted_delay_phase))
 
                 hsv = np.zeros((beam_frequency_space.shape[1], beam_frequency_space.shape[2], 3))
-                hsv[:,:,0] = (np.clip((delay_by_beam - mean_delay) / self.args.max_delay, 0, 1) + 1/3) % 1.0
+                hsv[:,:,0] = (np.clip((delay_by_beam - mean_delay) / self.democonfig.get("beamformer", "max_delay"), 0, 1) + 1/3) % 1.0
                 hsv[:,:,1] = 0.8
                 hsv[:,:,2] = color_value
 
