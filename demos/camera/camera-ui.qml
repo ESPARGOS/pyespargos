@@ -91,6 +91,42 @@ Common.DemoApplication {
 				checked: false
 			}
 
+			Label { text: "FOV Azi"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Slider {
+				id: fovAzimuth
+				property string configKey: "camera.fov_azimuth"
+				property string configProp: "value"
+				property var encode: function(v) { return Math.round(v) }
+				property var decode: function(v) { return Number(v) }
+				from: 10
+				to: 179
+				stepSize: 1
+				implicitWidth: 210
+				Component.onCompleted: demoDrawer.configManager.register(this)
+				onValueChanged: demoDrawer.configManager.onControlChanged(this)
+				value: 72
+				ToolTip.visible: hovered
+				ToolTip.text: "" + Math.round(value) + "°"
+			}
+
+			Label { text: "FOV Ele"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Slider {
+				id: fovElevation
+				property string configKey: "camera.fov_elevation"
+				property string configProp: "value"
+				property var encode: function(v) { return Math.round(v) }
+				property var decode: function(v) { return Number(v) }
+				from: 10
+				to: 120
+				stepSize: 1
+				implicitWidth: 210
+				Component.onCompleted: demoDrawer.configManager.register(this)
+				onValueChanged: demoDrawer.configManager.onControlChanged(this)
+				value: 41
+				ToolTip.visible: hovered
+				ToolTip.text: "" + Math.round(value) + "°"
+			}
+
 			Label { Layout.columnSpan: 2; text: "Beamforming"; color: "#9fb3c8" }
 			Label { text: "Method"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			ComboBox {
@@ -170,7 +206,7 @@ Common.DemoApplication {
 				Component.onCompleted: demoDrawer.configManager.register(this)
 				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
 				implicitWidth: 210
-				model: ["Angles", "Beamspace"]
+				model: ["Camera", "Beamspace"]
 				currentIndex: 0
 			}
 

@@ -27,12 +27,16 @@ class EspargosDemoCamera(DemoApplication):
     recentMacsChanged = PyQt6.QtCore.pyqtSignal(list)
     cameraFlipChanged = PyQt6.QtCore.pyqtSignal()
     rawBeamspaceChanged = PyQt6.QtCore.pyqtSignal()
+    fovAzimuthChanged = PyQt6.QtCore.pyqtSignal()
+    fovElevationChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
             "camera" : {
                 "flip" : False,
                 "format" : None, # will be populated by app, can take values like "1920x1080 @ 30.00 FPS",
-                "device" : None # will be populated by app, can take values like "/dev/video0"
+                "device" : None, # will be populated by app, can take values like "/dev/video0"
+                "fov_azimuth" : 72,
+                "fov_elevation" : 41
             },
             "beamformer" : {
                 "type" : "FFT",
@@ -40,7 +44,7 @@ class EspargosDemoCamera(DemoApplication):
                 "max_delay" : 0.2
             },
             "visualization" : {
-                "space" : "Angles",
+                "space" : "Camera",
                 "overlay" : "Default"
             }
         }
@@ -53,8 +57,6 @@ class EspargosDemoCamera(DemoApplication):
         parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
         parser.add_argument("-ra", "--resolution-azimuth", type = int, default = 64, help = "Beamspace resolution for azimuth angle")
         parser.add_argument("-re", "--resolution-elevation", type = int, default = 32, help = "Beamspace resolution for elevation angle")
-        parser.add_argument("-fa", "--fov-azimuth", type = int, default = 72, help = "Camera field of view in azimuth direction")
-        parser.add_argument("-fe", "--fov-elevation", type = int, default = 41, help = "Camera field of view in elevation direction")
         parser.add_argument("-a", "--additional-calibration", type = str, default = "", help = "File to read additional phase calibration results from")
         parser.add_argument("-e", "--manual-exposure", default = False, help = "Use manual exposure / brightness control for WiFi overlay", action = "store_true")
         parser.add_argument("--mac-filter", type = str, default = "", help = "Only display CSI data from given MAC address")
@@ -388,6 +390,18 @@ class EspargosDemoCamera(DemoApplication):
             except Exception as e:
                 print(f"Error setting camera flip: {e}")
 
+        if "fov_azimuth" in camera_cfg:
+            try:
+                self.fovAzimuthChanged.emit()
+            except Exception as e:
+                print(f"Error setting camera fov azimuth: {e}")
+
+        if "fov_elevation" in camera_cfg:
+            try:
+                self.fovElevationChanged.emit()
+            except Exception as e:
+                print(f"Error setting camera fov elevation: {e}")
+
         if "visualization" in newcfg and "space" in newcfg["visualization"]:
             try:
                 self.rawBeamspaceChanged.emit()
@@ -409,13 +423,13 @@ class EspargosDemoCamera(DemoApplication):
     def resolutionElevation(self):
         return self.args.resolution_elevation
 
-    @PyQt6.QtCore.pyqtProperty(int, constant=True)
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = fovAzimuthChanged)
     def fovAzimuth(self):
-        return self.args.fov_azimuth
+        return self.democonfig.get("camera", "fov_azimuth")
     
-    @PyQt6.QtCore.pyqtProperty(int, constant=True)
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = fovElevationChanged)
     def fovElevation(self):
-        return self.args.fov_elevation
+        return self.democonfig.get("camera", "fov_elevation")
 
     @PyQt6.QtCore.pyqtProperty(bool, constant=True)
     def manualExposure(self):
