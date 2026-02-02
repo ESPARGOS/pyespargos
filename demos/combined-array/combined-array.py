@@ -36,7 +36,12 @@ class EspargosDemoCombinedArray(PyQt6.QtWidgets.QApplication):
 		self.pool = espargos.Pool([espargos.Board(host) for host in board_names_hosts.values()])
 		self.pool.start()
 		self.pool.calibrate(duration = 4, per_board = False, cable_lengths = cable_lengths, cable_velocity_factors = cable_velocity_factors)
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable_lltf = self.args.lltf, enable_ht40 = not self.args.lltf)
+		enable = ["rssi", "timestamp", "host_timestamp", "mac"]
+		if self.args.lltf:
+			enable.append("lltf")
+		else:
+			enable.extend(["ht40", "ht20"])
+		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable = enable)
 		self.backlog.start()
 
 		# Qt setup
@@ -57,7 +62,7 @@ class EspargosDemoCombinedArray(PyQt6.QtWidgets.QApplication):
 	@PyQt6.QtCore.pyqtSlot()
 	def updateRequest(self):
 		self.backlog.read_start()
-		csi_backlog = self.backlog.get_lltf() if self.args.lltf else self.backlog.get_ht40()
+		csi_backlog = self.backlog.get("lltf") if self.args.lltf else self.backlog.get("ht40")
 		self.backlog.read_finish()
 
 		csi_largearray = espargos.util.build_combined_array_csi(self.indexing_matrix, csi_backlog)

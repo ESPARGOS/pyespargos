@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import PoolDrawer, DemoApplication
+from demos.common import DemoApplication
 
 import numpy as np
 import espargos
@@ -13,7 +13,6 @@ import argparse
 
 import PyQt6.QtCharts
 import PyQt6.QtCore
-import PyQt6.QtQml
 
 class EspargosDemoInstantaneousCSI(DemoApplication):
 	def __init__(self, argv):
@@ -43,17 +42,10 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 		hosts = self.args.hosts.split(",")
 		self.initialize_pool(hosts, enable_backlog = True, calibrate = not self.args.no_calib)
 
-		# Pool configuration manager
-		self.pooldrawer = PoolDrawer(self.pool, parent = self)
-
 		# Value range handling
 		self.stable_power_minimum = None
 		self.stable_power_maximum = None
 
-		# Qt setup
-		self.aboutToQuit.connect(self.onAboutToQuit)
-		self.engine = PyQt6.QtQml.QQmlApplicationEngine()
-		
 		if self.args.lltf:
 			self.subcarrier_count = espargos.csi.LEGACY_COEFFICIENTS_PER_CHANNEL
 		elif self.args.ht40:
@@ -64,6 +56,8 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 		self.sensor_count = len(hosts) * espargos.constants.ANTENNAS_PER_BOARD
 		self.subcarrier_range = np.arange(-self.subcarrier_count // 2, self.subcarrier_count // 2)
 
+		self.init_qml(pathlib.Path(__file__).resolve().parent / "instantaneous-csi-ui.qml")
+
 	@PyQt6.QtCore.pyqtProperty(int, constant=True)
 	def sensorCount(self):
 		return np.prod(self.pool.get_shape())
@@ -73,15 +67,6 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 		return self.subcarrier_range.tolist()
 
 	def exec(self):
-		context = self.engine.rootContext()
-		context.setContextProperty("backend", self)
-		context.setContextProperty("poolconfig", self.pooldrawer.configManager())
-
-		qmlFile = pathlib.Path(__file__).resolve().parent / "instantaneous-csi-ui.qml"
-		self.engine.load(qmlFile.as_uri())
-		if not self.engine.rootObjects():
-			return -1
-
 		return super().exec()
 
 	def _interpolate_axis_range(self, previous, new):
@@ -99,12 +84,12 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 
 		self.backlog.read_start()
 		if self.args.lltf:
-			csi_backlog = self.backlog.get_lltf()
+			csi_backlog = self.backlog.get("lltf")
 		elif self.args.ht40:
-			csi_backlog = self.backlog.get_ht40()
+			csi_backlog = self.backlog.get("ht40")
 		else:
-			csi_backlog = self.backlog.get_ht20()
-		rssi_backlog = self.backlog.get_rssi()
+			csi_backlog = self.backlog.get("ht20")
+		rssi_backlog = self.backlog.get("rssi")
 		self.backlog.read_finish()
 
 		# If any value is NaN, skip this update (happens if received frame were not of expected type)
@@ -175,11 +160,6 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 
 		axis.setMin(self.stable_power_minimum)
 		axis.setMax(self.stable_power_maximum)
-
-	def onAboutToQuit(self):
-		self.pool.stop()
-		self.backlog.stop()
-		self.engine.deleteLater()
 
 	@PyQt6.QtCore.pyqtProperty(bool, constant=True)
 	def timeDomain(self):

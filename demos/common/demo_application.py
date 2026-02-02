@@ -5,10 +5,9 @@ import PyQt6.QtCore
 
 import threading
 import argparse
-import enum
 import yaml
-
 import espargos.util
+import PyQt6.QtQml
 
 from .pool_drawer import PoolDrawer
 
@@ -21,6 +20,9 @@ class DemoApplication(PyQt6.QtWidgets.QApplication):
 
         # Basic app initialization
         self.ready = False
+        self.engine = PyQt6.QtQml.QQmlApplicationEngine()
+        self.aboutToQuit.connect(self.onAboutToQuit)
+        self._qml_ok = True
 
         # Parse command-line arguments
         parser = argparse.ArgumentParser(parents = [argparse_parent] if argparse_parent else [])
@@ -42,6 +44,21 @@ class DemoApplication(PyQt6.QtWidgets.QApplication):
             if key in self.initial_config and isinstance(self.initial_config[key], dict):
                 return self.initial_config[key]
         return default
+
+    def init_qml(self, qml_file, context_props: dict | None = None):
+        context = self.engine.rootContext()
+
+        # Provide backend and optional additional context properties
+        context.setContextProperty("backend", self)
+        if hasattr(self, "pooldrawer"):
+            context.setContextProperty("poolconfig", self.pooldrawer.configManager())
+
+        for key, value in (context_props or {}).items():
+            if key != "backend":
+                context.setContextProperty(key, value)
+
+        qml_url = qml_file.as_uri() if hasattr(qml_file, "as_uri") else qml_file
+        self.engine.load(qml_url)
 
     def initialize_pool(
             self,
@@ -72,7 +89,15 @@ class DemoApplication(PyQt6.QtWidgets.QApplication):
 
                 if enable_backlog:
                     # TODO: do not rely on self.args and self._cb_predicate here
-                    self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable_lltf = self.args.lltf,  enable_ht40 = self.args.ht40, enable_ht20 = self.args.ht20, cb_predicate = backlog_cb_predicate, calibrate = calibrate)
+                    enable = ["rssi", "timestamp", "host_timestamp", "mac"]
+                    if self.args.lltf:
+                        enable.append("lltf")
+                    if self.args.ht40:
+                        enable.append("ht40")
+                    if self.args.ht20:
+                        enable.append("ht20")
+
+                    self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable = enable, cb_predicate = backlog_cb_predicate, calibrate = calibrate)
                     self.backlog.start()
 
                 self.ready = True
@@ -107,7 +132,18 @@ class DemoApplication(PyQt6.QtWidgets.QApplication):
         self.pool.stop()
         if hasattr(self, "backlog"):
             self.backlog.stop()
+        if hasattr(self, "engine"):
+            self.engine.deleteLater()
+
+    def exec(self):
+        if not self._qml_ok:
+            return -1
+        return super().exec()
 
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=initComplete)
     def initializing(self):
         return not self.ready
+
+    @PyQt6.QtCore.pyqtProperty(object, constant=False, notify=initComplete)
+    def hasBacklog(self):
+        return hasattr(self, "backlog")

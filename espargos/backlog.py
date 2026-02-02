@@ -10,31 +10,73 @@ class CSIBacklog(object):
     CSI backlog class. Stores CSI data in a ringbuffer for processing when needed.
 
     :param pool: CSI pool object to collect CSI data from
-    :param enable_ht40: Enable storing CSI from HT40 frames (default: True)
-    :param enable_ht20: Enable storing CSI from HT20 frames (default: True)
+    :param enable: List of fields to store (default: all)
     :param calibrate: Apply calibration to CSI data (default: True)
     :param cb_predicate: A function that defines the conditions under which clustered CSI is regarded as completed and thus added to the backlog.
         See :meth:`espargos.pool.Pool.add_csi_callback` for more details.
     :param size: Size of the ringbuffer (default: 100)
     """
-    def __init__(self, pool, enable_lltf = True, enable_ht40 = True, enable_ht20 = True, calibrate = True, cb_predicate = None, size = 100):
+    DATA_FORMATS = {
+        "lltf": {
+            "shape": (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,),
+            "per_antenna": True,
+            "dtype": np.complex64
+        },
+        "ht20": {
+            "shape": (csi.HT_COEFFICIENTS_PER_CHANNEL,),
+            "per_antenna": True,
+            "dtype": np.complex64
+        },
+        "ht40": {
+            "shape": (csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL,),
+            "per_antenna": True,
+            "dtype": np.complex64
+        },
+        "rssi": {
+            "shape": (),
+            "per_antenna": True,
+            "dtype": np.float32
+        },
+        "timestamp": {
+            "shape": (),
+            "per_antenna": True,
+            "dtype": np.float128
+        },
+        "host_timestamp": {
+            "shape": (),
+            "per_antenna": False,
+            "dtype": np.float128
+        },
+        "mac": {
+            "shape": (6,),
+            "per_antenna": False,
+            "dtype": np.uint8
+        }
+    }
+
+    def __init__(self, pool, enable = None, calibrate = True, cb_predicate = None, size = 100):
         self.logger = logging.getLogger("pyespargos.backlog")
 
         self.pool = pool
         self.size = size
-        self.enable_lltf = enable_lltf
-        self.enable_ht20 = enable_ht20
-        self.enable_ht40 = enable_ht40
+        self.enable = set(self.DATA_FORMATS.keys()) if enable is None else set(enable)
         self.calibrate = calibrate
 
-        self.storage_ht40 = np.zeros((size,) + self.pool.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL,), dtype = np.complex64)
-        self.storage_ht20 = np.zeros((size,) + self.pool.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL,), dtype = np.complex64)
-        self.storage_lltf = np.zeros((size,) + self.pool.get_shape() + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), dtype = np.complex64)
+        self.storage = {}
+        self.storage_mutex = threading.Lock()
+        for key, meta in self.DATA_FORMATS.items():
+            shape = meta["shape"]
+            dtype = meta["dtype"]
+            if meta["per_antenna"]:
+                full_shape = (size,) + self.pool.get_shape() + shape
+            else:
+                full_shape = (size,) + shape
 
-        self.storage_timestamps = np.zeros((size,) + self.pool.get_shape(), dtype = np.float128)
-        self.host_timestamps = np.zeros((size,), dtype = np.float128)
-        self.storage_rssi = np.zeros((size,) + self.pool.get_shape(), dtype = np.float32)
-        self.storage_macs = np.zeros((size, 6), dtype = np.uint8)
+            if dtype in [np.uint8]:
+                self.storage[key] = np.zeros(full_shape, dtype = dtype)
+            else:
+                self.storage[key] = np.full(full_shape, fill_value=np.nan, dtype = dtype)
+
         self.head = 0
         self.latest = None
         self.filllevel = 0
@@ -55,28 +97,34 @@ class CSIBacklog(object):
                 if self.calibrate:
                     assert(self.pool.get_calibration() is not None)
                     sensor_timestamps = self.pool.get_calibration().apply_timestamps(sensor_timestamps)
-                self.storage_timestamps[self.head] = sensor_timestamps
+                if "timestamp" in self.enable:
+                    self.storage["timestamp"][self.head] = sensor_timestamps
+                else:
+                    self.storage["timestamp"][self.head] = np.nan
 
                 # Store host timestamp
-                self.host_timestamps[self.head] = clustered_csi.get_host_timestamp()
+                if "host_timestamp" in self.enable:
+                    self.storage["host_timestamp"][self.head] = clustered_csi.get_host_timestamp()
+                else:
+                    self.storage["host_timestamp"][self.head] = np.nan
 
                 # Store LLTF CSI if applicable
-                if self.enable_lltf:
+                if "lltf" in self.enable:
                     if clustered_csi.has_lltf():
                         csi_lltf = clustered_csi.deserialize_csi_lltf()
                         if self.calibrate:
                             assert(self.pool.get_calibration() is not None)
                             csi_lltf = self.pool.get_calibration().apply_lltf(csi_lltf)
 
-                        self.storage_lltf[self.head] = csi_lltf
+                        self.storage["lltf"][self.head] = csi_lltf
                     else:
-                        self.storage_lltf[self.head] = np.nan
+                        self.storage["lltf"][self.head] = np.nan
                         self.logger.warning(f"Received non-LLTF frame even though LLTF is enabled")
                 else:
-                    self.storage_lltf[self.head] = np.nan
+                    self.storage["lltf"][self.head] = np.nan
 
                 # Store HT40 CSI if applicable
-                if self.enable_ht40:
+                if "ht40" in self.enable:
                     if clustered_csi.has_ht40ltf():
                         csi_ht40 = clustered_csi.deserialize_csi_ht40ltf()
 
@@ -84,15 +132,15 @@ class CSIBacklog(object):
                             assert(self.pool.get_calibration() is not None)
                             csi_ht40 = self.pool.get_calibration().apply_ht40(csi_ht40)
 
-                        self.storage_ht40[self.head] = csi_ht40
+                        self.storage["ht40"][self.head] = csi_ht40
                     else:
-                        self.storage_ht40[self.head] = np.nan
+                        self.storage["ht40"][self.head] = np.nan
                         self.logger.warning(f"Received non-HT40 frame even though HT40 is enabled")
                 else:
-                    self.storage_ht40[self.head] = np.nan
+                    self.storage["ht40"][self.head] = np.nan
 
                 # Store HT20 CSI if applicable
-                if self.enable_ht20:
+                if "ht20" in self.enable:
                     if clustered_csi.has_ht20ltf():
                         csi_ht20 = clustered_csi.deserialize_csi_ht20ltf()
 
@@ -100,21 +148,27 @@ class CSIBacklog(object):
                             assert(self.pool.get_calibration() is not None)
                             csi_ht20 = self.pool.get_calibration().apply_ht20(csi_ht20)
 
-                        self.storage_ht20[self.head] = csi_ht20
+                        self.storage["ht20"][self.head] = csi_ht20
                     else:
-                        self.storage_ht20[self.head] = np.nan
+                        self.storage["ht20"][self.head] = np.nan
                         self.logger.warning(f"Received non-HT20 frame even though HT20 is enabled")
                 else:
-                    self.storage_ht20[self.head] = np.nan
+                    self.storage["ht20"][self.head] = np.nan
 
                 # Store RSSI
-                self.storage_rssi[self.head] = clustered_csi.get_rssi()
+                if "rssi" in self.enable:
+                    self.storage["rssi"][self.head] = clustered_csi.get_rssi()
+                else:
+                    self.storage["rssi"][self.head] = np.nan
 
                 # Store MAC address. mac_str is a hex string without colons, e.g. "00:11:22:33:44:55" -> "001122334455"
                 mac_str = clustered_csi.get_source_mac()
                 mac = np.asarray([int(mac_str[i:i+2], 16) for i in range(0, len(mac_str), 2)])
                 assert(mac.shape == (6,))
-                self.storage_macs[self.head] = mac
+                if "mac" in self.enable:
+                    self.storage["mac"][self.head] = mac
+                else:
+                    self.storage["mac"][self.head] = 0
 
                 # Advance ringbuffer head
                 self.latest = self.head
@@ -131,91 +185,36 @@ class CSIBacklog(object):
         """ Add a callback that is called when new CSI data is added to the backlog """
         self.callbacks.append(cb)
 
-    def get_lltf(self):
+    def get(self, key):
         """
-        Retrieve LLTF CSI data from the ringbuffer
+        Retrieve data from the ringbuffer
 
-        :return: LLTF CSI data, oldest first
+        :param key: Key of the data to retrieve (e.g., "lltf", "ht40", "rssi", etc.)
+        :return: Data corresponding to the key, oldest first
         """
-        assert(self.enable_lltf)
-        retval = np.copy(np.roll(self.storage_lltf, -self.head, axis = 0)[-self.filllevel:])
+        assert(key in self.enable)
+
+        # Check if storage mutex is held
+        if not self.storage_mutex.locked():
+            self.logger.warning("get() called without holding storage mutex. This may lead to inconsistent data being read. You must use read_start() and read_finish() to protect read operations.")
+        retval = np.copy(np.roll(self.storage[key], -self.head, axis = 0)[-self.filllevel:])
 
         return retval
 
-    def get_ht20(self):
+    def get_latest(self, key):
         """
-        Retrieve HT20 CSI data from the ringbuffer
+        Retrieve the latest value for a key in the ringbuffer.
 
-        :return: HT20 CSI data, oldest first
-        """
-        assert(self.enable_ht20)
-        retval = np.roll(self.storage_ht20, -self.head, axis = 0)[-self.filllevel:]
-
-        return retval
-
-    def get_ht40(self):
-        """
-        Retrieve HT40 CSI data from the ringbuffer
-
-        :return: HT40 CSI data, oldest first
-        """
-        assert(self.enable_ht40)
-        retval = np.roll(self.storage_ht40, -self.head, axis = 0)[-self.filllevel:]
-
-        return retval
-
-    def get_rssi(self):
-        """
-        Retrieve RSSI data from the ringbuffer
-
-        :return: RSSI data, oldest first
-        """
-        retval = np.copy(np.roll(self.storage_rssi, -self.head, axis = 0)[-self.filllevel:])
-
-        return retval
-
-    def get_timestamps(self):
-        """
-        Retrieve packet timestamps for all antennas from the ringbuffer
-
-        :return: Timestamps, oldest first, shape (n_packets, n_boards, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
-        """
-        retval = np.copy(np.roll(self.storage_timestamps, -self.head, axis = 0)[-self.filllevel:])
-
-        return retval
-
-    def get_host_timestamps(self):
-        """
-        Retrieve host timestamps from the ringbuffer
-
-        :return: Host timestamps, oldest first
-        """
-        retval = np.copy(np.roll(self.host_timestamps, -self.head)[-self.filllevel:])
-
-        return retval
-
-    def get_latest_timestamp(self):
-        """
-        Retrieve the mean (over all antennas) timestamp of the most recent packet in the ringbuffer
-
-        :return: Timestamp of the most recent packet, scalar
+        :param key: Key of the data to retrieve
+        :return: Latest value, or None if no data is available
         """
         if self.latest is None:
             return None
 
-        retval = np.mean(self.storage_timestamps[self.latest])
+        assert(key in self.enable)
+        latest_value = self.storage[key][self.latest]
 
-        return retval
-
-    def get_macs(self):
-        """
-        Retrieve MAC addresses from the ringbuffer
-
-        :return: MAC addresses, oldest first
-        """
-        retval = np.copy(np.roll(self.storage_macs, -self.head, axis = 0)[-self.filllevel:])
-
-        return retval
+        return np.copy(latest_value)
 
     def nonempty(self):
         """
@@ -242,7 +241,6 @@ class CSIBacklog(object):
         Start the CSI backlog thread, must be called before using the backlog
         """
         self.thread = threading.Thread(target=self.__run)
-        self.storage_mutex = threading.Lock()
         self.thread.start()
         self.logger.info(f"Started CSI backlog thread")
 

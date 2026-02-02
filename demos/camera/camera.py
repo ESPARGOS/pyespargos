@@ -16,7 +16,6 @@ import time
 
 import PyQt6.QtMultimedia
 import PyQt6.QtCore
-import PyQt6.QtQml
 
 import videocamera
 
@@ -91,10 +90,6 @@ class EspargosDemoCamera(DemoApplication):
         # Apply optional YAML config to pool/demo config managers
         self.democonfig.set(self.get_initial_config("demo", default = {}))
 
-        # Qt setup
-        self.aboutToQuit.connect(self.onAboutToQuit)
-        self.engine = PyQt6.QtQml.QQmlApplicationEngine()
-
         # Camera setup
         self.videocamera = videocamera.VideoCamera(self.democonfig.get("camera", "device"), self.democonfig.get("camera", "format"))
 
@@ -119,18 +114,12 @@ class EspargosDemoCamera(DemoApplication):
         # List of recent MAC addresses
         self.recent_macs = set()
 
+        self.init_qml(pathlib.Path(__file__).resolve().parent / "camera-ui.qml", {
+            "democonfig": self.democonfig,
+            "WebCam": self.videocamera,
+        })
+
     def exec(self):
-        context = self.engine.rootContext()
-        context.setContextProperty("backend", self)
-        context.setContextProperty("poolconfig", self.pooldrawer.configManager())
-        context.setContextProperty("democonfig", self.democonfig)
-        context.setContextProperty("WebCam", self.videocamera)
-
-        qmlFile = pathlib.Path(__file__).resolve().parent / "camera-ui.qml"
-        self.engine.load(qmlFile.as_uri())
-        if not self.engine.rootObjects():
-            return -1
-
         # disable auto-focus and enable camera stream
         self.videocamera.setFocusMode(PyQt6.QtMultimedia.QCamera.FocusMode.FocusModeManual)
         self.videocamera.start()
@@ -147,15 +136,15 @@ class EspargosDemoCamera(DemoApplication):
         csi_backlog = None
 
         if self.args.lltf:
-            csi_backlog = self.backlog.get_lltf()
+            csi_backlog = self.backlog.get("lltf")
         elif self.args.ht40:
-            csi_backlog = self.backlog.get_ht40()
+            csi_backlog = self.backlog.get("ht40")
         else:
-            csi_backlog = self.backlog.get_ht20()
+            csi_backlog = self.backlog.get("ht20")
 
-        rssi_backlog = self.backlog.get_rssi()
-        timestamp_backlog = self.backlog.get_host_timestamps()
-        mac_backlog = self.backlog.get_macs()
+        rssi_backlog = self.backlog.get("rssi")
+        timestamp_backlog = self.backlog.get("host_timestamp")
+        mac_backlog = self.backlog.get("mac")
         self.backlog.read_finish()
 
         if self.args.max_age > 0.0:
@@ -375,7 +364,6 @@ class EspargosDemoCamera(DemoApplication):
     def onAboutToQuit(self):
         self.videocamera.stop()
         super().onAboutToQuit()
-        self.engine.deleteLater()
 
     @PyQt6.QtCore.pyqtSlot(dict)
     def onUpdateAppState(self, newcfg):
