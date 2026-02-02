@@ -87,7 +87,7 @@ class EspargosDemoCamera(DemoApplication):
         self.initialize_combined_array(enable_backlog = True, backlog_cb_predicate = self._cb_predicate)
 
         # Demo configuration manager
-        self.democonfig = ConfigManager(self.DEFAULT_CONFIG, self.DEFAULT_CONFIG, parent = self)
+        self.democonfig = ConfigManager(self.DEFAULT_CONFIG, parent = self)
         self.democonfig.updateAppState.connect(self.onUpdateAppState)
 
         # Apply optional YAML config to pool/demo config managers

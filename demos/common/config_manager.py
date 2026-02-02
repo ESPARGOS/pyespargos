@@ -57,16 +57,15 @@ class ConfigManager(PyQt6.QtCore.QObject):
     # QML hook (ConfigManager.qml listens via Connections.onShowError)
     showError = PyQt6.QtCore.pyqtSignal(str, str)
 
-    # Emitted when a forceful config application has completed
-    forceConfigApplied = PyQt6.QtCore.pyqtSignal()
+    # Emitted when a forceful config change to app has completed
+    forceConfigAppApplied = PyQt6.QtCore.pyqtSignal()
 
-    def __init__(self, default_ui_config: dict = None, default_app_config: dict = None, parent=None):
+    def __init__(self, default_config: dict = None, parent=None):
         """
         Initialize ConfigManager with optional default configuration.
         Configuration keys that are not present in the default will remain None, i.e., uninitialized.
 
-        :param default_ui_config: Default configuration for UI initialization. If app state is authoritative, this is just for initial UI state, the app should call set() to provide true state later on.
-        :param default_app_config: Default configuration for application initialization.
+        :param default_config: Default configuration for app and UI initialization. If app state is authoritative, this is just for initial UI state, the app should call set() to provide true state later on.
         """
         super().__init__(parent=parent)
 
@@ -74,14 +73,15 @@ class ConfigManager(PyQt6.QtCore.QObject):
 
         # Keep separate copies of the app and UI state, which may diverge temporarily during updates
         # Both UI and app are responsible for fetching initial state, they will not receive signals initially.
-        self.app_config: dict = copy.deepcopy(default_app_config) if default_app_config is not None else dict()
-        self.ui_config: dict = copy.deepcopy(default_ui_config) if default_ui_config is not None else dict()
+        self.app_config: dict = copy.deepcopy(default_config) if default_config is not None else dict()
+        self.ui_config: dict = copy.deepcopy(default_config) if default_config is not None else dict()
 
         # Initialize asynchronous apply machinery
         self._pending_to_app: dict = dict()
         self._pending_to_ui: dict = dict()
         self._apply_lock = threading.Lock()
-        self._apply_in_flight = False
+        self._apply_in_flight_app = False
+        self._apply_in_flight_ui = False
         self._apply_timer = PyQt6.QtCore.QTimer(self)
         self._apply_timer.setSingleShot(True)
         self._apply_timer.timeout.connect(self._async_apply)
@@ -151,64 +151,99 @@ class ConfigManager(PyQt6.QtCore.QObject):
         self._scheduleApplyTimer.emit()
 
     def _async_apply(self):
-        # Ensure only one background applier runs at a time; coalesce pending updates.
+        # Run app/UI appliers independently; coalesce pending updates per target.
         with self._apply_lock:
-            # Nothing to do if an apply is already in flight (will re-trigger on finish)
-            if self._apply_in_flight:
-                return
-            
-            # Nothing to do if there are no pending changes
             if not self._pending_to_app and not self._pending_to_ui:
                 return
 
-            # Pending config changes from app always take precedence over UI changes
-            pending = self._pending_to_ui
-            self._pending_to_ui = {}
-            pending_source = "app"
+            force_apply = self.is_force_apply
+            pending_ui = pending_app = None
 
-            if not pending:
-                pending = dict(self._pending_to_app)
+            if self._pending_to_ui and not self._apply_in_flight_ui:
+                pending_ui = self._pending_to_ui
+                self._pending_to_ui = {}
+                self._apply_in_flight_ui = True
+
+            if self._pending_to_app and not self._apply_in_flight_app:
+                pending_app = self._pending_to_app
                 self._pending_to_app = {}
-                pending_source = "ui"
+                self._apply_in_flight_app = True
+                if force_apply:
+                    self.is_force_apply = False
 
-            self._apply_in_flight = True
-
-        def worker(pending: dict, pending_source: str):
-            try:
+        def get_delta(current_cfg: dict, target_cfg: dict, force_apply: bool) -> dict:
+            delta = dict()
+            if force_apply:
+                # Apply all pending changes, regardless of current state
+                delta = target_cfg
+            else:
                 # Determine actual delta between current config and desired state
-                target_cfg = self.app_config if pending_source == "ui" else self.ui_config
-                delta = {}
-                for k, v in pending.items():
-                    if k not in target_cfg or target_cfg[k] != v:
+                for k, v in target_cfg.items():
+                    if k not in current_cfg or current_cfg[k] != v:
                         delta[k] = v
+            return delta
 
-                # Changes are applied to the target config (app/ui) *before* handlers are called,
+        def app_worker(delta: dict, force_apply: bool):
+            try:
+                delta = get_delta(self.app_config, delta, force_apply)
+
+                # Changes are applied to the app *before* handlers are called,
                 # so that handlers always see the latest state (the values that
-                # changed are in delta).
-                deep_update(target_cfg, delta)
+                # changed are in delta, unless force-applying, in which case
+                # values are all applied even though they may be unchanged).
+                deep_update(self.app_config, delta)
 
-                if pending_source == "ui":
-                    self._update_app_handled_event.clear()
-                    self.updateAppState.emit(delta)
-                    self._wait_for_handled(self._update_app_handled_event, "ui")
-                    if self.is_force_apply:
-                        self.is_force_apply = False
-                        self.forceConfigApplied.emit()
-                else:
-                    self._update_ui_handled_event.clear()
-                    self.updateUIState.emit(json.dumps(delta))
-                    self._wait_for_handled(self._update_ui_handled_event, "app")
+                self._update_app_handled_event.clear()
+                self.updateAppState.emit(delta)
+                self._wait_for_handled(self._update_app_handled_event, "app")
+                if force_apply:
+                    self.forceConfigAppApplied.emit()
 
             finally:
                 with self._apply_lock:
-                    self._apply_in_flight = False
-                    has_more = bool(self._pending_to_app) or bool(self._pending_to_ui)
+                    self._apply_in_flight_app = False
+                    has_more = bool(self._pending_to_app)
 
                 # Trigger next run if more deltas arrived meanwhile (must be on QObject thread)
                 if has_more:
                     self._scheduleApplyTimer.emit()
 
-        threading.Thread(target=worker, args=(pending, pending_source), daemon=True).start()
+        def ui_worker(delta: dict, force_apply: bool):
+            try:
+                delta = get_delta(self.ui_config, delta, force_apply)
+
+                # Changes are applied to the UI *before* handlers are called,
+                # so that handlers always see the latest state (the values that
+                # changed are in delta, unless force-applying, in which case
+                # values are all applied even though they may be unchanged).
+                deep_update(self.ui_config, delta)
+
+                self._update_ui_handled_event.clear()
+                self.updateUIState.emit(json.dumps(delta))
+                self._wait_for_handled(self._update_ui_handled_event, "ui")
+
+            finally:
+                with self._apply_lock:
+                    self._apply_in_flight_ui = False
+                    has_more = bool(self._pending_to_ui)
+
+                # Trigger next run if more deltas arrived meanwhile (must be on QObject thread)
+                if has_more:
+                    self._scheduleApplyTimer.emit()
+
+        if pending_ui:
+            threading.Thread(
+                target=ui_worker,
+                args=(pending_ui, force_apply),
+                daemon=True,
+            ).start()
+
+        if pending_app:
+            threading.Thread(
+                target=app_worker,
+                args=(pending_app, force_apply),
+                daemon=True,
+            ).start()
 
     def get(self, *path_parts):
         # path_parts are multiple arguments that form the path in the config dict

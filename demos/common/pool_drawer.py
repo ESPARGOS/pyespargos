@@ -42,7 +42,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         # Note that the current pool config is authoritative, the default config is just for UI initialization
         # However, if force_config is given, it takes precedence
         super().__init__(parent=parent)
-        self.cfgman = ConfigManager(self.DEFAULT_CONFIG, self.DEFAULT_CONFIG, parent=self)
+        self.cfgman = ConfigManager(self.DEFAULT_CONFIG, parent=self)
         self.pool = pool
 
         # Connect to UI changes
@@ -54,7 +54,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         # Apply later
         def apply_initial_config():
             if force_config:
-                self.cfgman.forceConfigApplied.connect(self.initComplete)
+                self.cfgman.forceConfigAppApplied.connect(self.initComplete)
                 self.cfgman.force(force_config)
             else:
                 self.initComplete.emit()
