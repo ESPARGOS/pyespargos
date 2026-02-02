@@ -1,6 +1,7 @@
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Controls
+import QtQuick.Controls.Material
 import "." as Common
 
 Drawer {
@@ -9,6 +10,7 @@ Drawer {
 	property int headerHeight: 0
 	property string title: "Demo Settings"
 	default property alias content: contentLayout.data
+	property alias contentLayout: contentLayout
 	property alias configManager: demoConfigManager
 	property var endpoint: null
 

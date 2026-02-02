@@ -93,7 +93,7 @@ class ConfigManager(PyQt6.QtCore.QObject):
         self._update_ui_handled_event = threading.Event()
         self.updateAppStateHandled.connect(lambda: self._update_app_handled_event.set())
         self.updateUIStateHandled.connect(lambda: self._update_ui_handled_event.set())
-        self._handled_wait_timeout = 20.0
+        self._handled_wait_timeout = 5.0
 
     def _wait_for_handled(self, event: threading.Event, name: str):
         if not event.wait(timeout=self._handled_wait_timeout):

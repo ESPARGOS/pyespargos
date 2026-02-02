@@ -10,7 +10,7 @@ class CSIBacklog(object):
     CSI backlog class. Stores CSI data in a ringbuffer for processing when needed.
 
     :param pool: CSI pool object to collect CSI data from
-    :param enable: List of fields to store (default: all)
+    :param fields: List of fields to store (default: all), e.g., ["lltf", "ht40", "rssi", "timestamp", "host_timestamp", "mac"]
     :param calibrate: Apply calibration to CSI data (default: True)
     :param cb_predicate: A function that defines the conditions under which clustered CSI is regarded as completed and thus added to the backlog.
         See :meth:`espargos.pool.Pool.add_csi_callback` for more details.
@@ -54,136 +54,172 @@ class CSIBacklog(object):
         }
     }
 
-    def __init__(self, pool, enable = None, calibrate = True, cb_predicate = None, size = 100):
+    def __init__(self, pool, fields = None, calibrate = True, cb_predicate = None, size = 100):
         self.logger = logging.getLogger("pyespargos.backlog")
 
         self.pool = pool
-        self.size = size
-        self.enable = set(self.DATA_FORMATS.keys()) if enable is None else set(enable)
         self.calibrate = calibrate
 
-        self.storage = {}
         self.storage_mutex = threading.Lock()
-        for key, meta in self.DATA_FORMATS.items():
-            shape = meta["shape"]
-            dtype = meta["dtype"]
-            if meta["per_antenna"]:
-                full_shape = (size,) + self.pool.get_shape() + shape
-            else:
-                full_shape = (size,) + shape
-
-            if dtype in [np.uint8]:
-                self.storage[key] = np.zeros(full_shape, dtype = dtype)
-            else:
-                self.storage[key] = np.full(full_shape, fill_value=np.nan, dtype = dtype)
-
+        self.storage = None
         self.head = 0
         self.latest = None
         self.filllevel = 0
         self.mac_filter = None
 
+        self._initialize_storage(size = size, fields = set(self.DATA_FORMATS.keys()) if fields is None else set(fields))
+
         self.running = True
 
-        def new_csi_callback(clustered_csi):
-            # Check MAC address if filter is installed
-            if self.mac_filter is not None:
-                if not self.mac_filter.match(clustered_csi.get_source_mac()):
-                    return
+        self.pool.add_csi_callback(self._on_new_csi, cb_predicate = cb_predicate)
+        self.callbacks = []
 
-            with self.storage_mutex:
-                # Store timestamp
-                sensor_timestamps_raw = clustered_csi.get_sensor_timestamps()
-                sensor_timestamps = np.copy(sensor_timestamps_raw)
-                if self.calibrate:
-                    assert(self.pool.get_calibration() is not None)
-                    sensor_timestamps = self.pool.get_calibration().apply_timestamps(sensor_timestamps)
-                if "timestamp" in self.enable:
-                    self.storage["timestamp"][self.head] = sensor_timestamps
+    def _initialize_storage(self, size=None, fields=None):
+        """
+        Initialize or reinitialize storage arrays.
+        If storage already exists, old data will be preserved where applicable.
+
+        :param size: New size of the ringbuffer (default: keep current size)
+        :param fields: New set of fields to store (default: keep current fields)
+        """
+        with self.storage_mutex:
+            # Back up old data if storage exists
+            old_storage = None
+            if hasattr(self, 'storage') and self.storage:
+                old_storage = dict()
+                for key in self.fields:
+                    old_storage[key] = np.copy(self._read(key))
+
+            # Update size and fields
+            if size is not None:
+                self.size = size
+            if fields is not None:
+                self.fields = set(fields)
+
+            # Create new storage
+            self.storage = dict()
+            for key, meta in self.DATA_FORMATS.items():
+                if key not in self.fields:
+                    continue
+
+                shape = meta["shape"]
+                dtype = meta["dtype"]
+                if meta["per_antenna"]:
+                    full_shape = (self.size,) + self.pool.get_shape() + shape
                 else:
-                    self.storage["timestamp"][self.head] = np.nan
+                    full_shape = (self.size,) + shape
 
-                # Store host timestamp
-                if "host_timestamp" in self.enable:
-                    self.storage["host_timestamp"][self.head] = clustered_csi.get_host_timestamp()
+                if dtype in [np.uint8]:
+                    self.storage[key] = np.zeros(full_shape, dtype=dtype)
                 else:
-                    self.storage["host_timestamp"][self.head] = np.nan
+                    self.storage[key] = np.full(full_shape, fill_value=np.nan, dtype=dtype)
 
-                # Store LLTF CSI if applicable
-                if "lltf" in self.enable:
-                    if clustered_csi.has_lltf():
-                        csi_lltf = clustered_csi.deserialize_csi_lltf()
-                        if self.calibrate:
-                            assert(self.pool.get_calibration() is not None)
-                            csi_lltf = self.pool.get_calibration().apply_lltf(csi_lltf)
+            # Reset ringbuffer state
+            self.head = 0
+            self.latest = None
+            self.filllevel = 0
 
-                        self.storage["lltf"][self.head] = csi_lltf
-                    else:
-                        self.storage["lltf"][self.head] = np.nan
-                        self.logger.warning(f"Received non-LLTF frame even though LLTF is enabled")
+            # Re-insert old data if available
+            if old_storage is not None and len(old_storage) > 0:
+                num_entries = old_storage[next(iter(old_storage))].shape[0]
+                for i in range(num_entries):
+                    for key in old_storage.keys():
+                        if key in self.fields:
+                            self.storage[key][self.head] = old_storage[key][i]
+
+                    self.latest = self.head
+                    self.head = (self.head + 1) % self.size
+                    self.filllevel = min(self.filllevel + 1, self.size)
+
+    def _on_new_csi(self, clustered_csi):
+        # Check MAC address if filter is installed
+        if self.mac_filter is not None:
+            if not self.mac_filter.match(clustered_csi.get_source_mac()):
+                return
+
+        with self.storage_mutex:
+            # Store timestamp
+            sensor_timestamps_raw = clustered_csi.get_sensor_timestamps()
+            sensor_timestamps = np.copy(sensor_timestamps_raw)
+            if self.calibrate:
+                assert(self.pool.get_calibration() is not None)
+                sensor_timestamps = self.pool.get_calibration().apply_timestamps(sensor_timestamps)
+
+            if "timestamp" in self.fields:
+                self.storage["timestamp"][self.head] = sensor_timestamps
+
+            # Store host timestamp
+            if "host_timestamp" in self.fields:
+                self.storage["host_timestamp"][self.head] = clustered_csi.get_host_timestamp()
+
+            # Store LLTF CSI if applicable
+            if "lltf" in self.fields:
+                if clustered_csi.has_lltf():
+                    csi_lltf = clustered_csi.deserialize_csi_lltf()
+                    if self.calibrate:
+                        assert(self.pool.get_calibration() is not None)
+                        csi_lltf = self.pool.get_calibration().apply_lltf(csi_lltf)
+
+                    self.storage["lltf"][self.head] = csi_lltf
                 else:
                     self.storage["lltf"][self.head] = np.nan
+                    self.logger.warning(f"Received non-LLTF frame even though LLTF is enabled")
 
-                # Store HT40 CSI if applicable
-                if "ht40" in self.enable:
-                    if clustered_csi.has_ht40ltf():
-                        csi_ht40 = clustered_csi.deserialize_csi_ht40ltf()
+            # Store HT40 CSI if applicable
+            if "ht40" in self.fields:
+                if clustered_csi.has_ht40ltf():
+                    csi_ht40 = clustered_csi.deserialize_csi_ht40ltf()
 
-                        if self.calibrate:
-                            assert(self.pool.get_calibration() is not None)
-                            csi_ht40 = self.pool.get_calibration().apply_ht40(csi_ht40)
+                    if self.calibrate:
+                        assert(self.pool.get_calibration() is not None)
+                        csi_ht40 = self.pool.get_calibration().apply_ht40(csi_ht40)
 
-                        self.storage["ht40"][self.head] = csi_ht40
-                    else:
-                        self.storage["ht40"][self.head] = np.nan
-                        self.logger.warning(f"Received non-HT40 frame even though HT40 is enabled")
+                    self.storage["ht40"][self.head] = csi_ht40
                 else:
                     self.storage["ht40"][self.head] = np.nan
+                    self.logger.warning(f"Received non-HT40 frame even though HT40 is enabled")
 
-                # Store HT20 CSI if applicable
-                if "ht20" in self.enable:
-                    if clustered_csi.has_ht20ltf():
-                        csi_ht20 = clustered_csi.deserialize_csi_ht20ltf()
+            # Store HT20 CSI if applicable
+            if "ht20" in self.fields:
+                if clustered_csi.has_ht20ltf():
+                    csi_ht20 = clustered_csi.deserialize_csi_ht20ltf()
 
-                        if self.calibrate:
-                            assert(self.pool.get_calibration() is not None)
-                            csi_ht20 = self.pool.get_calibration().apply_ht20(csi_ht20)
+                    if self.calibrate:
+                        assert(self.pool.get_calibration() is not None)
+                        csi_ht20 = self.pool.get_calibration().apply_ht20(csi_ht20)
 
-                        self.storage["ht20"][self.head] = csi_ht20
-                    else:
-                        self.storage["ht20"][self.head] = np.nan
-                        self.logger.warning(f"Received non-HT20 frame even though HT20 is enabled")
+                    self.storage["ht20"][self.head] = csi_ht20
                 else:
                     self.storage["ht20"][self.head] = np.nan
+                    self.logger.warning(f"Received non-HT20 frame even though HT20 is enabled")
 
-                # Store RSSI
-                if "rssi" in self.enable:
-                    self.storage["rssi"][self.head] = clustered_csi.get_rssi()
-                else:
-                    self.storage["rssi"][self.head] = np.nan
+            # Store RSSI
+            if "rssi" in self.fields:
+                self.storage["rssi"][self.head] = clustered_csi.get_rssi()
 
-                # Store MAC address. mac_str is a hex string without colons, e.g. "00:11:22:33:44:55" -> "001122334455"
-                mac_str = clustered_csi.get_source_mac()
-                mac = np.asarray([int(mac_str[i:i+2], 16) for i in range(0, len(mac_str), 2)])
-                assert(mac.shape == (6,))
-                if "mac" in self.enable:
-                    self.storage["mac"][self.head] = mac
-                else:
-                    self.storage["mac"][self.head] = 0
+            # Store MAC address. mac_str is a hex string without colons, e.g. "00:11:22:33:44:55" -> "001122334455"
+            mac_str = clustered_csi.get_source_mac()
+            mac = np.asarray([int(mac_str[i:i+2], 16) for i in range(0, len(mac_str), 2)])
+            assert(mac.shape == (6,))
+            if "mac" in self.fields:
+                self.storage["mac"][self.head] = mac
 
-                # Advance ringbuffer head
-                self.latest = self.head
-                self.head = (self.head + 1) % self.size
-                self.filllevel = min(self.filllevel + 1, self.size)
+            # Advance ringbuffer head
+            self.latest = self.head
+            self.head = (self.head + 1) % self.size
+            self.filllevel = min(self.filllevel + 1, self.size)
 
-            for cb in self.callbacks:
-                cb()
-
-        self.pool.add_csi_callback(new_csi_callback, cb_predicate = cb_predicate)
-        self.callbacks = []
+        for cb in self.callbacks:
+            cb()
 
     def add_update_callback(self, cb):
         """ Add a callback that is called when new CSI data is added to the backlog """
         self.callbacks.append(cb)
+
+    def _read(self, key):
+        if self.filllevel == 0:
+            return np.empty((0,)+self.storage[key].shape[1:], dtype=self.storage[key].dtype)
+        return np.roll(self.storage[key], -self.head, axis = 0)[-self.filllevel:]
 
     def get(self, key):
         """
@@ -192,14 +228,32 @@ class CSIBacklog(object):
         :param key: Key of the data to retrieve (e.g., "lltf", "ht40", "rssi", etc.)
         :return: Data corresponding to the key, oldest first
         """
-        assert(key in self.enable)
+        assert(key in self.fields)
 
-        # Check if storage mutex is held
-        if not self.storage_mutex.locked():
-            self.logger.warning("get() called without holding storage mutex. This may lead to inconsistent data being read. You must use read_start() and read_finish() to protect read operations.")
-        retval = np.copy(np.roll(self.storage[key], -self.head, axis = 0)[-self.filllevel:])
+        self.storage_mutex.acquire()
+        retval = np.copy(self._read(key))
+        self.storage_mutex.release()
 
         return retval
+
+    def get_multiple(self, keys):
+        """
+        Retrieve multiple data fields from the ringbuffer.
+        You must use get_multiple to ensure consistency of data across multiple keys.
+
+        :param keys: List of keys of the data to retrieve (e.g., ["lltf", "ht40", "rssi"], etc.)
+        :return: Tuple of data arrays corresponding to the keys (in same order), contents are oldest first
+        """
+        for key in keys:
+            assert(key in self.fields)
+
+        self.storage_mutex.acquire()
+        retval = []
+        for key in keys:
+            retval.append(np.copy(self._read(key)))
+        self.storage_mutex.release()
+
+        return tuple(retval)
 
     def get_latest(self, key):
         """
@@ -211,7 +265,7 @@ class CSIBacklog(object):
         if self.latest is None:
             return None
 
-        assert(key in self.enable)
+        assert(key in self.fields)
         latest_value = self.storage[key][self.latest]
 
         return np.copy(latest_value)
@@ -223,18 +277,6 @@ class CSIBacklog(object):
         :return: True if the backlog is nonempty
         """
         return self.latest is not None
-
-    def read_start(self):
-        """
-        Start a read operation from the backlog, must be called before reading data.
-        """
-        self.storage_mutex.acquire()
-
-    def read_finish(self):
-        """
-        Finish a read operation from the backlog, must be called after reading data.
-        """
-        self.storage_mutex.release()
 
     def start(self):
         """
@@ -258,6 +300,32 @@ class CSIBacklog(object):
         :param filter_regex: MAC address filter regex
         """
         self.mac_filter = re.compile(filter_regex)
+
+    def get_size(self):
+        """
+        Get the size of the backlog ringbuffer
+
+        :return: Size of the backlog ringbuffer
+        """
+        return self.size
+
+    def set_size(self, new_size):
+        """
+        Resize the backlog ringbuffer.
+        If there are existing entries, they will be preserved up to the new size.
+
+        :param new_size: New size of the backlog ringbuffer
+        """
+        self._initialize_storage(size=new_size)
+
+    def set_fields(self, new_fields):
+        """
+        Set the fields to be stored in the backlog.
+        Existing data will be preserved for fields that are still present.
+
+        :param new_fields: New list of fields to store
+        """
+        self._initialize_storage(fields=new_fields)
 
     def __run(self):
         """

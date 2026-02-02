@@ -132,20 +132,23 @@ class EspargosDemoCamera(DemoApplication):
             # No backlog available yet, demo has not fully initialized
             return
 
-        self.backlog.read_start()
-        csi_backlog = None
-
         if self.args.lltf:
-            csi_backlog = self.backlog.get("lltf")
+            csi_key = "lltf"
         elif self.args.ht40:
-            csi_backlog = self.backlog.get("ht40")
+            csi_key = "ht40"
         else:
-            csi_backlog = self.backlog.get("ht20")
+            csi_key = "ht20"
 
-        rssi_backlog = self.backlog.get("rssi")
-        timestamp_backlog = self.backlog.get("host_timestamp")
-        mac_backlog = self.backlog.get("mac")
-        self.backlog.read_finish()
+        csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog = self.backlog.get_multiple([
+            csi_key,
+            "rssi",
+            "host_timestamp",
+            "mac",
+        ])
+
+        if csi_backlog.size == 0:
+            # No data available yet
+            return
 
         if self.args.max_age > 0.0:
             csi_backlog[timestamp_backlog < (time.time() - self.args.max_age),...] = 0
@@ -276,7 +279,7 @@ class EspargosDemoCamera(DemoApplication):
                 color_value = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-6)
 
             if self.democonfig.get("beamformer", "colorize_delay"):
-                if self.democonfig.get("beamformer", "type") in ["MUSIC", "MVDR"]   :
+                if self.democonfig.get("beamformer", "type") in ["MUSIC", "MVDR"]:
                     raise NotImplementedError("Delay colorization not supported in MUSIC or MVDR mode")
 
                 # Compute beam powers and delay. Beam power is value, delay is hue.

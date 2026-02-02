@@ -30,12 +30,12 @@ class EspargosDemoMusicSpectrum(PyQt6.QtWidgets.QApplication):
 		self.pool = espargos.Pool([espargos.Board(self.args.host)])
 		self.pool.start()
 		self.pool.calibrate(duration = 2)
-		enable = ["rssi", "timestamp", "host_timestamp", "mac"]
+		fields = ["rssi", "timestamp", "host_timestamp", "mac"]
 		if self.args.lltf:
-			enable.append("lltf")
+			fields.append("lltf")
 		else:
 			enable.extend(["ht40", "ht20"])
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable = enable)
+		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, fields = enable)
 		self.backlog.start()
 
 		# Qt setup
@@ -60,10 +60,8 @@ class EspargosDemoMusicSpectrum(PyQt6.QtWidgets.QApplication):
 
 	@PyQt6.QtCore.pyqtSlot(PyQt6.QtCharts.QLineSeries, PyQt6.QtCharts.QValueAxis)
 	def updateSpatialSpectrum(self, series, axis):
-		self.backlog.read_start()
-		csi_backlog = self.backlog.get("lltf") if self.args.lltf else self.backlog.get("ht40")
-		rssi_backlog = self.backlog.get("rssi")
-		self.backlog.read_finish()
+		csi_key = "lltf" if self.args.lltf else "ht40"
+		csi_backlog, rssi_backlog = self.backlog.get_multiple([csi_key, "rssi"])
 
 		# Weight CSI data with RSSI
 		csi_backlog = csi_backlog * 10**(rssi_backlog[..., np.newaxis] / 20)

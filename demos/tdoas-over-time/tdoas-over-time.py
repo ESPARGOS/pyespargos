@@ -40,12 +40,12 @@ class EspargosDemoTDOAOverTime(PyQt6.QtWidgets.QApplication):
 		self.pool = espargos.Pool([espargos.Board(host) for host in hosts])
 		self.pool.start()
 		self.pool.calibrate(duration = 4, per_board=False)
-		enable = ["rssi", "timestamp", "host_timestamp", "mac"]
+		fields = ["rssi", "timestamp", "host_timestamp", "mac"]
 		if self.args.lltf:
-			enable.append("lltf")
+			fields.append("lltf")
 		else:
 			enable.extend(["ht40", "ht20"])
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable = enable)
+		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, fields = enable)
 		self.backlog.start()
 
 		# Qt setup
@@ -71,10 +71,9 @@ class EspargosDemoTDOAOverTime(PyQt6.QtWidgets.QApplication):
 			#timestamps = self.backlog.get("timestamp")
 			#tdoas_ns = np.mean(timestamps - np.mean(timestamps, axis = (1, 2, 3))[:,np.newaxis,np.newaxis,np.newaxis], axis = 0) * 1e9
 
-			self.backlog.read_start()
-			csi_backlog = self.backlog.get("lltf") if self.args.lltf else self.backlog.get("ht40")
+			csi_key = "lltf" if self.args.lltf else "ht40"
+			csi_backlog = self.backlog.get(csi_key)
 			mean_rx_timestamp = self.backlog.get_latest("host_timestamp") - self.startTimestamp
-			self.backlog.read_finish()
 
 			if self.args.lltf:
 				espargos.util.interpolate_lltf_gap(csi_backlog)

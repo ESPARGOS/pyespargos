@@ -53,14 +53,14 @@ class q_image_app(QtWidgets.QApplication):
         self.pool = espargos.Pool([espargos.Board(self.args.host)])
         self.pool.start()
         self.pool.calibrate(duration = 2, per_board=False)
-        enable = ["rssi", "timestamp", "host_timestamp", "mac"]
+        fields = ["rssi", "timestamp", "host_timestamp", "mac"]
         if self.args.lltf:
-            enable.append("lltf")
+            fields.append("lltf")
         if self.args.ht40:
-            enable.append("ht40")
+            fields.append("ht40")
         if self.args.ht20:
-            enable.append("ht20")
-        self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable = enable)
+            fields.append("ht20")
+        self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, fields = enable)
         self.backlog.start()
         self.aboutToQuit.connect(self.onAboutToQuit)
         self.engine = QtQml.QQmlApplicationEngine()
@@ -102,7 +102,6 @@ class q_image_app(QtWidgets.QApplication):
     
     def get_csi(self):
         if self.backlog.nonempty():
-            self.backlog.read_start()
             if self.args.lltf:
                 csi = self.backlog.get("lltf")
                 espargos.util.interpolate_lltf_gap(csi)
@@ -112,7 +111,6 @@ class q_image_app(QtWidgets.QApplication):
             else:
                 csi = self.backlog.get("ht40")
                 espargos.util.interpolate_ht40ltf_gap(csi)
-            self.backlog.read_finish()
             return csi
         else:
             return np.zeros((1,1,2,ANTENNAS_COLS,self.subcarriers), dtype=complex)

@@ -155,16 +155,11 @@ Common.DemoApplication {
 			ComboBox {
 				id: beamformerType
 				property string configKey: "beamformer.type"
-				property string configProp: "currentIndex"
-				property var encode: function(v) { return ["FFT", "Bartlett", "MVDR", "MUSIC"][v] }
-				property var decode: function(v) {
-					let idx = ["FFT", "Bartlett", "MVDR", "MUSIC"].indexOf(v)
-					return idx >= 0 ? idx : 0
-				}
+				property string configProp: "currentValue"
 				Component.onCompleted: demoDrawer.configManager.register(this)
-				onCurrentIndexChanged: {
+				onCurrentValueChanged: {
 					// colorize_delay only makes sense for FFT beamformer, set to false when changing away
-					if (beamformerType.currentIndex !== 0) {
+					if (beamformerType.currentValue !== "FFT") {
 						colorizeDelay.currentIndex = 0
 					}
 					demoDrawer.configManager.onControlChanged(this)
@@ -288,11 +283,29 @@ Common.DemoApplication {
 				currentIndex: 0
 			}
 
+			Item {
+				id: backlogAnchor;
+				Layout.columnSpan: 2;
+				width: 0;
+				height: 0;
+				visible: false
+			}
+
+			Common.BacklogSettings {
+				id: backlogSettings
+			}
+
 			// Spacer
 			Rectangle {
+				id: endSpacer
 				Layout.columnSpan: 2
 				width: 1; height: 30
 				color: "transparent"
+			}
+
+			Component.onCompleted: {
+				// Attach backlog settings to drawer when available
+				backlogSettings.insertBefore = backlogAnchor
 			}
 		}
 	}

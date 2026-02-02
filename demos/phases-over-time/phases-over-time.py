@@ -35,12 +35,12 @@ class EspargosDemoPhasesOverTime(PyQt6.QtWidgets.QApplication):
 		self.pool = espargos.Pool([espargos.Board(host) for host in hosts])
 		self.pool.start()
 		self.pool.calibrate(per_board = False, duration = 2)
-		enable = ["rssi", "timestamp", "host_timestamp", "mac"]
+		fields = ["rssi", "timestamp", "host_timestamp", "mac"]
 		if self.args.lltf:
-			enable.append("lltf")
+			fields.append("lltf")
 		else:
 			enable.extend(["ht40", "ht20"])
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable = enable)
+		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, fields = enable)
 		self.backlog.add_update_callback(self.update)
 		self.backlog.start()
 
@@ -63,10 +63,9 @@ class EspargosDemoPhasesOverTime(PyQt6.QtWidgets.QApplication):
 
 	def update(self):
 		if self.backlog.nonempty():
-			self.backlog.read_start()
-			csi_backlog = self.backlog.get("lltf") if self.args.lltf else self.backlog.get("ht40")
+			csi_key = "lltf" if self.args.lltf else "ht40"
+			csi_backlog = self.backlog.get(csi_key)
 			timestamp = self.backlog.get_latest("host_timestamp") - self.startTimestamp
-			self.backlog.read_finish()
 
 			csi_shifted = espargos.util.shift_to_firstpeak_sync(csi_backlog) if self.args.shift_peak else csi_backlog
 			csi_interp = espargos.util.csi_interp_iterative(csi_shifted)

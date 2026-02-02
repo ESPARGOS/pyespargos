@@ -34,12 +34,12 @@ class EspargosDemoPhasesOverSpace(PyQt6.QtWidgets.QApplication):
 		self.pool.start()
 		if not self.args.no_calibration:
 			self.pool.calibrate(duration = 4)
-		enable = ["rssi", "timestamp", "host_timestamp", "mac"]
+		fields = ["rssi", "timestamp", "host_timestamp", "mac"]
 		if self.args.lltf:
-			enable.append("lltf")
+			fields.append("lltf")
 		else:
 			enable.extend(["ht40", "ht20"])
-		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, calibrate = not self.args.no_calibration, enable = enable)
+		self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, calibrate = not self.args.no_calibration, fields = enable)
 		self.backlog.start()
 
 		# Qt setup
@@ -59,9 +59,8 @@ class EspargosDemoPhasesOverSpace(PyQt6.QtWidgets.QApplication):
 
 	@PyQt6.QtCore.pyqtSlot()
 	def updateRequest(self):
-		self.backlog.read_start()
-		csi_backlog = self.backlog.get("lltf") if self.args.lltf else self.backlog.get("ht40")
-		self.backlog.read_finish()
+		csi_key = "lltf" if self.args.lltf else "ht40"
+		csi_backlog = self.backlog.get(csi_key)
 		R = np.einsum("dbmis,dbnjs->minj", csi_backlog, np.conj(csi_backlog))
 		R = np.reshape(R, (espargos.constants.ANTENNAS_PER_BOARD, espargos.constants.ANTENNAS_PER_BOARD))
 		w, v = np.linalg.eig(R)

@@ -9,6 +9,7 @@ import yaml
 import espargos.util
 import PyQt6.QtQml
 
+from .backlog_settings import BacklogSettings
 from .pool_drawer import PoolDrawer
 
 
@@ -52,6 +53,7 @@ class DemoApplication(PyQt6.QtWidgets.QApplication):
         context.setContextProperty("backend", self)
         if hasattr(self, "pooldrawer"):
             context.setContextProperty("poolconfig", self.pooldrawer.configManager())
+        
 
         for key, value in (context_props or {}).items():
             if key != "backend":
@@ -89,16 +91,18 @@ class DemoApplication(PyQt6.QtWidgets.QApplication):
 
                 if enable_backlog:
                     # TODO: do not rely on self.args and self._cb_predicate here
-                    enable = ["rssi", "timestamp", "host_timestamp", "mac"]
+                    fields = ["rssi", "timestamp", "host_timestamp", "mac"]
                     if self.args.lltf:
-                        enable.append("lltf")
+                        fields.append("lltf")
                     if self.args.ht40:
-                        enable.append("ht40")
+                        fields.append("ht40")
                     if self.args.ht20:
-                        enable.append("ht20")
-
-                    self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, enable = enable, cb_predicate = backlog_cb_predicate, calibrate = calibrate)
+                        fields.append("ht20")
+                    self.backlog = espargos.CSIBacklog(self.pool, size = self.args.backlog, fields = fields, cb_predicate = backlog_cb_predicate, calibrate = calibrate)
                     self.backlog.start()
+
+                    # Add settings for backlog, TODO
+                    #self.backlog_settings = BacklogSettings(self.backlog, initial_cfg=self.get_initial_config("backlog", default={}), parent=self)
 
                 self.ready = True
                 self.initComplete.emit()

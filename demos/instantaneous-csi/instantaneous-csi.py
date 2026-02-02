@@ -82,15 +82,13 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 			# Backlog not yet initialized
 			return
 
-		self.backlog.read_start()
 		if self.args.lltf:
-			csi_backlog = self.backlog.get("lltf")
+			csi_key = "lltf"
 		elif self.args.ht40:
-			csi_backlog = self.backlog.get("ht40")
+			csi_key = "ht40"
 		else:
-			csi_backlog = self.backlog.get("ht20")
-		rssi_backlog = self.backlog.get("rssi")
-		self.backlog.read_finish()
+			csi_key = "ht20"
+		csi_backlog, rssi_backlog = self.backlog.get_multiple([csi_key, "rssi"])
 
 		# If any value is NaN, skip this update (happens if received frame were not of expected type)
 		if np.isnan(csi_backlog).any() or np.isnan(rssi_backlog).any():
