@@ -3,6 +3,7 @@
 import PyQt6.QtCore
 
 import threading
+import copy
 import re
 
 import espargos.pool
@@ -44,6 +45,9 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         super().__init__(parent=parent)
         self.cfgman = ConfigManager(self.DEFAULT_CONFIG, parent=self)
         self.pool = pool
+
+        # Remember force_config for potential resets
+        self.force_config = force_config
 
         # Connect to UI changes
         self.cfgman.updateAppState.connect(self._write_config_to_pool)
@@ -213,7 +217,10 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         threading.Thread(target=worker, args=(delta,), daemon=True).start()
 
     def _action_reset_config(self):
-        self._write_config_to_pool(self.DEFAULT_CONFIG)
+        reset_cfg = copy.deepcopy(self.DEFAULT_CONFIG)
+        if self.force_config:
+            reset_cfg.update(self.force_config)
+        self._write_config_to_pool(reset_cfg)
 
     def _action_reload_config(self):
         self.cfgman.set(self._read_config_from_pool())

@@ -4,55 +4,52 @@ import PyQt6.QtWidgets
 import PyQt6.QtCore
 
 import threading
-
 import argparse
+import enum
 import yaml
 
 import espargos.util
 
 from .pool_drawer import PoolDrawer
 
+
 class DemoApplication(PyQt6.QtWidgets.QApplication):
     initComplete = PyQt6.QtCore.pyqtSignal()
 
-    def __init__(self, argv):
+    def __init__(self, argv : list[str], argparse_parent : argparse.ArgumentParser = None):
         super().__init__(argv)
 
-        # Not ready yet
+        # Basic app initialization
         self.ready = False
 
-        # Add parent argument parser
-        self.common_args = argparse.ArgumentParser(add_help = False)
-        self.common_args.add_argument("-c", "--config", type = str, default = None, help = "Path to YAML configuration file to load")
+        # Parse command-line arguments
+        parser = argparse.ArgumentParser(parents = [argparse_parent] if argparse_parent else [])
+        parser.add_argument("-c", "--config", type = str, default = None, help = "Path to YAML configuration file to load")
+        self.args = parser.parse_args()
 
+        # Load initial configuration if provided
         self.config_path = None
-        self.initial_config = {}
+        self.initial_config = dict()
+        if self.args.config is not None:
+            with open(self.args.config, "r") as config_file:
+                self.initial_config = yaml.safe_load(config_file) or {}
 
-    def parse_args(self, parser: argparse.ArgumentParser):
-        args = parser.parse_args()
-        self.config_path = getattr(args, "config", None)
-        self.initial_config = self._load_config(self.config_path)
-        return args
-
-    def _load_config(self, config_path: str):
-        if not config_path:
-            return {}
-
-        with open(config_path, "r") as config_file:
-            data = yaml.safe_load(config_file) or {}
-
-        if not isinstance(data, dict):
-            raise ValueError("Config file must contain a YAML object at the root")
-
-        return data
+            if not isinstance(self.initial_config, dict):
+                raise ValueError("Config file must contain a YAML object at the root")
 
     def get_initial_config(self, *keys, default=None):
         for key in keys:
             if key in self.initial_config and isinstance(self.initial_config[key], dict):
                 return self.initial_config[key]
         return default
-    
-    def initialize_pool(self, hosts, enable_backlog = False, backlog_cb_predicate = None, additional_calibrate_args = {}, calibrate = True):
+
+    def initialize_pool(
+            self,
+            hosts : list[str],
+            enable_backlog : bool = False,
+            backlog_cb_predicate = None,
+            additional_calibrate_args : dict = {},
+            calibrate : bool = True):
         """
         Initialize ESPARGOS Pool for combined-array setups.
         Also triggers creation of pool drawer.

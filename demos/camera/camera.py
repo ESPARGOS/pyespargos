@@ -58,10 +58,8 @@ class EspargosDemoCamera(DemoApplication):
         }
 
     def __init__(self, argv):
-        super().__init__(argv)
-
         # Parse command line arguments
-        parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Overlay received power on top of camera image", parents = [self.common_args])
+        parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Overlay received power on top of camera image", add_help = False)
         parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
         parser.add_argument("-a", "--additional-calibration", type = str, default = "", help = "File to read additional phase calibration results from")
         parser.add_argument("-e", "--manual-exposure", default = False, help = "Use manual exposure / brightness control for WiFi overlay", action = "store_true")
@@ -71,7 +69,7 @@ class EspargosDemoCamera(DemoApplication):
         format_group.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
         format_group.add_argument("-ht40", "--ht40", default = False, help = "Use only CSI from HT40", action = "store_true")
         format_group.add_argument("-ht20", "--ht20", default = False, help = "Use only CSI from HT20", action = "store_true")
-        self.args = self.parse_args(parser)
+        super().__init__(argv, argparse_parent = parser)
 
         # Check if at least one format is selected
         if not (self.args.lltf or self.args.ht40 or self.args.ht20):

@@ -17,10 +17,8 @@ import PyQt6.QtQml
 
 class EspargosDemoInstantaneousCSI(DemoApplication):
 	def __init__(self, argv):
-		super().__init__(argv)
-
 		# Parse command line arguments
-		parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Show instantaneous CSI over subcarrier index (single board)", parents = [self.common_args])
+		parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Show instantaneous CSI over subcarrier index (single board)", add_help = False)
 		parser.add_argument("hosts", type = str, help = "Comma-separated list of host addresses (IP or hostname) of ESPARGOS controllers")
 		parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
 		parser.add_argument("-s", "--shift-peak", default = False, help = "Time-shift CSI so that first peaks align", action = "store_true")
@@ -34,7 +32,7 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 		format_group.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
 		format_group.add_argument("-ht40", "--ht40", default = False, help = "Use only CSI from HT40", action = "store_true")
 		format_group.add_argument("-ht20", "--ht20", default = False, help = "Use only CSI from HT20", action = "store_true")
-		self.args = self.parse_args(parser)
+		super().__init__(argv, argparse_parent = parser)
 
 		# Check if at least one format is selected
 		if not (self.args.lltf or self.args.ht40 or self.args.ht20):
