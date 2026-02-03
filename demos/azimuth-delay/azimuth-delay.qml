@@ -9,8 +9,8 @@ import "../common" as Common
 Common.ESPARGOSApplication {
     id: window
     title: "Azimuth-Delay Demo"
-    minimumWidth: 1600
-    minimumHeight: 800
+    minimumWidth: 1024
+    minimumHeight: 768
 
     appDrawerComponent: Component {
         Common.AppDrawer {
