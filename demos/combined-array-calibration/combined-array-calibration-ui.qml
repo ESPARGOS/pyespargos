@@ -1,45 +1,85 @@
-import QtQuick
+import QtQuick.Controls.Material
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtCharts
+import QtQuick
 
-ApplicationWindow {
+import "../common" as Common
+
+Common.ESPARGOSApplication {
 	id: window
-	visible: true
-	minimumWidth: 800
-	minimumHeight: 500
-
-	color: "#11191e"
 	title: "Combined Array Calibration Demo"
-
-    // Full screen management
-	visibility: ApplicationWindow.Windowed
-	Shortcut {
-		sequence: "F11"
-		onActivated: {
-			window.visibility = window.visibility == ApplicationWindow.Windowed ? ApplicationWindow.FullScreen : ApplicationWindow.Windowed
-		}
-	}
-
-	Shortcut {
-		sequence: "Esc"
-		onActivated: window.close()
-	}
 
 	// Tab20 color cycle reordered: https://github.com/matplotlib/matplotlib/blob/main/lib/matplotlib/_cm.py#L1293
 	property var colorCycle: ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5", "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5"]
 
+	appDrawerComponent: Component {
+		Common.AppDrawer {
+			id: appDrawer
+			title: "Settings"
+			endpoint: appconfig
+
+			Label { Layout.columnSpan: 2; text: "Calibration Settings"; color: "#9fb3c8" }
+
+			Label { text: "Update Rate"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			SpinBox {
+				id: updateRateSpinBox
+				property string configKey: "update_rate"
+				property string configProp: "value"
+				property var encode: function(v) { return v / 1000.0 }
+				property var decode: function(v) { return Math.round(Number(v) * 1000) }
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 160
+				from: 1
+				to: 100
+				stepSize: 1
+				value: 10
+				textFromValue: function(value) { return (value / 1000).toFixed(3); }
+				valueFromText: function(text) { return parseFloat(text) * 1000; }
+			}
+
+			Label { text: "Boardwise"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: boardwiseSwitch
+				property string configKey: "boardwise"
+				property string configProp: "checked"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 80
+				checked: false
+			}
+
+			Label { text: "Color by Sensor"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: colorBySensorSwitch
+				property string configKey: "color_by_sensor_index"
+				property string configProp: "checked"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 80
+				checked: false
+			}
+
+			Common.GenericAppSettings {
+				id: genericAppSettings
+				insertBefore: genericAppSettingsAnchor
+				implicitWidth: 160
+			}
+
+			Item {
+				id: genericAppSettingsAnchor
+				Layout.columnSpan: 2
+				width: 0
+				height: 0
+				visible: false
+			}
+		}
+	}
+
 	ColumnLayout {
 		height: parent.height
 		width: parent.width
-
-		Text {
-			Layout.alignment: Qt.AlignCenter
-			font.pixelSize: Math.max(24, window.width / 70)
-			text: "Combined Array Calibration Demo"
-			color: "#ffffff"
-			Layout.margins: 10
-		}
 
 		ChartView {
 			id: csiPhase
@@ -55,8 +95,8 @@ ApplicationWindow {
 				ValueAxis {
 					id: csiPhaseSubcarrierAxis
 
-					min: backend.subcarrierRange[0]
-					max: backend.subcarrierRange.slice(-1)[0]
+					min: backend.subcarrierRange.length > 0 ? backend.subcarrierRange[0] : -32
+					max: backend.subcarrierRange.length > 0 ? backend.subcarrierRange[backend.subcarrierRange.length - 1] : 32
 					titleText: "<font color=\"#e0e0e0\">Subcarrier Index</font>"
 					titleFont.bold: false
 					gridLineColor: "#c0c0c0"
@@ -78,7 +118,8 @@ ApplicationWindow {
 				}
 			]
 
-			Component.onCompleted : {
+			function rebuildSeries() {
+				csiPhase.removeAllSeries();
 				for (let ant = 0; ant < backend.sensorCount; ++ant) {
 					let series = csiPhase.createSeries(ChartView.SeriesTypeLine, "tx-" + ant, csiPhaseSubcarrierAxis, csiPhaseAxis);
 					series.pointsVisible = false;
@@ -93,14 +134,30 @@ ApplicationWindow {
 					}
 				}
 			}
+
+			Connections {
+				target: backend
+				function onSensorCountChanged() {
+					csiPhase.rebuildSeries();
+				}
+				function onInitComplete() {
+					csiPhase.rebuildSeries();
+				}
+				function onColorBySensorIndexChanged() {
+					csiPhase.rebuildSeries();
+				}
+			}
 		}
 	}
 
 	Timer {
 		interval: 1 / 60 * 1000
-		running: true
+		running: !backend.initializing
 		repeat: true
 		onTriggered: {
+			if (backend.sensorCount === 0)
+				return;
+
 			let phaseSeries = [];
 			for (let i = 0; i < backend.sensorCount; ++i)
 				phaseSeries.push(csiPhase.series(i));
