@@ -46,6 +46,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
                 "type" : "FFT",
                 "colorize_delay" : False,
                 "max_delay" : 0.2,
+                "max_age" : 0.0,
                 "resolution_azimuth" : 64,
                 "resolution_elevation" : 32
             },
@@ -60,7 +61,6 @@ class EspargosDemoCamera(ESPARGOSApplication):
         parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Overlay received power on top of camera image", add_help = False)
         parser.add_argument("-a", "--additional-calibration", type = str, default = "", help = "File to read additional phase calibration results from")
         parser.add_argument("-e", "--manual-exposure", default = False, help = "Use manual exposure / brightness control for WiFi overlay", action = "store_true")
-        parser.add_argument("--max-age", type = float, default = 0.0, help = "Limit maximum age of CSI data to this value (in seconds). Set to 0.0 to disable.")
         parser.add_argument("--csi-completion-timeout", type = float, default = 0.2, help = "Time after which CSI cluster is considered complete even if not all antennas have provided data. Set to zero to disable processing incomplete clusters.")
         super().__init__(argv, argparse_parent = parser, flags = {
             ESPARGOSApplicationFlags.ENABLE_BACKLOG,
@@ -140,9 +140,10 @@ class EspargosDemoCamera(ESPARGOSApplication):
             # No data available yet
             return
 
-        if self.args.max_age > 0.0:
-            csi_backlog[timestamp_backlog < (time.time() - self.args.max_age),...] = 0
-            recent_rssi_backlog = rssi_backlog[timestamp_backlog > (time.time() - self.args.max_age),...]
+        max_age = self.democonfig.get("beamformer", "max_age")
+        if max_age > 0.0:
+            csi_backlog[timestamp_backlog < (time.time() - max_age),...] = 0
+            recent_rssi_backlog = rssi_backlog[timestamp_backlog > (time.time() - max_age),...]
         else:
             recent_rssi_backlog = rssi_backlog
 
