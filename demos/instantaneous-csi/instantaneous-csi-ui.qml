@@ -1,6 +1,7 @@
-import QtQuick
+import QtQuick.Controls.Material
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick
 import QtCharts
 import "../common" as Common
 
@@ -20,6 +21,55 @@ Common.ESPARGOSApplication {
 		Common.AppDrawer {
 			id: appDrawer
 			title: "Settings"
+			endpoint: appconfig
+
+
+			Label { Layout.columnSpan: 2; text: "Display Settings"; color: "#9fb3c8" }
+
+			Label { text: "Display Mode"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			ComboBox {
+				id: displayModeCombo
+				property string configKey: "display_mode"
+				property string configProp: "currentValue"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+
+				model: [
+					{ value: "frequency", text: "Frequency Domain" },
+					{ value: "timedomain", text: "Time Domain" },
+					{ value: "music", text: "MUSIC" },
+					{ value: "mvdr", text: "MVDR" }
+				]
+				textRole: "text"
+				valueRole: "value"
+				currentValue: "frequency"
+			}
+
+			Label { text: "Oversampling"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: backend.timeDomain }
+			SpinBox {
+				id: oversamplingSpinBox
+				property string configKey: "oversampling"
+				property string configProp: "value"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+				from: 1
+				to: 16
+				value: 4
+				visible: backend.timeDomain
+			}
+
+			Label { text: "Shift Peak"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: shiftPeakSwitch
+				property string configKey: "shift_peak"
+				property string configProp: "checked"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 80
+				checked: false
+			}
 
 			Common.GenericAppSettings {
 				id: genericAppSettings
@@ -75,8 +125,8 @@ Common.ESPARGOSApplication {
 				ValueAxis {
 					id: csiAmplitudeSubcarrierAxis
 
-					min: backend.superResolution ? -7 : -Math.floor(backend.subcarrierCount / 2)
-					max: backend.superResolution ? 7 : Math.floor(backend.subcarrierCount / 2) - 1
+					min: (backend.timeDomain || backend.superResolution) ? -7 : -Math.floor(backend.subcarrierCount / 2)
+					max: (backend.timeDomain || backend.superResolution) ? 7 : Math.floor(backend.subcarrierCount / 2) - 1
 					titleText: (backend.timeDomain || backend.superResolution) ? "<font color=\"#e0e0e0\">Delay [tap]</font>" : "<font color=\"#e0e0e0\">Subcarrier Index</font>"
 					titleFont.bold: false
 					gridLineColor: "#c0c0c0"
@@ -124,8 +174,8 @@ Common.ESPARGOSApplication {
 				ValueAxis {
 					id: csiPhaseSubcarrierAxis
 
-					min: (backend.superResolution) ? -7 : -Math.floor(backend.subcarrierCount / 2)
-					max: (backend.superResolution) ? 7 : Math.floor(backend.subcarrierCount / 2) - 1
+					min: (backend.timeDomain || backend.superResolution) ? -7 : -Math.floor(backend.subcarrierCount / 2)
+					max: (backend.timeDomain || backend.superResolution) ? 7 : Math.floor(backend.subcarrierCount / 2) - 1
 					titleText: (backend.timeDomain || backend.superResolution) ? "<font color=\"#e0e0e0\">Delay [tap]</font>" : "<font color=\"#e0e0e0\">Subcarrier Index</font>"
 					titleFont.bold: false
 					gridLineColor: "#c0c0c0"

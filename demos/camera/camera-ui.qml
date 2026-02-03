@@ -19,7 +19,7 @@ Common.ESPARGOSApplication {
 		Common.AppDrawer {
 			id: appDrawer
 			title: "App Settings"
-			endpoint: democonfig
+			endpoint: appconfig
 
 			CheckBox {
 				id: advancedSettings

@@ -77,18 +77,18 @@ class EspargosDemoCamera(ESPARGOSApplication):
         # Initialize combined array setup
         self.initialize_pool(backlog_cb_predicate = self._cb_predicate)
 
-        # Demo configuration manager
-        self.democonfig = ConfigManager(self.DEFAULT_CONFIG, parent = self)
-        self.democonfig.updateAppState.connect(self.onUpdateAppState)
+        # App configuration manager
+        self.appconfig = ConfigManager(self.DEFAULT_CONFIG, parent = self)
+        self.appconfig.updateAppState.connect(self.onUpdateAppState)
 
         # Apply optional YAML config to pool/demo config managers
-        self.democonfig.set(self.get_initial_config("app", default = {}))
+        self.appconfig.set(self.get_initial_config("app", default = {}))
 
         # Camera setup
-        self.videocamera = videocamera.VideoCamera(self.democonfig.get("camera", "device"), self.democonfig.get("camera", "format"))
+        self.videocamera = videocamera.VideoCamera(self.appconfig.get("camera", "device"), self.appconfig.get("camera", "format"))
 
         # Let UI know about currently selected camera device and format
-        self.democonfig.set({
+        self.appconfig.set({
             "camera" : {
                 "device" : self.videocamera.getDevice(),
                 "format" : self.videocamera.getFormat()
@@ -106,7 +106,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
         self.recent_macs = set()
 
         self.initialize_qml(pathlib.Path(__file__).resolve().parent / "camera-ui.qml", {
-            "democonfig": self.democonfig,
+            "appconfig": self.appconfig,
             "WebCam": self.videocamera,
         })
 
@@ -138,7 +138,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
             # No data available yet
             return
 
-        max_age = self.democonfig.get("beamformer", "max_age")
+        max_age = self.appconfig.get("beamformer", "max_age")
         if max_age > 0.0:
             csi_backlog[timestamp_backlog < (time.time() - max_age),...] = 0
             recent_rssi_backlog = rssi_backlog[timestamp_backlog > (time.time() - max_age),...]
@@ -157,7 +157,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
         # Update list of recent MAC addresses
         # Only send signal if list of MAC addresses has changed
         # mac_backlog is a numpy array of shape (n_packets, 6) of data type uint8, where each row is a MAC address
-        if self.democonfig.get("receiver", "mac_list_enabled"):
+        if self.appconfig.get("receiver", "mac_list_enabled"):
             mac_strings = ["{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}".format(*mac) for mac in mac_backlog]
             mac_strings_set = set(mac_strings)
 
@@ -195,7 +195,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
         # Shift all CSI datapoints in time so that LoS component arrives at the same time
         csi_combined = espargos.util.shift_to_firstpeak_sync(csi_combined, peak_threshold = (0.4 if self.genericconfig.get("preamble_format") == "lltf" else 0.1))
 
-        beamformer_type = self.democonfig.get("beamformer", "type")
+        beamformer_type = self.appconfig.get("beamformer", "type")
         match beamformer_type:
             case "MUSIC" | "MVDR":
                 # Option 1: MUSIC or MVDR spatial spectrum
@@ -223,8 +223,8 @@ class EspargosDemoCamera(ESPARGOSApplication):
                 # csi_zeropadded has shape (datapoints, azimuth / row, elevation / column, subcarriers)                
                 csi_zeropadded = np.zeros((
                     csi_fdomain_cut.shape[0],
-                    self.democonfig.get("beamformer", "resolution_azimuth"),
-                    self.democonfig.get("beamformer", "resolution_elevation"),
+                    self.appconfig.get("beamformer", "resolution_azimuth"),
+                    self.appconfig.get("beamformer", "resolution_elevation"),
                     csi_fdomain_cut.shape[-1]
                 ), dtype = csi_fdomain_cut.dtype)
                 real_rows_half = csi_fdomain_cut.shape[2] // 2
@@ -249,7 +249,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
                 beam_frequency_space = np.einsum("rcae,dbrcs->daes", np.conj(self.steering_vectors_2d), csi_combined, optimize = True)
                 self.beamspace_power = np.mean(np.abs(beam_frequency_space)**2, axis = (0, 3))
 
-        if self.democonfig.get("visualization", "overlay") == "Power":
+        if self.appconfig.get("visualization", "overlay") == "Power":
             db_beamspace = 10 * np.log10(self.beamspace_power + 1e-6)
             db_beamspace_norm = (db_beamspace - np.max(db_beamspace) + 15) / 15
             db_beamspace_norm = np.clip(db_beamspace_norm, 0, 1)
@@ -261,19 +261,19 @@ class EspargosDemoCamera(ESPARGOSApplication):
         else:
             power_visualization_beamspace = self.beamspace_power**3
 
-            if self.democonfig.get("visualization", "manual_exposure"):
-                match self.democonfig.get("beamformer", "type"):
+            if self.appconfig.get("visualization", "manual_exposure"):
+                match self.appconfig.get("beamformer", "type"):
                     case "MUSIC" | "MVDR":
                         value_range = 1e-2
                     case "FFT" | "Bartlett":
                         value_range = 1e11
-                exposure = self.democonfig.get("visualization", "exposure")
+                exposure = self.appconfig.get("visualization", "exposure")
                 color_value = power_visualization_beamspace / value_range * (10 ** (exposure / 0.1) + 1e-6)
             else:
                 color_value = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-6)
 
-            if self.democonfig.get("beamformer", "colorize_delay"):
-                if self.democonfig.get("beamformer", "type") in ["MUSIC", "MVDR"]:
+            if self.appconfig.get("beamformer", "colorize_delay"):
+                if self.appconfig.get("beamformer", "type") in ["MUSIC", "MVDR"]:
                     raise NotImplementedError("Delay colorization not supported in MUSIC or MVDR mode")
 
                 # Compute beam powers and delay. Beam power is value, delay is hue.
@@ -282,7 +282,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
                 mean_delay = np.angle(np.sum(beamspace_weighted_delay_phase))
 
                 hsv = np.zeros((beam_frequency_space.shape[1], beam_frequency_space.shape[2], 3))
-                hsv[:,:,0] = (np.clip((delay_by_beam - mean_delay) / self.democonfig.get("beamformer", "max_delay"), 0, 1) + 1/3) % 1.0
+                hsv[:,:,0] = (np.clip((delay_by_beam - mean_delay) / self.appconfig.get("beamformer", "max_delay"), 0, 1) + 1/3) % 1.0
                 hsv[:,:,1] = 0.8
                 hsv[:,:,2] = color_value
 
@@ -346,8 +346,8 @@ class EspargosDemoCamera(ESPARGOSApplication):
         return c0 * (1 - t[:,:,np.newaxis]) + c1 * t[:,:,np.newaxis]
 
     def _update_steering_vectors(self):
-        resolution_azimuth = self.democonfig.get("beamformer", "resolution_azimuth")
-        resolution_elevation = self.democonfig.get("beamformer", "resolution_elevation")
+        resolution_azimuth = self.appconfig.get("beamformer", "resolution_azimuth")
+        resolution_elevation = self.appconfig.get("beamformer", "resolution_elevation")
         phase_c = np.outer(np.arange(self.n_cols), np.linspace(-np.pi, np.pi, resolution_azimuth))
         phase_r = np.outer(np.arange(self.n_rows), np.linspace(-np.pi, np.pi, resolution_elevation))
         self.steering_vectors_2d = np.exp(1.0j * (phase_c[np.newaxis,:, :, np.newaxis] + phase_r[:,np.newaxis,np.newaxis,:]))
@@ -427,33 +427,33 @@ class EspargosDemoCamera(ESPARGOSApplication):
                 print(f"Error setting raw beamspace: {e}")
 
         # Let configmanager know we're done
-        self.democonfig.updateAppStateHandled.emit()
+        self.appconfig.updateAppStateHandled.emit()
 
     @PyQt6.QtCore.pyqtProperty(bool, constant=True)
     def music(self):
-        return self.democonfig.get("beamformer", "type") == "MUSIC"
+        return self.appconfig.get("beamformer", "type") == "MUSIC"
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = resolutionAzimuthChanged)
     def resolutionAzimuth(self):
-        return self.democonfig.get("beamformer", "resolution_azimuth")
+        return self.appconfig.get("beamformer", "resolution_azimuth")
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = resolutionElevationChanged)
     def resolutionElevation(self):
-        return self.democonfig.get("beamformer", "resolution_elevation")
+        return self.appconfig.get("beamformer", "resolution_elevation")
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = fovAzimuthChanged)
     def fovAzimuth(self):
-        return self.democonfig.get("camera", "fov_azimuth")
+        return self.appconfig.get("camera", "fov_azimuth")
     
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = fovElevationChanged)
     def fovElevation(self):
-        return self.democonfig.get("camera", "fov_elevation")
+        return self.appconfig.get("camera", "fov_elevation")
 
 
 
     @PyQt6.QtCore.pyqtProperty(str, constant=False, notify = rawBeamspaceChanged)
     def rawBeamspace(self):
-        return self.democonfig.get("visualization", "space")
+        return self.appconfig.get("visualization", "space")
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify = rssiChanged)
     def rssi(self):
@@ -465,7 +465,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
     
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify = macListEnabledChanged)
     def macListEnabled(self):
-        return self.democonfig.get("receiver", "mac_list_enabled")
+        return self.appconfig.get("receiver", "mac_list_enabled")
     
     @PyQt6.QtCore.pyqtProperty(list, constant=False, notify = recentMacsChanged)
     def macList(self):
@@ -492,7 +492,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
 
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify = cameraFlipChanged)
     def cameraFlip(self):
-        return self.democonfig.get("camera", "flip")
+        return self.appconfig.get("camera", "flip")
 
 app = EspargosDemoCamera(sys.argv)
 sys.exit(app.exec())
