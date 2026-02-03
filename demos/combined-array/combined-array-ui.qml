@@ -2,29 +2,58 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtCharts
+import "../common" as Common
 
-ApplicationWindow {
+Common.ESPARGOSApplication {
 	id: window
 	visible: true
 	minimumWidth: 800
 	minimumHeight: 500
 
-    // Full screen management
-	visibility: ApplicationWindow.Windowed
-	Shortcut {
-		sequence: "F11"
-		onActivated: {
-			window.visibility = window.visibility == ApplicationWindow.Windowed ? ApplicationWindow.FullScreen : ApplicationWindow.Windowed
-		}
-	}
-
-	Shortcut {
-		sequence: "Esc"
-		onActivated: window.close()
-	}
-
 	color: "#11191e"
 	title: "Combined Array Demo"
+
+	appDrawerComponent: Component {
+		Common.AppDrawer {
+			id: appDrawer
+			title: "Settings"
+			endpoint: appconfig
+
+			Common.GenericAppSettings {
+				id: genericAppSettings
+				insertBefore: genericAppSettingsAnchor
+			}
+
+			Item {
+				id: genericAppSettingsAnchor
+				Layout.columnSpan: 2
+				width: 0
+				height: 0
+				visible: false
+			}
+
+			Common.BacklogSettings {
+				id: backlogSettings
+				insertBefore: backlogSettingsAnchor
+			}
+
+			Item {
+				id: backlogSettingsAnchor
+				Layout.columnSpan: 2
+				width: 0
+				height: 0
+				visible: false
+			}
+
+			// Spacer
+			Rectangle {
+				id: endSpacer
+				Layout.columnSpan: 2
+				width: 1; height: 30
+				color: "transparent"
+			}
+		}
+	}
 
 	Item {
 		anchors.centerIn: parent
