@@ -31,7 +31,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             }
         },
         "pool": {
-            # Pool configuration settings, handled by PoolDrawer
+            # Pool configuration settings, partially handled by PoolDrawer
+            "hosts" : []
         },
         "combined-array": {
             # Combined array configuration settings
@@ -69,6 +70,9 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             format_group.add_argument("--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
             format_group.add_argument("--ht40", default = False, help = "Use only CSI from HT40", action = "store_true")
             format_group.add_argument("--ht20", default = False, help = "Use only CSI from HT20", action = "store_true")
+
+        if not ESPARGOSApplicationFlags.COMBINED_ARRAY in self.flags:
+            parser.add_argument("hosts", type = str, default="", help = "Comma-separated list of host addresses (IP or hostname) of ESPARGOS controllers")
 
         self.args = parser.parse_args()
 
@@ -114,18 +118,36 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
                         "ht40": self.args.ht40
                     }
 
+        # If hosts are provided on command line, override pool config
+        if "hosts" in self.args and len(self.args.hosts) > 0:
+            hosts = self.args.hosts.split(",")
+            self.initial_config["pool"]["hosts"] = hosts
+
         # Configuration managers
         if ESPARGOSApplicationFlags.ENABLE_BACKLOG in self.flags:
             self.backlog_settings = BacklogSettings(force_config=self.get_initial_config("backlog"), parent=self)
         self.genericconfig = ConfigManager(self.get_initial_config("generic"), parent=self)
 
-    def get_initial_config(self, *keys, default=None):
-        for key in keys:
-            if key in self.initial_config and isinstance(self.initial_config[key], dict):
-                return self.initial_config[key]
-        return default
+    def get_initial_config(self, *path, default=None):
+        """
+        Retrieve initial configuration value for given path.
 
-    def init_qml(self, qml_file, context_props: dict | None = None):
+        Examples:
+            * self.get_initial_config("pool", "hosts", default=[])
+            * self.get_initial_config("combined-array")
+
+        Path can be either a sequence of keys, or a single key.
+        """
+        cfg = self.initial_config
+        for key in path if isinstance(path, tuple) else (path,):
+            if key in cfg:
+                cfg = cfg[key]
+            else:
+                return default
+
+        return cfg
+
+    def initialize_qml(self, qml_file, context_props: dict | None = None):
         context = self.engine.rootContext()
 
         # Backlog config manager
@@ -152,22 +174,23 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
     def initialize_pool(
             self,
-            hosts : list[str],
-            enable_backlog : bool = False,
             backlog_cb_predicate = None,
             additional_calibrate_args : dict = {},
             calibrate : bool = True):
         """
-        Initialize ESPARGOS Pool for combined-array setups.
-        Also triggers creation of pool drawer.
-
-        enable_backlog: If True, also set up CSI backlog after pool initialization.
+        Initialize ESPARGOS Pool. Also triggers creation of pool drawer backend.
         """
-        # Setup ESPARGOS pool for combined array setup and calibrate
-        self.pool = espargos.Pool([espargos.Board(host) for host in hosts])
+        if ESPARGOSApplicationFlags.COMBINED_ARRAY in self.flags:
+            self.indexing_matrix, hosts, cable_lengths, cable_velocity_factors, self.n_rows, self.n_cols = espargos.util.parse_combined_array_config(self.get_initial_config("combined-array"))
+
+            additional_calibrate_args["cable_lengths"] = cable_lengths
+            additional_calibrate_args["cable_velocity_factors"] = cable_velocity_factors
+            self.initial_config["pool"]["hosts"] = list(hosts.values())
+
+        self.pool = espargos.Pool([espargos.Board(host) for host in self.get_initial_config("pool", "hosts")])
 
         # Pool configuration UI
-        pool_cfg = self.get_initial_config("pool", default = {})
+        pool_cfg = self.get_initial_config("pool")
         self.pooldrawer = PoolDrawer(self.pool, pool_cfg, parent = self)
 
         # Wait for config to be applied before starting pool and calibration
@@ -177,7 +200,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
                 if calibrate:
                     self.pool.calibrate(duration = 2, per_board = False, **additional_calibrate_args)
 
-                if enable_backlog:
+                if ESPARGOSApplicationFlags.ENABLE_BACKLOG in self.flags:
                     # Do not enable any preamble formats for now, will be set later based on config
                     self.backlog = espargos.CSIBacklog(self.pool, cb_predicate = backlog_cb_predicate, calibrate = calibrate)
                     self.backlog.start()
@@ -190,27 +213,6 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             threading.Thread(target=_init_worker, daemon=True).start()
 
         self.pooldrawer.initComplete.connect(config_applied)
-
-    # Helper functions for common initialization tasks
-    def initialize_combined_array(self, **kwargs):
-        """
-        Initialize ESPARGOS Pool for combined-array setups.
-        Also triggers creation of pool drawer.
-
-        backlog: If True, also set up CSI backlog after pool initialization.
-        """
-        # Ensure that initial config is not empty
-        if not self.initial_config:
-            raise ValueError("Configuration for combined-array setups must be provided for combined-array setups!")
-
-        # Load config file
-        self.indexing_matrix, self.board_names_hosts, self.cable_lengths, self.cable_velocity_factors, self.n_rows, self.n_cols = espargos.util.parse_combined_array_config(self.get_initial_config("combined-array"))
-
-        # Set up ESPARGOS pool and backlog
-        self.initialize_pool(list(self.board_names_hosts.values()), **kwargs, additional_calibrate_args = {
-            "cable_lengths": self.cable_lengths,
-            "cable_velocity_factors": self.cable_velocity_factors
-        })
 
     def onAboutToQuit(self):
         self.pool.stop()

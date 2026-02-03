@@ -75,7 +75,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
             self.additional_calibration = np.load(self.args.additional_calibration)
 
         # Initialize combined array setup
-        self.initialize_combined_array(enable_backlog = True, backlog_cb_predicate = self._cb_predicate)
+        self.initialize_pool(backlog_cb_predicate = self._cb_predicate)
 
         # Demo configuration manager
         self.democonfig = ConfigManager(self.DEFAULT_CONFIG, parent = self)
@@ -105,7 +105,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
         # List of recent MAC addresses
         self.recent_macs = set()
 
-        self.init_qml(pathlib.Path(__file__).resolve().parent / "camera-ui.qml", {
+        self.initialize_qml(pathlib.Path(__file__).resolve().parent / "camera-ui.qml", {
             "democonfig": self.democonfig,
             "WebCam": self.videocamera,
         })

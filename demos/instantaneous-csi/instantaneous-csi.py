@@ -20,7 +20,6 @@ class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
 	def __init__(self, argv):
 		# Parse command line arguments
 		parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Show instantaneous CSI over subcarrier index (single board)", add_help = False)
-		parser.add_argument("hosts", type = str, help = "Comma-separated list of host addresses (IP or hostname) of ESPARGOS controllers")
 		parser.add_argument("-s", "--shift-peak", default = False, help = "Time-shift CSI so that first peaks align", action = "store_true")
 		parser.add_argument("-o", "--oversampling", type = int, default = 4, help = "Oversampling factor for time-domain CSI")
 		parser.add_argument("--no-calib", default = False, help = "Do not calibrate", action = "store_true")
@@ -35,7 +34,7 @@ class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
 
 		# Set up ESPARGOS pool and backlog
 		hosts = self.args.hosts.split(",")
-		self.initialize_pool(hosts, enable_backlog = True, calibrate = not self.args.no_calib)
+		self.initialize_pool(calibrate = not self.args.no_calib)
 
 		# Value range handling
 		self.stable_power_minimum = None
@@ -46,7 +45,7 @@ class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
 
 		self.sensor_count = len(hosts) * espargos.constants.ANTENNAS_PER_BOARD
 
-		self.init_qml(pathlib.Path(__file__).resolve().parent / "instantaneous-csi-ui.qml")
+		self.initialize_qml(pathlib.Path(__file__).resolve().parent / "instantaneous-csi-ui.qml")
 
 	def _on_preamble_format_changed(self, newcfg):
 		self.preambleFormatChanged.emit()
