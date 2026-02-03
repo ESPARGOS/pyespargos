@@ -84,18 +84,30 @@ The application code can query the backlog whenever it needs recent CSI.
 
   pool = espargos.Pool([espargos.Board("192.168.1.2")])
   pool.start()
-  pool.calibrate(duration = 2)
-  backlog = espargos.CSIBacklog(pool, size = 20)
+  pool.calibrate(duration=2)
+  backlog = espargos.CSIBacklog(pool, size=20)
   backlog.start()
 
   # Wait for a while to collect some WiFi packets to the backlog...
   time.sleep(4)
 
-  csi_ht40 = backlog.get_ht40()
+  csi_ht40 = backlog.get("ht40")
   print("Received CSI: ", csi_ht40)
 
   backlog.stop()
   pool.stop()
+
+The backlog supports multiple data fields that can be retrieved using the :meth:`~espargos.backlog.CSIBacklog.get` method:
+
+* ``lltf`` - L-LTF CSI data
+* ``ht20`` - HT20 CSI data  
+* ``ht40`` - HT40 CSI data
+* ``rssi`` - RSSI values
+* ``timestamp`` - Sensor timestamps
+* ``host_timestamp`` - Host timestamps
+* ``mac`` - Source MAC addresses
+
+You can also use :meth:`~espargos.backlog.CSIBacklog.get_multiple` to retrieve multiple fields atomically.
 
 Advanced Usage
 --------------
