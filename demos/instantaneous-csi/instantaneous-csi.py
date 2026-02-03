@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import DemoApplication
+from demos.common import ESPARGOSApplication, ESPARGOSApplicationFlags, ConfigManager
 
 import numpy as np
 import espargos
@@ -14,12 +14,13 @@ import argparse
 import PyQt6.QtCharts
 import PyQt6.QtCore
 
-class EspargosDemoInstantaneousCSI(DemoApplication):
+class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
+	preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
+
 	def __init__(self, argv):
 		# Parse command line arguments
 		parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Show instantaneous CSI over subcarrier index (single board)", add_help = False)
 		parser.add_argument("hosts", type = str, help = "Comma-separated list of host addresses (IP or hostname) of ESPARGOS controllers")
-		parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
 		parser.add_argument("-s", "--shift-peak", default = False, help = "Time-shift CSI so that first peaks align", action = "store_true")
 		parser.add_argument("-o", "--oversampling", type = int, default = 4, help = "Oversampling factor for time-domain CSI")
 		parser.add_argument("--no-calib", default = False, help = "Do not calibrate", action = "store_true")
@@ -27,16 +28,10 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 		display_group.add_argument("-t", "--timedomain", default = False, help = "Display CSI in time-domain", action = "store_true")
 		display_group.add_argument("-m", "--music", default = False, help = "Display PDP computed via MUSIC algorithm", action = "store_true")
 		display_group.add_argument("-v", "--mvdr", default = False, help = "Display PDP computed via MVDR algorithm", action = "store_true")
-		format_group = parser.add_mutually_exclusive_group()
-		format_group.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
-		format_group.add_argument("-ht40", "--ht40", default = False, help = "Use only CSI from HT40", action = "store_true")
-		format_group.add_argument("-ht20", "--ht20", default = False, help = "Use only CSI from HT20", action = "store_true")
-		super().__init__(argv, argparse_parent = parser)
-
-		# Check if at least one format is selected
-		if not (self.args.lltf or self.args.ht40 or self.args.ht20):
-			print("Error: At least one of --lltf, --ht40 or --ht20 must be selected.")
-			sys.exit(1)
+		super().__init__(argv, argparse_parent = parser, flags = {
+			ESPARGOSApplicationFlags.ENABLE_BACKLOG,
+			ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT
+		})
 
 		# Set up ESPARGOS pool and backlog
 		hosts = self.args.hosts.split(",")
@@ -46,25 +41,34 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 		self.stable_power_minimum = None
 		self.stable_power_maximum = None
 
-		if self.args.lltf:
-			self.subcarrier_count = espargos.csi.LEGACY_COEFFICIENTS_PER_CHANNEL
-		elif self.args.ht40:
-			self.subcarrier_count = 2 * espargos.csi.HT_COEFFICIENTS_PER_CHANNEL + espargos.csi.HT40_GAP_SUBCARRIERS
-		else:
-			self.subcarrier_count = espargos.csi.HT_COEFFICIENTS_PER_CHANNEL
+		# Subscribe to preamble format changes
+		self.genericconfig.updateAppState.connect(self._on_preamble_format_changed)
 
 		self.sensor_count = len(hosts) * espargos.constants.ANTENNAS_PER_BOARD
-		self.subcarrier_range = np.arange(-self.subcarrier_count // 2, self.subcarrier_count // 2)
 
 		self.init_qml(pathlib.Path(__file__).resolve().parent / "instantaneous-csi-ui.qml")
+
+	def _on_preamble_format_changed(self, newcfg):
+		self.preambleFormatChanged.emit()
+		self.genericconfig.updateAppStateHandled.emit()
 
 	@PyQt6.QtCore.pyqtProperty(int, constant=True)
 	def sensorCount(self):
 		return np.prod(self.pool.get_shape())
 
-	@PyQt6.QtCore.pyqtProperty(list, constant=True)
-	def subcarrierRange(self):
-		return self.subcarrier_range.tolist()
+	@PyQt6.QtCore.pyqtProperty(str, constant=False, notify=preambleFormatChanged)
+	def preambleFormat(self):
+		return self.genericconfig.get("preamble_format")
+
+	@PyQt6.QtCore.pyqtProperty(int, constant=False, notify=preambleFormatChanged)
+	def subcarrierCount(self):
+		preamble = self.genericconfig.get("preamble_format")
+		if preamble == "lltf":
+			return espargos.csi.LEGACY_COEFFICIENTS_PER_CHANNEL
+		elif preamble == "ht40":
+			return 2 * espargos.csi.HT_COEFFICIENTS_PER_CHANNEL + espargos.csi.HT40_GAP_SUBCARRIERS
+		else:
+			return espargos.csi.HT_COEFFICIENTS_PER_CHANNEL
 
 	def exec(self):
 		return super().exec()
@@ -76,22 +80,26 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 			return (previous * 0.97 + new * 0.03)
 
 	# list parameters contain PyQt6.QtCharts.QLineSeries
-	@PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis)
-	def updateCSI(self, powerSeries, phaseSeries, axis):
+	@PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis, PyQt6.QtCharts.QValueAxis)
+	def updateCSI(self, powerSeries, phaseSeries, subcarrierAxis, axis):
 		if not hasattr(self, "backlog"):
 			# Backlog not yet initialized
 			return
 
-		if self.args.lltf:
-			csi_key = "lltf"
-		elif self.args.ht40:
-			csi_key = "ht40"
-		else:
-			csi_key = "ht20"
-		csi_backlog, rssi_backlog = self.backlog.get_multiple([csi_key, "rssi"])
+		csi_key = self.genericconfig.get("preamble_format")
 
-		# If any value is NaN, skip this update (happens if received frame were not of expected type)
+		try:
+			csi_backlog, rssi_backlog = self.backlog.get_multiple([csi_key, "rssi"])
+		except ValueError:
+			print(f"Requested CSI key {csi_key} not in backlog")
+			return
+
+		# If any value is NaN skip this update (happens if received frame were not of expected type)
 		if np.isnan(csi_backlog).any() or np.isnan(rssi_backlog).any():
+			return
+		
+		# If backlog is empty, skip update
+		if csi_backlog.size == 0:
 			return
 
 		# Weight CSI data with RSSI
@@ -101,13 +109,12 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 			espargos.util.remove_mean_sto(csi_backlog)
 
 		# Fill "gap" in subcarriers with interpolated data
-		if self.args.ht40:
-			espargos.util.interpolate_ht40ltf_gap(csi_backlog)
-		elif self.args.ht20:
-			espargos.util.interpolate_ht20ltf_gap(csi_backlog)
-		elif self.args.lltf:
-			pass
-			#espargos.util.interpolate_lltf_gap(csi_backlog)
+		match csi_key:
+			case "ht40":
+				espargos.util.interpolate_ht40ltf_gap(csi_backlog)
+			case "ht20":
+				espargos.util.interpolate_ht20ltf_gap(csi_backlog)
+
 
 		# TODO: If using per-board calibration, interpolation should also be per-board
 		csi_interp = espargos.util.csi_interp_iterative(csi_backlog, iterations = 5)
@@ -138,8 +145,8 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 			self.stable_power_minimum = 0
 			self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, np.max(csi_power) * 1.1)
 
-			axis.setMin(0)
-			axis.setMax(csi_flat_zeropadded.shape[-1] / np.sqrt(2) / self.args.oversampling**2)
+			subcarrierAxis.setMin(0)
+			subcarrierAxis.setMax(csi_flat_zeropadded.shape[-1] / np.sqrt(2) / self.args.oversampling**2)
 			csi_phase = np.angle(csi_flat_zeropadded * np.exp(-1.0j * np.angle(csi_flat_zeropadded[0, len(csi_flat_zeropadded[0]) // 2])))
 
 			for pwr_series, phase_series, ant_pwr, ant_phase in zip(powerSeries, phaseSeries, csi_power, csi_phase):
@@ -152,9 +159,14 @@ class EspargosDemoInstantaneousCSI(DemoApplication):
 			csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, csi_flat.shape[1] // 2])))
 			#csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, :])))
 
+			subcarrier_count = csi_flat.shape[1]
+			subcarrier_range = np.arange(-subcarrier_count // 2, subcarrier_count // 2)
+			subcarrierAxis.setMin(subcarrier_range[0])
+			subcarrierAxis.setMax(subcarrier_range[-1])
+
 			for pwr_series, phase_series, ant_pwr, ant_phase in zip(powerSeries, phaseSeries, csi_power, csi_phase):
-				pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(self.subcarrier_range, ant_pwr)])
-				phase_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(self.subcarrier_range, ant_phase)])
+				pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, ant_pwr)])
+				phase_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, ant_phase)])
 
 		axis.setMin(self.stable_power_minimum)
 		axis.setMax(self.stable_power_maximum)

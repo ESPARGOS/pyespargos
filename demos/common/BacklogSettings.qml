@@ -15,8 +15,12 @@ Item  {
 			backlogHeader,
 			sizeLabel,
 			sizeRow,
-			preambleLabel,
-			preambleCombo
+			lltfEnableLabel,
+			lltfEnableSwitch,
+			ht20EnableLabel,
+			ht20EnableSwitch,
+			ht40EnableLabel,
+			ht40EnableSwitch
 		]
 
 		let targetLayout = insertBefore.parent
@@ -57,10 +61,12 @@ Item  {
 		endpoint: backlogconfig
 	}
 
+	Component.onCompleted: backlogConfigManager.fetchAndApply()
+
 	Label {
 		id: backlogHeader
 		Layout.columnSpan: 2
-		text: "Backlog"
+		text: "CSI Backlog"
 		color: "#9fb3c8"
 	}
 
@@ -84,7 +90,7 @@ Item  {
 			property var decode: function(v) { return Math.max(1, Math.min(1024, parseInt(v||64))) }
 			Component.onCompleted: backlogConfigManager.register(this)
 			onValueChanged: backlogConfigManager.onControlChanged(this)
-			from: 1; to: 1024; value: 64; stepSize: 1
+			from: 1; to: 128; value: 16; stepSize: 1
 			implicitWidth: 120
 			function isUserActive() { return pressed }
 		}
@@ -92,32 +98,62 @@ Item  {
 	}
 
 	Label {
-		id: preambleLabel
-		text: "Preamble"
+		id: lltfEnableLabel
+		text: "Store L-LTF"
 		color: "#ffffff"
 		horizontalAlignment: Text.AlignRight
 		Layout.alignment: Qt.AlignRight
 		Layout.fillWidth: true
 	}
 
-	ComboBox {
-		id: preambleCombo
-		property string configKey: "preamble"
-		property string configProp: "currentValue"
+	Switch {
+		id: lltfEnableSwitch
+		property string configKey: "fields.lltf"
+		property string configProp: "checked"
 
 		Component.onCompleted: backlogConfigManager.register(this)
-		onCurrentValueChanged: backlogConfigManager.onControlChanged(this)
+		onCheckedChanged: backlogConfigManager.onControlChanged(this)
 
-		implicitWidth: 210
+		checked: true
+	}
 
-		// Different internal representation than displayed strings
-		model: [
-			{ value: "lltf", text: "L-LTF"},
-			{ value: "ht20", text: "HT20"},
-			{ value: "ht40", text: "HT40"}
-		]
-		textRole: "text"
-		valueRole: "value"
-		currentIndex: 0
+	Label {
+		id: ht20EnableLabel
+		text: "Store HT20"
+		color: "#ffffff"
+		horizontalAlignment: Text.AlignRight
+		Layout.alignment: Qt.AlignRight
+		Layout.fillWidth: true
+	}
+
+	Switch {
+		id: ht20EnableSwitch
+		property string configKey: "fields.ht20"
+		property string configProp: "checked"
+
+		Component.onCompleted: backlogConfigManager.register(this)
+		onCheckedChanged: backlogConfigManager.onControlChanged(this)
+
+		checked: false
+	}
+
+	Label {
+		id: ht40EnableLabel
+		text: "Store HT40"
+		color: "#ffffff"
+		horizontalAlignment: Text.AlignRight
+		Layout.alignment: Qt.AlignRight
+		Layout.fillWidth: true
+	}
+
+	Switch {
+		id: ht40EnableSwitch
+		property string configKey: "fields.ht40"
+		property string configProp: "checked"
+
+		Component.onCompleted: backlogConfigManager.register(this)
+		onCheckedChanged: backlogConfigManager.onControlChanged(this)
+
+		checked: false
 	}
 }

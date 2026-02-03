@@ -6,7 +6,7 @@ import QtQuick.Layouts
 import QtQuick.Controls.Material
 import "../common" as Common
 
-Common.DemoApplication {
+Common.ESPARGOSApplication {
 	id: window
 	visible: true
 	minimumWidth: 800
@@ -15,10 +15,10 @@ Common.DemoApplication {
 	color: "#333333"
 	title: "ESPARGOS Camera Overlay Demo"
 
-	demoDrawerComponent: Component {
-		Common.DemoDrawer {
-			id: demoDrawer
-			title: "Demo Settings"
+	appDrawerComponent: Component {
+		Common.AppDrawer {
+			id: appDrawer
+			title: "App Settings"
 			endpoint: democonfig
 
 			CheckBox {
@@ -41,8 +41,8 @@ Common.DemoApplication {
 					let idx = cameraDevice.model.indexOf(v)
 					return idx >= 0 ? idx : 0
 				}
-				Component.onCompleted: demoDrawer.configManager.register(this)
-				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCurrentIndexChanged: appDrawer.configManager.onControlChanged(this)
 				implicitWidth: 210
 				model: WebCam.availableDevices
 				currentIndex: 0
@@ -67,12 +67,12 @@ Common.DemoApplication {
 					return idx >= 0 ? idx : 0
 				}
 				Component.onCompleted: {
-					demoDrawer.configManager.register(this)
+					appDrawer.configManager.register(this)
 
 					// Populate formats for initial device
 					cameraFormat.model = WebCam.availableFormats
 				}
-				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
+				onCurrentIndexChanged: appDrawer.configManager.onControlChanged(this)
 				implicitWidth: 210
 				// Initially empty, populated when device changes or when component is completed
 				model: []
@@ -94,8 +94,8 @@ Common.DemoApplication {
 				id: cameraFlip
 				property string configKey: "camera.flip"
 				property string configProp: "checked"
-				Component.onCompleted: demoDrawer.configManager.register(this)
-				onCheckedChanged: demoDrawer.configManager.onControlChanged(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
 				implicitWidth: 80
 				checked: false
 			}
@@ -106,8 +106,8 @@ Common.DemoApplication {
 				id: macListEnabled
 				property string configKey: "receiver.mac_list_enabled"
 				property string configProp: "checked"
-				Component.onCompleted: demoDrawer.configManager.register(this)
-				onCheckedChanged: demoDrawer.configManager.onControlChanged(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
 				implicitWidth: 80
 				checked: false
 			}
@@ -123,8 +123,8 @@ Common.DemoApplication {
 				to: 179
 				stepSize: 1
 				implicitWidth: 210
-				Component.onCompleted: demoDrawer.configManager.register(this)
-				onValueChanged: demoDrawer.configManager.onControlChanged(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 72
 				ToolTip.visible: hovered
 				ToolTip.text: "" + Math.round(value) + "°"
@@ -142,8 +142,8 @@ Common.DemoApplication {
 				to: 120
 				stepSize: 1
 				implicitWidth: 210
-				Component.onCompleted: demoDrawer.configManager.register(this)
-				onValueChanged: demoDrawer.configManager.onControlChanged(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 41
 				ToolTip.visible: hovered
 				ToolTip.text: "" + Math.round(value) + "°"
@@ -156,13 +156,13 @@ Common.DemoApplication {
 				id: beamformerType
 				property string configKey: "beamformer.type"
 				property string configProp: "currentValue"
-				Component.onCompleted: demoDrawer.configManager.register(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
 				onCurrentValueChanged: {
 					// colorize_delay only makes sense for FFT beamformer, set to false when changing away
 					if (beamformerType.currentValue !== "FFT") {
 						colorizeDelay.currentIndex = 0
 					}
-					demoDrawer.configManager.onControlChanged(this)
+					appDrawer.configManager.onControlChanged(this)
 				}
 				implicitWidth: 210
 				// Different internal representation than displayed strings
@@ -174,7 +174,7 @@ Common.DemoApplication {
 				]
 				textRole: "text"
 				valueRole: "value"
-				currentIndex: 0
+				currentValue: "FFT"
 			}
 
 			Label { text: "Res Azi"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
@@ -188,8 +188,8 @@ Common.DemoApplication {
 				to: 128
 				stepSize: 1
 				implicitWidth: 210
-				Component.onCompleted: demoDrawer.configManager.register(this)
-				onValueChanged: demoDrawer.configManager.onControlChanged(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 64
 				ToolTip.visible: hovered
 				ToolTip.text: "" + Math.round(value)
@@ -207,8 +207,8 @@ Common.DemoApplication {
 				to: 128
 				stepSize: 1
 				implicitWidth: 210
-				Component.onCompleted: demoDrawer.configManager.register(this)
-				onValueChanged: demoDrawer.configManager.onControlChanged(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 32
 				ToolTip.visible: hovered
 				ToolTip.text: "" + Math.round(value)
@@ -223,8 +223,8 @@ Common.DemoApplication {
 				property string configProp: "currentIndex"
 				property var encode: function(v) { return colorizeDelay.currentIndex === 1 }
 				property var decode: function(v) { return v ? 1 : 0 }
-				Component.onCompleted: demoDrawer.configManager.register(this)
-				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCurrentIndexChanged: appDrawer.configManager.onControlChanged(this)
 				implicitWidth: 210
 				model: ["Default", "Show Delay"]
 				currentIndex: 0
@@ -240,8 +240,8 @@ Common.DemoApplication {
 				to: 0.8
 				stepSize: 0.01
 				implicitWidth: 210
-				Component.onCompleted: demoDrawer.configManager.register(this)
-				onValueChanged: demoDrawer.configManager.onControlChanged(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 0.2
 				visible: beamformerType.currentIndex === 0 && colorizeDelay.currentIndex === 1
 				ToolTip.visible: hovered
@@ -259,8 +259,8 @@ Common.DemoApplication {
 					let idx = spaceMode.model.indexOf(v)
 					return idx >= 0 ? idx : 0
 				}
-				Component.onCompleted: demoDrawer.configManager.register(this)
-				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCurrentIndexChanged: appDrawer.configManager.onControlChanged(this)
 				implicitWidth: 210
 				model: ["Camera", "Beamspace"]
 				currentIndex: 0
@@ -276,23 +276,37 @@ Common.DemoApplication {
 					let idx = overlayMode.model.indexOf(v)
 					return idx >= 0 ? idx : 0
 				}
-				Component.onCompleted: demoDrawer.configManager.register(this)
-				onCurrentIndexChanged: demoDrawer.configManager.onControlChanged(this)
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCurrentIndexChanged: appDrawer.configManager.onControlChanged(this)
 				implicitWidth: 210
 				model: ["Default", "Power"]
 				currentIndex: 0
 			}
 
+			Common.GenericAppSettings {
+				id: genericAppSettings
+				insertBefore: genericAppSettingsAnchor
+			}
+
 			Item {
-				id: backlogAnchor;
-				Layout.columnSpan: 2;
-				width: 0;
-				height: 0;
+				id: genericAppSettingsAnchor
+				Layout.columnSpan: 2
+				width: 0
+				height: 0
 				visible: false
 			}
 
 			Common.BacklogSettings {
 				id: backlogSettings
+				insertBefore: backlogSettingsAnchor
+			}
+
+			Item {
+				id: backlogSettingsAnchor;
+				Layout.columnSpan: 2;
+				width: 0;
+				height: 0;
+				visible: false
 			}
 
 			// Spacer
@@ -301,11 +315,6 @@ Common.DemoApplication {
 				Layout.columnSpan: 2
 				width: 1; height: 30
 				color: "transparent"
-			}
-
-			Component.onCompleted: {
-				// Attach backlog settings to drawer when available
-				backlogSettings.insertBefore = backlogAnchor
 			}
 		}
 	}

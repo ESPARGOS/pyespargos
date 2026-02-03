@@ -71,17 +71,17 @@ ApplicationWindow {
 			Item { Layout.fillWidth: true }
 
 			ToolButton {
-				text: "Demo ⚙"
+				text: "App ⚙"
 				font.pixelSize: Math.max(20, root.width / 80)
-				visible: demoDrawerComponent !== null
+				visible: appDrawerComponent !== null
 				MouseArea {
 					anchors.fill: parent
 					cursorShape: Qt.PointingHandCursor
 					onClicked: {
-						if (demoDrawer.visible) {
-							demoDrawer.close()
+						if (appDrawer.visible) {
+							appDrawer.close()
 						} else {
-							demoDrawer.open()
+							appDrawer.open()
 						}
 					}
 				}
@@ -96,14 +96,14 @@ ApplicationWindow {
 	}
 
 	/** Demo-specific configuration drawer **/
-	property Component demoDrawerComponent: null
-	property var demoDrawer: null
+	property Component appDrawerComponent: null
+	property var appDrawer: null
 
-	onDemoDrawerComponentChanged: {
+	onAppDrawerComponentChanged: {
 		// defer creation to avoid header height being 0 at this point
 		Qt.callLater( () => {
-			demoDrawer = demoDrawerComponent.createObject(root.contentItem)
-			demoDrawer.headerHeight = header.height
+			appDrawer = appDrawerComponent.createObject(root.contentItem)
+			appDrawer.headerHeight = header.height
 		})
 	}
 

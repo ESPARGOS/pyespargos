@@ -245,7 +245,8 @@ class CSIBacklog(object):
         :return: Tuple of data arrays corresponding to the keys (in same order), contents are oldest first
         """
         for key in keys:
-            assert(key in self.fields)
+            if not key in self.fields:
+                raise ValueError(f"Requested key '{key}' not in backlog fields")
 
         self.storage_mutex.acquire()
         retval = []
@@ -326,6 +327,14 @@ class CSIBacklog(object):
         :param new_fields: New list of fields to store
         """
         self._initialize_storage(fields=new_fields)
+
+    def get_fields(self):
+        """
+        Get the list of fields currently stored in the backlog.
+
+        :return: List of fields currently stored in the backlog
+        """
+        return self.fields
 
     def __run(self):
         """

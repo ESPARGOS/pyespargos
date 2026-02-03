@@ -5,13 +5,13 @@ import QtQuick.Controls.Material
 import "." as Common
 
 Drawer {
-	id: demodrawer
+	id: appdrawer
 
 	property int headerHeight: 0
-	property string title: "Demo Settings"
+	property string title: "App Settings"
 	default property alias content: contentLayout.data
 	property alias contentLayout: contentLayout
-	property alias configManager: demoConfigManager
+	property alias configManager: appConfigManager
 	property var endpoint: null
 
 	implicitHeight: parent ? parent.height - headerHeight : 0
@@ -48,7 +48,7 @@ Drawer {
 
 			Label {
 				Layout.columnSpan: 2
-				text: demodrawer.title
+				text: appdrawer.title
 				font.pixelSize: 18
 				color: "#ffffff"
 				horizontalAlignment: Text.AlignHCenter
@@ -58,9 +58,9 @@ Drawer {
 	}
 
 	Common.ConfigManager {
-		id: demoConfigManager
-		endpoint: demodrawer.endpoint
+		id: appConfigManager
+		endpoint: appdrawer.endpoint
 	}
 
-	Component.onCompleted: demoConfigManager.fetchAndApply()
+	Component.onCompleted: appConfigManager.fetchAndApply()
 }

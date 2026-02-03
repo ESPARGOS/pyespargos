@@ -1,7 +1,7 @@
 # Use this configuration if you have multiple (here: 3) ESPARGOS boards
 # which are all connected to the same master sync output.
 
-demo:
+app:
   camera:
     device: "/dev/video2"
     format: null
@@ -9,9 +9,19 @@ demo:
   beamformer:
     type: "MUSIC"
 
+generic:
+  preamble_format: "lltf"
+
 pool:
   channel: 5
   rf_switch: 2
+
+backlog:
+  size: 20
+  fields:
+    lltf: True
+    ht20: False
+    ht40: False
 
 combined-array:
   boards:

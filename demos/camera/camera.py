@@ -5,8 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ConfigManager
-from demos.common import DemoApplication
+from demos.common import ConfigManager, ESPARGOSApplication, ESPARGOSApplicationFlags
 
 import matplotlib.colors
 import numpy as np
@@ -19,7 +18,7 @@ import PyQt6.QtCore
 
 import videocamera
 
-class EspargosDemoCamera(DemoApplication):
+class EspargosDemoCamera(ESPARGOSApplication):
     rssiChanged = PyQt6.QtCore.pyqtSignal(float)
     activeAntennasChanged = PyQt6.QtCore.pyqtSignal(float)
     beamspacePowerImagedataChanged = PyQt6.QtCore.pyqtSignal(list)
@@ -59,21 +58,15 @@ class EspargosDemoCamera(DemoApplication):
     def __init__(self, argv):
         # Parse command line arguments
         parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Overlay received power on top of camera image", add_help = False)
-        parser.add_argument("-b", "--backlog", type = int, default = 20, help = "Number of CSI datapoints to average over in backlog")
         parser.add_argument("-a", "--additional-calibration", type = str, default = "", help = "File to read additional phase calibration results from")
         parser.add_argument("-e", "--manual-exposure", default = False, help = "Use manual exposure / brightness control for WiFi overlay", action = "store_true")
         parser.add_argument("--max-age", type = float, default = 0.0, help = "Limit maximum age of CSI data to this value (in seconds). Set to 0.0 to disable.")
         parser.add_argument("--csi-completion-timeout", type = float, default = 0.2, help = "Time after which CSI cluster is considered complete even if not all antennas have provided data. Set to zero to disable processing incomplete clusters.")
-        format_group = parser.add_mutually_exclusive_group()
-        format_group.add_argument("-l", "--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
-        format_group.add_argument("-ht40", "--ht40", default = False, help = "Use only CSI from HT40", action = "store_true")
-        format_group.add_argument("-ht20", "--ht20", default = False, help = "Use only CSI from HT20", action = "store_true")
-        super().__init__(argv, argparse_parent = parser)
-
-        # Check if at least one format is selected
-        if not (self.args.lltf or self.args.ht40 or self.args.ht20):
-            print("Error: At least one of --lltf, --ht40 or --ht20 must be selected.")
-            sys.exit(1)
+        super().__init__(argv, argparse_parent = parser, flags = {
+            ESPARGOSApplicationFlags.ENABLE_BACKLOG,
+            ESPARGOSApplicationFlags.COMBINED_ARRAY,
+            ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT
+        })
 
         # Load additional calibration data from file, if provided
         self.additional_calibration = None
@@ -88,7 +81,7 @@ class EspargosDemoCamera(DemoApplication):
         self.democonfig.updateAppState.connect(self.onUpdateAppState)
 
         # Apply optional YAML config to pool/demo config managers
-        self.democonfig.set(self.get_initial_config("demo", default = {}))
+        self.democonfig.set(self.get_initial_config("app", default = {}))
 
         # Camera setup
         self.videocamera = videocamera.VideoCamera(self.democonfig.get("camera", "device"), self.democonfig.get("camera", "format"))
@@ -132,19 +125,16 @@ class EspargosDemoCamera(DemoApplication):
             # No backlog available yet, demo has not fully initialized
             return
 
-        if self.args.lltf:
-            csi_key = "lltf"
-        elif self.args.ht40:
-            csi_key = "ht40"
-        else:
-            csi_key = "ht20"
-
-        csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog = self.backlog.get_multiple([
-            csi_key,
-            "rssi",
-            "host_timestamp",
-            "mac",
-        ])
+        try:
+            csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog = self.backlog.get_multiple([
+                self.genericconfig.get("preamble_format"),
+                "rssi",
+                "host_timestamp",
+                "mac",
+            ])
+        except ValueError as e:
+            print(f"Error retrieving backlog data: {e}")
+            return
 
         if csi_backlog.size == 0:
             # No data available yet
@@ -197,16 +187,15 @@ class EspargosDemoCamera(DemoApplication):
         csi_combined = csi_combined[:,np.newaxis,:,:,:]
 
         # Get rid of gap in CSI data around DC
-        if self.args.lltf:
-            espargos.util.interpolate_lltf_gap(csi_combined)
-        elif self.args.ht20:
-            espargos.util.interpolate_ht20ltf_gap(csi_combined)
-        elif self.args.ht40:
-            espargos.util.interpolate_ht40ltf_gap(csi_combined)
+        match self.genericconfig.get("preamble_format"):
+            case "ht20":
+                espargos.util.interpolate_ht20ltf_gap(csi_combined)
+            case "ht40":
+                espargos.util.interpolate_ht40ltf_gap(csi_combined)
 
         # Shift all CSI datapoints in time so that LoS component arrives at the same time
-        csi_combined = espargos.util.shift_to_firstpeak_sync(csi_combined, peak_threshold = (0.4 if self.args.lltf else 0.1))
-        
+        csi_combined = espargos.util.shift_to_firstpeak_sync(csi_combined, peak_threshold = (0.4 if self.genericconfig.get("preamble_format") == "lltf" else 0.1))
+
         beamformer_type = self.democonfig.get("beamformer", "type")
         match beamformer_type:
             case "MUSIC" | "MVDR":
@@ -262,7 +251,7 @@ class EspargosDemoCamera(DemoApplication):
                 self.beamspace_power = np.sum(np.abs(beam_frequency_space)**2, axis = (0, 3))
 
         if self.democonfig.get("visualization", "overlay") == "Power":
-            db_beamspace = 10 * np.log10(self.beamspace_power)
+            db_beamspace = 10 * np.log10(self.beamspace_power + 1e-6)
             db_beamspace_norm = (db_beamspace - np.max(db_beamspace) + 15) / 15
             db_beamspace_norm = np.clip(db_beamspace_norm, 0, 1)
             color_beamspace = self._viridis(db_beamspace_norm)
@@ -310,6 +299,7 @@ class EspargosDemoCamera(DemoApplication):
         R = (R + np.conj(R.T)) / 2
         eig_val, eig_vec = np.linalg.eig(R)
         order = np.argsort(eig_val)[::-1]
+        # TODO: Estimate number of sources, or use user-defined number of sources
         Qn = eig_vec[:,order][:,1:]
         spatial_spectrum = 1 / np.linalg.norm(np.einsum("ae,a...->e...", Qn, np.conj(steering_vectors_2d_flat)), axis = 0)
 
