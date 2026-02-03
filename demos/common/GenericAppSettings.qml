@@ -8,6 +8,7 @@ import "." as Common
 Item  {
 	id: genericAppSettings
 	property Item insertBefore: null
+	property int implicitWidth: 0
 	onInsertBeforeChanged: {
 		if (!insertBefore) return
 
@@ -81,7 +82,7 @@ Item  {
 		Component.onCompleted: genericConfigManager.register(this)
 		onCurrentValueChanged: genericConfigManager.onControlChanged(this)
 
-		implicitWidth: 210
+		implicitWidth: genericAppSettings.implicitWidth > 0 ? genericAppSettings.implicitWidth : 210
 
 		// Different internal representation than displayed strings
 		model: [
