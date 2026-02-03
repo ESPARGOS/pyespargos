@@ -228,7 +228,8 @@ class CSIBacklog(object):
         :param key: Key of the data to retrieve (e.g., "lltf", "ht40", "rssi", etc.)
         :return: Data corresponding to the key, oldest first
         """
-        assert(key in self.fields)
+        if not key in self.fields:
+            raise ValueError(f"Requested key '{key}' not in backlog fields")
 
         self.storage_mutex.acquire()
         retval = np.copy(self._read(key))
