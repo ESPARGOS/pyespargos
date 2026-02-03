@@ -1,42 +1,77 @@
-import QtQuick
+import QtQuick.Controls.Material
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtCharts
+import QtQuick
+import "../common" as Common
 
-ApplicationWindow {
+Common.ESPARGOSApplication {
 	id: window
 	visible: true
 	minimumWidth: 800
 	minimumHeight: 500
 
-    // Full screen management
-	visibility: ApplicationWindow.Windowed
-	Shortcut {
-		sequence: "F11"
-		onActivated: {
-			window.visibility = window.visibility == ApplicationWindow.Windowed ? ApplicationWindow.FullScreen : ApplicationWindow.Windowed
-		}
-	}
-
-	Shortcut {
-		sequence: "Esc"
-		onActivated: window.close()
-	}
-
 	color: "#11191e"
 	title: "MUSIC Azimuth of Arrival Spectrum"
+
+	appDrawerComponent: Component {
+		Common.AppDrawer {
+			id: appDrawer
+			title: "Settings"
+			endpoint: appconfig
+
+			Label { Layout.columnSpan: 2; text: "MUSIC Settings"; color: "#9fb3c8" }
+
+			Label { text: "Shift Peak"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: shiftPeakSwitch
+				property string configKey: "shift_peak"
+				property string configProp: "checked"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 80
+				checked: false
+			}
+
+			Common.GenericAppSettings {
+				id: genericAppSettings
+				insertBefore: genericAppSettingsAnchor
+			}
+
+			Item {
+				id: genericAppSettingsAnchor
+				Layout.columnSpan: 2
+				width: 0
+				height: 0
+				visible: false
+			}
+
+			Common.BacklogSettings {
+				id: backlogSettings
+				insertBefore: backlogSettingsAnchor
+			}
+
+			Item {
+				id: backlogSettingsAnchor
+				Layout.columnSpan: 2
+				width: 0
+				height: 0
+				visible: false
+			}
+
+			// Spacer
+			Rectangle {
+				id: endSpacer
+				Layout.columnSpan: 2
+				width: 1; height: 30
+				color: "transparent"
+			}
+		}
+	}
 
 	ColumnLayout {
 		height: parent.height
 		width: parent.width
-
-		Text {
-			Layout.alignment: Qt.AlignCenter
-			font.pixelSize: Math.max(24, window.width / 70)
-			text: "MUSIC Azimuth Spatial Spectrum"
-			color: "#ffffff"
-			Layout.margins: 10
-		}
 
 		ChartView {
 			id: spatialSpectra
@@ -82,9 +117,9 @@ ApplicationWindow {
 				axisY: musicSpectrumYAxis
 
 				Component.onCompleted : {
-						for (const angle of backend.scanningAngles) {
-							musicSpectrum.append(angle, 0)
-						}
+					for (const angle of backend.scanningAngles) {
+						musicSpectrum.append(angle, 0)
+					}
 				}
 			}
 
