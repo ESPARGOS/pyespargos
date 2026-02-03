@@ -11,15 +11,12 @@ import espargos.csi
 
 from .config_manager import ConfigManager
 
+
 class PoolDrawer(PyQt6.QtCore.QObject):
     DEFAULT_CONFIG = {
         "channel": 13,
         "secondary_channel": 2,
-        "calibration": {
-            "per_board": False,
-            "show_csi": False,
-            "duration": 1.0
-        },
+        "calibration": {"per_board": False, "show_csi": False, "duration": 1.0},
         "rf_switch": 2,
         "acquire_lltf_force": False,
         "rx_gain": {
@@ -39,7 +36,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
     # Init complete signal
     initComplete = PyQt6.QtCore.pyqtSignal()
 
-    def __init__(self, pool : espargos.pool.Pool, force_config = None, parent = None):
+    def __init__(self, pool: espargos.pool.Pool, force_config=None, parent=None):
         # Note that the current pool config is authoritative, the default config is just for UI initialization
         # However, if force_config is given, it takes precedence
         super().__init__(parent=parent)
@@ -67,11 +64,13 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         PyQt6.QtCore.QTimer.singleShot(0, apply_initial_config)
 
         # Connect actions
-        self.cfgman.action.connect(lambda action_name: {
-            "reset_config": self._action_reset_config,
-            "reload_config": self._action_reload_config,
-            "calibrate": self._action_calibrate,
-        }.get(action_name, lambda: None)())
+        self.cfgman.action.connect(
+            lambda action_name: {
+                "reset_config": self._action_reset_config,
+                "reload_config": self._action_reload_config,
+                "calibrate": self._action_calibrate,
+            }.get(action_name, lambda: None)()
+        )
 
         self.calibration_running = False
 
@@ -117,7 +116,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         if isinstance(mf, dict):
             cfg_out["mac_filter"] = {
                 "enable": bool(mf.get("enable", False)),
-                "mac_address": str(mf.get("mac", "") or "")
+                "mac_address": str(mf.get("mac", "") or ""),
             }
 
         # WiFi config -> channel fields
@@ -140,7 +139,10 @@ class PoolDrawer(PyQt6.QtCore.QObject):
                 # Validate mac_address format if present
                 mac_filter_delta = delta.get("mac_filter") if isinstance(delta.get("mac_filter"), dict) else {}
                 if mac_filter_delta.get("mac_address"):
-                    if not re.fullmatch(r"(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}", mac_filter_delta["mac_address"]):
+                    if not re.fullmatch(
+                        r"(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}",
+                        mac_filter_delta["mac_address"],
+                    ):
                         raise ValueError("mac_address must be in format 00:11:22:33:44:55")
 
                 # WiFi channels
@@ -210,7 +212,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
             except Exception as e:
                 err_str = str(e)
                 self.cfgman.emitShowError("Failed to read back configuration", err_str)
-                
+
             # Let configmanager know we're done
             self.cfgman.updateAppStateHandled.emit()
 

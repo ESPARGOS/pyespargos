@@ -15,24 +15,19 @@ from .backlog_settings import BacklogSettings, ConfigManager
 from .config_manager import deep_update
 from .pool_drawer import PoolDrawer
 
+
 class ESPARGOSApplicationFlags(enum.Enum):
     ENABLE_BACKLOG = enum.auto()
     COMBINED_ARRAY = enum.auto()
     SINGLE_PREAMBLE_FORMAT = enum.auto()
 
+
 class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
     BASE_DEFAULT_CONFIG = {
-        "backlog": {
-            "size": 20,
-            "fields": {
-                "lltf": True,
-                "ht20": False,
-                "ht40": False
-            }
-        },
+        "backlog": {"size": 20, "fields": {"lltf": True, "ht20": False, "ht40": False}},
         "pool": {
             # Pool configuration settings, partially handled by PoolDrawer
-            "hosts" : []
+            "hosts": []
         },
         "combined-array": {
             # Combined array configuration settings
@@ -43,12 +38,17 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         },
         "app": {
             # The 'app' section is reserved for application-specific settings
-        }
+        },
     }
 
     initComplete = PyQt6.QtCore.pyqtSignal()
 
-    def __init__(self, argv : list[str], argparse_parent : argparse.ArgumentParser = None, flags : set[ESPARGOSApplicationFlags] = set()):
+    def __init__(
+        self,
+        argv: list[str],
+        argparse_parent: argparse.ArgumentParser = None,
+        flags: set[ESPARGOSApplicationFlags] = set(),
+    ):
         super().__init__(argv)
 
         # Basic app initialization
@@ -59,20 +59,52 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         self._qml_ok = True
 
         # Parse command-line arguments
-        parser = argparse.ArgumentParser(parents = [argparse_parent] if argparse_parent else [])
-        parser.add_argument("-c", "--config", type = str, default = None, help = "Path to YAML configuration file to load")
+        parser = argparse.ArgumentParser(parents=[argparse_parent] if argparse_parent else [])
+        parser.add_argument(
+            "-c",
+            "--config",
+            type=str,
+            default=None,
+            help="Path to YAML configuration file to load",
+        )
 
         if ESPARGOSApplicationFlags.ENABLE_BACKLOG in self.flags:
-            parser.add_argument("-b", "--backlog-size", type = int, default = 20, help = "Size of CSI datapoint backlog")
+            parser.add_argument(
+                "-b",
+                "--backlog-size",
+                type=int,
+                default=20,
+                help="Size of CSI datapoint backlog",
+            )
 
         if ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT in self.flags:
             format_group = parser.add_mutually_exclusive_group()
-            format_group.add_argument("--lltf", default = False, help = "Use only CSI from L-LTF", action = "store_true")
-            format_group.add_argument("--ht40", default = False, help = "Use only CSI from HT40", action = "store_true")
-            format_group.add_argument("--ht20", default = False, help = "Use only CSI from HT20", action = "store_true")
+            format_group.add_argument(
+                "--lltf",
+                default=False,
+                help="Use only CSI from L-LTF",
+                action="store_true",
+            )
+            format_group.add_argument(
+                "--ht40",
+                default=False,
+                help="Use only CSI from HT40",
+                action="store_true",
+            )
+            format_group.add_argument(
+                "--ht20",
+                default=False,
+                help="Use only CSI from HT20",
+                action="store_true",
+            )
 
         if not ESPARGOSApplicationFlags.COMBINED_ARRAY in self.flags:
-            parser.add_argument("hosts", type = str, default="", help = "Comma-separated list of host addresses (IP or hostname) of ESPARGOS controllers")
+            parser.add_argument(
+                "hosts",
+                type=str,
+                default="",
+                help="Comma-separated list of host addresses (IP or hostname) of ESPARGOS controllers",
+            )
 
         self.args = parser.parse_args()
 
@@ -115,7 +147,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
                     self.initial_config["backlog"]["fields"] = {
                         "lltf": self.args.lltf,
                         "ht20": self.args.ht20,
-                        "ht40": self.args.ht40
+                        "ht40": self.args.ht40,
                     }
 
         # If hosts are provided on command line, override pool config
@@ -163,7 +195,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         # Provide backend and optional additional context properties
         context.setContextProperty("backend", self)
         if hasattr(self, "pooldrawer"):
-            context.setContextProperty("poolconfig", self.pooldrawer.configManager())            
+            context.setContextProperty("poolconfig", self.pooldrawer.configManager())
 
         for key, value in (context_props or {}).items():
             if key != "backend":
@@ -173,15 +205,23 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         self.engine.load(qml_url)
 
     def initialize_pool(
-            self,
-            backlog_cb_predicate = None,
-            additional_calibrate_args : dict = {},
-            calibrate : bool = True):
+        self,
+        backlog_cb_predicate=None,
+        additional_calibrate_args: dict = {},
+        calibrate: bool = True,
+    ):
         """
         Initialize ESPARGOS Pool. Also triggers creation of pool drawer backend.
         """
         if ESPARGOSApplicationFlags.COMBINED_ARRAY in self.flags:
-            self.indexing_matrix, hosts, cable_lengths, cable_velocity_factors, self.n_rows, self.n_cols = espargos.util.parse_combined_array_config(self.get_initial_config("combined-array"))
+            (
+                self.indexing_matrix,
+                hosts,
+                cable_lengths,
+                cable_velocity_factors,
+                self.n_rows,
+                self.n_cols,
+            ) = espargos.util.parse_combined_array_config(self.get_initial_config("combined-array"))
 
             additional_calibrate_args["cable_lengths"] = cable_lengths
             additional_calibrate_args["cable_velocity_factors"] = cable_velocity_factors
@@ -191,18 +231,22 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
         # Pool configuration UI
         pool_cfg = self.get_initial_config("pool")
-        self.pooldrawer = PoolDrawer(self.pool, pool_cfg, parent = self)
+        self.pooldrawer = PoolDrawer(self.pool, pool_cfg, parent=self)
 
         # Wait for config to be applied before starting pool and calibration
         def config_applied():
             def _init_worker():
                 self.pool.start()
                 if calibrate:
-                    self.pool.calibrate(duration = 2, per_board = False, **additional_calibrate_args)
+                    self.pool.calibrate(duration=2, per_board=False, **additional_calibrate_args)
 
                 if ESPARGOSApplicationFlags.ENABLE_BACKLOG in self.flags:
                     # Do not enable any preamble formats for now, will be set later based on config
-                    self.backlog = espargos.CSIBacklog(self.pool, cb_predicate = backlog_cb_predicate, calibrate = calibrate)
+                    self.backlog = espargos.CSIBacklog(
+                        self.pool,
+                        cb_predicate=backlog_cb_predicate,
+                        calibrate=calibrate,
+                    )
                     self.backlog.start()
 
                     self.backlog_settings.set_backlog(self.backlog)

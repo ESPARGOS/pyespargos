@@ -5,6 +5,7 @@ import re
 
 from . import csi
 
+
 class CSIBacklog(object):
     """
     CSI backlog class. Stores CSI data in a ringbuffer for processing when needed.
@@ -16,45 +17,30 @@ class CSIBacklog(object):
         See :meth:`espargos.pool.Pool.add_csi_callback` for more details.
     :param size: Size of the ringbuffer (default: 100)
     """
+
     DATA_FORMATS = {
         "lltf": {
             "shape": (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,),
             "per_antenna": True,
-            "dtype": np.complex64
+            "dtype": np.complex64,
         },
         "ht20": {
             "shape": (csi.HT_COEFFICIENTS_PER_CHANNEL,),
             "per_antenna": True,
-            "dtype": np.complex64
+            "dtype": np.complex64,
         },
         "ht40": {
             "shape": (csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL,),
             "per_antenna": True,
-            "dtype": np.complex64
+            "dtype": np.complex64,
         },
-        "rssi": {
-            "shape": (),
-            "per_antenna": True,
-            "dtype": np.float32
-        },
-        "timestamp": {
-            "shape": (),
-            "per_antenna": True,
-            "dtype": np.float128
-        },
-        "host_timestamp": {
-            "shape": (),
-            "per_antenna": False,
-            "dtype": np.float128
-        },
-        "mac": {
-            "shape": (6,),
-            "per_antenna": False,
-            "dtype": np.uint8
-        }
+        "rssi": {"shape": (), "per_antenna": True, "dtype": np.float32},
+        "timestamp": {"shape": (), "per_antenna": True, "dtype": np.float128},
+        "host_timestamp": {"shape": (), "per_antenna": False, "dtype": np.float128},
+        "mac": {"shape": (6,), "per_antenna": False, "dtype": np.uint8},
     }
 
-    def __init__(self, pool, fields = None, calibrate = True, cb_predicate = None, size = 100):
+    def __init__(self, pool, fields=None, calibrate=True, cb_predicate=None, size=100):
         self.logger = logging.getLogger("pyespargos.backlog")
 
         self.pool = pool
@@ -67,11 +53,14 @@ class CSIBacklog(object):
         self.filllevel = 0
         self.mac_filter = None
 
-        self._initialize_storage(size = size, fields = set(self.DATA_FORMATS.keys()) if fields is None else set(fields))
+        self._initialize_storage(
+            size=size,
+            fields=set(self.DATA_FORMATS.keys()) if fields is None else set(fields),
+        )
 
         self.running = True
 
-        self.pool.add_csi_callback(self._on_new_csi, cb_predicate = cb_predicate)
+        self.pool.add_csi_callback(self._on_new_csi, cb_predicate=cb_predicate)
         self.callbacks = []
 
     def _initialize_storage(self, size=None, fields=None):
@@ -85,7 +74,7 @@ class CSIBacklog(object):
         with self.storage_mutex:
             # Back up old data if storage exists
             old_storage = None
-            if hasattr(self, 'storage') and self.storage:
+            if hasattr(self, "storage") and self.storage:
                 old_storage = dict()
                 for key in self.fields:
                     old_storage[key] = np.copy(self._read(key))
@@ -142,7 +131,7 @@ class CSIBacklog(object):
             sensor_timestamps_raw = clustered_csi.get_sensor_timestamps()
             sensor_timestamps = np.copy(sensor_timestamps_raw)
             if self.calibrate:
-                assert(self.pool.get_calibration() is not None)
+                assert self.pool.get_calibration() is not None
                 sensor_timestamps = self.pool.get_calibration().apply_timestamps(sensor_timestamps)
 
             if "timestamp" in self.fields:
@@ -157,7 +146,7 @@ class CSIBacklog(object):
                 if clustered_csi.has_lltf():
                     csi_lltf = clustered_csi.deserialize_csi_lltf()
                     if self.calibrate:
-                        assert(self.pool.get_calibration() is not None)
+                        assert self.pool.get_calibration() is not None
                         csi_lltf = self.pool.get_calibration().apply_lltf(csi_lltf)
 
                     self.storage["lltf"][self.head] = csi_lltf
@@ -171,7 +160,7 @@ class CSIBacklog(object):
                     csi_ht40 = clustered_csi.deserialize_csi_ht40ltf()
 
                     if self.calibrate:
-                        assert(self.pool.get_calibration() is not None)
+                        assert self.pool.get_calibration() is not None
                         csi_ht40 = self.pool.get_calibration().apply_ht40(csi_ht40)
 
                     self.storage["ht40"][self.head] = csi_ht40
@@ -185,7 +174,7 @@ class CSIBacklog(object):
                     csi_ht20 = clustered_csi.deserialize_csi_ht20ltf()
 
                     if self.calibrate:
-                        assert(self.pool.get_calibration() is not None)
+                        assert self.pool.get_calibration() is not None
                         csi_ht20 = self.pool.get_calibration().apply_ht20(csi_ht20)
 
                     self.storage["ht20"][self.head] = csi_ht20
@@ -199,8 +188,8 @@ class CSIBacklog(object):
 
             # Store MAC address. mac_str is a hex string without colons, e.g. "00:11:22:33:44:55" -> "001122334455"
             mac_str = clustered_csi.get_source_mac()
-            mac = np.asarray([int(mac_str[i:i+2], 16) for i in range(0, len(mac_str), 2)])
-            assert(mac.shape == (6,))
+            mac = np.asarray([int(mac_str[i : i + 2], 16) for i in range(0, len(mac_str), 2)])
+            assert mac.shape == (6,)
             if "mac" in self.fields:
                 self.storage["mac"][self.head] = mac
 
@@ -213,13 +202,13 @@ class CSIBacklog(object):
             cb()
 
     def add_update_callback(self, cb):
-        """ Add a callback that is called when new CSI data is added to the backlog """
+        """Add a callback that is called when new CSI data is added to the backlog"""
         self.callbacks.append(cb)
 
     def _read(self, key):
         if self.filllevel == 0:
-            return np.empty((0,)+self.storage[key].shape[1:], dtype=self.storage[key].dtype)
-        return np.roll(self.storage[key], -self.head, axis = 0)[-self.filllevel:]
+            return np.empty((0,) + self.storage[key].shape[1:], dtype=self.storage[key].dtype)
+        return np.roll(self.storage[key], -self.head, axis=0)[-self.filllevel :]
 
     def get(self, key):
         """
@@ -267,7 +256,7 @@ class CSIBacklog(object):
         if self.latest is None:
             return None
 
-        assert(key in self.fields)
+        assert key in self.fields
         latest_value = self.storage[key][self.latest]
 
         return np.copy(latest_value)

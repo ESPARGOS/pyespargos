@@ -2,6 +2,7 @@
 
 import signal
 
+
 class ExitHandler:
     running = True
 

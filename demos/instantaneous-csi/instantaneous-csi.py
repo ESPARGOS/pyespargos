@@ -14,6 +14,7 @@ import argparse
 import PyQt6.QtCharts
 import PyQt6.QtCore
 
+
 class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
     preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
     displayModeChanged = PyQt6.QtCore.pyqtSignal()
@@ -23,27 +24,34 @@ class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
     DEFAULT_CONFIG = {
         "display_mode": "frequency",  # "frequency", "timedomain", "music", "mvdr"
         "oversampling": 4,
-        "shift_peak": False
+        "shift_peak": False,
     }
 
     def __init__(self, argv):
         # Parse command line arguments
-        parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Show instantaneous CSI over subcarrier index (single board)", add_help = False)
-        parser.add_argument("--no-calib", default = False, help = "Do not calibrate", action = "store_true")
-        super().__init__(argv, argparse_parent = parser, flags = {
-            ESPARGOSApplicationFlags.ENABLE_BACKLOG,
-            ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT
-        })
+        parser = argparse.ArgumentParser(
+            description="ESPARGOS Demo: Show instantaneous CSI over subcarrier index (single board)",
+            add_help=False,
+        )
+        parser.add_argument("--no-calib", default=False, help="Do not calibrate", action="store_true")
+        super().__init__(
+            argv,
+            argparse_parent=parser,
+            flags={
+                ESPARGOSApplicationFlags.ENABLE_BACKLOG,
+                ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT,
+            },
+        )
 
         # Set up ESPARGOS pool and backlog
-        self.initialize_pool(calibrate = not self.args.no_calib)
+        self.initialize_pool(calibrate=not self.args.no_calib)
 
         # App configuration manager
-        self.appconfig = ConfigManager(self.DEFAULT_CONFIG, parent = self)
+        self.appconfig = ConfigManager(self.DEFAULT_CONFIG, parent=self)
         self.appconfig.updateAppState.connect(self._on_update_app_state)
 
         # Apply optional YAML config to pool/demo config managers
-        self.appconfig.set(self.get_initial_config("app", default = {}))
+        self.appconfig.set(self.get_initial_config("app", default={}))
 
         # Value range handling
         self.stable_power_minimum = None
@@ -53,9 +61,12 @@ class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
         self.genericconfig.updateAppState.connect(self._on_preamble_format_changed)
         self.sensor_count = len(self.get_initial_config("pool", "hosts")) * espargos.constants.ANTENNAS_PER_BOARD
 
-        self.initialize_qml(pathlib.Path(__file__).resolve().parent / "instantaneous-csi-ui.qml", {
-            "appconfig": self.appconfig,
-        })
+        self.initialize_qml(
+            pathlib.Path(__file__).resolve().parent / "instantaneous-csi-ui.qml",
+            {
+                "appconfig": self.appconfig,
+            },
+        )
 
     def _on_update_app_state(self, newcfg):
         # Handle display mode changes
@@ -117,7 +128,7 @@ class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
         if previous is None:
             return new
         else:
-            return (previous * 0.97 + new * 0.03)
+            return previous * 0.97 + new * 0.03
 
     # list parameters contain PyQt6.QtCharts.QLineSeries
     @PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis, PyQt6.QtCharts.QValueAxis)
@@ -137,13 +148,13 @@ class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
         # If any value is NaN skip this update (happens if received frame were not of expected type)
         if np.isnan(csi_backlog).any() or np.isnan(rssi_backlog).any():
             return
-        
+
         # If backlog is empty, skip update
         if csi_backlog.size == 0:
             return
 
         # Weight CSI data with RSSI
-        csi_backlog = csi_backlog * 10**(rssi_backlog[..., np.newaxis] / 20)
+        csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
 
         if self.appconfig.get("shift_peak"):
             espargos.util.remove_mean_sto(csi_backlog)
@@ -155,9 +166,8 @@ class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
             case "ht20":
                 espargos.util.interpolate_ht20ltf_gap(csi_backlog)
 
-
         # TODO: If using per-board calibration, interpolation should also be per-board
-        csi_interp = espargos.util.csi_interp_iterative(csi_backlog, iterations = 5)
+        csi_interp = espargos.util.csi_interp_iterative(csi_backlog, iterations=5)
         csi_flat = np.reshape(csi_interp, (-1, csi_interp.shape[-1]))
 
         display_mode = self.appconfig.get("display_mode")
@@ -178,13 +188,28 @@ class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
             for pwr_series, mvdr_pdp in zip(powerSeries, superres_pdps_flat):
                 pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(superres_delays, mvdr_pdp)])
         elif display_mode == "timedomain":
-            csi_flat_zeropadded = np.zeros((csi_flat.shape[0], csi_flat.shape[1] * oversampling), dtype = np.complex64)
+            csi_flat_zeropadded = np.zeros(
+                (csi_flat.shape[0], csi_flat.shape[1] * oversampling),
+                dtype=np.complex64,
+            )
             subcarriers = csi_flat.shape[1]
             subcarriers_zp = csi_flat_zeropadded.shape[1]
-            csi_flat_zeropadded[:,subcarriers_zp // 2 - subcarriers // 2:subcarriers_zp // 2 + subcarriers // 2 + 1] = csi_flat
-            csi_flat_zeropadded = np.fft.ifftshift(np.fft.ifft(np.fft.fftshift(csi_flat_zeropadded, axes = -1), axis = -1), axes = -1)
-            subcarrier_range_zeropadded = np.arange(-csi_flat_zeropadded.shape[-1] // 2, csi_flat_zeropadded.shape[-1] // 2) / oversampling
-            csi_power = (csi_flat_zeropadded.shape[1] * np.abs(csi_flat_zeropadded))**2
+            csi_flat_zeropadded[
+                :,
+                subcarriers_zp // 2 - subcarriers // 2 : subcarriers_zp // 2 + subcarriers // 2 + 1,
+            ] = csi_flat
+            csi_flat_zeropadded = np.fft.ifftshift(
+                np.fft.ifft(np.fft.fftshift(csi_flat_zeropadded, axes=-1), axis=-1),
+                axes=-1,
+            )
+            subcarrier_range_zeropadded = (
+                np.arange(
+                    -csi_flat_zeropadded.shape[-1] // 2,
+                    csi_flat_zeropadded.shape[-1] // 2,
+                )
+                / oversampling
+            )
+            csi_power = (csi_flat_zeropadded.shape[1] * np.abs(csi_flat_zeropadded)) ** 2
             self.stable_power_minimum = 0
             self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, np.max(csi_power) * 1.1)
 
@@ -198,7 +223,7 @@ class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
             self.stable_power_minimum = self._interpolate_axis_range(self.stable_power_minimum, np.min(csi_power) - 3)
             self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, np.max(csi_power) + 3)
             csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, csi_flat.shape[1] // 2])))
-            #csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, :])))
+            # csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, :])))
 
             subcarrier_count = csi_flat.shape[1]
             subcarrier_range = np.arange(-subcarrier_count // 2, subcarrier_count // 2)

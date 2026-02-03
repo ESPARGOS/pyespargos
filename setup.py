@@ -15,10 +15,7 @@ setup(
         "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.11',
-    install_requires=[
-        "websockets>=12.0",
-		"numpy>=1.26.0"
-    ],
-    include_package_data=True
+    python_requires=">=3.11",
+    install_requires=["websockets>=12.0", "numpy>=1.26.0"],
+    include_package_data=True,
 )

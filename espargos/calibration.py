@@ -7,16 +7,19 @@ from . import board
 from . import util
 from . import csi
 
+
 class CSICalibration(object):
-    def __init__(self,
-                 boards: list[board.Board],
-                 channel_primary: int,
-                 channel_secondary: int,
-                 calibration_values_lltf: np.ndarray,
-                 calibration_values_ht20: np.ndarray,
-                 calibration_values_ht40: np.ndarray,
-                 board_cable_lengths = None,
-                 board_cable_vfs = None):
+    def __init__(
+        self,
+        boards: list[board.Board],
+        channel_primary: int,
+        channel_secondary: int,
+        calibration_values_lltf: np.ndarray,
+        calibration_values_ht20: np.ndarray,
+        calibration_values_ht40: np.ndarray,
+        board_cable_lengths=None,
+        board_cable_vfs=None,
+    ):
         """
         Constructor for the CSICalibration class.
 
@@ -33,39 +36,54 @@ class CSICalibration(object):
         :param board_cable_lengths: The lengths of the cables that distribute the clock and phase calibration signal to the ESP32 boards, in meters
         :param board_cable_vfs: The velocity factors of the cables that distribute the clock and phase calibration signal to the ESP32 boards
         """
-        assert(calibration_values_lltf.shape == (len(boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.LEGACY_COEFFICIENTS_PER_CHANNEL))
-        assert(calibration_values_ht20.shape == (len(boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL))
-        assert(calibration_values_ht40.shape == (len(boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL))
+        assert calibration_values_lltf.shape == (
+            len(boards),
+            constants.ROWS_PER_BOARD,
+            constants.ANTENNAS_PER_ROW,
+            csi.LEGACY_COEFFICIENTS_PER_CHANNEL,
+        )
+        assert calibration_values_ht20.shape == (
+            len(boards),
+            constants.ROWS_PER_BOARD,
+            constants.ANTENNAS_PER_ROW,
+            csi.HT_COEFFICIENTS_PER_CHANNEL,
+        )
+        assert calibration_values_ht40.shape == (
+            len(boards),
+            constants.ROWS_PER_BOARD,
+            constants.ANTENNAS_PER_ROW,
+            csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL,
+        )
 
         self.channel_primary = channel_primary
         self.channel_secondary = channel_secondary
-        #wavelengths_lltf = util.get_calib_trace_wavelength(self.frequencies_lltf).astype(calibration_values_lltf.dtype)
-        #wavelengths_ht40 = util.get_calib_trace_wavelength(self.frequencies_ht40).astype(calibration_values_ht40.dtype)
-        #tracelengths = np.asarray(constants.CALIB_TRACE_LENGTH, dtype = calibration_values_ht40.dtype)# - np.asarray(constants.CALIB_TRACE_EMPIRICAL_ERROR)
+        # wavelengths_lltf = util.get_calib_trace_wavelength(self.frequencies_lltf).astype(calibration_values_lltf.dtype)
+        # wavelengths_ht40 = util.get_calib_trace_wavelength(self.frequencies_ht40).astype(calibration_values_ht40.dtype)
+        # tracelengths = np.asarray(constants.CALIB_TRACE_LENGTH, dtype = calibration_values_ht40.dtype)# - np.asarray(constants.CALIB_TRACE_EMPIRICAL_ERROR)
 
         # If provided, determine delay due to different sync signal distribution cable lengths and velocity factors for each board
-        cable_group_delays = np.zeros(len(boards), dtype = calibration_values_ht40.dtype)
+        cable_group_delays = np.zeros(len(boards), dtype=calibration_values_ht40.dtype)
         if board_cable_lengths is not None:
-            assert(board_cable_vfs is not None)
-            assert(len(board_cable_lengths) == len(boards))
-            assert(len(board_cable_vfs) == len(boards))
-            board_cable_lengths = np.asarray(board_cable_lengths, dtype = calibration_values_ht40.dtype)
-            board_cable_vfs = np.asarray(board_cable_vfs, dtype = calibration_values_ht40.dtype)
+            assert board_cable_vfs is not None
+            assert len(board_cable_lengths) == len(boards)
+            assert len(board_cable_vfs) == len(boards)
+            board_cable_lengths = np.asarray(board_cable_lengths, dtype=calibration_values_ht40.dtype)
+            board_cable_vfs = np.asarray(board_cable_vfs, dtype=calibration_values_ht40.dtype)
             cable_group_delays[:] = board_cable_lengths / (constants.SPEED_OF_LIGHT * board_cable_vfs)
 
         # Determine per-antenna total group delay based on cable lengths, velocity factors and board revisions
-        group_delays = np.zeros(calibration_values_ht40.shape[:-1], dtype = calibration_values_ht40.dtype)
+        group_delays = np.zeros(calibration_values_ht40.shape[:-1], dtype=calibration_values_ht40.dtype)
         for b, board in enumerate(boards):
-            group_delays[b,:,:] = cable_group_delays[b] + board.revision.calib_trace_delays
+            group_delays[b, :, :] = cable_group_delays[b] + board.revision.calib_trace_delays
 
         # From group delay (in seconds) to phase shift per subcarrier
-        prop_phase_offsets_lltf = np.exp(-1.0j * 2 * np.pi * group_delays[:,:,:,np.newaxis] * util.get_frequencies_lltf(self.channel_primary)[np.newaxis,np.newaxis,np.newaxis,:])
-        prop_phase_offsets_ht20 = np.exp(-1.0j * 2 * np.pi * group_delays[:,:,:,np.newaxis] * util.get_frequencies_ht20(self.channel_primary)[np.newaxis,np.newaxis,np.newaxis,:])
-        prop_phase_offsets_ht40 = np.exp(-1.0j * 2 * np.pi * group_delays[:,:,:,np.newaxis] * util.get_frequencies_ht40(self.channel_primary, self.channel_secondary)[np.newaxis,np.newaxis,np.newaxis,:])
+        prop_phase_offsets_lltf = np.exp(-1.0j * 2 * np.pi * group_delays[:, :, :, np.newaxis] * util.get_frequencies_lltf(self.channel_primary)[np.newaxis, np.newaxis, np.newaxis, :])
+        prop_phase_offsets_ht20 = np.exp(-1.0j * 2 * np.pi * group_delays[:, :, :, np.newaxis] * util.get_frequencies_ht20(self.channel_primary)[np.newaxis, np.newaxis, np.newaxis, :])
+        prop_phase_offsets_ht40 = np.exp(-1.0j * 2 * np.pi * group_delays[:, :, :, np.newaxis] * util.get_frequencies_ht40(self.channel_primary, self.channel_secondary)[np.newaxis, np.newaxis, np.newaxis, :])
 
-        #prop_calib_each_board_lltf = np.exp(-1.0j * 2 * np.pi * tracelengths[:,:,np.newaxis] / wavelengths_lltf[np.newaxis, np.newaxis])
-        #prop_calib_each_board_ht40 = np.exp(-1.0j * 2 * np.pi * tracelengths[:,:,np.newaxis] / wavelengths_ht40[np.newaxis, np.newaxis])
-        #prop_delay_each_board = np.asarray(constants.CALIB_TRACE_LENGTH) / np.asarray(constants.CALIB_TRACE_GROUP_VELOCITY)
+        # prop_calib_each_board_lltf = np.exp(-1.0j * 2 * np.pi * tracelengths[:,:,np.newaxis] / wavelengths_lltf[np.newaxis, np.newaxis])
+        # prop_calib_each_board_ht40 = np.exp(-1.0j * 2 * np.pi * tracelengths[:,:,np.newaxis] / wavelengths_ht40[np.newaxis, np.newaxis])
+        # prop_delay_each_board = np.asarray(constants.CALIB_TRACE_LENGTH) / np.asarray(constants.CALIB_TRACE_GROUP_VELOCITY)
         self.receiver_lo_freq = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * ((self.channel_primary + self.channel_secondary) / 2 - 1)
 
         self.calibration_values_lltf = np.einsum("bras,bras->bras", calibration_values_lltf, np.conj(prop_phase_offsets_lltf))
@@ -73,7 +91,7 @@ class CSICalibration(object):
         self.calibration_values_ht40 = np.einsum("bras,bras->bras", calibration_values_ht40, np.conj(prop_phase_offsets_ht40))
 
         ## Account for additional board-specific phase offsets due to different feeder cable lengths in a multi-board antenna array system
-        #if board_cable_lengths is not None:
+        # if board_cable_lengths is not None:
         #    assert(board_cable_vfs is not None)
         #    board_cable_lengths = np.asarray(board_cable_lengths)
         #    board_cable_vfs = np.asarray(board_cable_vfs)
@@ -89,14 +107,14 @@ class CSICalibration(object):
 
         #    coeffs_without_propdelay_lltf = np.einsum("bras,bras->bras", calibration_values_lltf, np.conj(prop_calib_lltf))
         #    coeffs_without_propdelay_ht40 = np.einsum("bras,bras->bras", calibration_values_ht40, np.conj(prop_calib_ht40))
-        #else:
+        # else:
         #    coeffs_without_propdelay_lltf = np.einsum("bras,ras->bras", calibration_values_lltf, np.conj(prop_calib_each_board_lltf))
         #    coeffs_without_propdelay_ht40 = np.einsum("bras,ras->bras", calibration_values_ht40, np.conj(prop_calib_each_board_ht40))
 
-        #self.calibration_values_lltf: np.ndarray = np.exp(-1.0j * np.angle(coeffs_without_propdelay_lltf))
-        #self.calibration_values_ht40: np.ndarray = np.exp(-1.0j * np.angle(coeffs_without_propdelay_ht40))
+        # self.calibration_values_lltf: np.ndarray = np.exp(-1.0j * np.angle(coeffs_without_propdelay_lltf))
+        # self.calibration_values_ht40: np.ndarray = np.exp(-1.0j * np.angle(coeffs_without_propdelay_ht40))
 
-        #self.timestamp_calibration_values = timestamp_calibration_values - prop_delay_each_board[np.newaxis,:,:]
+        # self.timestamp_calibration_values = timestamp_calibration_values - prop_delay_each_board[np.newaxis,:,:]
 
     def apply_ht40(self, values: np.ndarray) -> np.ndarray:
         """
@@ -143,4 +161,4 @@ class CSICalibration(object):
         :return: The calibrated timestamps
         """
         # TODO
-        return timestamps #- self.timestamp_calibration_values
+        return timestamps  # - self.timestamp_calibration_values

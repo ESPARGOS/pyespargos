@@ -28,11 +28,14 @@ class AzimuthDelayApp(ESPARGOSApplication):
     preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
 
     def __init__(self, argv):
-        super().__init__(argv, flags = {
-            ESPARGOSApplicationFlags.ENABLE_BACKLOG,
-            ESPARGOSApplicationFlags.COMBINED_ARRAY,
-            ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT
-        })
+        super().__init__(
+            argv,
+            flags={
+                ESPARGOSApplicationFlags.ENABLE_BACKLOG,
+                ESPARGOSApplicationFlags.COMBINED_ARRAY,
+                ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT,
+            },
+        )
 
         # App-specific configuration
         self.appconfig = ConfigManager(self.get_initial_config("app"), parent=self)
@@ -96,7 +99,6 @@ class AzimuthDelayApp(ESPARGOSApplication):
         else:
             return espargos.csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + espargos.csi.HT40_GAP_SUBCARRIERS
 
-
     @PyQt6.QtCore.pyqtSlot()
     def update_data(self):
         preamble_format = self.genericconfig.get("preamble_format")
@@ -110,7 +112,7 @@ class AzimuthDelayApp(ESPARGOSApplication):
         # If any value is NaN skip this update (happens if received frame were not of expected type)
         if np.isnan(csi).any():
             return
-        
+
         # If backlog is empty, skip update
         if csi.size == 0:
             return
@@ -135,14 +137,29 @@ class AzimuthDelayApp(ESPARGOSApplication):
         # Sum over rows (beamform vertically)
         csi = np.sum(csi_largearray, axis=1)  # shape: (backlog_depth, n_cols, subcarriers)
 
-        csi_padded = np.zeros((csi.shape[0], self.n_cols * BEAMSPACE_OVERSAMPLING, subcarriers * DELAY_OVERSAMPLING), dtype=csi.dtype)
-        csi_padded[:, :csi.shape[1], :csi.shape[2]] = csi
-        csi_padded = np.roll(np.fft.fft(csi_padded, axis=1), (self.n_cols * BEAMSPACE_OVERSAMPLING) // 2, axis=1)  # beamspace
+        csi_padded = np.zeros(
+            (
+                csi.shape[0],
+                self.n_cols * BEAMSPACE_OVERSAMPLING,
+                subcarriers * DELAY_OVERSAMPLING,
+            ),
+            dtype=csi.dtype,
+        )
+        csi_padded[:, : csi.shape[1], : csi.shape[2]] = csi
+        csi_padded = np.roll(
+            np.fft.fft(csi_padded, axis=1),
+            (self.n_cols * BEAMSPACE_OVERSAMPLING) // 2,
+            axis=1,
+        )  # beamspace
         csi_padded = np.roll(np.fft.ifft(csi_padded, axis=2), -delay_min * DELAY_OVERSAMPLING, axis=2)  # from frequency to delay domain
         csi_padded = np.abs(csi_padded)
         csi_padded = np.sum(csi_padded, axis=0)  # sum of all backlog samples
-        self.data = csi_padded[:, :(delay_max - delay_min) * DELAY_OVERSAMPLING + 1]  # only relevant delays
-        self.data = np.append(self.data, self.data[0, :].reshape(1, (delay_max - delay_min) * DELAY_OVERSAMPLING + 1), axis=0)  # beamspace -pi identical to pi
+        self.data = csi_padded[:, : (delay_max - delay_min) * DELAY_OVERSAMPLING + 1]  # only relevant delays
+        self.data = np.append(
+            self.data,
+            self.data[0, :].reshape(1, (delay_max - delay_min) * DELAY_OVERSAMPLING + 1),
+            axis=0,
+        )  # beamspace -pi identical to pi
         self.image_data = self.colormap(self.data)
         self.dataChanged.emit(self.image_data)
 
@@ -161,6 +178,7 @@ class AzimuthDelayApp(ESPARGOSApplication):
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=configChanged)
     def delayMax(self):
         return self.appconfig.get("delay_max")
+
 
 app = AzimuthDelayApp(sys.argv)
 sys.exit(app.exec())

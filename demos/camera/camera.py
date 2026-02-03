@@ -18,6 +18,7 @@ import PyQt6.QtCore
 
 import videocamera
 
+
 class EspargosDemoCamera(ESPARGOSApplication):
     rssiChanged = PyQt6.QtCore.pyqtSignal(float)
     activeAntennasChanged = PyQt6.QtCore.pyqtSignal(float)
@@ -32,42 +33,58 @@ class EspargosDemoCamera(ESPARGOSApplication):
     macListEnabledChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
-            "receiver" : {
-                "mac_list_enabled" : False
-            },
-            "camera" : {
-                "flip" : False,
-                "format" : None, # will be populated by app, can take values like "1920x1080 @ 30.00 FPS",
-                "device" : None, # will be populated by app, can take values like "/dev/video0"
-                "fov_azimuth" : 72,
-                "fov_elevation" : 41
-            },
-            "beamformer" : {
-                "type" : "FFT",
-                "colorize_delay" : False,
-                "max_delay" : 0.2,
-                "max_age" : 0.0,
-                "resolution_azimuth" : 64,
-                "resolution_elevation" : 32
-            },
-            "visualization" : {
-                "space" : "Camera",
-                "overlay" : "Default",
-                "manual_exposure" : False,
-                "exposure" : 0.5
-            }
-        }
+        "receiver": {"mac_list_enabled": False},
+        "camera": {
+            "flip": False,
+            "format": None,  # will be populated by app, can take values like "1920x1080 @ 30.00 FPS",
+            "device": None,  # will be populated by app, can take values like "/dev/video0"
+            "fov_azimuth": 72,
+            "fov_elevation": 41,
+        },
+        "beamformer": {
+            "type": "FFT",
+            "colorize_delay": False,
+            "max_delay": 0.2,
+            "max_age": 0.0,
+            "resolution_azimuth": 64,
+            "resolution_elevation": 32,
+        },
+        "visualization": {
+            "space": "Camera",
+            "overlay": "Default",
+            "manual_exposure": False,
+            "exposure": 0.5,
+        },
+    }
 
     def __init__(self, argv):
         # Parse command line arguments
-        parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Overlay received power on top of camera image", add_help = False)
-        parser.add_argument("-a", "--additional-calibration", type = str, default = "", help = "File to read additional phase calibration results from")
-        parser.add_argument("--csi-completion-timeout", type = float, default = 0.2, help = "Time after which CSI cluster is considered complete even if not all antennas have provided data. Set to zero to disable processing incomplete clusters.")
-        super().__init__(argv, argparse_parent = parser, flags = {
-            ESPARGOSApplicationFlags.ENABLE_BACKLOG,
-            ESPARGOSApplicationFlags.COMBINED_ARRAY,
-            ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT
-        })
+        parser = argparse.ArgumentParser(
+            description="ESPARGOS Demo: Overlay received power on top of camera image",
+            add_help=False,
+        )
+        parser.add_argument(
+            "-a",
+            "--additional-calibration",
+            type=str,
+            default="",
+            help="File to read additional phase calibration results from",
+        )
+        parser.add_argument(
+            "--csi-completion-timeout",
+            type=float,
+            default=0.2,
+            help="Time after which CSI cluster is considered complete even if not all antennas have provided data. Set to zero to disable processing incomplete clusters.",
+        )
+        super().__init__(
+            argv,
+            argparse_parent=parser,
+            flags={
+                ESPARGOSApplicationFlags.ENABLE_BACKLOG,
+                ESPARGOSApplicationFlags.COMBINED_ARRAY,
+                ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT,
+            },
+        )
 
         # Load additional calibration data from file, if provided
         self.additional_calibration = None
@@ -75,25 +92,30 @@ class EspargosDemoCamera(ESPARGOSApplication):
             self.additional_calibration = np.load(self.args.additional_calibration)
 
         # Initialize combined array setup
-        self.initialize_pool(backlog_cb_predicate = self._cb_predicate)
+        self.initialize_pool(backlog_cb_predicate=self._cb_predicate)
 
         # App configuration manager
-        self.appconfig = ConfigManager(self.DEFAULT_CONFIG, parent = self)
+        self.appconfig = ConfigManager(self.DEFAULT_CONFIG, parent=self)
         self.appconfig.updateAppState.connect(self.onUpdateAppState)
 
         # Apply optional YAML config to pool/demo config managers
-        self.appconfig.set(self.get_initial_config("app", default = {}))
+        self.appconfig.set(self.get_initial_config("app", default={}))
 
         # Camera setup
-        self.videocamera = videocamera.VideoCamera(self.appconfig.get("camera", "device"), self.appconfig.get("camera", "format"))
+        self.videocamera = videocamera.VideoCamera(
+            self.appconfig.get("camera", "device"),
+            self.appconfig.get("camera", "format"),
+        )
 
         # Let UI know about currently selected camera device and format
-        self.appconfig.set({
-            "camera" : {
-                "device" : self.videocamera.getDevice(),
-                "format" : self.videocamera.getFormat()
+        self.appconfig.set(
+            {
+                "camera": {
+                    "device": self.videocamera.getDevice(),
+                    "format": self.videocamera.getFormat(),
+                }
             }
-        })
+        )
 
         # Pre-compute 2d steering vectors (array manifold)
         self._update_steering_vectors()
@@ -105,10 +127,13 @@ class EspargosDemoCamera(ESPARGOSApplication):
         # List of recent MAC addresses
         self.recent_macs = set()
 
-        self.initialize_qml(pathlib.Path(__file__).resolve().parent / "camera-ui.qml", {
-            "appconfig": self.appconfig,
-            "WebCam": self.videocamera,
-        })
+        self.initialize_qml(
+            pathlib.Path(__file__).resolve().parent / "camera-ui.qml",
+            {
+                "appconfig": self.appconfig,
+                "WebCam": self.videocamera,
+            },
+        )
 
     def exec(self):
         # disable auto-focus and enable camera stream
@@ -124,12 +149,14 @@ class EspargosDemoCamera(ESPARGOSApplication):
             return
 
         try:
-            csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog = self.backlog.get_multiple([
-                self.genericconfig.get("preamble_format"),
-                "rssi",
-                "host_timestamp",
-                "mac",
-            ])
+            csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog = self.backlog.get_multiple(
+                [
+                    self.genericconfig.get("preamble_format"),
+                    "rssi",
+                    "host_timestamp",
+                    "mac",
+                ]
+            )
         except ValueError as e:
             print(f"Error retrieving backlog data: {e}")
             return
@@ -140,18 +167,18 @@ class EspargosDemoCamera(ESPARGOSApplication):
 
         max_age = self.appconfig.get("beamformer", "max_age")
         if max_age > 0.0:
-            csi_backlog[timestamp_backlog < (time.time() - max_age),...] = 0
-            recent_rssi_backlog = rssi_backlog[timestamp_backlog > (time.time() - max_age),...]
+            csi_backlog[timestamp_backlog < (time.time() - max_age), ...] = 0
+            recent_rssi_backlog = rssi_backlog[timestamp_backlog > (time.time() - max_age), ...]
         else:
             recent_rssi_backlog = rssi_backlog
 
         # Update mean RSSI
-        self.mean_rssi = 10 * np.log10(np.nanmean(10**(recent_rssi_backlog / 10)) + 1e-6) if recent_rssi_backlog.size > 0 else -np.inf
+        self.mean_rssi = 10 * np.log10(np.nanmean(10 ** (recent_rssi_backlog / 10)) + 1e-6) if recent_rssi_backlog.size > 0 else -np.inf
         self.rssiChanged.emit(self.mean_rssi)
 
         # Update mean number of active antennas
         if recent_rssi_backlog.shape[0] > 0:
-            self.mean_active_antennas = np.prod(recent_rssi_backlog.shape[1:]) - np.mean(np.sum(np.isnan(recent_rssi_backlog), axis = (1, 2, 3)))
+            self.mean_active_antennas = np.prod(recent_rssi_backlog.shape[1:]) - np.mean(np.sum(np.isnan(recent_rssi_backlog), axis=(1, 2, 3)))
             self.activeAntennasChanged.emit(self.mean_active_antennas)
 
         # Update list of recent MAC addresses
@@ -168,22 +195,26 @@ class EspargosDemoCamera(ESPARGOSApplication):
 
         # CSI backlog may be incomplete: If individual sensor did not provide packet, CSI value is NaN
         # For the purpose of visualization, we treat these NaN values as 0
-        csi_backlog = np.nan_to_num(csi_backlog, nan = 0.0)
-        rssi_backlog = np.nan_to_num(rssi_backlog, nan = -np.inf)
+        csi_backlog = np.nan_to_num(csi_backlog, nan=0.0)
+        rssi_backlog = np.nan_to_num(rssi_backlog, nan=-np.inf)
 
         espargos.util.remove_mean_sto(csi_backlog)
 
         # Apply additional calibration (only phase)
         if self.additional_calibration is not None:
             # TODO: espargos.pool should natively support additional calibration
-            csi_backlog = np.einsum("dbrcs,brcs->dbrcs", csi_backlog, np.exp(-1.0j * np.angle(self.additional_calibration)))
+            csi_backlog = np.einsum(
+                "dbrcs,brcs->dbrcs",
+                csi_backlog,
+                np.exp(-1.0j * np.angle(self.additional_calibration)),
+            )
 
         # Weight CSI data with RSSI
-        csi_backlog = csi_backlog * 10**(rssi_backlog[..., np.newaxis] / 20)
+        csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
 
         # Build combined array CSI data and add fake array index dimension
         csi_combined = espargos.util.build_combined_array_csi(self.indexing_matrix, csi_backlog)
-        csi_combined = csi_combined[:,np.newaxis,:,:,:]
+        csi_combined = csi_combined[:, np.newaxis, :, :, :]
 
         # Get rid of gap in CSI data around DC
         match self.genericconfig.get("preamble_format"):
@@ -193,7 +224,10 @@ class EspargosDemoCamera(ESPARGOSApplication):
                 espargos.util.interpolate_ht40ltf_gap(csi_combined)
 
         # Shift all CSI datapoints in time so that LoS component arrives at the same time
-        csi_combined = espargos.util.shift_to_firstpeak_sync(csi_combined, peak_threshold = (0.4 if self.genericconfig.get("preamble_format") == "lltf" else 0.1))
+        csi_combined = espargos.util.shift_to_firstpeak_sync(
+            csi_combined,
+            peak_threshold=(0.4 if self.genericconfig.get("preamble_format") == "lltf" else 0.1),
+        )
 
         beamformer_type = self.appconfig.get("beamformer", "type")
         match beamformer_type:
@@ -202,7 +236,12 @@ class EspargosDemoCamera(ESPARGOSApplication):
                 # Multipath can be resolved due to multiple subcarriers, which pfrovide sufficient decorelation
                 # between different paths if delay spread is sufficiently large.
                 # Compute array covariance matrix R. Flatten CSI over horizontal and vertical dimensions of array.
-                csi_flat = csi_combined.reshape(csi_combined.shape[0], csi_combined.shape[1], csi_combined.shape[2] * csi_combined.shape[3], csi_combined.shape[4])
+                csi_flat = csi_combined.reshape(
+                    csi_combined.shape[0],
+                    csi_combined.shape[1],
+                    csi_combined.shape[2] * csi_combined.shape[3],
+                    csi_combined.shape[4],
+                )
                 R = np.einsum("dbis,dbjs->ij", csi_flat, np.conj(csi_flat)) / (csi_flat.shape[0] * csi_flat.shape[1] * csi_flat.shape[3])
                 self.beamspace_power = self._music_algorithm(R) if beamformer_type == "MUSIC" else self._mvdr_algorithm(R)
 
@@ -210,54 +249,73 @@ class EspargosDemoCamera(ESPARGOSApplication):
             case "FFT":
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
                 # This assumes a constant channel except for CFO-induced phase rotations and noise
-                csi_combined = np.asarray([espargos.util.csi_interp_iterative(csi_combined, iterations = 5)])
+                csi_combined = np.asarray([espargos.util.csi_interp_iterative(csi_combined, iterations=5)])
 
                 # Exploit time-domain sparsity to reduce number of 2D FFTs from antenna space to beamspace
-                csi_tdomain = np.fft.ifftshift(np.fft.ifft(np.fft.fftshift(csi_combined, axes = -1), axis = -1), axes = -1)
+                csi_tdomain = np.fft.ifftshift(
+                    np.fft.ifft(np.fft.fftshift(csi_combined, axes=-1), axis=-1),
+                    axes=-1,
+                )
                 tap_count = csi_tdomain.shape[-1]
-                csi_tdomain_cut = csi_tdomain[...,tap_count//2 + 1 - 16:tap_count//2 + 1 + 17]
-                csi_fdomain_cut = np.fft.ifftshift(np.fft.fft(np.fft.fftshift(csi_tdomain_cut, axes = -1), axis = -1), axes = -1)
+                csi_tdomain_cut = csi_tdomain[..., tap_count // 2 + 1 - 16 : tap_count // 2 + 1 + 17]
+                csi_fdomain_cut = np.fft.ifftshift(
+                    np.fft.fft(np.fft.fftshift(csi_tdomain_cut, axes=-1), axis=-1),
+                    axes=-1,
+                )
 
                 # Here, we only go to DFT beamspace, not directly azimuth / elevation space,
                 # but the shader can take care of fixing the distortion.
-                # csi_zeropadded has shape (datapoints, azimuth / row, elevation / column, subcarriers)                
-                csi_zeropadded = np.zeros((
-                    csi_fdomain_cut.shape[0],
-                    self.appconfig.get("beamformer", "resolution_azimuth"),
-                    self.appconfig.get("beamformer", "resolution_elevation"),
-                    csi_fdomain_cut.shape[-1]
-                ), dtype = csi_fdomain_cut.dtype)
+                # csi_zeropadded has shape (datapoints, azimuth / row, elevation / column, subcarriers)
+                csi_zeropadded = np.zeros(
+                    (
+                        csi_fdomain_cut.shape[0],
+                        self.appconfig.get("beamformer", "resolution_azimuth"),
+                        self.appconfig.get("beamformer", "resolution_elevation"),
+                        csi_fdomain_cut.shape[-1],
+                    ),
+                    dtype=csi_fdomain_cut.dtype,
+                )
                 real_rows_half = csi_fdomain_cut.shape[2] // 2
                 real_cols_half = csi_fdomain_cut.shape[3] // 2
                 zeropadded_rows_half = csi_zeropadded.shape[2] // 2
                 zeropadded_cols_half = csi_zeropadded.shape[1] // 2
-                csi_zeropadded[:,zeropadded_cols_half-real_cols_half:zeropadded_cols_half+real_cols_half,zeropadded_rows_half-real_rows_half:zeropadded_rows_half+real_rows_half,:] = np.swapaxes(csi_fdomain_cut[:,0,:,:,:], 1, 2)
-                csi_zeropadded = np.fft.ifftshift(csi_zeropadded, axes = (1, 2))
-                beam_frequency_space = np.fft.fft2(csi_zeropadded, axes = (1, 2))
-                beam_frequency_space = np.fft.fftshift(beam_frequency_space, axes = (1, 2))
-                self.beamspace_power = np.mean(np.abs(beam_frequency_space)**2, axis = (0, 3))
+                csi_zeropadded[
+                    :,
+                    zeropadded_cols_half - real_cols_half : zeropadded_cols_half + real_cols_half,
+                    zeropadded_rows_half - real_rows_half : zeropadded_rows_half + real_rows_half,
+                    :,
+                ] = np.swapaxes(csi_fdomain_cut[:, 0, :, :, :], 1, 2)
+                csi_zeropadded = np.fft.ifftshift(csi_zeropadded, axes=(1, 2))
+                beam_frequency_space = np.fft.fft2(csi_zeropadded, axes=(1, 2))
+                beam_frequency_space = np.fft.fftshift(beam_frequency_space, axes=(1, 2))
+                self.beamspace_power = np.mean(np.abs(beam_frequency_space) ** 2, axis=(0, 3))
 
             case "Bartlett":
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
                 # This assumes a constant channel except for CFO-induced phase rotations and noise
-                csi_combined = np.asarray([espargos.util.csi_interp_iterative(csi_combined, iterations = 5)])
+                csi_combined = np.asarray([espargos.util.csi_interp_iterative(csi_combined, iterations=5)])
 
                 # Compute sum of received power per steering angle over all datapoints and subcarriers
                 # real 2d spatial spectrum is too slow...
                 # we can use 2D FFT to get to beamspace, which of course is technically not correct
                 # (cannot separate 2D steering vector into Kronecker product of azimuth / elevation steering vectors)
-                beam_frequency_space = np.einsum("rcae,dbrcs->daes", np.conj(self.steering_vectors_2d), csi_combined, optimize = True)
-                self.beamspace_power = np.mean(np.abs(beam_frequency_space)**2, axis = (0, 3))
+                beam_frequency_space = np.einsum(
+                    "rcae,dbrcs->daes",
+                    np.conj(self.steering_vectors_2d),
+                    csi_combined,
+                    optimize=True,
+                )
+                self.beamspace_power = np.mean(np.abs(beam_frequency_space) ** 2, axis=(0, 3))
 
         if self.appconfig.get("visualization", "overlay") == "Power":
             db_beamspace = 10 * np.log10(self.beamspace_power + 1e-6)
             db_beamspace_norm = (db_beamspace - np.max(db_beamspace) + 15) / 15
             db_beamspace_norm = np.clip(db_beamspace_norm, 0, 1)
             color_beamspace = self._viridis(db_beamspace_norm)
-        
+
             alpha_channel = np.ones((*color_beamspace.shape[:2], 1))
             color_beamspace_rgba = np.clip(np.concatenate((color_beamspace, alpha_channel), axis=-1), 0, 1)
-            self.beamspace_power_imagedata = np.asarray(np.swapaxes(color_beamspace_rgba, 0, 1).ravel() * 255, dtype = np.uint8)
+            self.beamspace_power_imagedata = np.asarray(np.swapaxes(color_beamspace_rgba, 0, 1).ravel() * 255, dtype=np.uint8)
         else:
             power_visualization_beamspace = self.beamspace_power**3
 
@@ -277,21 +335,31 @@ class EspargosDemoCamera(ESPARGOSApplication):
                     raise NotImplementedError("Delay colorization not supported in MUSIC or MVDR mode")
 
                 # Compute beam powers and delay. Beam power is value, delay is hue.
-                beamspace_weighted_delay_phase = np.sum(beam_frequency_space[...,1:] * np.conj(beam_frequency_space[...,:-1]), axis=(0, 3))
+                beamspace_weighted_delay_phase = np.sum(
+                    beam_frequency_space[..., 1:] * np.conj(beam_frequency_space[..., :-1]),
+                    axis=(0, 3),
+                )
                 delay_by_beam = np.angle(beamspace_weighted_delay_phase)
                 mean_delay = np.angle(np.sum(beamspace_weighted_delay_phase))
 
                 hsv = np.zeros((beam_frequency_space.shape[1], beam_frequency_space.shape[2], 3))
-                hsv[:,:,0] = (np.clip((delay_by_beam - mean_delay) / self.appconfig.get("beamformer", "max_delay"), 0, 1) + 1/3) % 1.0
-                hsv[:,:,1] = 0.8
-                hsv[:,:,2] = color_value
+                hsv[:, :, 0] = (
+                    np.clip(
+                        (delay_by_beam - mean_delay) / self.appconfig.get("beamformer", "max_delay"),
+                        0,
+                        1,
+                    )
+                    + 1 / 3
+                ) % 1.0
+                hsv[:, :, 1] = 0.8
+                hsv[:, :, 2] = color_value
 
                 wifi_image_rgb = matplotlib.colors.hsv_to_rgb(hsv)
                 alpha_channel = np.ones((*wifi_image_rgb.shape[:2], 1))
                 wifi_image_rgba = np.clip(np.concatenate((wifi_image_rgb, alpha_channel), axis=-1), 0, 1)
-                self.beamspace_power_imagedata = np.asarray(np.swapaxes(wifi_image_rgba, 0, 1).ravel() * 255, dtype = np.uint8)
+                self.beamspace_power_imagedata = np.asarray(np.swapaxes(wifi_image_rgba, 0, 1).ravel() * 255, dtype=np.uint8)
             else:
-                self.beamspace_power_imagedata = np.zeros(4 * self.beamspace_power.size, dtype = np.uint8)
+                self.beamspace_power_imagedata = np.zeros(4 * self.beamspace_power.size, dtype=np.uint8)
                 self.beamspace_power_imagedata[1::4] = np.clip(np.swapaxes(color_value, 0, 1).ravel(), 0, 1) * 255
                 self.beamspace_power_imagedata[3::4] = 255
 
@@ -305,8 +373,8 @@ class EspargosDemoCamera(ESPARGOSApplication):
         eig_val, eig_vec = np.linalg.eig(R)
         order = np.argsort(eig_val)[::-1]
         # TODO: Estimate number of sources, or use user-defined number of sources
-        Qn = eig_vec[:,order][:,1:]
-        spatial_spectrum = 1 / np.linalg.norm(np.einsum("ae,a...->e...", Qn, np.conj(steering_vectors_2d_flat)), axis = 0)
+        Qn = eig_vec[:, order][:, 1:]
+        spatial_spectrum = 1 / np.linalg.norm(np.einsum("ae,a...->e...", Qn, np.conj(steering_vectors_2d_flat)), axis=0)
 
         return spatial_spectrum - np.min(spatial_spectrum) + 1e-6
 
@@ -319,20 +387,27 @@ class EspargosDemoCamera(ESPARGOSApplication):
         loading = 0.1 * np.trace(R) / R.shape[0]
         R_loaded = R + loading * np.eye(R.shape[0])
         R_inv = np.linalg.pinv(R_loaded)
-        denom = np.einsum("a...,ab,b...->...", np.conj(steering_vectors_2d_flat), R_inv, steering_vectors_2d_flat)
+        denom = np.einsum(
+            "a...,ab,b...->...",
+            np.conj(steering_vectors_2d_flat),
+            R_inv,
+            steering_vectors_2d_flat,
+        )
         spatial_spectrum = 1.0 / np.maximum(np.real(denom), 1e-12)
 
         return spatial_spectrum - np.min(spatial_spectrum) + 1e-6
 
     def _viridis(self, values):
-        viridis_colormap = np.asarray([
-            (0.267004, 0.004874, 0.329415),
-            (0.229739, 0.322361, 0.545706),
-            (0.127568, 0.566949, 0.550556),
-            (0.369214, 0.788888, 0.382914),
-            (0.993248, 0.906157, 0.143936),
-            (0.993248, 0.906157, 0.143936)
-        ])
+        viridis_colormap = np.asarray(
+            [
+                (0.267004, 0.004874, 0.329415),
+                (0.229739, 0.322361, 0.545706),
+                (0.127568, 0.566949, 0.550556),
+                (0.369214, 0.788888, 0.382914),
+                (0.993248, 0.906157, 0.143936),
+                (0.993248, 0.906157, 0.143936),
+            ]
+        )
 
         n = len(viridis_colormap) - 1
         idx = values * n
@@ -343,14 +418,14 @@ class EspargosDemoCamera(ESPARGOSApplication):
         c0 = viridis_colormap[low]
         c1 = viridis_colormap[high]
 
-        return c0 * (1 - t[:,:,np.newaxis]) + c1 * t[:,:,np.newaxis]
+        return c0 * (1 - t[:, :, np.newaxis]) + c1 * t[:, :, np.newaxis]
 
     def _update_steering_vectors(self):
         resolution_azimuth = self.appconfig.get("beamformer", "resolution_azimuth")
         resolution_elevation = self.appconfig.get("beamformer", "resolution_elevation")
         phase_c = np.outer(np.arange(self.n_cols), np.linspace(-np.pi, np.pi, resolution_azimuth))
         phase_r = np.outer(np.arange(self.n_rows), np.linspace(-np.pi, np.pi, resolution_elevation))
-        self.steering_vectors_2d = np.exp(1.0j * (phase_c[np.newaxis,:, :, np.newaxis] + phase_r[:,np.newaxis,np.newaxis,:]))
+        self.steering_vectors_2d = np.exp(1.0j * (phase_c[np.newaxis, :, :, np.newaxis] + phase_r[:, np.newaxis, np.newaxis, :]))
 
     def _cb_predicate(self, csi_completion_state, csi_age):
         timeout_condition = False
@@ -433,66 +508,56 @@ class EspargosDemoCamera(ESPARGOSApplication):
     def music(self):
         return self.appconfig.get("beamformer", "type") == "MUSIC"
 
-    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = resolutionAzimuthChanged)
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=resolutionAzimuthChanged)
     def resolutionAzimuth(self):
         return self.appconfig.get("beamformer", "resolution_azimuth")
 
-    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = resolutionElevationChanged)
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=resolutionElevationChanged)
     def resolutionElevation(self):
         return self.appconfig.get("beamformer", "resolution_elevation")
 
-    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = fovAzimuthChanged)
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=fovAzimuthChanged)
     def fovAzimuth(self):
         return self.appconfig.get("camera", "fov_azimuth")
-    
-    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify = fovElevationChanged)
+
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=fovElevationChanged)
     def fovElevation(self):
         return self.appconfig.get("camera", "fov_elevation")
 
-
-
-    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify = rawBeamspaceChanged)
+    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=rawBeamspaceChanged)
     def rawBeamspace(self):
         return self.appconfig.get("visualization", "space")
 
-    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify = rssiChanged)
+    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=rssiChanged)
     def rssi(self):
         return self.mean_rssi
 
-    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify = activeAntennasChanged)
+    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=activeAntennasChanged)
     def activeAntennas(self):
         return self.mean_active_antennas
-    
-    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify = macListEnabledChanged)
+
+    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=macListEnabledChanged)
     def macListEnabled(self):
         return self.appconfig.get("receiver", "mac_list_enabled")
-    
-    @PyQt6.QtCore.pyqtProperty(list, constant=False, notify = recentMacsChanged)
+
+    @PyQt6.QtCore.pyqtProperty(list, constant=False, notify=recentMacsChanged)
     def macList(self):
         return self.recent_macs
-    
+
     @PyQt6.QtCore.pyqtSlot(str)
     def setMacFilter(self, mac):
         self.pool.set_mac_filter({"enable": True, "mac": mac})
-        self.pooldrawer.configManager().set({
-            "mac_filter" : {
-                "enable" : True,
-                "mac" : mac
-            }
-        })
+        self.pooldrawer.configManager().set({"mac_filter": {"enable": True, "mac": mac}})
 
     @PyQt6.QtCore.pyqtSlot()
     def clearMacFilter(self):
         self.pool.clear_mac_filter()
-        self.pooldrawer.configManager().set({
-            "mac_filter" : {
-                "enable" : False
-            }
-        })
+        self.pooldrawer.configManager().set({"mac_filter": {"enable": False}})
 
-    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify = cameraFlipChanged)
+    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=cameraFlipChanged)
     def cameraFlip(self):
         return self.appconfig.get("camera", "flip")
+
 
 app = EspargosDemoCamera(sys.argv)
 sys.exit(app.exec())

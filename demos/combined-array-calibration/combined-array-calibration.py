@@ -18,11 +18,12 @@ import PyQt6.QtCore
 
 from common import ESPARGOSApplication, ESPARGOSApplicationFlags, ConfigManager
 
+
 class EspargosDemoCombinedArrayCalibration(ESPARGOSApplication):
     DEFAULT_CONFIG = {
         "color_by_sensor_index": False,
         "update_rate": 0.01,
-        "boardwise": False
+        "boardwise": False,
     }
 
     sensorCountChanged = PyQt6.QtCore.pyqtSignal()
@@ -30,24 +31,37 @@ class EspargosDemoCombinedArrayCalibration(ESPARGOSApplication):
     colorBySensorIndexChanged = PyQt6.QtCore.pyqtSignal()
 
     def __init__(self, argv):
-        parser = argparse.ArgumentParser(description = "Combined Array Calibration Tool", add_help = False)
-        parser.add_argument("-o", "--outfile", type = str, default = "", help = "Path to .npy file to save calibration result upon exit")
+        parser = argparse.ArgumentParser(description="Combined Array Calibration Tool", add_help=False)
+        parser.add_argument(
+            "-o",
+            "--outfile",
+            type=str,
+            default="",
+            help="Path to .npy file to save calibration result upon exit",
+        )
 
-        super().__init__(argv, argparse_parent=parser, flags = {
-            ESPARGOSApplicationFlags.COMBINED_ARRAY,
-            ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT
-        })
+        super().__init__(
+            argv,
+            argparse_parent=parser,
+            flags={
+                ESPARGOSApplicationFlags.COMBINED_ARRAY,
+                ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT,
+            },
+        )
 
         # App-specific configuration
         self.appconfig = ConfigManager(self.DEFAULT_CONFIG, parent=self)
         self.appconfig.updateAppState.connect(self.onConfigUpdate)
 
         # Apply optional YAML config to app config manager
-        self.appconfig.set(self.get_initial_config("app", default = {}))
+        self.appconfig.set(self.get_initial_config("app", default={}))
 
         # Calibration setup
         self.calibration_values = None
-        self._subcarrier_range = [-32, 32]  # Placeholder, will be updated on init complete
+        self._subcarrier_range = [
+            -32,
+            32,
+        ]  # Placeholder, will be updated on init complete
         self._sensor_count = 0
         self._sensor_count_per_board = 0
 
@@ -117,7 +131,7 @@ class EspargosDemoCombinedArrayCalibration(ESPARGOSApplication):
     def onCSI(self, clustered_csi):
         preamble_format = self.genericconfig.get("preamble_format")
 
-        assert(self.pool.get_calibration() is not None)
+        assert self.pool.get_calibration() is not None
 
         # Deserialize CSI based on preamble format
         if preamble_format == "lltf":
@@ -164,7 +178,7 @@ class EspargosDemoCombinedArrayCalibration(ESPARGOSApplication):
             csi = self.calibration_values
             boardwise = self.appconfig.get("boardwise")
             if boardwise:
-                csi = np.sum(csi, axis = (1, 2))
+                csi = np.sum(csi, axis=(1, 2))
             csi_flat = np.reshape(csi, (-1, csi.shape[-1]))
             csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, csi_flat.shape[1] // 2])))
 

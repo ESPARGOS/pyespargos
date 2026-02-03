@@ -13,11 +13,13 @@ from . import csi
 
 class EspargosHTTPStatusError(Exception):
     "Raised when the ESPARGOS HTTP API returns an invalid status code"
+
     pass
 
 
 class EspargosUnexpectedResponseError(Exception):
     "Raised when the server (ESPARGOS controller) provides unexpected response. Is the server really ESPARGOS?"
+
     pass
 
 
@@ -159,7 +161,7 @@ class Board(object):
         Only provided fields will be changed; others will remain as previously configured.
 
         :param mac_filter: MAC filter configuration dict
-        
+
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
         self._post_json_ok("set_mac_filter", mac_filter)
@@ -345,9 +347,9 @@ class Board(object):
 
     def _csistream_handle_message(self, message):
         pktsize = ctypes.sizeof(self.revision.csistream_pkt_t)
-        assert(len(message) % pktsize == 0)
+        assert len(message) % pktsize == 0
         for i in range(0, len(message), pktsize):
-            packet = self.revision.csistream_pkt_t(message[i:i + pktsize])
+            packet = self.revision.csistream_pkt_t(message[i : i + pktsize])
             serialized_csi = csi.deserialize_packet_buffer(self.revision, packet.buf)
 
             for clist, cv, args in self.consumers:
@@ -356,7 +358,7 @@ class Board(object):
                     cv.notify()
 
     def _csistream_loop(self):
-        with websockets.sync.client.connect("ws://" + self.host + "/csi", close_timeout = 0.5) as websocket:
+        with websockets.sync.client.connect("ws://" + self.host + "/csi", close_timeout=0.5) as websocket:
             self.csistream_connected = True
             timeout_total = 0
             timeout_once = 0.2

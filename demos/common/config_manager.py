@@ -25,6 +25,7 @@ import copy
 # - use get(*path_parts) to read current config values
 # - use emitShowError(title: str, message: str) to notify QML of errors
 
+
 def deep_update(original: dict, updates: dict) -> dict:
     """
     Recursively update a dictionary with another dictionary.
@@ -37,6 +38,7 @@ def deep_update(original: dict, updates: dict) -> dict:
             original[k] = v
 
     return original
+
 
 class ConfigManager(PyQt6.QtCore.QObject):
     # Internal: schedule starting the QTimer on the QObject's thread

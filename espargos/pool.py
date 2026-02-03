@@ -17,8 +17,13 @@ from . import board
 from . import util
 from . import csi
 
+
 class _CSICallback(object):
-    def __init__(self, cb: Callable[[cluster.CSICluster], None], cb_predicate: Callable[[np.ndarray, float], bool] = None):
+    def __init__(
+        self,
+        cb: Callable[[cluster.CSICluster], None],
+        cb_predicate: Callable[[np.ndarray, float], bool] = None,
+    ):
         # By default, provide csi if CSI is available from all antennas
         self.cb_predicate = cb_predicate
         self.cb = cb
@@ -47,12 +52,14 @@ class _CSICallback(object):
 
         return False
 
+
 class Pool(object):
     """
-        A Pool is a collection of ESPARGOS boards.
-        The pool manages the clustering of CSI data from multiple ESPARGOS sensors (antennas)
-        that belong to the same WiFi packet and provides :class:'cluster.CSICluster' objects to registered callbacks.
+    A Pool is a collection of ESPARGOS boards.
+    The pool manages the clustering of CSI data from multiple ESPARGOS sensors (antennas)
+    that belong to the same WiFi packet and provides :class:'cluster.CSICluster' objects to registered callbacks.
     """
+
     def __init__(self, boards: list[board.Board], ota_cache_timeout=5, refgen_boards=None):
         """
         Constructor for the Pool class.
@@ -136,7 +143,7 @@ class Pool(object):
         """
         if not self.boards:
             raise ValueError("No boards in pool to get RF switch state from")
-        
+
         states = [b.get_rfswitch() for b in self.boards]
         self._assert_same_across_boards(states, "RF switch state")
         return states[0]
@@ -166,7 +173,6 @@ class Pool(object):
         filters = [b.get_mac_filter() for b in self.boards]
         self._assert_same_across_boards(filters, "MAC filter")
         return filters[0]
-
 
     def get_csi_acquire_config(self) -> dict:
         """
@@ -265,7 +271,11 @@ class Pool(object):
         for board in self.boards:
             board.stop()
 
-    def add_csi_callback(self, cb: Callable[[cluster.CSICluster], None], cb_predicate: Callable[[np.ndarray, float], bool] = None):
+    def add_csi_callback(
+        self,
+        cb: Callable[[cluster.CSICluster], None],
+        cb_predicate: Callable[[np.ndarray, float], bool] = None,
+    ):
         """
         Register callback function that is invoked whenever a new CSI cluster is completed.
 
@@ -280,7 +290,7 @@ class Pool(object):
         """
         self.callbacks.append(_CSICallback(cb, cb_predicate))
 
-    def _clusters_to_calibration(self, board_num = None):
+    def _clusters_to_calibration(self, board_num=None):
         """
         Convert collected calibration clusters to phase calibration values.
 
@@ -304,8 +314,10 @@ class Pool(object):
         for cluster in clusters:
             cluster_channel_primary = cluster.get_primary_channel()
             cluster_channel_secondary = cluster.get_secondary_channel_relative()
-            if (channel_primary != cluster_channel_primary or channel_secondary != cluster_channel_secondary):
-                self.logger.warning(f"Calibration cluster with differing channel settings detected (most likely stale data), expected primary channel {channel_primary} and secondary channel {channel_secondary}, but got primary channel {cluster_channel_primary} and secondary channel {cluster_channel_secondary}. Skipping cluster.")
+            if channel_primary != cluster_channel_primary or channel_secondary != cluster_channel_secondary:
+                self.logger.warning(
+                    f"Calibration cluster with differing channel settings detected (most likely stale data), expected primary channel {channel_primary} and secondary channel {channel_secondary}, but got primary channel {cluster_channel_primary} and secondary channel {cluster_channel_secondary}. Skipping cluster."
+                )
                 continue
 
             completion = cluster.get_completion()[board_num] if board_num is not None else cluster.get_completion()
@@ -339,9 +351,23 @@ class Pool(object):
         if any_csi_count < 5:
             raise Exception("ESPARGOS calibration failed, did not receive enough calibration clusters.")
 
-        return complete_clusters_lltf, complete_clusters_ht20, complete_clusters_ht40, channel_primary, channel_secondary
+        return (
+            complete_clusters_lltf,
+            complete_clusters_ht20,
+            complete_clusters_ht40,
+            channel_primary,
+            channel_secondary,
+        )
 
-    def calibrate(self, per_board = True, duration = 2, exithandler = None, cable_lengths = None, cable_velocity_factors = None, run_in_thread = True):
+    def calibrate(
+        self,
+        per_board=True,
+        duration=2,
+        exithandler=None,
+        cable_lengths=None,
+        cable_velocity_factors=None,
+        run_in_thread=True,
+    ):
         """
         Run calibration for a specified duration.
 
@@ -388,22 +414,78 @@ class Pool(object):
             phase_calibrations_ht40 = []
 
             for board_num in range(len(self.boards)):
-                complete_clusters_lltf, complete_clusters_ht20, complete_clusters_ht40, channel_primary, channel_secondary = self._clusters_to_calibration(board_num)
+                (
+                    complete_clusters_lltf,
+                    complete_clusters_ht20,
+                    complete_clusters_ht40,
+                    channel_primary,
+                    channel_secondary,
+                ) = self._clusters_to_calibration(board_num)
 
-                phase_calibrations_lltf.append(util.csi_interp_iterative(np.asarray(complete_clusters_lltf))) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape()[1:] + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
-                phase_calibrations_ht20.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht20))) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
-                phase_calibrations_ht40.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht40))) if len(complete_clusters_ht40) > 0 else np.full(self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,), np.nan)
+                (
+                    phase_calibrations_lltf.append(util.csi_interp_iterative(np.asarray(complete_clusters_lltf)))
+                    if len(complete_clusters_lltf) > 0
+                    else np.full(
+                        self.get_shape()[1:] + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,),
+                        np.nan,
+                    )
+                )
+                (
+                    phase_calibrations_ht20.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht20)))
+                    if len(complete_clusters_ht20) > 0
+                    else np.full(
+                        self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL,),
+                        np.nan,
+                    )
+                )
+                (
+                    phase_calibrations_ht40.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht40)))
+                    if len(complete_clusters_ht40) > 0
+                    else np.full(
+                        self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,),
+                        np.nan,
+                    )
+                )
 
-            self.stored_calibration = calibration.CSICalibration(self.boards, channel_primary, channel_secondary, np.asarray(phase_calibrations_lltf), np.asarray(phase_calibrations_ht20), np.asarray(phase_calibrations_ht40))
+            self.stored_calibration = calibration.CSICalibration(
+                self.boards,
+                channel_primary,
+                channel_secondary,
+                np.asarray(phase_calibrations_lltf),
+                np.asarray(phase_calibrations_ht20),
+                np.asarray(phase_calibrations_ht40),
+            )
 
         else:
-            complete_clusters_lltf, complete_clusters_ht20, complete_clusters_ht40, channel_primary, channel_secondary = self._clusters_to_calibration()
+            (
+                complete_clusters_lltf,
+                complete_clusters_ht20,
+                complete_clusters_ht40,
+                channel_primary,
+                channel_secondary,
+            ) = self._clusters_to_calibration()
 
             phase_calibrations_lltf = util.csi_interp_iterative(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
             phase_calibrations_ht20 = util.csi_interp_iterative(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
-            phase_calibration_ht40 = util.csi_interp_iterative(np.asarray(complete_clusters_ht40)) if len(complete_clusters_ht40) > 0 else np.full(self.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,), np.nan)
+            phase_calibration_ht40 = (
+                util.csi_interp_iterative(np.asarray(complete_clusters_ht40))
+                if len(complete_clusters_ht40) > 0
+                else np.full(
+                    self.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,),
+                    np.nan,
+                )
+            )
 
-            self.stored_calibration = calibration.CSICalibration(self.boards, channel_primary, channel_secondary, phase_calibrations_lltf, phase_calibrations_ht20, phase_calibration_ht40, board_cable_lengths=cable_lengths, board_cable_vfs=cable_velocity_factors)
+            self.stored_calibration = calibration.CSICalibration(
+                self.boards,
+                channel_primary,
+                channel_secondary,
+                phase_calibrations_lltf,
+                phase_calibrations_ht20,
+                phase_calibration_ht40,
+                board_cable_lengths=cable_lengths,
+                board_cable_vfs=cable_velocity_factors,
+            )
 
     def get_calibration(self):
         """
@@ -432,7 +514,7 @@ class Pool(object):
         May block for a short amount of time if no data is available.
         """
         with self.input_cond:
-            self.input_cond.wait(timeout = 0.5)
+            self.input_cond.wait(timeout=0.5)
             packets = [p for p in self.input_list]
             self.input_list.clear()
 
@@ -454,12 +536,22 @@ class Pool(object):
             if serialized_csi.is_calib:
                 with self.cluster_cache_calib_lock:
                     if cluster_id not in self.cluster_cache_calib:
-                        self.cluster_cache_calib[cluster_id] = cluster.CSICluster(source_mac_str, dest_mac_str, serialized_csi.seq_ctrl, [b.revision for b in self.boards])
+                        self.cluster_cache_calib[cluster_id] = cluster.CSICluster(
+                            source_mac_str,
+                            dest_mac_str,
+                            serialized_csi.seq_ctrl,
+                            [b.revision for b in self.boards],
+                        )
 
                     self.cluster_cache_calib[cluster_id].add_csi(board_num, esp_num, serialized_csi)
             else:
                 if cluster_id not in self.cluster_cache_ota:
-                    self.cluster_cache_ota[cluster_id] = cluster.CSICluster(source_mac_str, dest_mac_str, serialized_csi.seq_ctrl, [b.revision for b in self.boards])
+                    self.cluster_cache_ota[cluster_id] = cluster.CSICluster(
+                        source_mac_str,
+                        dest_mac_str,
+                        serialized_csi.seq_ctrl,
+                        [b.revision for b in self.boards],
+                    )
 
                 # Add received data for the antenna to the current cluster
                 self.cluster_cache_ota[cluster_id].add_csi(board_num, esp_num, serialized_csi)
