@@ -301,6 +301,42 @@ Common.ESPARGOSApplication {
 				currentIndex: 0
 			}
 
+			Label {
+				Layout.columnSpan: 2
+				text: "Exposure Settings"
+				color: "#9fb3c8"
+			}
+
+			Label { text: "Manual"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: manualExposure
+				property string configKey: "visualization.manual_exposure"
+				property string configProp: "checked"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 80
+				checked: false
+			}
+
+			Label { text: "Brightness"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: manualExposure.checked }
+			Slider {
+				id: exposureSlider
+				property string configKey: "visualization.exposure"
+				property string configProp: "value"
+				property var encode: function(v) { return v }
+				property var decode: function(v) { return Number(v) }
+				from: 0.0
+				to: 1.0
+				stepSize: 0.01
+				implicitWidth: 210
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				value: 0.5
+				visible: manualExposure.checked
+				ToolTip.visible: hovered
+				ToolTip.text: "Exposure: " + (value * 100).toFixed(0) + "%"
+			}
+
 			Common.GenericAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
@@ -339,45 +375,5 @@ Common.ESPARGOSApplication {
 
 	CameraOverlay {
 		anchors.fill: parent
-
-		Rectangle {
-			height: parent.height * 0.8
-			visible: backend.manualExposure
-			width: 40
-			color: "#20ffffff"
-			anchors.right: parent.right
-			anchors.rightMargin: 20
-			anchors.verticalCenter: parent.verticalCenter
-			radius: 10
-
-			Slider {
-				id: exposureSlider
-				anchors.fill: parent
-				anchors.topMargin: 20
-				anchors.bottomMargin: 20
-				orientation: Qt.Vertical
-				from: 0
-				to: 1
-				value: 0.5
-
-				handle: Rectangle {
-					x: exposureSlider.leftPadding + exposureSlider.availableWidth / 2 - width / 2
-					y: exposureSlider.topPadding +  exposureSlider.visualPosition * (exposureSlider.availableHeight - height)
-					implicitWidth: 26
-					implicitHeight: 26
-					radius: 12
-					color: exposureSlider.pressed ? "#f0f0f0" : "#f6f6f6"
-					border.color: "#bdbebf"
-				}
-
-				onMoved : {
-					backend.adjustExposure(value);
-				}
-
-				Component.onCompleted : {
-					backend.adjustExposure(value);
-				}
-			}
-		}
 	}
 }

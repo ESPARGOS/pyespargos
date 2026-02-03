@@ -52,7 +52,9 @@ class EspargosDemoCamera(ESPARGOSApplication):
             },
             "visualization" : {
                 "space" : "Camera",
-                "overlay" : "Default"
+                "overlay" : "Default",
+                "manual_exposure" : False,
+                "exposure" : 0.5
             }
         }
 
@@ -60,7 +62,6 @@ class EspargosDemoCamera(ESPARGOSApplication):
         # Parse command line arguments
         parser = argparse.ArgumentParser(description = "ESPARGOS Demo: Overlay received power on top of camera image", add_help = False)
         parser.add_argument("-a", "--additional-calibration", type = str, default = "", help = "File to read additional phase calibration results from")
-        parser.add_argument("-e", "--manual-exposure", default = False, help = "Use manual exposure / brightness control for WiFi overlay", action = "store_true")
         parser.add_argument("--csi-completion-timeout", type = float, default = 0.2, help = "Time after which CSI cluster is considered complete even if not all antennas have provided data. Set to zero to disable processing incomplete clusters.")
         super().__init__(argv, argparse_parent = parser, flags = {
             ESPARGOSApplicationFlags.ENABLE_BACKLOG,
@@ -96,9 +97,6 @@ class EspargosDemoCamera(ESPARGOSApplication):
 
         # Pre-compute 2d steering vectors (array manifold)
         self._update_steering_vectors()
-
-        # Manual exposure control (only used if manual exposure is enabled)
-        self.exposure = 0
 
         # Statistics display
         self.mean_rssi = -np.inf
@@ -205,7 +203,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
                 # between different paths if delay spread is sufficiently large.
                 # Compute array covariance matrix R. Flatten CSI over horizontal and vertical dimensions of array.
                 csi_flat = csi_combined.reshape(csi_combined.shape[0], csi_combined.shape[1], csi_combined.shape[2] * csi_combined.shape[3], csi_combined.shape[4])
-                R = np.einsum("dbis,dbjs->ij", csi_flat, np.conj(csi_flat))
+                R = np.einsum("dbis,dbjs->ij", csi_flat, np.conj(csi_flat)) / (csi_flat.shape[0] * csi_flat.shape[1] * csi_flat.shape[3])
                 self.beamspace_power = self._music_algorithm(R) if beamformer_type == "MUSIC" else self._mvdr_algorithm(R)
 
             # Option 2: Beamspace via FFT
@@ -237,7 +235,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
                 csi_zeropadded = np.fft.ifftshift(csi_zeropadded, axes = (1, 2))
                 beam_frequency_space = np.fft.fft2(csi_zeropadded, axes = (1, 2))
                 beam_frequency_space = np.fft.fftshift(beam_frequency_space, axes = (1, 2))
-                self.beamspace_power = np.sum(np.abs(beam_frequency_space)**2, axis = (0, 3))
+                self.beamspace_power = np.mean(np.abs(beam_frequency_space)**2, axis = (0, 3))
 
             case "Bartlett":
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
@@ -249,7 +247,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
                 # we can use 2D FFT to get to beamspace, which of course is technically not correct
                 # (cannot separate 2D steering vector into Kronecker product of azimuth / elevation steering vectors)
                 beam_frequency_space = np.einsum("rcae,dbrcs->daes", np.conj(self.steering_vectors_2d), csi_combined, optimize = True)
-                self.beamspace_power = np.sum(np.abs(beam_frequency_space)**2, axis = (0, 3))
+                self.beamspace_power = np.mean(np.abs(beam_frequency_space)**2, axis = (0, 3))
 
         if self.democonfig.get("visualization", "overlay") == "Power":
             db_beamspace = 10 * np.log10(self.beamspace_power + 1e-6)
@@ -263,8 +261,14 @@ class EspargosDemoCamera(ESPARGOSApplication):
         else:
             power_visualization_beamspace = self.beamspace_power**3
 
-            if self.args.manual_exposure:
-                color_value = power_visualization_beamspace / (10 ** ((1 - self.exposure) / 0.1) + 1e-8)
+            if self.democonfig.get("visualization", "manual_exposure"):
+                match self.democonfig.get("beamformer", "type"):
+                    case "MUSIC" | "MVDR":
+                        value_range = 1e-2
+                    case "FFT" | "Bartlett":
+                        value_range = 1e11
+                exposure = self.democonfig.get("visualization", "exposure")
+                color_value = power_visualization_beamspace / value_range * (10 ** (exposure / 0.1) + 1e-6)
             else:
                 color_value = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-6)
 
@@ -445,13 +449,7 @@ class EspargosDemoCamera(ESPARGOSApplication):
     def fovElevation(self):
         return self.democonfig.get("camera", "fov_elevation")
 
-    @PyQt6.QtCore.pyqtProperty(bool, constant=True)
-    def manualExposure(self):
-        return self.args.manual_exposure
 
-    @PyQt6.QtCore.pyqtSlot(float)
-    def adjustExposure(self, exposure):
-        self.exposure = exposure
 
     @PyQt6.QtCore.pyqtProperty(str, constant=False, notify = rawBeamspaceChanged)
     def rawBeamspace(self):
