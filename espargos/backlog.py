@@ -35,6 +35,7 @@ class CSIBacklog(object):
             "dtype": np.complex64,
         },
         "rssi": {"shape": (), "per_antenna": True, "dtype": np.float32},
+        "rfswitch_state": {"shape": (), "per_antenna": True, "dtype": np.uint8},
         "timestamp": {"shape": (), "per_antenna": True, "dtype": np.float128},
         "host_timestamp": {"shape": (), "per_antenna": False, "dtype": np.float128},
         "mac": {"shape": (6,), "per_antenna": False, "dtype": np.uint8},
@@ -185,6 +186,10 @@ class CSIBacklog(object):
             # Store RSSI
             if "rssi" in self.fields:
                 self.storage["rssi"][self.head] = clustered_csi.get_rssi()
+
+            # Store RF switch states
+            if "rfswitch_state" in self.fields:
+                self.storage["rfswitch_state"][self.head] = clustered_csi.get_rfswitch_state()
 
             # Store MAC address. mac_str is a hex string without colons, e.g. "00:11:22:33:44:55" -> "001122334455"
             mac_str = clustered_csi.get_source_mac()

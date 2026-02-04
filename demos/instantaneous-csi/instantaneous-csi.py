@@ -7,6 +7,7 @@ sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
 from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin
 
+from espargos.csi import rfswitch_state_t
 import numpy as np
 import espargos
 import argparse
@@ -27,6 +28,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         "display_mode": "frequency",  # "frequency", "timedomain", "music", "mvdr"
         "oversampling": 4,
         "shift_peak": False,
+        "feed_filter": "all",
     }
 
     def __init__(self, argv):
@@ -89,6 +91,14 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     def shiftPeak(self):
         return self.appconfig.get("shift_peak")
 
+    # Mapping from config string to rfswitch_state_t
+    FEED_FILTER_MAP = {
+        "R": rfswitch_state_t.SENSOR_RFSWITCH_ANTENNA_R,
+        "L": rfswitch_state_t.SENSOR_RFSWITCH_ANTENNA_L,
+        "ref": rfswitch_state_t.SENSOR_RFSWITCH_REFERENCE,
+        "iso": rfswitch_state_t.SENSOR_RFSWITCH_ISOLATION,
+    }
+
     @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=preambleFormatChanged)
     def preambleFormat(self):
         return self.genericconfig.get("preamble_format")
@@ -115,14 +125,31 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     # list parameters contain PyQt6.QtCharts.QLineSeries
     @PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis, PyQt6.QtCharts.QValueAxis)
     def updateCSI(self, powerSeries, phaseSeries, subcarrierAxis, axis):
-        if (result := self.get_backlog_csi("rssi")) is None:
+        if (result := self.get_backlog_csi("rssi", "rfswitch_state")) is None:
             return
 
-        csi_backlog, rssi_backlog = result
+        csi_backlog, rssi_backlog, rfswitch_state = result
 
         # If RSSI contains NaN, skip this update
         if np.isnan(rssi_backlog).any():
             return
+
+        # Apply feed filter if not "all"
+        feed_mask = np.full(rfswitch_state.shape, True, dtype=bool)
+        feed_filter = self.appconfig.get("feed_filter")
+        if feed_filter != "all" and feed_filter in self.FEED_FILTER_MAP:
+            target_state = self.FEED_FILTER_MAP[feed_filter]
+            # Create mask and expand to include subcarrier dimension
+            feed_mask = rfswitch_state == target_state
+            # Zero out CSI values that don't match the filter
+            csi_backlog = csi_backlog * feed_mask[..., np.newaxis]
+            # Also zero out RSSI for non-matching entries
+            rssi_backlog = np.where(rfswitch_state == target_state, rssi_backlog, -np.inf)
+            # Need to scale csi_backlog based on feed count to keep power levels consistent
+            filtered_datapoint_count = np.sum(feed_mask, axis=0)
+            if np.any(filtered_datapoint_count == 0):
+                return
+            csi_backlog *= csi_backlog.shape[0] / filtered_datapoint_count[..., np.newaxis]
 
         # Weight CSI data with RSSI
         csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)

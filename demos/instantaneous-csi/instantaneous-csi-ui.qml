@@ -71,6 +71,27 @@ Common.ESPARGOSApplication {
 				checked: false
 			}
 
+			Label { text: "Feed Filter"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			ComboBox {
+				id: feedFilterCombo
+				property string configKey: "feed_filter"
+				property string configProp: "currentValue"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+
+				model: [
+					{ value: "all", text: "All" },
+					{ value: "R", text: "45° Right" },
+					{ value: "L", text: "45° Left" },
+					{ value: "ref", text: "Reference" },
+					{ value: "iso", text: "Isolated" }
+				]
+				textRole: "text"
+				valueRole: "value"
+				currentValue: "all"
+			}
+
 			Common.GenericAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor

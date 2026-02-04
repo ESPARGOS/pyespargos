@@ -39,6 +39,7 @@ class rfswitch_state_t(IntEnum):
     SENSOR_RFSWITCH_ANTENNA_R = 2
     SENSOR_RFSWITCH_ANTENNA_L = 3
     SENSOR_RFSWITCH_ANTENNA_RANDOM = 4
+    SENSOR_RFSWITCH_UNKNOWN = 255
 
 
 #####################################################

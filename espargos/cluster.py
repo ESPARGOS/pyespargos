@@ -54,8 +54,9 @@ class CSICluster(object):
         self.csi_completion_state = np.full(self.shape, False)
         self.csi_completion_state_all = False
 
-        # Allocate memory for the RSSI and noise floor values
+        # Allocate memory for the RSSI, rf switch state and noise floor values
         self.rssi_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
+        self.rfswitch_state_all = np.full(self.shape, fill_value=csi.rfswitch_state_t.SENSOR_RFSWITCH_UNKNOWN, dtype=np.uint8)
         self.noise_floor_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
 
     def add_csi(
@@ -93,6 +94,7 @@ class CSICluster(object):
         noise_floor = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).noise_floor
         self.rssi_all[board_num, row, col] = (rssi - 0x100) if (rssi & 0x80) else rssi
         self.noise_floor_all[board_num, row, col] = (noise_floor - 0x100) if (noise_floor & 0x80) else noise_floor
+        self.rfswitch_state_all[board_num, row, col] = serialized_csi.rfswitch_state
 
     def deserialize_csi_lltf(self):
         """
@@ -434,6 +436,12 @@ class CSICluster(object):
         Get the RSSI values of the WiFi packet.
         """
         return self.rssi_all
+
+    def get_rfswitch_state(self):
+        """
+        Get the RF switch state of all sensors when the WiFi packet was received.
+        """
+        return self.rfswitch_state_all
 
     def get_source_mac(self):
         """
