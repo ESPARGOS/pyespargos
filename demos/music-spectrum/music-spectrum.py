@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin, ConfigManager
+from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin
 
 import numpy as np
 import espargos
@@ -35,13 +35,6 @@ class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppl
         # Set up ESPARGOS pool and backlog
         self.initialize_pool(calibrate=not self.args.no_calib)
 
-        # App configuration manager
-        self.appconfig = ConfigManager(self.DEFAULT_CONFIG, parent=self)
-        self.appconfig.updateAppState.connect(self._on_update_app_state)
-
-        # Apply optional YAML config to pool/demo config managers
-        self.appconfig.set(self.get_initial_config("app", default={}))
-
         # Initialize MUSIC scanning angles, steering vectors, ...
         self.scanning_angles = np.linspace(-np.pi / 2, np.pi / 2, 180)
         self.steering_vectors = np.exp(
@@ -55,9 +48,6 @@ class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppl
 
         self.initialize_qml(
             pathlib.Path(__file__).resolve().parent / "music-spectrum-ui.qml",
-            {
-                "appconfig": self.appconfig,
-            },
         )
 
     def _on_update_app_state(self, newcfg):
@@ -65,7 +55,7 @@ class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppl
         if "shift_peak" in newcfg:
             self.shiftPeakChanged.emit()
 
-        self.appconfig.updateAppStateHandled.emit()
+        super()._on_update_app_state(newcfg)
 
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=shiftPeakChanged)
     def shiftPeak(self):

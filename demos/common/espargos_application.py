@@ -52,6 +52,9 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
     initComplete = PyQt6.QtCore.pyqtSignal()
     preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
+    appConfigChanged = PyQt6.QtCore.pyqtSignal(dict)  # Emitted when app config changes, with the changed keys
+
+    DEFAULT_CONFIG = {}  # Override in subclasses to provide app-specific defaults
 
     def __init__(
         self,
@@ -102,6 +105,18 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         self._init_config_managers()
 
         self.genericconfig = ConfigManager(self.get_initial_config("generic"), parent=self)
+
+        # App configuration manager (uses DEFAULT_CONFIG from subclass)
+        self.appconfig = ConfigManager(self.get_initial_config("app"), parent=self)
+        self.appconfig.updateAppState.connect(self._on_update_app_state)
+
+    def _on_update_app_state(self, newcfg):
+        """
+        Handler for app configuration changes.
+        Override in subclasses to handle specific config changes, then call super()._on_update_app_state(newcfg).
+        """
+        self.appConfigChanged.emit(newcfg)
+        self.appconfig.updateAppStateHandled.emit()
 
     def _add_argparse_arguments(self, parser):
         """
@@ -184,11 +199,12 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
         # Provide backend and optional additional context properties
         context.setContextProperty("backend", self)
+        context.setContextProperty("appconfig", self.appconfig)
         if hasattr(self, "pooldrawer"):
             context.setContextProperty("poolconfig", self.pooldrawer.configManager())
 
         for key, value in (context_props or {}).items():
-            if key != "backend":
+            if key not in ("backend", "appconfig"):
                 context.setContextProperty(key, value)
 
         qml_url = qml_file.as_uri() if hasattr(qml_file, "as_uri") else qml_file

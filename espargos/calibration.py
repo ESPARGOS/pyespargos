@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import numpy as np
+import logging
 
 from . import constants
 from . import board
@@ -54,6 +55,8 @@ class CSICalibration(object):
             constants.ANTENNAS_PER_ROW,
             csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL,
         )
+
+        self.logger = logging.getLogger("espargos.calib")
 
         self.channel_primary = channel_primary
         self.channel_secondary = channel_secondary
@@ -125,6 +128,9 @@ class CSICalibration(object):
         :return: The phase-calibrated CSI data
         """
         # TODO: Check if primary and secondary channel match
+        # Check if calibration values are not NaN
+        if np.isnan(self.calibration_values_ht40).any():
+            self.logger.warning("HT40 calibration values contain NaN, missing calibration data?")
 
         # Only calibrate phase, not amplitude
         return values * np.exp(-1.0j * np.angle(self.calibration_values_ht40))
@@ -139,6 +145,10 @@ class CSICalibration(object):
         """
         # TODO: Check if calibration value channel matches OTA channel
 
+        # Check if calibration values are not NaN
+        if np.isnan(self.calibration_values_ht20).any():
+            self.logger.warning("HT20 calibration values contain NaN, missing calibration data?")
+
         return values * np.exp(-1.0j * np.angle(self.calibration_values_ht20))
 
     def apply_lltf(self, values: np.ndarray) -> np.ndarray:
@@ -150,6 +160,10 @@ class CSICalibration(object):
         :return: The phase-calibrated CSI data
         """
         # TODO: Check if calibration value channel matches OTA channel
+
+        # Check if calibration values are not NaN
+        if np.isnan(self.calibration_values_lltf).any():
+            self.logger.warning("L-LTF calibration values contain NaN, missing calibration data?")
 
         return values * np.exp(-1.0j * np.angle(self.calibration_values_lltf))
 

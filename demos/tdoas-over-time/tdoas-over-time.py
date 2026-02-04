@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin, ConfigManager
+from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin
 
 import numpy as np
 import espargos
@@ -42,20 +42,10 @@ class EspargosDemoTDOAOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppli
         # Set up ESPARGOS pool and backlog
         self.initialize_pool(calibrate=not self.args.no_calib)
 
-        # App configuration manager
-        self.appconfig = ConfigManager(self.DEFAULT_CONFIG, parent=self)
-        self.appconfig.updateAppState.connect(self._on_update_app_state)
-
-        # Apply optional YAML config to pool/demo config managers
-        self.appconfig.set(self.get_initial_config("app", default={}))
-
         self.startTimestamp = time.time()
 
         self.initialize_qml(
             pathlib.Path(__file__).resolve().parent / "tdoas-over-time-ui.qml",
-            {
-                "appconfig": self.appconfig,
-            },
         )
 
     def _on_update_app_state(self, newcfg):
@@ -65,7 +55,7 @@ class EspargosDemoTDOAOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppli
         if "average" in newcfg:
             self.averageChanged.emit()
 
-        self.appconfig.updateAppStateHandled.emit()
+        super()._on_update_app_state(newcfg)
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=maxAgeChanged)
     def maxCSIAge(self):

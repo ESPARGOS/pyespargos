@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ConfigManager, ESPARGOSApplication, BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
+from demos.common import ESPARGOSApplication, BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
 
 import matplotlib.colors
 import numpy as np
@@ -89,13 +89,6 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         # Initialize combined array setup
         self.initialize_pool(backlog_cb_predicate=self._cb_predicate)
 
-        # App configuration manager
-        self.appconfig = ConfigManager(self.DEFAULT_CONFIG, parent=self)
-        self.appconfig.updateAppState.connect(self.onUpdateAppState)
-
-        # Apply optional YAML config to pool/demo config managers
-        self.appconfig.set(self.get_initial_config("app", default={}))
-
         # Camera setup
         self.videocamera = videocamera.VideoCamera(
             self.appconfig.get("camera", "device"),
@@ -125,7 +118,6 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         self.initialize_qml(
             pathlib.Path(__file__).resolve().parent / "camera-ui.qml",
             {
-                "appconfig": self.appconfig,
                 "WebCam": self.videocamera,
             },
         )
@@ -434,7 +426,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         super().onAboutToQuit()
 
     @PyQt6.QtCore.pyqtSlot(dict)
-    def onUpdateAppState(self, newcfg):
+    def _on_update_app_state(self, newcfg):
         camera_cfg = newcfg.get("camera", {}) if isinstance(newcfg, dict) else {}
         if not isinstance(camera_cfg, dict):
             camera_cfg = {}
@@ -496,8 +488,8 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
             except Exception as e:
                 print(f"Error setting raw beamspace: {e}")
 
-        # Let configmanager know we're done
-        self.appconfig.updateAppStateHandled.emit()
+        # Let base class handle the rest
+        super()._on_update_app_state(newcfg)
 
     @PyQt6.QtCore.pyqtProperty(bool, constant=True)
     def music(self):

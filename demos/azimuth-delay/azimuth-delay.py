@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ConfigManager
+from demos.common import ESPARGOSApplication, BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
 
 from matplotlib import colormaps
 import numpy as np
@@ -31,10 +31,6 @@ class AzimuthDelayApp(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ES
             argv,
         )
 
-        # App-specific configuration
-        self.appconfig = ConfigManager(self.get_initial_config("app"), parent=self)
-        self.appconfig.updateAppState.connect(self.onConfigUpdate)
-
         # Initialize pool and backlog
         self.initialize_pool()
         self.initComplete.connect(self.onInitComplete)
@@ -47,11 +43,11 @@ class AzimuthDelayApp(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ES
     def onInitComplete(self):
         self.updateDelaySize()
 
-    def onConfigUpdate(self, newconfig):
+    def _on_update_app_state(self, newconfig):
         if "delay_min" in newconfig or "delay_max" in newconfig:
             self.updateDelaySize()
             self.configChanged.emit()
-        self.appconfig.updateAppStateHandled.emit()
+        super()._on_update_app_state(newconfig)
 
     def updateDelaySize(self):
         delay_min = self.appconfig.get("delay_min")
@@ -60,7 +56,7 @@ class AzimuthDelayApp(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ES
 
     def exec(self):
         qml_file = pathlib.Path(__file__).resolve().parent / "azimuth-delay.qml"
-        self.initialize_qml(qml_file, context_props={"appconfig": self.appconfig})
+        self.initialize_qml(qml_file)
 
         if not self.engine.rootObjects():
             return -1
