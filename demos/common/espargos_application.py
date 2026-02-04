@@ -82,28 +82,36 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             format_group.add_argument(
                 "--lltf",
                 default=False,
-                help="Use only CSI from L-LTF",
+                help="Use only CSI from L-LTF (set up backlog and application accordingly)",
                 action="store_true",
             )
             format_group.add_argument(
                 "--ht40",
                 default=False,
-                help="Use only CSI from HT40",
+                help="Use only CSI from HT40 (set up backlog and application accordingly)",
                 action="store_true",
             )
             format_group.add_argument(
                 "--ht20",
                 default=False,
-                help="Use only CSI from HT20",
+                help="Use only CSI from HT20 (set up backlog and application accordingly)",
                 action="store_true",
             )
 
-        if not ESPARGOSApplicationFlags.COMBINED_ARRAY in self.flags:
+        if ESPARGOSApplicationFlags.COMBINED_ARRAY in self.flags:
+            parser.add_argument(
+                "-s",
+                "--single-array",
+                type=str,
+                default="",
+                help="Array consists of a single ESPARGOS device in horizontal orientation, specify host address (IP or hostname) of device",
+            )
+        else:
             parser.add_argument(
                 "hosts",
                 type=str,
                 default="",
-                help="Comma-separated list of host addresses (IP or hostname) of ESPARGOS controllers",
+                help="Comma-separated list of host addresses (IP or hostname) of ESPARGOS devices",
             )
 
         self.args = parser.parse_args()
@@ -149,6 +157,26 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
                         "ht20": self.args.ht20,
                         "ht40": self.args.ht40,
                     }
+
+        # In single-array mode, auto-generate combined array config
+        if "single_array" in self.args and len(self.args.single_array) > 0:
+            host = self.args.single_array
+
+            self.initial_config["combined-array"] = {
+                "boards": {
+                    "arr": {
+                        "host": host,
+                        "cable": {
+                            "length": 0.0,
+                            "velocity_factor": 1.0,
+                        },
+                    }
+                },
+                "array": [
+                    ["arr.0.0", "arr.0.1", "arr.0.2", "arr.0.3"],
+                    ["arr.1.0", "arr.1.1", "arr.1.2", "arr.1.3"],
+                ],
+            }
 
         # If hosts are provided on command line, override pool config
         if "hosts" in self.args and len(self.args.hosts) > 0:
@@ -214,6 +242,12 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         Initialize ESPARGOS Pool. Also triggers creation of pool drawer backend.
         """
         if ESPARGOSApplicationFlags.COMBINED_ARRAY in self.flags:
+            combined_array_cfg = self.get_initial_config("combined-array")
+
+            # Check if combined_array_cfg was provided (not just empty dictionary)
+            if combined_array_cfg is None or combined_array_cfg == {}:
+                raise ValueError("Combined array configuration is required for applications using COMBINED_ARRAY mode. You must either provide it via config file or use the --single-array option.")
+
             (
                 self.indexing_matrix,
                 hosts,
@@ -221,7 +255,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
                 cable_velocity_factors,
                 self.n_rows,
                 self.n_cols,
-            ) = espargos.util.parse_combined_array_config(self.get_initial_config("combined-array"))
+            ) = espargos.util.parse_combined_array_config(combined_array_cfg)
 
             additional_calibrate_args["cable_lengths"] = cable_lengths
             additional_calibrate_args["cable_velocity_factors"] = cable_velocity_factors
