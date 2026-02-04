@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, ESPARGOSApplicationFlags, ConfigManager
+from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin, ConfigManager
 
 import numpy as np
 import espargos
@@ -15,7 +15,7 @@ import PyQt6.QtCharts
 import PyQt6.QtCore
 
 
-class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
+class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
     preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
     displayModeChanged = PyQt6.QtCore.pyqtSignal()
     oversamplingChanged = PyQt6.QtCore.pyqtSignal()
@@ -37,10 +37,6 @@ class EspargosDemoInstantaneousCSI(ESPARGOSApplication):
         super().__init__(
             argv,
             argparse_parent=parser,
-            flags={
-                ESPARGOSApplicationFlags.ENABLE_BACKLOG,
-                ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT,
-            },
         )
 
         # Set up ESPARGOS pool and backlog

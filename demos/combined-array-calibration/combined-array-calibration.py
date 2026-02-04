@@ -16,10 +16,10 @@ import espargos
 import PyQt6.QtCharts
 import PyQt6.QtCore
 
-from common import ESPARGOSApplication, ESPARGOSApplicationFlags, ConfigManager
+from common import ESPARGOSApplication, CombinedArrayMixin, SingleCSIFormatMixin, ConfigManager
 
 
-class EspargosDemoCombinedArrayCalibration(ESPARGOSApplication):
+class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
     DEFAULT_CONFIG = {
         "color_by_sensor_index": False,
         "update_rate": 0.01,
@@ -43,10 +43,6 @@ class EspargosDemoCombinedArrayCalibration(ESPARGOSApplication):
         super().__init__(
             argv,
             argparse_parent=parser,
-            flags={
-                ESPARGOSApplicationFlags.COMBINED_ARRAY,
-                ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT,
-            },
         )
 
         # App-specific configuration

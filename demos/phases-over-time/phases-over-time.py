@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, ESPARGOSApplicationFlags, ConfigManager
+from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin, ConfigManager
 
 import numpy as np
 import espargos
@@ -15,7 +15,7 @@ import time
 import PyQt6.QtCore
 
 
-class EspargosDemoPhasesOverTime(ESPARGOSApplication):
+class EspargosDemoPhasesOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
     updatePhases = PyQt6.QtCore.pyqtSignal(float, list)
     preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
     maxAgeChanged = PyQt6.QtCore.pyqtSignal()
@@ -34,10 +34,6 @@ class EspargosDemoPhasesOverTime(ESPARGOSApplication):
         super().__init__(
             argv,
             argparse_parent=parser,
-            flags={
-                ESPARGOSApplicationFlags.ENABLE_BACKLOG,
-                ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT,
-            },
         )
 
         # Set up ESPARGOS pool and backlog

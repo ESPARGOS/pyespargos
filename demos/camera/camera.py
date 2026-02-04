@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ConfigManager, ESPARGOSApplication, ESPARGOSApplicationFlags
+from demos.common import ConfigManager, ESPARGOSApplication, BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
 
 import matplotlib.colors
 import numpy as np
@@ -19,7 +19,7 @@ import PyQt6.QtCore
 import videocamera
 
 
-class EspargosDemoCamera(ESPARGOSApplication):
+class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
     rssiChanged = PyQt6.QtCore.pyqtSignal(float)
     activeAntennasChanged = PyQt6.QtCore.pyqtSignal(float)
     beamspacePowerImagedataChanged = PyQt6.QtCore.pyqtSignal(list)
@@ -79,11 +79,6 @@ class EspargosDemoCamera(ESPARGOSApplication):
         super().__init__(
             argv,
             argparse_parent=parser,
-            flags={
-                ESPARGOSApplicationFlags.ENABLE_BACKLOG,
-                ESPARGOSApplicationFlags.COMBINED_ARRAY,
-                ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT,
-            },
         )
 
         # Load additional calibration data from file, if provided

@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, ESPARGOSApplicationFlags, ConfigManager
+from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin, ConfigManager
 
 import numpy as np
 import matplotlib
@@ -15,7 +15,7 @@ import argparse
 import PyQt6.QtCore
 
 
-class EspargosDemoPhasesOverSpace(ESPARGOSApplication):
+class EspargosDemoPhasesOverSpace(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
     updateColors = PyQt6.QtCore.pyqtSignal(list)
     preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
 
@@ -36,10 +36,6 @@ class EspargosDemoPhasesOverSpace(ESPARGOSApplication):
         super().__init__(
             argv,
             argparse_parent=parser,
-            flags={
-                ESPARGOSApplicationFlags.ENABLE_BACKLOG,
-                ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT,
-            },
         )
 
         # Set up ESPARGOS pool and backlog

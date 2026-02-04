@@ -9,20 +9,28 @@ import espargos.util
 import threading
 import argparse
 import yaml
-import enum
 
 from .backlog_settings import BacklogSettings, ConfigManager
 from .config_manager import deep_update
 from .pool_drawer import PoolDrawer
 
 
-class ESPARGOSApplicationFlags(enum.Enum):
-    ENABLE_BACKLOG = enum.auto()
-    COMBINED_ARRAY = enum.auto()
-    SINGLE_PREAMBLE_FORMAT = enum.auto()
-
-
 class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
+    """
+    Base class for ESPARGOS demo applications.
+
+    This class provides core functionality for ESPARGOS demos including:
+    - Command-line argument parsing (config file support)
+    - YAML configuration loading
+    - QML engine initialization
+    - Pool initialization and management
+
+    Use mixins to extend functionality:
+    - BacklogMixin: Adds CSI backlog support
+    - CombinedArrayMixin: Adds combined array configuration support
+    - SingleCSIFormatMixin: Adds single preamble format selection
+    """
+
     BASE_DEFAULT_CONFIG = {
         "backlog": {"size": 20, "fields": {"lltf": True, "ht20": False, "ht40": False}},
         "pool": {
@@ -47,12 +55,10 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         self,
         argv: list[str],
         argparse_parent: argparse.ArgumentParser = None,
-        flags: set[ESPARGOSApplicationFlags] = set(),
     ):
         super().__init__(argv)
 
         # Basic app initialization
-        self.flags = flags
         self.ready = False
         self.engine = PyQt6.QtQml.QQmlApplicationEngine()
         self.aboutToQuit.connect(self.onAboutToQuit)
@@ -68,51 +74,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             help="Path to YAML configuration file to load",
         )
 
-        if ESPARGOSApplicationFlags.ENABLE_BACKLOG in self.flags:
-            parser.add_argument(
-                "-b",
-                "--backlog-size",
-                type=int,
-                default=20,
-                help="Size of CSI datapoint backlog",
-            )
-
-        if ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT in self.flags:
-            format_group = parser.add_mutually_exclusive_group()
-            format_group.add_argument(
-                "--lltf",
-                default=False,
-                help="Use only CSI from L-LTF (set up backlog and application accordingly)",
-                action="store_true",
-            )
-            format_group.add_argument(
-                "--ht40",
-                default=False,
-                help="Use only CSI from HT40 (set up backlog and application accordingly)",
-                action="store_true",
-            )
-            format_group.add_argument(
-                "--ht20",
-                default=False,
-                help="Use only CSI from HT20 (set up backlog and application accordingly)",
-                action="store_true",
-            )
-
-        if ESPARGOSApplicationFlags.COMBINED_ARRAY in self.flags:
-            parser.add_argument(
-                "-s",
-                "--single-array",
-                type=str,
-                default="",
-                help="Array consists of a single ESPARGOS device in horizontal orientation, specify host address (IP or hostname) of device",
-            )
-        else:
-            parser.add_argument(
-                "hosts",
-                type=str,
-                default="",
-                help="Comma-separated list of host addresses (IP or hostname) of ESPARGOS devices",
-            )
+        # Let mixins add their arguments
+        self._add_argparse_arguments(parser)
 
         self.args = parser.parse_args()
 
@@ -130,63 +93,56 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
                 deep_update(self.initial_config, cfg_from_file)
 
-        # Override initial config with command-line arguments
-        if ESPARGOSApplicationFlags.ENABLE_BACKLOG in self.flags:
-            self.initial_config["backlog"]["size"] = self.args.backlog_size
+        # Let mixins process their arguments and update config
+        self._process_args()
 
-        if ESPARGOSApplicationFlags.SINGLE_PREAMBLE_FORMAT in self.flags:
-            # Make sure that only one format is selected
-            selected_formats = []
-            if self.args.lltf:
-                selected_formats.append("lltf")
-            if self.args.ht40:
-                selected_formats.append("ht40")
-            if self.args.ht20:
-                selected_formats.append("ht20")
-            if len(selected_formats) > 1:
-                raise ValueError("At most one of --lltf, --ht40 or --ht20 can be selected!")
+        # Configuration managers
+        self._init_config_managers()
 
-            # Remember choice in generic app config
-            if len(selected_formats) == 1:
-                self.initial_config["generic"]["preamble_format"] = selected_formats[0]
+        self.genericconfig = ConfigManager(self.get_initial_config("generic"), parent=self)
 
-                # *If* a command line flag about preamble format is provided, it also overrides backlog config
-                if ESPARGOSApplicationFlags.ENABLE_BACKLOG in self.flags:
-                    self.initial_config["backlog"]["fields"] = {
-                        "lltf": self.args.lltf,
-                        "ht20": self.args.ht20,
-                        "ht40": self.args.ht40,
-                    }
+    def _add_argparse_arguments(self, parser):
+        """
+        Hook for mixins to add command-line arguments.
+        Override in mixins and call super()._add_argparse_arguments(parser).
+        """
+        # Base class adds hosts argument by default (non-combined-array mode)
+        if not self._uses_combined_array():
+            parser.add_argument(
+                "hosts",
+                type=str,
+                default="",
+                help="Comma-separated list of host addresses (IP or hostname) of ESPARGOS devices",
+            )
 
-        # In single-array mode, auto-generate combined array config
-        if "single_array" in self.args and len(self.args.single_array) > 0:
-            host = self.args.single_array
+    def _uses_combined_array(self):
+        """Check if this class uses the CombinedArrayMixin."""
+        return isinstance(self, CombinedArrayMixin)
 
-            self.initial_config["combined-array"] = {
-                "boards": {
-                    "arr": {
-                        "host": host,
-                        "cable": {
-                            "length": 0.0,
-                            "velocity_factor": 1.0,
-                        },
-                    }
-                },
-                "array": [
-                    ["arr.0.0", "arr.0.1", "arr.0.2", "arr.0.3"],
-                    ["arr.1.0", "arr.1.1", "arr.1.2", "arr.1.3"],
-                ],
-            }
+    def _uses_backlog(self):
+        """Check if this class uses the BacklogMixin."""
+        return isinstance(self, BacklogMixin)
 
+    def _uses_single_csi_format(self):
+        """Check if this class uses the SingleCSIFormatMixin."""
+        return isinstance(self, SingleCSIFormatMixin)
+
+    def _process_args(self):
+        """
+        Hook for mixins to process command-line arguments.
+        Override in mixins and call super()._process_args().
+        """
         # If hosts are provided on command line, override pool config
-        if "hosts" in self.args and len(self.args.hosts) > 0:
+        if hasattr(self.args, "hosts") and len(self.args.hosts) > 0:
             hosts = self.args.hosts.split(",")
             self.initial_config["pool"]["hosts"] = hosts
 
-        # Configuration managers
-        if ESPARGOSApplicationFlags.ENABLE_BACKLOG in self.flags:
-            self.backlog_settings = BacklogSettings(force_config=self.get_initial_config("backlog"), parent=self)
-        self.genericconfig = ConfigManager(self.get_initial_config("generic"), parent=self)
+    def _init_config_managers(self):
+        """
+        Hook for mixins to initialize their config managers.
+        Override in mixins and call super()._init_config_managers().
+        """
+        pass
 
     def get_initial_config(self, *path, default=None):
         """
@@ -210,9 +166,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
     def initialize_qml(self, qml_file, context_props: dict | None = None):
         context = self.engine.rootContext()
 
-        # Backlog config manager
-        if ESPARGOSApplicationFlags.ENABLE_BACKLOG in self.flags:
-            context.setContextProperty("backlogconfig", self.backlog_settings.configManager())
+        # Let mixins set up their context properties
+        self._setup_qml_context(context)
 
         # Generic app config manager
         context.setContextProperty("genericconfig", self.genericconfig)
@@ -232,6 +187,13 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         qml_url = qml_file.as_uri() if hasattr(qml_file, "as_uri") else qml_file
         self.engine.load(qml_url)
 
+    def _setup_qml_context(self, context):
+        """
+        Hook for mixins to set up QML context properties.
+        Override in mixins and call super()._setup_qml_context(context).
+        """
+        pass
+
     def initialize_pool(
         self,
         backlog_cb_predicate=None,
@@ -241,25 +203,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         """
         Initialize ESPARGOS Pool. Also triggers creation of pool drawer backend.
         """
-        if ESPARGOSApplicationFlags.COMBINED_ARRAY in self.flags:
-            combined_array_cfg = self.get_initial_config("combined-array")
-
-            # Check if combined_array_cfg was provided (not just empty dictionary)
-            if combined_array_cfg is None or combined_array_cfg == {}:
-                raise ValueError("Combined array configuration is required for applications using COMBINED_ARRAY mode. You must either provide it via config file or use the --single-array option.")
-
-            (
-                self.indexing_matrix,
-                hosts,
-                cable_lengths,
-                cable_velocity_factors,
-                self.n_rows,
-                self.n_cols,
-            ) = espargos.util.parse_combined_array_config(combined_array_cfg)
-
-            additional_calibrate_args["cable_lengths"] = cable_lengths
-            additional_calibrate_args["cable_velocity_factors"] = cable_velocity_factors
-            self.initial_config["pool"]["hosts"] = list(hosts.values())
+        # Let mixins prepare pool initialization
+        additional_calibrate_args = self._prepare_pool_init(additional_calibrate_args)
 
         self.pool = espargos.Pool([espargos.Board(host) for host in self.get_initial_config("pool", "hosts")])
 
@@ -274,16 +219,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
                 if calibrate:
                     self.pool.calibrate(duration=2, per_board=False, **additional_calibrate_args)
 
-                if ESPARGOSApplicationFlags.ENABLE_BACKLOG in self.flags:
-                    # Do not enable any preamble formats for now, will be set later based on config
-                    self.backlog = espargos.CSIBacklog(
-                        self.pool,
-                        cb_predicate=backlog_cb_predicate,
-                        calibrate=calibrate,
-                    )
-                    self.backlog.start()
-
-                    self.backlog_settings.set_backlog(self.backlog)
+                # Let mixins finalize pool initialization
+                self._finalize_pool_init(backlog_cb_predicate, calibrate)
 
                 self.ready = True
                 self.initComplete.emit()
@@ -291,6 +228,21 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             threading.Thread(target=_init_worker, daemon=True).start()
 
         self.pooldrawer.initComplete.connect(config_applied)
+
+    def _prepare_pool_init(self, additional_calibrate_args):
+        """
+        Hook for mixins to prepare pool initialization.
+        Override in mixins and call super()._prepare_pool_init(additional_calibrate_args).
+        Returns the (possibly modified) additional_calibrate_args.
+        """
+        return additional_calibrate_args
+
+    def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
+        """
+        Hook for mixins to finalize pool initialization.
+        Override in mixins and call super()._finalize_pool_init(backlog_cb_predicate, calibrate).
+        """
+        pass
 
     def onAboutToQuit(self):
         self.pool.stop()
@@ -311,3 +263,174 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
     @PyQt6.QtCore.pyqtProperty(object, constant=False, notify=initComplete)
     def hasBacklog(self):
         return hasattr(self, "backlog")
+
+
+class BacklogMixin:
+    """
+    Mixin that adds CSI backlog support to an ESPARGOSApplication.
+
+    Provides:
+    - Backlog size command-line argument (-b/--backlog-size)
+    - BacklogSettings configuration manager
+    - Automatic backlog creation during pool initialization
+    """
+
+    def _add_argparse_arguments(self, parser):
+        super()._add_argparse_arguments(parser)
+        parser.add_argument(
+            "-b",
+            "--backlog-size",
+            type=int,
+            default=20,
+            help="Size of CSI datapoint backlog",
+        )
+
+    def _process_args(self):
+        super()._process_args()
+        self.initial_config["backlog"]["size"] = self.args.backlog_size
+
+    def _init_config_managers(self):
+        super()._init_config_managers()
+        self.backlog_settings = BacklogSettings(force_config=self.get_initial_config("backlog"), parent=self)
+
+    def _setup_qml_context(self, context):
+        super()._setup_qml_context(context)
+        context.setContextProperty("backlogconfig", self.backlog_settings.configManager())
+
+    def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
+        super()._finalize_pool_init(backlog_cb_predicate, calibrate)
+        # Do not enable any preamble formats for now, will be set later based on config
+        self.backlog = espargos.CSIBacklog(
+            self.pool,
+            cb_predicate=backlog_cb_predicate,
+            calibrate=calibrate,
+        )
+        self.backlog.start()
+
+        self.backlog_settings.set_backlog(self.backlog)
+
+
+class CombinedArrayMixin:
+    """
+    Mixin that adds combined array configuration support to an ESPARGOSApplication.
+
+    Provides:
+    - Single-array command-line argument (-s/--single-array)
+    - Combined array configuration parsing
+    - Automatic host extraction from combined array config
+    - Cable length calibration support
+    """
+
+    def _add_argparse_arguments(self, parser):
+        super()._add_argparse_arguments(parser)
+        parser.add_argument(
+            "-s",
+            "--single-array",
+            type=str,
+            default="",
+            help="Array consists of a single ESPARGOS device in horizontal orientation, specify host address (IP or hostname) of device",
+        )
+
+    def _process_args(self):
+        super()._process_args()
+        # In single-array mode, auto-generate combined array config
+        if hasattr(self.args, "single_array") and len(self.args.single_array) > 0:
+            host = self.args.single_array
+
+            self.initial_config["combined-array"] = {
+                "boards": {
+                    "arr": {
+                        "host": host,
+                        "cable": {
+                            "length": 0.0,
+                            "velocity_factor": 1.0,
+                        },
+                    }
+                },
+                "array": [
+                    ["arr.0.0", "arr.0.1", "arr.0.2", "arr.0.3"],
+                    ["arr.1.0", "arr.1.1", "arr.1.2", "arr.1.3"],
+                ],
+            }
+
+    def _prepare_pool_init(self, additional_calibrate_args):
+        additional_calibrate_args = super()._prepare_pool_init(additional_calibrate_args)
+
+        combined_array_cfg = self.get_initial_config("combined-array")
+
+        # Check if combined_array_cfg was provided (not just empty dictionary)
+        if combined_array_cfg is None or combined_array_cfg == {}:
+            raise ValueError("Combined array configuration is required for applications using CombinedArrayMixin. You must either provide it via config file or use the --single-array option.")
+
+        (
+            self.indexing_matrix,
+            hosts,
+            cable_lengths,
+            cable_velocity_factors,
+            self.n_rows,
+            self.n_cols,
+        ) = espargos.util.parse_combined_array_config(combined_array_cfg)
+
+        additional_calibrate_args["cable_lengths"] = cable_lengths
+        additional_calibrate_args["cable_velocity_factors"] = cable_velocity_factors
+        self.initial_config["pool"]["hosts"] = list(hosts.values())
+
+        return additional_calibrate_args
+
+
+class SingleCSIFormatMixin:
+    """
+    Mixin that adds single preamble format selection to an ESPARGOSApplication.
+
+    Provides:
+    - Mutually exclusive command-line arguments (--lltf, --ht20, --ht40)
+    - Automatic backlog field configuration when combined with BacklogMixin
+    """
+
+    def _add_argparse_arguments(self, parser):
+        super()._add_argparse_arguments(parser)
+        format_group = parser.add_mutually_exclusive_group()
+        format_group.add_argument(
+            "--lltf",
+            default=False,
+            help="Use only CSI from L-LTF (set up backlog and application accordingly)",
+            action="store_true",
+        )
+        format_group.add_argument(
+            "--ht40",
+            default=False,
+            help="Use only CSI from HT40 (set up backlog and application accordingly)",
+            action="store_true",
+        )
+        format_group.add_argument(
+            "--ht20",
+            default=False,
+            help="Use only CSI from HT20 (set up backlog and application accordingly)",
+            action="store_true",
+        )
+
+    def _process_args(self):
+        super()._process_args()
+
+        # Make sure that only one format is selected
+        selected_formats = []
+        if self.args.lltf:
+            selected_formats.append("lltf")
+        if self.args.ht40:
+            selected_formats.append("ht40")
+        if self.args.ht20:
+            selected_formats.append("ht20")
+        if len(selected_formats) > 1:
+            raise ValueError("At most one of --lltf, --ht40 or --ht20 can be selected!")
+
+        # Remember choice in generic app config
+        if len(selected_formats) == 1:
+            self.initial_config["generic"]["preamble_format"] = selected_formats[0]
+
+            # *If* a command line flag about preamble format is provided, it also overrides backlog config
+            if self._uses_backlog():
+                self.initial_config["backlog"]["fields"] = {
+                    "lltf": self.args.lltf,
+                    "ht20": self.args.ht20,
+                    "ht40": self.args.ht40,
+                }
