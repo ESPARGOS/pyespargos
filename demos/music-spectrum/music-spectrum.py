@@ -16,7 +16,6 @@ import PyQt6.QtCore
 
 
 class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
-    preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
     shiftPeakChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {"shift_peak": False}
@@ -43,9 +42,6 @@ class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppl
         # Apply optional YAML config to pool/demo config managers
         self.appconfig.set(self.get_initial_config("app", default={}))
 
-        # Subscribe to preamble format changes
-        self.genericconfig.updateAppState.connect(self._on_preamble_format_changed)
-
         # Initialize MUSIC scanning angles, steering vectors, ...
         self.scanning_angles = np.linspace(-np.pi / 2, np.pi / 2, 180)
         self.steering_vectors = np.exp(
@@ -71,39 +67,16 @@ class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppl
 
         self.appconfig.updateAppStateHandled.emit()
 
-    def _on_preamble_format_changed(self, newcfg):
-        self.preambleFormatChanged.emit()
-        self.genericconfig.updateAppStateHandled.emit()
-
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=shiftPeakChanged)
     def shiftPeak(self):
         return self.appconfig.get("shift_peak")
 
     @PyQt6.QtCore.pyqtSlot(PyQt6.QtCharts.QLineSeries, PyQt6.QtCharts.QValueAxis)
     def updateSpatialSpectrum(self, series, axis):
-        if not hasattr(self, "backlog"):
+        if (result := self.get_backlog_csi("rssi")) is None:
             return
 
-        csi_key = self.genericconfig.get("preamble_format")
-
-        try:
-            csi_backlog, rssi_backlog = self.backlog.get_multiple([csi_key, "rssi"])
-        except ValueError:
-            print(f"Requested CSI key {csi_key} not in backlog")
-            return
-
-        if csi_backlog.size == 0:
-            return
-
-        # If any CSI values are NaN, skip processing
-        if np.any(np.isnan(csi_backlog)):
-            return
-
-        # Interpolate missing DC gap subcarriers if needed
-        if csi_key == "ht20":
-            espargos.util.interpolate_ht20ltf_gap(csi_backlog)
-        elif csi_key == "ht40":
-            espargos.util.interpolate_ht40ltf_gap(csi_backlog)
+        csi_backlog, rssi_backlog = result
 
         # Weight CSI data with RSSI
         csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)

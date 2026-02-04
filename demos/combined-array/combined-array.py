@@ -17,7 +17,6 @@ import PyQt6.QtCore
 
 class EspargosDemoCombinedArray(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
     updateColors = PyQt6.QtCore.pyqtSignal(list)
-    preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {}
 
@@ -40,9 +39,6 @@ class EspargosDemoCombinedArray(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         # Apply optional YAML config to pool/demo config managers
         self.appconfig.set(self.get_initial_config("app", default={}))
 
-        # Subscribe to preamble format changes
-        self.genericconfig.updateAppState.connect(self._on_preamble_format_changed)
-
         self.initialize_qml(
             pathlib.Path(__file__).resolve().parent / "combined-array-ui.qml",
             {
@@ -52,10 +48,6 @@ class EspargosDemoCombinedArray(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     def _on_update_app_state(self, newcfg):
         self.appconfig.updateAppStateHandled.emit()
-
-    def _on_preamble_format_changed(self, newcfg):
-        self.preambleFormatChanged.emit()
-        self.genericconfig.updateAppStateHandled.emit()
 
     @PyQt6.QtCore.pyqtSlot()
     def updateRequest(self):

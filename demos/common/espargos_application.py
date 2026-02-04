@@ -51,6 +51,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
     }
 
     initComplete = PyQt6.QtCore.pyqtSignal()
+    preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
 
     def __init__(
         self,
@@ -173,8 +174,13 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         # Generic app config manager
         context.setContextProperty("genericconfig", self.genericconfig)
 
-        # No callback for generic config changes yet, just mark as handled
-        self.genericconfig.updateAppState.connect(self.genericconfig.updateAppStateHandled)
+        # Handle generic config changes - emit preambleFormatChanged when needed
+        def _on_generic_config_changed(newcfg):
+            if "preamble_format" in newcfg:
+                self.preambleFormatChanged.emit()
+            self.genericconfig.updateAppStateHandled.emit()
+
+        self.genericconfig.updateAppState.connect(_on_generic_config_changed)
 
         # Provide backend and optional additional context properties
         context.setContextProperty("backend", self)

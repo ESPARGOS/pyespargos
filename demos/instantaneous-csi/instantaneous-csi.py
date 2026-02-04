@@ -16,7 +16,9 @@ import PyQt6.QtCore
 
 
 class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+    # Re-declare base class signal so it's visible to notify= in pyqtProperty decorators
     preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
+
     displayModeChanged = PyQt6.QtCore.pyqtSignal()
     oversamplingChanged = PyQt6.QtCore.pyqtSignal()
     shiftPeakChanged = PyQt6.QtCore.pyqtSignal()
@@ -53,8 +55,6 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         self.stable_power_minimum = None
         self.stable_power_maximum = None
 
-        # Subscribe to preamble format changes
-        self.genericconfig.updateAppState.connect(self._on_preamble_format_changed)
         self.sensor_count = len(self.get_initial_config("pool", "hosts")) * espargos.constants.ANTENNAS_PER_BOARD
 
         self.initialize_qml(
@@ -82,10 +82,6 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             self.shiftPeakChanged.emit()
 
         self.appconfig.updateAppStateHandled.emit()
-
-    def _on_preamble_format_changed(self, newcfg):
-        self.preambleFormatChanged.emit()
-        self.genericconfig.updateAppStateHandled.emit()
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def sensorCount(self):
@@ -129,24 +125,13 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     # list parameters contain PyQt6.QtCharts.QLineSeries
     @PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis, PyQt6.QtCharts.QValueAxis)
     def updateCSI(self, powerSeries, phaseSeries, subcarrierAxis, axis):
-        if not hasattr(self, "backlog"):
-            # Backlog not yet initialized
+        if (result := self.get_backlog_csi("rssi")) is None:
             return
 
-        csi_key = self.genericconfig.get("preamble_format")
+        csi_backlog, rssi_backlog = result
 
-        try:
-            csi_backlog, rssi_backlog = self.backlog.get_multiple([csi_key, "rssi"])
-        except ValueError:
-            print(f"Requested CSI key {csi_key} not in backlog")
-            return
-
-        # If any value is NaN skip this update (happens if received frame were not of expected type)
-        if np.isnan(csi_backlog).any() or np.isnan(rssi_backlog).any():
-            return
-
-        # If backlog is empty, skip update
-        if csi_backlog.size == 0:
+        # If RSSI contains NaN, skip this update
+        if np.isnan(rssi_backlog).any():
             return
 
         # Weight CSI data with RSSI
@@ -154,13 +139,6 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
 
         if self.appconfig.get("shift_peak"):
             espargos.util.remove_mean_sto(csi_backlog)
-
-        # Fill "gap" in subcarriers with interpolated data
-        match csi_key:
-            case "ht40":
-                espargos.util.interpolate_ht40ltf_gap(csi_backlog)
-            case "ht20":
-                espargos.util.interpolate_ht20ltf_gap(csi_backlog)
 
         # TODO: If using per-board calibration, interpolation should also be per-board
         csi_interp = espargos.util.csi_interp_iterative(csi_backlog, iterations=5)

@@ -25,7 +25,6 @@ class AzimuthDelayApp(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ES
 
     dataChanged = PyQt6.QtCore.pyqtSignal(list)
     configChanged = PyQt6.QtCore.pyqtSignal()
-    preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
 
     def __init__(self, argv):
         super().__init__(
@@ -36,9 +35,6 @@ class AzimuthDelayApp(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ES
         self.appconfig = ConfigManager(self.get_initial_config("app"), parent=self)
         self.appconfig.updateAppState.connect(self.onConfigUpdate)
 
-        # Subscribe to preamble format changes
-        self.genericconfig.updateAppState.connect(self._on_preamble_format_changed)
-
         # Initialize pool and backlog
         self.initialize_pool()
         self.initComplete.connect(self.onInitComplete)
@@ -47,10 +43,6 @@ class AzimuthDelayApp(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ES
         self._angle_size = self.n_cols * BEAMSPACE_OVERSAMPLING + 1
 
         self.data = []
-
-    def _on_preamble_format_changed(self, newcfg):
-        self.preambleFormatChanged.emit()
-        self.genericconfig.updateAppStateHandled.emit()
 
     def onInitComplete(self):
         self.updateDelaySize()

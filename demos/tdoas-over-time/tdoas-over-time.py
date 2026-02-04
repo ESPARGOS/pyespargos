@@ -18,7 +18,6 @@ import PyQt6.QtCore
 
 class EspargosDemoTDOAOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
     updateTDOAs = PyQt6.QtCore.pyqtSignal(float, list)
-    preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
     maxAgeChanged = PyQt6.QtCore.pyqtSignal()
     averageChanged = PyQt6.QtCore.pyqtSignal()
 
@@ -50,9 +49,6 @@ class EspargosDemoTDOAOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppli
         # Apply optional YAML config to pool/demo config managers
         self.appconfig.set(self.get_initial_config("app", default={}))
 
-        # Subscribe to preamble format changes
-        self.genericconfig.updateAppState.connect(self._on_preamble_format_changed)
-
         self.startTimestamp = time.time()
 
         self.initialize_qml(
@@ -70,10 +66,6 @@ class EspargosDemoTDOAOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppli
             self.averageChanged.emit()
 
         self.appconfig.updateAppStateHandled.emit()
-
-    def _on_preamble_format_changed(self, newcfg):
-        self.preambleFormatChanged.emit()
-        self.genericconfig.updateAppStateHandled.emit()
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=maxAgeChanged)
     def maxCSIAge(self):
