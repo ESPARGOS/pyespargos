@@ -67,28 +67,7 @@ class EspargosDemoPhasesOverSpace(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAp
 
     @PyQt6.QtCore.pyqtSlot()
     def updateRequest(self):
-        if not hasattr(self, "backlog"):
-            return
-
-        csi_key = self.genericconfig.get("preamble_format")
-
-        try:
-            csi_backlog = self.backlog.get(csi_key)
-        except ValueError:
-            print(f"Requested CSI key {csi_key} not in backlog")
-            return
-
-        if csi_backlog.size == 0:
-            return
-
-        # Interpolate DC subcarrier gap in HT20 / HT40 mode
-        if csi_key == "ht20":
-            espargos.util.interpolate_ht20ltf_gap(csi_backlog)
-        elif csi_key == "ht40":
-            espargos.util.interpolate_ht40ltf_gap(csi_backlog)
-
-        # Ignore backlog if it contains any NaN values
-        if np.isnan(csi_backlog).any():
+        if (csi_backlog := self.get_backlog_csi()) is None:
             return
 
         R = np.einsum("dbmis,dbnjs->minj", csi_backlog, np.conj(csi_backlog))

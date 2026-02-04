@@ -85,32 +85,11 @@ class EspargosDemoTDOAOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppli
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
-        if not hasattr(self, "backlog"):
+        if (result := self.get_backlog_csi("host_timestamp")) is None:
             return
 
-        if not self.backlog.nonempty():
-            return
-
-        csi_key = self.genericconfig.get("preamble_format")
-
-        try:
-            csi_backlog = self.backlog.get(csi_key)
-            mean_rx_timestamp = self.backlog.get_latest("host_timestamp") - self.startTimestamp
-        except ValueError:
-            print(f"Requested CSI key {csi_key} not in backlog")
-            return
-
-        if csi_backlog.size == 0:
-            return
-
-        if csi_key == "ht40":
-            espargos.util.interpolate_ht40ltf_gap(csi_backlog)
-        elif csi_key == "ht20":
-            espargos.util.interpolate_ht20ltf_gap(csi_backlog)
-
-        # Ignore backlog if it contains any NaN values
-        if np.any(np.isnan(csi_backlog)):
-            return
+        csi_backlog, timestamp_backlog = result
+        mean_rx_timestamp = timestamp_backlog[-1] - self.startTimestamp
 
         # Do interpolation "by_array" due to Doppler (destroys TDoA for moving targets otherwise)
         csi_interp = espargos.util.csi_interp_iterative_by_array(csi_backlog, iterations=5)

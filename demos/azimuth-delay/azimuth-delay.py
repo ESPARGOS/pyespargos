@@ -96,26 +96,8 @@ class AzimuthDelayApp(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ES
 
     @PyQt6.QtCore.pyqtSlot()
     def update_data(self):
-        preamble_format = self.genericconfig.get("preamble_format")
-
-        try:
-            csi = self.backlog.get(preamble_format)
-        except ValueError:
-            print(f"Requested CSI key {preamble_format} not in backlog")
+        if (csi := self.get_backlog_csi()) is None:
             return
-
-        # If any value is NaN skip this update (happens if received frame were not of expected type)
-        if np.isnan(csi).any():
-            return
-
-        # If backlog is empty, skip update
-        if csi.size == 0:
-            return
-
-        if preamble_format == "ht20":
-            espargos.util.interpolate_ht20ltf_gap(csi)
-        elif preamble_format == "ht40":
-            espargos.util.interpolate_ht40ltf_gap(csi)
 
         # Remove STO from CSI
         espargos.util.remove_mean_sto(csi)

@@ -59,22 +59,7 @@ class EspargosDemoCombinedArray(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     @PyQt6.QtCore.pyqtSlot()
     def updateRequest(self):
-        if not hasattr(self, "backlog"):
-            return
-
-        csi_key = self.genericconfig.get("preamble_format")
-
-        try:
-            csi_backlog = self.backlog.get(csi_key)
-        except ValueError:
-            print(f"Requested CSI key {csi_key} not in backlog")
-            return
-
-        if csi_backlog.size == 0:
-            return
-
-        # Make sure backlog does not contain NaNs (happens if requesting wrong type of preamble)
-        if np.any(np.isnan(csi_backlog)):
+        if (csi_backlog := self.get_backlog_csi()) is None:
             return
 
         csi_largearray = espargos.util.build_combined_array_csi(self.indexing_matrix, csi_backlog)

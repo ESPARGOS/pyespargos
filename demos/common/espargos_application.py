@@ -6,6 +6,7 @@ import PyQt6.QtQml
 
 import espargos.util
 
+import numpy as np
 import threading
 import argparse
 import yaml
@@ -386,6 +387,43 @@ class SingleCSIFormatMixin:
     - Mutually exclusive command-line arguments (--lltf, --ht20, --ht40)
     - Automatic backlog field configuration when combined with BacklogMixin
     """
+
+    def get_backlog_csi(self, *additional_keys: str) -> np.ndarray | tuple[np.ndarray, ...] | None:
+        """
+        Retrieve latest CSI datapoints from backlog for the selected preamble format.
+
+        Returns None if backlog does not exist (yet), is empty, or data is otherwise unavailable.
+        Automatically interpolates gaps for HT20/HT40 formats and filters out NaN values.
+
+        :param additional_keys: Additional backlog keys to retrieve alongside the CSI data.
+        :return: CSI array if no additional keys, tuple of (csi, *additional) if keys specified, or None if unavailable.
+        """
+        if not hasattr(self, "backlog") or not self.backlog.nonempty():
+            return None
+
+        csi_key = self.genericconfig.get("preamble_format")
+
+        try:
+            results = self.backlog.get_multiple([csi_key, *additional_keys])
+        except ValueError:
+            print(f"Requested CSI key {csi_key} not in backlog")
+            return None
+
+        csi_backlog = results[0]
+
+        # Interpolate DC subcarrier gap for HT formats
+        if csi_key == "ht40":
+            espargos.util.interpolate_ht40ltf_gap(csi_backlog)
+        elif csi_key == "ht20":
+            espargos.util.interpolate_ht20ltf_gap(csi_backlog)
+
+        # Reject data containing NaN values
+        if np.any(np.isnan(csi_backlog)):
+            return None
+
+        if additional_keys:
+            return tuple(results)
+        return csi_backlog
 
     def _add_argparse_arguments(self, parser):
         super()._add_argparse_arguments(parser)
