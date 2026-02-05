@@ -9,6 +9,7 @@ from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin
 
 from espargos.csi import rfswitch_state_t
 import espargos.constants
+import espargos.util
 import numpy as np
 import argparse
 
@@ -57,31 +58,12 @@ class EspargosDemoPolarization(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppli
         # Scale CSI with RSSI to account for different signal strengths
         # csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
 
-        # The antenna has two feeds (RF switch state can vary per antenna):
-        # - rfswitch_state_t.SENSOR_RFSWITCH_ANTENNA_R
-        # - rfswitch_state_t.SENSOR_RFSWITCH_ANTENNA_L
+        # Separate CSI by feeds
+        csi_by_feed = espargos.util.separate_feeds(csi_backlog, rfswitch_state)  # (D, B, M, N, S, 2)
 
-        # Create masks and expand to include subcarrier dimension for broadcasting
-        # rfswitch_state: (D, B, M, N), csi_backlog: (D, B, M, N, S)
-        mask_R = rfswitch_state == rfswitch_state_t.SENSOR_RFSWITCH_ANTENNA_R  # (D, B, M, N)
-        mask_L = rfswitch_state == rfswitch_state_t.SENSOR_RFSWITCH_ANTENNA_L  # (D, B, M, N)
-
-        mask_R_count = np.sum(mask_R, axis=0)
-        mask_L_count = np.sum(mask_L, axis=0)
-
-        if np.any(mask_R_count == 0) or np.any(mask_L_count == 0):
-            print("Need to receive both R and L feeds to compute polarization")
+        if csi_by_feed is None:
+            print("Must have measurements for both R and L feeds to compute polarization (is RF switch in random mode?)")
             return
-
-        csi_R = csi_backlog * mask_R[..., np.newaxis]
-        csi_L = csi_backlog * mask_L[..., np.newaxis]
-
-        # Scale CSI to account for different number of samples per feed
-        csi_R *= csi_backlog.shape[0] / mask_R_count[..., np.newaxis]
-        csi_L *= csi_backlog.shape[0] / mask_L_count[..., np.newaxis]
-
-        # Separate CSI by feed using element-wise multiplication (zeros where mask is False)
-        csi_by_feed = np.stack([csi_R, csi_L], axis=-1)  # (D, B, M, N, S, 2)
 
         # Move subcarrier axis to the very front for covariance computation
         csi_by_feed = np.moveaxis(csi_by_feed, -2, 0)  # (S, D, B, M, N, 2)
