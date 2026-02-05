@@ -197,93 +197,114 @@ Common.ESPARGOSApplication {
 
                     }
 
+                    // Spacer item to keep some distance to the bottom of the window
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 80
+                        color: "transparent"
+                        visible: true
+                    }
+
                 }
 
                 // Right two-thirds: polarization ellipse visualization
-                Item {
-                    id: circleContainer
-
-                    // Store ellipse points and rotation direction from backend
-                    property var ellipsePoints: []
-                    property int rotationDirection: 0 // 1=CCW, -1=CW, 0=linear
-
+                ColumnLayout {
                     Layout.fillHeight: true
                     Layout.fillWidth: true
                     Layout.preferredWidth: 2
 
-                    Canvas {
-                        id: polarizationCanvas
+                    Item {
+                        id: circleContainer
 
-                        width: Math.min(parent.width, parent.height) * 0.95
-                        height: width
-                        anchors.centerIn: parent
-                        onPaint: {
-                            var ctx = getContext("2d");
-                            ctx.reset();
-                            var centerX = width / 2;
-                            var centerY = height / 2;
-                            var scale = width / 2 * 0.9; // Leave some margin
-                            // Draw reference circle (unit circle)
-                            ctx.strokeStyle = "#444444";
-                            ctx.lineWidth = 1;
-                            ctx.beginPath();
-                            ctx.arc(centerX, centerY, scale, 0, 2 * Math.PI);
-                            ctx.stroke();
-                            // Draw axes
-                            ctx.strokeStyle = "#666666";
-                            ctx.lineWidth = 1;
-                            ctx.beginPath();
-                            ctx.moveTo(centerX - scale, centerY);
-                            ctx.lineTo(centerX + scale, centerY);
-                            ctx.moveTo(centerX, centerY - scale);
-                            ctx.lineTo(centerX, centerY + scale);
-                            ctx.stroke();
-                            // Draw polarization ellipse
-                            var points = circleContainer.ellipsePoints;
-                            var rotDir = circleContainer.rotationDirection;
-                            if (points.length > 0) {
-                                ctx.strokeStyle = "#ffffff";
-                                ctx.lineWidth = 3;
+                        // Store ellipse points and rotation direction from backend
+                        property var ellipsePoints: []
+                        property int rotationDirection: 0 // 1=CCW, -1=CW, 0=linear
+
+                        Layout.fillHeight: true
+                        Layout.fillWidth: true
+
+                        Canvas {
+                            id: polarizationCanvas
+
+                            width: Math.min(parent.width, parent.height) * 0.95
+                            height: width
+                            anchors.centerIn: parent
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.reset();
+                                var centerX = width / 2;
+                                var centerY = height / 2;
+                                var scale = width / 2 * 0.9; // Leave some margin
+                                // Draw reference circle (unit circle)
+                                ctx.strokeStyle = "#444444";
+                                ctx.lineWidth = 1;
                                 ctx.beginPath();
-                                ctx.moveTo(centerX + points[0][0] * scale, centerY - points[0][1] * scale);
-                                for (var i = 1; i < points.length; i++) {
-                                    ctx.lineTo(centerX + points[i][0] * scale, centerY - points[i][1] * scale);
-                                }
-                                ctx.closePath();
+                                ctx.arc(centerX, centerY, scale, 0, 2 * Math.PI);
                                 ctx.stroke();
-                                // Draw arrow to indicate rotation direction (if not linear)
-                                if (rotDir !== 0 && points.length > 10) {
-                                    // Pick a point along the ellipse (around 25% of the way)
-                                    var arrowIdx = Math.floor(points.length / 4);
-                                    var arrowX = centerX + points[arrowIdx][0] * scale;
-                                    var arrowY = centerY - points[arrowIdx][1] * scale;
-                                    // Compute tangent direction from adjacent points
-                                    var prevIdx = arrowIdx - 1;
-                                    var nextIdx = arrowIdx + 1;
-                                    var dx = (points[nextIdx][0] - points[prevIdx][0]) * scale;
-                                    var dy = -(points[nextIdx][1] - points[prevIdx][1]) * scale; // Flip Y
-                                    // Normalize tangent
-                                    var tangentLen = Math.sqrt(dx * dx + dy * dy);
-                                    if (tangentLen > 0) {
-                                        dx = dx / tangentLen;
-                                        dy = dy / tangentLen;
-                                    }
-                                    // Arrow size
-                                    var arrowSize = 15;
-                                    // Perpendicular to tangent
-                                    var perpX = -dy;
-                                    var perpY = dx;
-                                    // Draw arrowhead
-                                    ctx.fillStyle = "#ffffff";
+                                // Draw axes
+                                ctx.strokeStyle = "#666666";
+                                ctx.lineWidth = 1;
+                                ctx.beginPath();
+                                ctx.moveTo(centerX - scale, centerY);
+                                ctx.lineTo(centerX + scale, centerY);
+                                ctx.moveTo(centerX, centerY - scale);
+                                ctx.lineTo(centerX, centerY + scale);
+                                ctx.stroke();
+                                // Draw polarization ellipse
+                                var points = circleContainer.ellipsePoints;
+                                var rotDir = circleContainer.rotationDirection;
+                                if (points.length > 0) {
+                                    ctx.strokeStyle = "#ffffff";
+                                    ctx.lineWidth = 3;
                                     ctx.beginPath();
-                                    ctx.moveTo(arrowX + dx * arrowSize, arrowY + dy * arrowSize);
-                                    ctx.lineTo(arrowX - dx * arrowSize * 0.5 + perpX * arrowSize * 0.5, arrowY - dy * arrowSize * 0.5 + perpY * arrowSize * 0.5);
-                                    ctx.lineTo(arrowX - dx * arrowSize * 0.5 - perpX * arrowSize * 0.5, arrowY - dy * arrowSize * 0.5 - perpY * arrowSize * 0.5);
+                                    ctx.moveTo(centerX + points[0][0] * scale, centerY - points[0][1] * scale);
+                                    for (var i = 1; i < points.length; i++) {
+                                        ctx.lineTo(centerX + points[i][0] * scale, centerY - points[i][1] * scale);
+                                    }
                                     ctx.closePath();
-                                    ctx.fill();
+                                    ctx.stroke();
+                                    // Draw arrow to indicate rotation direction (if not linear)
+                                    if (rotDir !== 0 && points.length > 10) {
+                                        // Pick a point along the ellipse (around 25% of the way)
+                                        var arrowIdx = Math.floor(points.length / 4);
+                                        var arrowX = centerX + points[arrowIdx][0] * scale;
+                                        var arrowY = centerY - points[arrowIdx][1] * scale;
+                                        // Compute tangent direction from adjacent points
+                                        var prevIdx = arrowIdx - 1;
+                                        var nextIdx = arrowIdx + 1;
+                                        var dx = (points[nextIdx][0] - points[prevIdx][0]) * scale;
+                                        var dy = -(points[nextIdx][1] - points[prevIdx][1]) * scale; // Flip Y
+                                        // Normalize tangent
+                                        var tangentLen = Math.sqrt(dx * dx + dy * dy);
+                                        if (tangentLen > 0) {
+                                            dx = dx / tangentLen;
+                                            dy = dy / tangentLen;
+                                        }
+                                        // Arrow size
+                                        var arrowSize = 15;
+                                        // Perpendicular to tangent
+                                        var perpX = -dy;
+                                        var perpY = dx;
+                                        // Draw arrowhead
+                                        ctx.fillStyle = "#ffffff";
+                                        ctx.beginPath();
+                                        ctx.moveTo(arrowX + dx * arrowSize, arrowY + dy * arrowSize);
+                                        ctx.lineTo(arrowX - dx * arrowSize * 0.5 + perpX * arrowSize * 0.5, arrowY - dy * arrowSize * 0.5 + perpY * arrowSize * 0.5);
+                                        ctx.lineTo(arrowX - dx * arrowSize * 0.5 - perpX * arrowSize * 0.5, arrowY - dy * arrowSize * 0.5 - perpY * arrowSize * 0.5);
+                                        ctx.closePath();
+                                        ctx.fill();
+                                    }
                                 }
                             }
                         }
+
+                    }
+
+                    Label {
+                        text: "For this demo, disable the AGC (use manual gain) and choose RF switch state \"Random\""
+                        color: textColor
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.alignment: Qt.AlignHCenter
                     }
 
                 }
