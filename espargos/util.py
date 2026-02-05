@@ -449,29 +449,26 @@ def parse_combined_array_config(config_dict: dict):
     )
 
 
-def build_combined_array_csi(indexing_matrix, input_csi):
+def build_combined_array_data(indexing_matrix, input_data):
     """
-    Build the combined array CSI data from the CSI data of the subarrays.
+    Helper for combined array setups. Re-structures data from multiple subarrays into a single large array, using the provided indexing matrix.
+    Typically, the input data is the CSI data of the subarrays, but it can also be anything else with shape (datapoints, boards, rows, columns, ...).
 
     :param indexing_matrix: The indexing matrix to map the CSI data of the subarrays to the CSI data of the large array.
-    :param input_csi: The CSI data of the subarrays. Complex-valued NumPy array with shape (datapoints, boards, rows, columns, subcarriers).
+    :param input_data: The data of the subarrays. Complex-valued NumPy array with shape (datapoints, boards, rows, columns, ...).
 
-    :return: The combined array CSI data. Complex-valued NumPy array with shape (datapoints, rows, columns, subcarriers).
+    :return: The combined array data. Complex-valued NumPy array with shape (datapoints, rows, columns, subcarriers).
     """
-    # input_csi has shape (datapoint, board, row, column, subcarrier)
-    csi_by_array_row_col = np.moveaxis(input_csi, 0, -1)
-    csi_ht40_by_antenna = np.reshape(
-        csi_by_array_row_col,
-        (
-            csi_by_array_row_col.shape[0] * csi_by_array_row_col.shape[1] * csi_by_array_row_col.shape[2],
-            csi_by_array_row_col.shape[3],
-            csi_by_array_row_col.shape[4],
-        ),
+    # input_data has shape (datapoint, board, row, column, subcarrier)
+    data_by_array_row_col = np.moveaxis(input_data, 0, -1)
+    data_by_antenna = np.reshape(
+        data_by_array_row_col,
+        (data_by_array_row_col.shape[0] * data_by_array_row_col.shape[1] * data_by_array_row_col.shape[2],) + data_by_array_row_col.shape[3:],
     )
-    csi_combined = csi_ht40_by_antenna[indexing_matrix]
-    csi_combined = np.moveaxis(csi_combined, -1, 0)
+    combined_data = data_by_antenna[indexing_matrix]
+    combined_data = np.moveaxis(combined_data, -1, 0)
 
-    return csi_combined
+    return combined_data
 
 
 def extract_lltf_subcarriers_from_ht40(csi_ht40: np.ndarray, secondary_channel_relative: int):

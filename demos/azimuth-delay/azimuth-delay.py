@@ -96,7 +96,7 @@ class AzimuthDelayApp(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ES
         subcarriers = csi.shape[-1]
 
         # Build combined array CSI
-        csi_largearray = espargos.util.build_combined_array_csi(self.indexing_matrix, csi)
+        csi_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, csi)
         # csi_largearray shape: (backlog_depth, n_rows, n_cols, subcarriers)
 
         # Sum over rows (beamform vertically)

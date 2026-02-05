@@ -231,6 +231,26 @@ Common.ESPARGOSApplication {
 				visible: beamformerType.currentIndex === 0
 			}
 
+			// polarization visualization only makes sense for FFT beamformer
+			Label { text: "Polarization"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 }
+			ComboBox {
+				id: showPolarization
+				property string configKey: "beamformer.polarization_mode"
+				property string configProp: "currentValue"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+				model: [
+					{ value: "ignore", text: "Ignore"},
+					{ value: "incorporate", text: "Incorporate"},
+					{ value: "show", text: "Show"},
+				]
+				textRole: "text"
+				valueRole: "value"
+				currentValue: "ignore"
+				visible: beamformerType.currentIndex === 0
+			}
+
 			Label { text: "Max Delay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && colorizeDelay.currentIndex === 1 }
 			Slider {
 				id: maxDelay

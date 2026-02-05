@@ -44,6 +44,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         "beamformer": {
             "type": "FFT",
             "colorize_delay": False,
+            "polarization_mode": "show",
             "max_delay": 0.2,
             "max_age": 0.0,
             "resolution_azimuth": 64,
@@ -136,12 +137,13 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
             return
 
         try:
-            csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog = self.backlog.get_multiple(
+            csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog, rfswitch_state_backlog = self.backlog.get_multiple(
                 [
                     self.genericconfig.get("preamble_format"),
                     "rssi",
                     "host_timestamp",
                     "mac",
+                    "rfswitch_state",
                 ]
             )
         except ValueError as e:
@@ -200,8 +202,10 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
 
         # Build combined array CSI data and add fake array index dimension
-        csi_combined = espargos.util.build_combined_array_csi(self.indexing_matrix, csi_backlog)
-        csi_combined = csi_combined[:, np.newaxis, :, :, :]
+        csi_combined = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)
+        csi_combined = csi_combined[:, np.newaxis]
+        rfswitch_state_combined = espargos.util.build_combined_array_data(self.indexing_matrix, rfswitch_state_backlog)
+        rfswitch_state_combined = rfswitch_state_combined[:, np.newaxis]
 
         # Get rid of gap in CSI data around DC
         match self.genericconfig.get("preamble_format"):
@@ -234,48 +238,85 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
 
             # Option 2: Beamspace via FFT
             case "FFT":
+                # csi_combined has shape (datapoints, boards, row, column, subcarriers)
+                if self.appconfig.get("beamformer", "polarization_mode") != "ignore":
+                    # Separate CSI by feed
+                    csi_combined = espargos.util.separate_feeds(csi_combined, rfswitch_state_combined)  # (D, B, M, N, S, 2)
+                    if csi_combined is None:
+                        print("Must have measurements for both R and L feeds for polarization visualization")
+                        return
+
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
                 # This assumes a constant channel except for CFO-induced phase rotations and noise
-                csi_combined = np.asarray([espargos.util.csi_interp_iterative(csi_combined, iterations=5)])
+                csi_combined = espargos.util.csi_interp_iterative(csi_combined, iterations=5)
+
+                # Now csi_combined can have two possible shapes:
+                # * Without polarization: (B=1, M, N, S)
+                # * With polarization: (B=1, M, N, S, 2)
 
                 # Exploit time-domain sparsity to reduce number of 2D FFTs from antenna space to beamspace
                 csi_tdomain = np.fft.ifftshift(
-                    np.fft.ifft(np.fft.fftshift(csi_combined, axes=-1), axis=-1),
-                    axes=-1,
+                    np.fft.ifft(np.fft.fftshift(csi_combined, axes=3), axis=3),
+                    axes=3,
                 )
-                tap_count = csi_tdomain.shape[-1]
-                csi_tdomain_cut = csi_tdomain[..., tap_count // 2 + 1 - 16 : tap_count // 2 + 1 + 17]
+                tap_count = csi_tdomain.shape[3]
+                # csi_tdomain_cut = csi_tdomain[..., tap_count // 2 + 1 - 16 : tap_count // 2 + 1 + 17]
+                csi_tdomain_cut = csi_tdomain.take(range(tap_count // 2 + 1 - 16, tap_count // 2 + 1 + 17), axis=3)
                 csi_fdomain_cut = np.fft.ifftshift(
-                    np.fft.fft(np.fft.fftshift(csi_tdomain_cut, axes=-1), axis=-1),
-                    axes=-1,
+                    np.fft.fft(np.fft.fftshift(csi_tdomain_cut, axes=3), axis=3),
+                    axes=3,
                 )
 
                 # Here, we only go to DFT beamspace, not directly azimuth / elevation space,
                 # but the shader can take care of fixing the distortion.
-                # csi_zeropadded has shape (datapoints, azimuth / row, elevation / column, subcarriers)
+                # csi_zeropadded either has shape
+                # * (azimuth / row, elevation / column, subcarriers) without polarization or
+                # * (azimuth / row, elevation / column, subcarriers, 2) with polarization
                 csi_zeropadded = np.zeros(
-                    (
-                        csi_fdomain_cut.shape[0],
-                        self.appconfig.get("beamformer", "resolution_azimuth"),
-                        self.appconfig.get("beamformer", "resolution_elevation"),
-                        csi_fdomain_cut.shape[-1],
-                    ),
+                    (self.appconfig.get("beamformer", "resolution_azimuth"), self.appconfig.get("beamformer", "resolution_elevation")) + csi_fdomain_cut.shape[3:],
                     dtype=csi_fdomain_cut.dtype,
                 )
-                real_rows_half = csi_fdomain_cut.shape[2] // 2
-                real_cols_half = csi_fdomain_cut.shape[3] // 2
-                zeropadded_rows_half = csi_zeropadded.shape[2] // 2
-                zeropadded_cols_half = csi_zeropadded.shape[1] // 2
+                real_rows_half = csi_fdomain_cut.shape[1] // 2
+                real_cols_half = csi_fdomain_cut.shape[2] // 2
+                zeropadded_rows_half = csi_zeropadded.shape[1] // 2
+                zeropadded_cols_half = csi_zeropadded.shape[0] // 2
                 csi_zeropadded[
-                    :,
                     zeropadded_cols_half - real_cols_half : zeropadded_cols_half + real_cols_half,
                     zeropadded_rows_half - real_rows_half : zeropadded_rows_half + real_rows_half,
                     :,
-                ] = np.swapaxes(csi_fdomain_cut[:, 0, :, :, :], 1, 2)
-                csi_zeropadded = np.fft.ifftshift(csi_zeropadded, axes=(1, 2))
-                beam_frequency_space = np.fft.fft2(csi_zeropadded, axes=(1, 2))
-                beam_frequency_space = np.fft.fftshift(beam_frequency_space, axes=(1, 2))
-                self.beamspace_power = np.mean(np.abs(beam_frequency_space) ** 2, axis=(0, 3))
+                ] = np.swapaxes(csi_fdomain_cut[0, ...], 0, 1)
+                csi_zeropadded = np.fft.ifftshift(csi_zeropadded, axes=(0, 1))
+                beam_frequency_space = np.fft.fft2(csi_zeropadded, axes=(0, 1))
+                beam_frequency_space = np.fft.fftshift(beam_frequency_space, axes=(0, 1))
+
+                if self.appconfig.get("beamformer", "polarization_mode") == "ignore":
+                    # beam_frequency_space has shape (azimuth, elevation, subcarriers, 2)
+                    # Compute total power over both polarizations
+                    self.beamspace_power = np.mean(np.abs(beam_frequency_space) ** 2, axis=-1)
+                else:
+                    # beam_frequency_space has shape (azimuth, elevation, subcarriers, 2)
+                    # Separate polarizations into V/H components using antenna Jones matrix
+                    beam_frequency_polarization = np.einsum("aesf,fp->aesp", beam_frequency_space, np.linalg.inv(espargos.constants.ANTENNA_JONES_MATRIX))
+
+                    # For power (brightness) of visualization: Use total power over both polarizations
+                    self.beamspace_power = np.mean(np.abs(beam_frequency_polarization) ** 2, axis=(-2, -1))
+
+                    # We are not either in polarization_mode "show" or "incorporate"
+                    # For delay (color hue) of visualization:
+                    # Move polarization axis to front, treating each as an independent observation
+                    # The delay computation sums phase derivatives over axis 0, so both polarizations
+                    # contribute their delay estimates constructively (no destructive interference)
+                    beam_frequency_space = np.moveaxis(beam_frequency_space, -1, 0)
+
+                    if self.appconfig.get("beamformer", "polarization_mode") == "show":
+                        # Normalize beam_frequency_polarization so that power of both polarizations combined (last axis) is always 1
+                        beam_frequency_polarization_norm = beam_frequency_polarization / (np.sqrt(np.sum(np.abs(beam_frequency_polarization) ** 2, axis=-1, keepdims=True)) + 1e-6)
+                        self.polarization_v_re = beam_frequency_polarization_norm[..., 0].real
+                        self.polarization_v_im = beam_frequency_polarization_norm[..., 0].imag
+                        self.polarization_h_re = beam_frequency_polarization_norm[..., 1].real
+                        self.polarization_h_im = beam_frequency_polarization_norm[..., 1].imag
+
+                        print("Warning: Polarization show mode not yet implemented")
 
             case "Bartlett":
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
@@ -321,10 +362,17 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                 if self.appconfig.get("beamformer", "type") in ["MUSIC", "MVDR"]:
                     raise NotImplementedError("Delay colorization not supported in MUSIC or MVDR mode")
 
+                # Ensure beam_frequency_space is 4D: (observations, azimuth, elevation, subcarriers)
+                # For FFT with polarization_mode="show", it's already (2, az, el, sc) after moveaxis
+                # For FFT with polarization_mode="ignore", it's (az, el, sc) - add fake axis
+                # For Bartlett, it's (datapoints, az, el, sc)
+                if beam_frequency_space.ndim == 3:
+                    beam_frequency_space = beam_frequency_space[np.newaxis, ...]
+
                 # Compute beam powers and delay. Beam power is value, delay is hue.
                 beamspace_weighted_delay_phase = np.sum(
                     beam_frequency_space[..., 1:] * np.conj(beam_frequency_space[..., :-1]),
-                    axis=(0, 3),
+                    axis=(0, -1),
                 )
                 delay_by_beam = np.angle(beamspace_weighted_delay_phase)
                 mean_delay = np.angle(np.sum(beamspace_weighted_delay_phase))

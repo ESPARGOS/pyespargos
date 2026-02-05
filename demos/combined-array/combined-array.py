@@ -41,7 +41,7 @@ class EspargosDemoCombinedArray(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         if (csi_backlog := self.get_backlog_csi()) is None:
             return
 
-        csi_largearray = espargos.util.build_combined_array_csi(self.indexing_matrix, csi_backlog)
+        csi_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)
 
         R = np.einsum("dnis,dmjs->nimj", csi_largearray, np.conj(csi_largearray))
         R = np.reshape(R, (R.shape[0] * R.shape[1], R.shape[2] * R.shape[3]))

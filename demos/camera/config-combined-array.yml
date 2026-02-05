@@ -7,14 +7,14 @@ app:
     format: null
     flip: False
   beamformer:
-    type: "MUSIC"
+    type: "FFT"
 
 generic:
   preamble_format: "lltf"
 
 pool:
   channel: 5
-  rf_switch: 2
+  rf_switch: 4
 
 backlog:
   size: 20
