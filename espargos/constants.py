@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import numpy as np
+
 ANTENNAS_PER_ROW = 4
 "Number of antennas per row / per SPI controller on the board"
 
@@ -23,3 +25,14 @@ WIFI_CHANNEL_SPACING = 5e6
 
 WIFI_SUBCARRIER_SPACING = 312.5e3
 "Subcarrier spacing of WiFi (in Hz)"
+
+ANTENNA_JONES_MATRIX_SIMPLE = np.sqrt(2) / 2 * np.asarray([[1, -1], [1, 1]])
+"Simple Jones matrix to convert from linear (H/V) to feed (R/L) polarization basis"
+
+ANTENNA_JONES_CROSSPOL_MATRIX = np.asarray([[0.33, 0.05 + 0.05j], [0.05 + 0.05j, 0.33]])
+ANTENNA_JONES_CROSSPOL_MATRIX = ANTENNA_JONES_CROSSPOL_MATRIX / np.linalg.norm(ANTENNA_JONES_CROSSPOL_MATRIX, ord="fro")
+"Empirically determined cross-polarization component (due to intentional elliptical antenna polarization) of the Jones matrix"
+
+# Jones matrix is only a rough approximation for now
+ANTENNA_JONES_MATRIX = ANTENNA_JONES_MATRIX_SIMPLE @ ANTENNA_JONES_CROSSPOL_MATRIX  # np.sqrt(2) / 2 * (0.8 * np.asarray([[1, -1], [1, 1]]) - 0.1j * np.asarray([[1, 1], [1, -1]]))
+"Jones matrix to convert from linear (H/V) to feed (R/L) polarization basis"

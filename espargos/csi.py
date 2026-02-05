@@ -224,7 +224,6 @@ class serialized_csi_v1_t(ctypes.LittleEndianStructure):
 ########################################################################
 # C Structures for Espressif PHY version 3 (e.g., ESP32-C5, ESP32-C61) #
 ########################################################################
-# TODO: This should also contain AGC and FFT gain info
 class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
     """
     A ctypes structure representing the `wifi_pkt_rx_ctrl_t` as provided by the ESP32.
