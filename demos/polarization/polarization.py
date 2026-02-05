@@ -21,6 +21,9 @@ class EspargosDemoPolarization(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppli
     # Each points list contains [[i1, q1], [i2, q2], ...]
     updateConstellation = PyQt6.QtCore.pyqtSignal(list, list, list, list, float)
 
+    # Signal to update polarization ellipse: list of [x, y] points tracing the ellipse, and rotation direction (1=CCW/LHCP, -1=CW/RHCP, 0=linear)
+    updatePolarizationEllipse = PyQt6.QtCore.pyqtSignal(list, int)
+
     DEFAULT_CONFIG = {
         "crosspol_compensation": True,
         "show_mean": True,
@@ -161,6 +164,42 @@ class EspargosDemoPolarization(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppli
 
         # Emit constellation data to QML
         self.updateConstellation.emit(feed_L_list, feed_R_list, linear_H_list, linear_V_list, float(self._smoothed_axis_scale))
+
+        # Compute mean H and V components of polarization for displaying polarization as ellipse
+        mean_H = np.mean(linear_H_points)
+        mean_V = np.mean(linear_V_points)
+
+        # Compute polarization ellipse by sampling the parametric curve:
+        # x(t) = Re(mean_H * e^(i*t)), y(t) = Re(mean_V * e^(i*t))
+        # This traces out the polarization ellipse as t goes from 0 to 2*pi
+        # Negate t to fix the rotation direction (match physical antenna rotation)
+        t = np.linspace(0, 2 * np.pi, 100)
+        ellipse_x = np.real(mean_H * np.exp(1j * t))
+        ellipse_y = np.real(mean_V * np.exp(1j * t))
+
+        # Normalize by the maximum radius of the ellipse (semi-major axis)
+        # This ensures the largest dimension always matches the reference circle
+        ellipse_radius = np.sqrt(ellipse_x**2 + ellipse_y**2)
+        max_radius = np.max(ellipse_radius)
+        if max_radius > 0:
+            ellipse_x = ellipse_x / max_radius
+            ellipse_y = ellipse_y / max_radius
+
+        # Determine rotation direction (handedness) from the phase relationship
+        # Im(mean_H * conj(mean_V)) > 0 means V leads H by 90° (LHCP/CCW when looking at source)
+        # Im(mean_H * conj(mean_V)) < 0 means H leads V by 90° (RHCP/CW when looking at source)
+        cross_product = np.imag(mean_H * np.conj(mean_V))
+        threshold = 0.1 * np.abs(mean_H) * np.abs(mean_V)  # Threshold for considering it linear
+        if cross_product > threshold:
+            rotation_direction = 1  # CCW / LHCP
+        elif cross_product < -threshold:
+            rotation_direction = -1  # CW / RHCP
+        else:
+            rotation_direction = 0  # Linear (no rotation)
+
+        # Convert to list of [x, y] points for QML
+        ellipse_points = [[float(x), float(y)] for x, y in zip(ellipse_x, ellipse_y)]
+        self.updatePolarizationEllipse.emit(ellipse_points, int(rotation_direction))
 
 
 app = EspargosDemoPolarization(sys.argv)
