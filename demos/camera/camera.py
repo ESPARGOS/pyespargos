@@ -23,6 +23,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     rssiChanged = PyQt6.QtCore.pyqtSignal(float)
     activeAntennasChanged = PyQt6.QtCore.pyqtSignal(float)
     beamspacePowerImagedataChanged = PyQt6.QtCore.pyqtSignal(list)
+    polarizationImagedataChanged = PyQt6.QtCore.pyqtSignal(list)
     recentMacsChanged = PyQt6.QtCore.pyqtSignal(list)
     cameraFlipChanged = PyQt6.QtCore.pyqtSignal()
     rawBeamspaceChanged = PyQt6.QtCore.pyqtSignal()
@@ -35,6 +36,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     DEFAULT_CONFIG = {
         "receiver": {"mac_list_enabled": False},
         "camera": {
+            "enable": True,
             "flip": False,
             "format": None,  # will be populated by app, can take values like "1920x1080 @ 30.00 FPS",
             "device": None,  # will be populated by app, can take values like "/dev/video0"
@@ -77,6 +79,12 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
             default=0.2,
             help="Time after which CSI cluster is considered complete even if not all antennas have provided data. Set to zero to disable processing incomplete clusters.",
         )
+        parser.add_argument(
+            "--no-camera",
+            default=False,
+            help="Do not actually use camera, only show spatial spectrum visualization",
+            action="store_true",
+        )
         super().__init__(
             argv,
             argparse_parent=parser,
@@ -90,21 +98,28 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         # Initialize combined array setup
         self.initialize_pool(backlog_cb_predicate=self._cb_predicate)
 
-        # Camera setup
-        self.videocamera = videocamera.VideoCamera(
-            self.appconfig.get("camera", "device"),
-            self.appconfig.get("camera", "format"),
-        )
+        # Parse no-camera command line argument, overrides initial app config
+        if self.args.no_camera:
+            self.appconfig.set({"camera": {"enable": False}})
 
-        # Let UI know about currently selected camera device and format
-        self.appconfig.set(
-            {
-                "camera": {
-                    "device": self.videocamera.getDevice(),
-                    "format": self.videocamera.getFormat(),
+        # Camera setup (if enabled in config)
+        if self.appconfig.get("camera", "enable"):
+            self.videocamera = videocamera.VideoCamera(
+                self.appconfig.get("camera", "device"),
+                self.appconfig.get("camera", "format"),
+            )
+
+            # Let UI know about currently selected camera device and format
+            self.appconfig.set(
+                {
+                    "camera": {
+                        "device": self.videocamera.getDevice(),
+                        "format": self.videocamera.getFormat(),
+                    }
                 }
-            }
-        )
+            )
+        else:
+            self.videocamera = videocamera.DummyVideoCamera()
 
         # Pre-compute 2d steering vectors (array manifold)
         self._update_steering_vectors()
@@ -294,6 +309,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                     # Compute total power over both polarizations
                     self.beamspace_power = np.mean(np.abs(beam_frequency_space) ** 2, axis=-1)
                 else:
+                    # We are now either in polarization_mode "show" or "incorporate"
                     # beam_frequency_space has shape (azimuth, elevation, subcarriers, 2)
                     # Separate polarizations into V/H components using antenna Jones matrix
                     beam_frequency_polarization = np.einsum("aesf,fp->aesp", beam_frequency_space, np.linalg.inv(espargos.constants.ANTENNA_JONES_MATRIX))
@@ -301,7 +317,6 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                     # For power (brightness) of visualization: Use total power over both polarizations
                     self.beamspace_power = np.mean(np.abs(beam_frequency_polarization) ** 2, axis=(-2, -1))
 
-                    # We are not either in polarization_mode "show" or "incorporate"
                     # For delay (color hue) of visualization:
                     # Move polarization axis to front, treating each as an independent observation
                     # The delay computation sums phase derivatives over axis 0, so both polarizations
@@ -309,14 +324,67 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                     beam_frequency_space = np.moveaxis(beam_frequency_space, -1, 0)
 
                     if self.appconfig.get("beamformer", "polarization_mode") == "show":
-                        # Normalize beam_frequency_polarization so that power of both polarizations combined (last axis) is always 1
-                        beam_frequency_polarization_norm = beam_frequency_polarization / (np.sqrt(np.sum(np.abs(beam_frequency_polarization) ** 2, axis=-1, keepdims=True)) + 1e-6)
-                        self.polarization_v_re = beam_frequency_polarization_norm[..., 0].real
-                        self.polarization_v_im = beam_frequency_polarization_norm[..., 0].imag
-                        self.polarization_h_re = beam_frequency_polarization_norm[..., 1].real
-                        self.polarization_h_im = beam_frequency_polarization_norm[..., 1].imag
+                        # Combine polarization information of all subcarriers into a single polarization estimate per beam
+                        # using the polarization coherence matrix (2x2 Hermitian matrix per beam, summed over subcarriers).
+                        # Delay across subcarriers cancels out because both polarization components share the same propagation delay.
+                        # The dominant eigenvector of J gives the best polarization estimate.
+                        # beam_frequency_polarization: (azimuth, elevation, subcarriers, 2)
+                        # J: (azimuth, elevation, 2, 2)
+                        J = np.einsum("aesp,aesq->aepq", beam_frequency_polarization, np.conj(beam_frequency_polarization))
+                        eigenvalues, eigenvectors = np.linalg.eig(J)
+                        max_eigenvalue_indices = np.argmax(eigenvalues, axis=-1)
+                        polarization_estimate = eigenvectors[np.arange(eigenvectors.shape[0])[:, np.newaxis], np.arange(eigenvectors.shape[1]), max_eigenvalue_indices]
 
-                        print("Warning: Polarization show mode not yet implemented")
+                        # debugging: just grab subcarrier from middle of band
+                        #polarization_estimate = beam_frequency_polarization[:, :, beam_frequency_polarization.shape[2] // 2, :]
+
+                        # Normalize so that total power is 1
+                        polarization_estimate = polarization_estimate / (np.linalg.norm(polarization_estimate, axis=-1, keepdims=True) + 1e-12)
+
+                        # inv(ANTENNA_JONES_MATRIX) converts from R/L feed basis to H/V linear basis,
+                        # so index 0 = H and index 1 = V
+
+                        # Normalize global phase so that V component (index 1) is real and non-negative.
+                        # This means V only needs one real channel, freeing the alpha channel.
+                        v_phase = np.angle(polarization_estimate[..., 1])
+                        polarization_estimate = polarization_estimate * np.exp(-1j * v_phase)[..., np.newaxis]
+                        # Flip sign if V ended up negative (angle was pi)
+                        polarization_estimate = np.where(
+                            polarization_estimate[..., 1:2].real < 0,
+                            -polarization_estimate,
+                            polarization_estimate,
+                        )
+
+                        v_amplitude = polarization_estimate[..., 1].real  # |V|, in [0, 1]
+                        h_complex = polarization_estimate[..., 0]          # complex H
+
+                        # Encode as RGBA texture:
+                        # R = V amplitude [0,1] (V is real after phase normalization)
+                        # G = H real part [-1,1] -> [0,1]
+                        # B = H imag part [-1,1] -> [0,1]
+                        # A = 255 (always opaque, avoids premultiplied alpha corruption)
+                        self.polarization_imagedata = np.zeros(self.beamspace_power.size * 4, dtype=np.uint8)
+                        self.polarization_imagedata[0::4] = np.clip(np.swapaxes(v_amplitude, 0, 1).ravel(), 0, 1) * 255
+                        self.polarization_imagedata[1::4] = np.clip(np.swapaxes((h_complex.real + 1.0) / 2.0, 0, 1).ravel(), 0, 1) * 255
+                        self.polarization_imagedata[2::4] = np.clip(np.swapaxes((h_complex.imag + 1.0) / 2.0, 0, 1).ravel(), 0, 1) * 255
+                        self.polarization_imagedata[3::4] = 255
+                        self.polarizationImagedataChanged.emit(self.polarization_imagedata.tolist())
+
+                        # TODO
+                        pol_ratio = np.swapaxes(np.abs(polarization_estimate[:, :, 0]) / np.abs(polarization_estimate[:, :, 1]), 0, 1).ravel()
+                        #phase_ratio = np.swapaxes(np.angle(polarization_estimate[:, :, 0]) - np.angle(polarization_estimate[:, :, 1]), 0, 1).ravel()
+                        #print(phase_ratio)
+                        power_visualization_beamspace = self.beamspace_power**3
+                        relative_power = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-6)
+                        self.beamspace_power_imagedata = np.zeros(4 * self.beamspace_power.size, dtype=np.uint8)
+                        power_color = np.clip(np.swapaxes(relative_power, 0, 1).ravel(), 0, 1) * 255
+                        self.beamspace_power_imagedata[0::4] = np.where((1/pol_ratio<1), power_color * (1/pol_ratio), power_color)
+                        self.beamspace_power_imagedata[1::4] = np.where(pol_ratio < 1, power_color * pol_ratio, power_color)
+                        self.beamspace_power_imagedata[3::4] = 255
+
+                        self.beamspacePowerImagedataChanged.emit(self.beamspace_power_imagedata.tolist())
+                        return
+
 
             case "Bartlett":
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints

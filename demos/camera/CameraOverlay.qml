@@ -24,8 +24,7 @@ Rectangle {
 		anchors.verticalCenter: videoOutput.verticalCenter
 		anchors.horizontalCenter: videoOutput.horizontalCenter
 
-		// This is the source for the beamspace canvas.
-		// It is unused if MUSIC mode is enabled.
+		// This is the source for the beamspace canvas (power + delay colorization).
 		property Canvas spatialSpectrumCanvas: Canvas {
 			id: spatialSpectrumCanvas
 			width: backend.resolutionAzimuth
@@ -49,8 +48,38 @@ Rectangle {
 			}
 		}
 
+		// This is the source for the polarization canvas (polarization information)
+		property Canvas polarizationCanvas: Canvas {
+			id: polarizationCanvas
+			width: backend.resolutionAzimuth
+			height: backend.resolutionElevation
+
+			property var polarizationImageData: undefined
+			function createPolarizationImageData() {
+				const ctx = polarizationCanvas.getContext("2d");
+				polarizationImageData = ctx.createImageData(width, height);
+			}
+
+			onAvailableChanged: if(available) createPolarizationImageData();
+			onWidthChanged: if(available) createPolarizationImageData();
+			onHeightChanged: if(available) createPolarizationImageData();
+
+			onPaint: {
+				if(polarizationImageData) {
+					const ctx = polarizationCanvas.getContext("2d");
+					ctx.drawImage(polarizationImageData, 0, 0);
+				}
+			}
+		}
+
 		property variant spatialSpectrumCanvasSource: ShaderEffectSource {
 			sourceItem: spatialSpectrumCanvas;
+			hideSource: true
+			smooth: true
+		}
+
+		property variant polarizationCanvasSource: ShaderEffectSource {
+			sourceItem: polarizationCanvas;
 			hideSource: true
 			smooth: true
 		}
@@ -61,10 +90,17 @@ Rectangle {
 
 		vertexShader: "spatialspectrum_vert.qsb"
 
-		property string spaceMode: backend.rawBeamspace
-		property bool rawBeamspace: spaceMode === "Beamspace"
+		property bool rawBeamspace: backend.rawBeamspace === "Beamspace"
 		property bool flip: backend.cameraFlip
 		property vector2d fov: Qt.vector2d(backend.fovAzimuth, backend.fovElevation)
+		property real time: 0
+		NumberAnimation on time {
+			from: 0
+			to: 6.283185307
+			duration: 500
+			loops: Animation.Infinite
+			running: true
+		}
 
 		fragmentShader: "spatialspectrum.qsb"
 
@@ -242,6 +278,17 @@ Rectangle {
 			}
 
 			spatialSpectrumCanvas.requestPaint();
+		}
+
+		function onPolarizationImagedataChanged(polarizationImagedata) {
+			if (polarizationCanvas.polarizationImageData === undefined)
+				polarizationCanvas.createPolarizationImageData();
+			let len = polarizationCanvas.polarizationImageData.data.length;
+			for (let i = 0; i < len; i++) {
+				polarizationCanvas.polarizationImageData.data[i] = polarizationImagedata[i];//(polarizationImagedata[i]).qclamp(0, 255);
+			}
+
+			polarizationCanvas.requestPaint();
 		}
 
 		function onMacListChanged(macList) {

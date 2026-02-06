@@ -81,3 +81,24 @@ class VideoCamera(QCamera):
     def availableFormats(self) -> list[str]:
         formats = self.cameraDevice().videoFormats()
         return [self._format_to_string(fmt) for fmt in formats]
+
+class DummyVideoCamera(QCamera):
+    "Dummy camera, used if camera is disabled to let UI know no camera is available."
+    availableFormatsChanged = PyQt6.QtCore.pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+
+    def setDevice(self, device_str: str):
+        pass
+
+    def setFormat(self, format_str: str):
+        pass
+
+    @PyQt6.QtCore.pyqtProperty(list, constant=True)
+    def availableDevices(self) -> list[str]:
+        return ["No camera available"]
+    
+    @PyQt6.QtCore.pyqtProperty(list, constant=True)
+    def availableFormats(self) -> list[str]:
+        return ["No format available"]

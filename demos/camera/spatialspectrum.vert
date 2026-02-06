@@ -2,8 +2,10 @@
 layout(location = 0) in vec4 qt_Vertex;
 layout(location = 1) in vec2 qt_MultiTexCoord0;
 layout(location = 0) out vec2 qt_TexCoord0;
-layout(location = 1) out vec4 vColor;
+layout(location = 1) out vec4 beamspaceColor;
+layout(location = 2) out vec4 beamspacePolarization;
 layout(binding = 0) uniform sampler2D spatialSpectrumCanvasSource;
+layout(binding = 1) uniform sampler2D polarizationCanvasSource;
 
 layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
@@ -12,6 +14,7 @@ layout(std140, binding = 0) uniform buf {
 	bool rawBeamspace;
 	bool flip;
 	vec2 fov;
+	float time;
 };
 
 // Converts cartesian coordinates of the camera projection into a pair of azimuth and elevation angle (in radians).
@@ -31,7 +34,8 @@ void main() {
 	vec2 angles = cameraPixelToAngles(coord);
 	vec2 textureCoords = rawBeamspace ? coord : (anglesToFFTBeamspace(angles) + 0.5);
 
-	vColor = texture(spatialSpectrumCanvasSource, textureCoords);
+	beamspaceColor = texture(spatialSpectrumCanvasSource, textureCoords);
+	beamspacePolarization = texture(polarizationCanvasSource, textureCoords);
 
     gl_Position = qt_Matrix * qt_Vertex;
     qt_TexCoord0 = qt_MultiTexCoord0;
