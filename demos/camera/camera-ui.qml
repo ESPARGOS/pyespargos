@@ -251,6 +251,20 @@ Common.ESPARGOSApplication {
 				visible: beamformerType.currentIndex === 0
 			}
 
+			Label { text: "Normalize"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show" }
+			Switch {
+				id: normalizePolarization
+				property string configKey: "beamformer.normalize_polarization"
+				property string configProp: "checked"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 80
+				checked: true
+				visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show"
+				ToolTip.visible: hovered
+				ToolTip.text: "When enabled, all polarization dots oscillate with the same amplitude. When disabled, amplitude scales with received power."
+			}
+
 			Label { text: "Grid Spacing"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show" }
 			Slider {
 				id: gridSpacing

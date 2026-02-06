@@ -55,7 +55,8 @@ void main() {
 	// R = V real part, encoded as [0,1] -> [-1,1] (signed: preserves polarity between sources)
 	// G = H real part, encoded as [0,1] -> [-1,1]
 	// B = H imag part, encoded as [0,1] -> [-1,1]
-	// A = always 1.0 (opaque, avoids premultiplied alpha issues)
+	// A = 1.0 (opaque)
+	// Power scaling is already baked into R/G/B by Python when normalization is off.
 	float v_re = beamspacePolarization.r * 2.0 - 1.0;
 	float h_re = beamspacePolarization.g * 2.0 - 1.0;
 	float h_im = beamspacePolarization.b * 2.0 - 1.0;

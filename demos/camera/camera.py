@@ -28,6 +28,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     cameraFlipChanged = PyQt6.QtCore.pyqtSignal()
     rawBeamspaceChanged = PyQt6.QtCore.pyqtSignal()
     polarizationVisibleChanged = PyQt6.QtCore.pyqtSignal()
+    normalizePolarizationChanged = PyQt6.QtCore.pyqtSignal()
     gridSpacingChanged = PyQt6.QtCore.pyqtSignal()
     fovAzimuthChanged = PyQt6.QtCore.pyqtSignal()
     fovElevationChanged = PyQt6.QtCore.pyqtSignal()
@@ -50,6 +51,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
             "colorize_delay": False,
             "polarization_mode": "ignore",
             "grid_spacing": 24,
+            "normalize_polarization": False,
             "max_delay": 0.2,
             "max_age": 0.0,
             "resolution_azimuth": 64,
@@ -375,6 +377,15 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         v_signed = polarization_estimate[..., 1].real  # signed, in [-1, 1]
                         h_complex = polarization_estimate[..., 0]       # complex H
 
+                        # Compute per-pixel power scaling for un-normalized mode.
+                        # Scale polarization components by sqrt(power/max_power) so oscillation
+                        # amplitude reflects received power. Applied before encoding so no
+                        # shader-side logic is needed.
+                        if not self.appconfig.get("beamformer", "normalize_polarization"):
+                            power_scale = np.sqrt(self.beamspace_power / (np.max(self.beamspace_power) + 1e-12))
+                            v_signed = v_signed * power_scale
+                            h_complex = h_complex * power_scale
+
                         # Encode as RGBA texture (all components signed):
                         # R = V real part [-1,1] -> [0,1]
                         # G = H real part [-1,1] -> [0,1]
@@ -601,6 +612,12 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                 except Exception as e:
                     print(f"Error setting grid spacing: {e}")
 
+            if "normalize_polarization" in beamformer_cfg:
+                try:
+                    self.normalizePolarizationChanged.emit()
+                except Exception as e:
+                    print(f"Error setting normalize polarization: {e}")
+
             if "resolution_azimuth" in beamformer_cfg or "resolution_elevation" in beamformer_cfg:
                 try:
                     self._update_steering_vectors()
@@ -677,6 +694,10 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=gridSpacingChanged)
     def gridSpacing(self):
         return float(self.appconfig.get("beamformer", "grid_spacing"))
+
+    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=normalizePolarizationChanged)
+    def normalizePolarization(self):
+        return self.appconfig.get("beamformer", "normalize_polarization")
 
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=cameraFlipChanged)
     def cameraFlip(self):
