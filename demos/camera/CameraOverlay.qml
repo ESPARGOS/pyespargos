@@ -101,6 +101,8 @@ Rectangle {
 			loops: Animation.Infinite
 			running: true
 		}
+		property bool polarizationVisible: backend.polarizationVisible
+		property real gridSpacing: backend.gridSpacing
 
 		fragmentShader: "spatialspectrum.qsb"
 

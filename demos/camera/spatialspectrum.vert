@@ -15,6 +15,8 @@ layout(std140, binding = 0) uniform buf {
 	bool flip;
 	vec2 fov;
 	float time;
+	bool polarizationVisible;
+	float gridSpacing;
 };
 
 // Converts cartesian coordinates of the camera projection into a pair of azimuth and elevation angle (in radians).

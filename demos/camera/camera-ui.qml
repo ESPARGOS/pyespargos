@@ -251,6 +251,25 @@ Common.ESPARGOSApplication {
 				visible: beamformerType.currentIndex === 0
 			}
 
+			Label { text: "Grid Spacing"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show" }
+			Slider {
+				id: gridSpacing
+				property string configKey: "beamformer.grid_spacing"
+				property string configProp: "value"
+				property var encode: function(v) { return Math.round(v) }
+				property var decode: function(v) { return Number(v) }
+				from: 8
+				to: 128
+				stepSize: 1
+				implicitWidth: 210
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				value: 24
+				visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show"
+				ToolTip.visible: hovered
+				ToolTip.text: "Grid spacing for polarization dots in pixels. Current value: " + value.toFixed(0)
+			}
+
 			Label { text: "Max Delay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && colorizeDelay.currentIndex === 1 }
 			Slider {
 				id: maxDelay
@@ -325,9 +344,10 @@ Common.ESPARGOSApplication {
 				Layout.columnSpan: 2
 				text: "Exposure Settings"
 				color: "#9fb3c8"
+				visible: overlayMode.currentIndex === 0
 			}
 
-			Label { text: "Manual"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "Manual"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: overlayMode.currentIndex === 0 }
 			Switch {
 				id: manualExposure
 				property string configKey: "visualization.manual_exposure"
@@ -336,9 +356,10 @@ Common.ESPARGOSApplication {
 				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
 				implicitWidth: 80
 				checked: false
+				visible: overlayMode.currentIndex === 0
 			}
 
-			Label { text: "Brightness"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: manualExposure.checked }
+			Label { text: "Brightness"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: overlayMode.currentIndex === 0 && manualExposure.checked }
 			Slider {
 				id: exposureSlider
 				property string configKey: "visualization.exposure"
@@ -352,7 +373,7 @@ Common.ESPARGOSApplication {
 				Component.onCompleted: appDrawer.configManager.register(this)
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 0.5
-				visible: manualExposure.checked
+				visible: overlayMode.currentIndex === 0 && manualExposure.checked
 				ToolTip.visible: hovered
 				ToolTip.text: "Exposure: " + (value * 100).toFixed(0) + "%"
 			}

@@ -14,12 +14,13 @@ layout(std140, binding = 0) uniform buf {
 	bool flip;
 	vec2 fov;
 	float time;
+	bool polarizationVisible;
+	float gridSpacing;
 };
 
 // Constants for polarization mode
-float pointRadius = 3.0;           // Radius of the polarization points in pixels
-float gridSpacing = 16.0;          // Distance between grid points in pixels
 float pol_oscillation_freq = 2.0;  // Frequency of polarization oscillation
+float pointRadius = gridSpacing / 8.0;           // Radius of the polarization points in pixels
 
 // Converts azimuth and elevation angles (in radians) back into camera projection coordinates.
 vec2 anglesToCameraPixel(vec2 angles) {
@@ -68,8 +69,8 @@ void main() {
 	float eh = -(h_re * ct - h_im * st); // horizontal displacement (negated to match physical convention)
 
 	// Displace each grid point by the polarization ellipse position
-	// Check all 9 neighboring grid centers to handle large displacements crossing cell boundaries
-	float amplitude = gridSpacing * 0.8;
+	// Check all 4 neighboring grid centers to handle large displacements crossing cell boundaries
+	float amplitude = gridSpacing * 0.5;
 	vec2 baseCell = floor(gl_FragCoord.xy / gridSpacing);
 	float minDist = 1e6;
 	for (int dy = 0; dy <= 1; dy++) {
@@ -80,7 +81,47 @@ void main() {
 			minDist = min(minDist, d);
 		}
 	}
-	float pointContribution = minDist < pointRadius ? (pointRadius - minDist) / pointRadius : 0.0;
 
-	fragmentColor = vec4(gray * 0.25 + 0.6 * s.r, gray * 0.25 + 0.6 * s.g, gray * 0.25 + 0.6 * s.b, s.a) + beamspaceColor * pointContribution;
+	// Compute polarization ellipse trace:
+	// Sample the full ellipse path and find, for each pixel, the best contribution
+	// considering both spatial proximity and temporal fading (points further "behind"
+	// the current dot position fade out, creating a comet-tail effect).
+	float currentPhase = mod(pol_oscillation_freq * time, 2.0 * 3.14159265);
+	float traceContribution = 0.0;
+	float traceWidth = 0.5 * pointRadius; // width of the trace in pixels
+	int numSamples = 48;
+	for (int i = 0; i < numSamples; i++) {
+		float phase = float(i) / float(numSamples) * 2.0 * 3.14159265;
+
+		// Temporal fade: how far behind the current dot position is this sample?
+		// phaseDist = 0 at current position, increases going backwards
+		float phaseDist = mod(currentPhase - phase, 2.0 * 3.14159265);
+		float timeFade = exp(-phaseDist * 0.6);
+
+		float ct_sample = cos(phase);
+		float st_sample = sin(phase);
+		float ev_sample = v_re * ct_sample;
+		float eh_sample = -(h_re * ct_sample - h_im * st_sample);
+
+		for (int dy = 0; dy <= 1; dy++) {
+			for (int dx = 0; dx <= 1; dx++) {
+				vec2 gridCenter = (baseCell + vec2(dx, dy)) * gridSpacing;
+				vec2 tracePoint = gridCenter + vec2(eh_sample, ev_sample) * amplitude;
+				float d = length(gl_FragCoord.xy - tracePoint);
+				float spatialFade = smoothstep(traceWidth + 1.0, 0.0, d);
+				traceContribution = max(traceContribution, spatialFade * timeFade);
+			}
+		}
+	}
+
+	float glowContribution = 0.2;
+	float pointContribution = minDist < pointRadius ? (pointRadius - minDist) / pointRadius : glowContribution;
+	// Combine the dot and trace, trace is dimmer than the dot itself
+	float totalContribution = max(pointContribution, traceContribution * 0.5 + glowContribution);
+
+	// If not in polarization "show" mode, skip dot/trace overlay
+	if (!polarizationVisible)
+		totalContribution = 1.0;
+
+	fragmentColor = vec4(gray * 0.25 + 0.6 * s.r, gray * 0.25 + 0.6 * s.g, gray * 0.25 + 0.6 * s.b, s.a) + beamspaceColor * totalContribution;
 }

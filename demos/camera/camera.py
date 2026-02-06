@@ -27,6 +27,8 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     recentMacsChanged = PyQt6.QtCore.pyqtSignal(list)
     cameraFlipChanged = PyQt6.QtCore.pyqtSignal()
     rawBeamspaceChanged = PyQt6.QtCore.pyqtSignal()
+    polarizationVisibleChanged = PyQt6.QtCore.pyqtSignal()
+    gridSpacingChanged = PyQt6.QtCore.pyqtSignal()
     fovAzimuthChanged = PyQt6.QtCore.pyqtSignal()
     fovElevationChanged = PyQt6.QtCore.pyqtSignal()
     resolutionAzimuthChanged = PyQt6.QtCore.pyqtSignal()
@@ -46,7 +48,8 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         "beamformer": {
             "type": "FFT",
             "colorize_delay": False,
-            "polarization_mode": "show",
+            "polarization_mode": "ignore",
+            "grid_spacing": 24,
             "max_delay": 0.2,
             "max_age": 0.0,
             "resolution_azimuth": 64,
@@ -336,7 +339,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         polarization_estimate = eigenvectors[np.arange(eigenvectors.shape[0])[:, np.newaxis], np.arange(eigenvectors.shape[1]), max_eigenvalue_indices]
 
                         # debugging: just grab subcarrier from middle of band
-                        #polarization_estimate = beam_frequency_polarization[:, :, beam_frequency_polarization.shape[2] // 2, :]
+                        # polarization_estimate = beam_frequency_polarization[:, :, beam_frequency_polarization.shape[2] // 2, :]
 
                         # Normalize so that total power is 1
                         polarization_estimate = polarization_estimate / (np.linalg.norm(polarization_estimate, axis=-1, keepdims=True) + 1e-12)
@@ -356,7 +359,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         )
 
                         v_amplitude = polarization_estimate[..., 1].real  # |V|, in [0, 1]
-                        h_complex = polarization_estimate[..., 0]          # complex H
+                        h_complex = polarization_estimate[..., 0]  # complex H
 
                         # Encode as RGBA texture:
                         # R = V amplitude [0,1] (V is real after phase normalization)
@@ -369,22 +372,6 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         self.polarization_imagedata[2::4] = np.clip(np.swapaxes((h_complex.imag + 1.0) / 2.0, 0, 1).ravel(), 0, 1) * 255
                         self.polarization_imagedata[3::4] = 255
                         self.polarizationImagedataChanged.emit(self.polarization_imagedata.tolist())
-
-                        # TODO
-                        pol_ratio = np.swapaxes(np.abs(polarization_estimate[:, :, 0]) / np.abs(polarization_estimate[:, :, 1]), 0, 1).ravel()
-                        #phase_ratio = np.swapaxes(np.angle(polarization_estimate[:, :, 0]) - np.angle(polarization_estimate[:, :, 1]), 0, 1).ravel()
-                        #print(phase_ratio)
-                        power_visualization_beamspace = self.beamspace_power**3
-                        relative_power = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-6)
-                        self.beamspace_power_imagedata = np.zeros(4 * self.beamspace_power.size, dtype=np.uint8)
-                        power_color = np.clip(np.swapaxes(relative_power, 0, 1).ravel(), 0, 1) * 255
-                        self.beamspace_power_imagedata[0::4] = np.where((1/pol_ratio<1), power_color * (1/pol_ratio), power_color)
-                        self.beamspace_power_imagedata[1::4] = np.where(pol_ratio < 1, power_color * pol_ratio, power_color)
-                        self.beamspace_power_imagedata[3::4] = 255
-
-                        self.beamspacePowerImagedataChanged.emit(self.beamspace_power_imagedata.tolist())
-                        return
-
 
             case "Bartlett":
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
@@ -588,6 +575,18 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
 
         if "beamformer" in newcfg:
             beamformer_cfg = newcfg.get("beamformer", {}) if isinstance(newcfg.get("beamformer", {}), dict) else {}
+            if "polarization_mode" in beamformer_cfg or "type" in beamformer_cfg:
+                try:
+                    self.polarizationVisibleChanged.emit()
+                except Exception as e:
+                    print(f"Error setting polarization mode: {e}")
+
+            if "grid_spacing" in beamformer_cfg:
+                try:
+                    self.gridSpacingChanged.emit()
+                except Exception as e:
+                    print(f"Error setting grid spacing: {e}")
+
             if "resolution_azimuth" in beamformer_cfg or "resolution_elevation" in beamformer_cfg:
                 try:
                     self._update_steering_vectors()
@@ -656,6 +655,14 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     def clearMacFilter(self):
         self.pool.clear_mac_filter()
         self.pooldrawer.configManager().set({"mac_filter": {"enable": False}})
+
+    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=polarizationVisibleChanged)
+    def polarizationVisible(self):
+        return self.appconfig.get("beamformer", "type") == "FFT" and self.appconfig.get("beamformer", "polarization_mode") == "show"
+
+    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=gridSpacingChanged)
+    def gridSpacing(self):
+        return float(self.appconfig.get("beamformer", "grid_spacing"))
 
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=cameraFlipChanged)
     def cameraFlip(self):
