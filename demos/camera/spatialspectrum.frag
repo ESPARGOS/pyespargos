@@ -52,20 +52,21 @@ void main() {
 	float gray = dot(s.rgb, vec3(0.21, 0.71, 0.07));
 
 	// Decode polarization from texture
-	// R = V amplitude [0,1] (V is real after phase normalization in Python)
+	// R = V real part, encoded as [0,1] -> [-1,1] (signed: preserves polarity between sources)
 	// G = H real part, encoded as [0,1] -> [-1,1]
 	// B = H imag part, encoded as [0,1] -> [-1,1]
 	// A = always 1.0 (opaque, avoids premultiplied alpha issues)
-	float v_re = beamspacePolarization.r;
+	float v_re = beamspacePolarization.r * 2.0 - 1.0;
 	float h_re = beamspacePolarization.g * 2.0 - 1.0;
 	float h_im = beamspacePolarization.b * 2.0 - 1.0;
 
 	// Compute instantaneous E-field: Re(polarization * e^{j*omega*t})
 	// This traces out the polarization ellipse over time
-	// V is purely real after phase normalization, so V contributes only via cos(t)
+	// V is predominantly real after global phase normalization (can be negative for
+	// sources with opposite sign), so V contributes only via cos(t)
 	float ct = cos(pol_oscillation_freq * time);
 	float st = sin(pol_oscillation_freq * time);
-	float ev = v_re * ct;                // vertical displacement (V is real)
+	float ev = v_re * ct;                // vertical displacement (V is signed real)
 	float eh = h_re * ct - h_im * st;    // horizontal displacement
 
 	// Displace each grid point by the polarization ellipse position

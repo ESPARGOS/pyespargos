@@ -328,31 +328,30 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
 
                     if self.appconfig.get("beamformer", "polarization_mode") == "show":
                         # Combine polarization information of all subcarriers into a single polarization estimate per beam
-                        # using the polarization coherence matrix (2x2 Hermitian matrix per beam, summed over subcarriers).
-                        # Delay across subcarriers cancels out because both polarization components share the same propagation delay.
-                        # The dominant eigenvector of J gives the best polarization estimate.
+                        # while preserving absolute phase (and thus sign) of the beamformed signal.
                         # beam_frequency_polarization: (azimuth, elevation, subcarriers, 2)
-                        # J: (azimuth, elevation, 2, 2)
-                        J = np.einsum("aesp,aesq->aepq", beam_frequency_polarization, np.conj(beam_frequency_polarization))
-                        # J is Hermitian (sum of outer products); eigh gives real sorted eigenvalues
-                        # and avoids the eigenvector sign instability issues of eig
-                        eigenvalues, eigenvectors = np.linalg.eigh(J)
-                        # eigh returns eigenvalues in ascending order; dominant eigenvector is the last column
-                        polarization_estimate = eigenvectors[..., -1]
+                        #
+                        # Unlike an eigenvector approach (which loses sign in the outer product),
+                        # we directly average the per-subcarrier polarization vectors after removing
+                        # the subcarrier-dependent delay phase. This preserves the absolute sign
+                        # from the beamformer, so two sources with opposite polarization signs
+                        # (e.g., flipped antenna) are displayed correctly.
 
-                        # debugging: just grab subcarrier from middle of band
-                        # polarization_estimate = beam_frequency_polarization[:, :, beam_frequency_polarization.shape[2] // 2, :]
+                        # Find globally dominant polarization component (H=0, V=1) for phase reference
+                        total_power_per_component = np.sum(np.abs(beam_frequency_polarization) ** 2, axis=(0, 1, 2))
+                        ref_comp = np.argmax(total_power_per_component)
 
-                        # Resolve eigenvector sign/phase ambiguity using a power-weighted global reference.
-                        # eigh eigenvectors have arbitrary phase per pixel; without correction, neighboring
-                        # pixels can have opposite signs, causing 180° oscillation flips.
-                        # Compute a global polarization coherence matrix weighted by beamspace power,
-                        # find its dominant eigenvector, and align all per-pixel eigenvectors to it.
-                        J_global = np.einsum("ae,aepq->pq", self.beamspace_power, J)
-                        _, global_eigvecs = np.linalg.eigh(J_global)
-                        global_ref = global_eigvecs[:, -1]  # (2,) - global dominant polarization
-                        projection = np.einsum("...p,p->...", polarization_estimate, np.conj(global_ref))
-                        polarization_estimate = polarization_estimate * (np.conj(projection) / (np.abs(projection) + 1e-12))[..., np.newaxis]
+                        # Remove per-subcarrier delay phase using the globally dominant component.
+                        # Both H and V share the same propagation delay, so dividing by one component's
+                        # delay aligns all subcarriers while preserving the H/V ratio and absolute sign.
+                        # IMPORTANT: Only remove the subcarrier-varying part of the phase (the delay),
+                        # NOT the per-pixel absolute phase — that carries the sign/polarity information
+                        # between different source directions.
+                        ref_phase = np.angle(beam_frequency_polarization[..., ref_comp])  # (az, el, subcarriers)
+                        center_sc = ref_phase.shape[-1] // 2
+                        delay_phase = ref_phase - ref_phase[..., center_sc:center_sc + 1]  # subcarrier delay relative to center
+                        aligned = beam_frequency_polarization * np.exp(-1j * delay_phase)[..., np.newaxis]  # (az, el, subcarriers, 2)
+                        polarization_estimate = np.mean(aligned, axis=2)  # (az, el, 2)
 
                         # Normalize so that total power is 1
                         polarization_estimate = polarization_estimate / (np.linalg.norm(polarization_estimate, axis=-1, keepdims=True) + 1e-12)
@@ -360,30 +359,29 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         # inv(ANTENNA_JONES_MATRIX) converts from R/L feed basis to H/V linear basis,
                         # so index 0 = H and index 1 = V
 
-                        # Normalize phase so that V component (index 1) is real and non-negative per pixel.
-                        # This means V only needs one real channel, freeing the alpha channel.
-                        # Per-pixel V phase normalization is now safe because the global alignment
-                        # above already resolved the eigenvector sign ambiguity — V phases are
-                        # spatially smooth, not random. At pixels where V≈0 the phase is noisy,
-                        # but the resulting ev displacement is negligible anyway.
-                        v_phase = np.angle(polarization_estimate[..., 1])
-                        polarization_estimate = polarization_estimate * np.exp(-1j * v_phase)[..., np.newaxis]
-                        polarization_estimate = np.where(
-                            polarization_estimate[..., 1:2].real < 0,
-                            -polarization_estimate,
-                            polarization_estimate,
-                        )
+                        # Apply a single global phase rotation to make V predominantly real.
+                        # Use power-weighted aggregate to determine the global V phase.
+                        # This is a single rotation for all pixels, so relative phases between
+                        # different directions are preserved (including sign differences).
+                        v_global_phase = np.angle(np.sum(polarization_estimate[..., 1] * self.beamspace_power))
+                        polarization_estimate = polarization_estimate * np.exp(-1j * v_global_phase)
+                        if np.sum(polarization_estimate[..., 1].real * self.beamspace_power) < 0:
+                            polarization_estimate = -polarization_estimate
 
-                        v_amplitude = polarization_estimate[..., 1].real  # |V|, in [0, 1]
-                        h_complex = polarization_estimate[..., 0]  # complex H
+                        # V is now predominantly real after the global phase rotation.
+                        # Individual pixels may have V < 0 (opposite sign from dominant source) — this is
+                        # real physical information that we preserve. V may also have small imaginary
+                        # residuals which we discard (second-order effect from global phase approximation).
+                        v_signed = polarization_estimate[..., 1].real  # signed, in [-1, 1]
+                        h_complex = polarization_estimate[..., 0]       # complex H
 
-                        # Encode as RGBA texture:
-                        # R = V amplitude [0,1] (V is real after phase normalization)
+                        # Encode as RGBA texture (all components signed):
+                        # R = V real part [-1,1] -> [0,1]
                         # G = H real part [-1,1] -> [0,1]
                         # B = H imag part [-1,1] -> [0,1]
                         # A = 255 (always opaque, avoids premultiplied alpha corruption)
                         self.polarization_imagedata = np.zeros(self.beamspace_power.size * 4, dtype=np.uint8)
-                        self.polarization_imagedata[0::4] = np.clip(np.swapaxes(v_amplitude, 0, 1).ravel(), 0, 1) * 255
+                        self.polarization_imagedata[0::4] = np.clip(np.swapaxes((v_signed + 1.0) / 2.0, 0, 1).ravel(), 0, 1) * 255
                         self.polarization_imagedata[1::4] = np.clip(np.swapaxes((h_complex.real + 1.0) / 2.0, 0, 1).ravel(), 0, 1) * 255
                         self.polarization_imagedata[2::4] = np.clip(np.swapaxes((h_complex.imag + 1.0) / 2.0, 0, 1).ravel(), 0, 1) * 255
                         self.polarization_imagedata[3::4] = 255
