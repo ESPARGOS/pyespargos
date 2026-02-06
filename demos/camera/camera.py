@@ -334,12 +334,25 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         # beam_frequency_polarization: (azimuth, elevation, subcarriers, 2)
                         # J: (azimuth, elevation, 2, 2)
                         J = np.einsum("aesp,aesq->aepq", beam_frequency_polarization, np.conj(beam_frequency_polarization))
-                        eigenvalues, eigenvectors = np.linalg.eig(J)
-                        max_eigenvalue_indices = np.argmax(eigenvalues, axis=-1)
-                        polarization_estimate = eigenvectors[np.arange(eigenvectors.shape[0])[:, np.newaxis], np.arange(eigenvectors.shape[1]), max_eigenvalue_indices]
+                        # J is Hermitian (sum of outer products); eigh gives real sorted eigenvalues
+                        # and avoids the eigenvector sign instability issues of eig
+                        eigenvalues, eigenvectors = np.linalg.eigh(J)
+                        # eigh returns eigenvalues in ascending order; dominant eigenvector is the last column
+                        polarization_estimate = eigenvectors[..., -1]
 
                         # debugging: just grab subcarrier from middle of band
                         # polarization_estimate = beam_frequency_polarization[:, :, beam_frequency_polarization.shape[2] // 2, :]
+
+                        # Resolve eigenvector sign/phase ambiguity using a power-weighted global reference.
+                        # eigh eigenvectors have arbitrary phase per pixel; without correction, neighboring
+                        # pixels can have opposite signs, causing 180° oscillation flips.
+                        # Compute a global polarization coherence matrix weighted by beamspace power,
+                        # find its dominant eigenvector, and align all per-pixel eigenvectors to it.
+                        J_global = np.einsum("ae,aepq->pq", self.beamspace_power, J)
+                        _, global_eigvecs = np.linalg.eigh(J_global)
+                        global_ref = global_eigvecs[:, -1]  # (2,) - global dominant polarization
+                        projection = np.einsum("...p,p->...", polarization_estimate, np.conj(global_ref))
+                        polarization_estimate = polarization_estimate * (np.conj(projection) / (np.abs(projection) + 1e-12))[..., np.newaxis]
 
                         # Normalize so that total power is 1
                         polarization_estimate = polarization_estimate / (np.linalg.norm(polarization_estimate, axis=-1, keepdims=True) + 1e-12)
@@ -347,11 +360,14 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         # inv(ANTENNA_JONES_MATRIX) converts from R/L feed basis to H/V linear basis,
                         # so index 0 = H and index 1 = V
 
-                        # Normalize global phase so that V component (index 1) is real and non-negative.
+                        # Normalize phase so that V component (index 1) is real and non-negative per pixel.
                         # This means V only needs one real channel, freeing the alpha channel.
+                        # Per-pixel V phase normalization is now safe because the global alignment
+                        # above already resolved the eigenvector sign ambiguity — V phases are
+                        # spatially smooth, not random. At pixels where V≈0 the phase is noisy,
+                        # but the resulting ev displacement is negligible anyway.
                         v_phase = np.angle(polarization_estimate[..., 1])
                         polarization_estimate = polarization_estimate * np.exp(-1j * v_phase)[..., np.newaxis]
-                        # Flip sign if V ended up negative (angle was pi)
                         polarization_estimate = np.where(
                             polarization_estimate[..., 1:2].real < 0,
                             -polarization_estimate,

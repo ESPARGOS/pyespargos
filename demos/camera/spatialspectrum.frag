@@ -66,7 +66,7 @@ void main() {
 	float ct = cos(pol_oscillation_freq * time);
 	float st = sin(pol_oscillation_freq * time);
 	float ev = v_re * ct;                // vertical displacement (V is real)
-	float eh = -(h_re * ct - h_im * st); // horizontal displacement (negated to match physical convention)
+	float eh = h_re * ct - h_im * st;    // horizontal displacement
 
 	// Displace each grid point by the polarization ellipse position
 	// Check all 4 neighboring grid centers to handle large displacements crossing cell boundaries
@@ -101,7 +101,7 @@ void main() {
 		float ct_sample = cos(phase);
 		float st_sample = sin(phase);
 		float ev_sample = v_re * ct_sample;
-		float eh_sample = -(h_re * ct_sample - h_im * st_sample);
+		float eh_sample = h_re * ct_sample - h_im * st_sample;
 
 		for (int dy = 0; dy <= 1; dy++) {
 			for (int dx = 0; dx <= 1; dx++) {
