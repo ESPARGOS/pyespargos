@@ -80,6 +80,14 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             default=None,
             help="Path to YAML configuration file to load",
         )
+        parser.add_argument(
+            "-o",
+            "--option",
+            action="append",
+            default=[],
+            metavar="KEY=VALUE",
+            help="Override a configuration option, e.g. -o generic.kiosk_mode=True, multiple -o options are allowed (overrides config file and defaults)",
+        )
 
         # Let mixins add their arguments
         self._add_argparse_arguments(parser)
@@ -99,6 +107,22 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
                     raise ValueError("Config file must contain a YAML object at the root")
 
                 deep_update(self.initial_config, cfg_from_file)
+
+        # Apply command-line option overrides (-o key=value)
+        for opt in self.args.option:
+            if "=" not in opt:
+                raise ValueError(f"Invalid option format '{opt}', expected KEY=VALUE")
+            key, value = opt.split("=", 1)
+            value = yaml.safe_load(value)  # Parse value as YAML to support int, float, bool, etc.
+            parts = key.split(".")
+            nested = {}
+            current = nested
+            for part in parts[:-1]:
+                current[part] = {}
+                current = current[part]
+            current[parts[-1]] = value
+            print(f"Overriding config option '{key}' with value: {value}")
+            deep_update(self.initial_config, nested)
 
         # Let mixins process their arguments and update config
         self._process_args()
