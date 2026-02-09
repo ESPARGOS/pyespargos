@@ -10,10 +10,11 @@ app:
     type: "FFT"
     polarization_mode: "show"
   visualization:
-    space: "beamspace"
+    space: "camera"
 
 generic:
   preamble_format: "lltf"
+  kiosk_mode: False
 
 pool:
   channel: 5

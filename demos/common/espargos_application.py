@@ -7,6 +7,7 @@ import PyQt6.QtQml
 import espargos.util
 
 import numpy as np
+import subprocess
 import threading
 import argparse
 import yaml
@@ -43,7 +44,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         },
         "generic": {
             # Generic application settings, handled by GenericAppSettings
-            "preamble_format": "lltf"
+            "preamble_format": "lltf",
+            "kiosk_mode": False,
         },
         "app": {
             # The 'app' section is reserved for application-specific settings
@@ -286,6 +288,16 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
     @PyQt6.QtCore.pyqtProperty(object, constant=False, notify=initComplete)
     def hasBacklog(self):
         return hasattr(self, "backlog")
+
+    @PyQt6.QtCore.pyqtProperty(bool, constant=True)
+    def kioskMode(self):
+        return bool(self.genericconfig.get("kiosk_mode"))
+
+    @PyQt6.QtCore.pyqtSlot()
+    def shutdownComputer(self):
+        self.onAboutToQuit()
+        subprocess.Popen(["systemctl", "poweroff"])
+        self.quit()
 
 
 class BacklogMixin:

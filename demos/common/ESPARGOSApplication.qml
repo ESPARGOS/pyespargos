@@ -11,7 +11,7 @@ ApplicationWindow {
 	minimumHeight: 800
 
 	// Full screen management
-	visibility: ApplicationWindow.Windowed
+	visibility: backend.kioskMode ? ApplicationWindow.FullScreen : ApplicationWindow.Windowed
 	Shortcut {
 		sequence: "F11"
 		onActivated: {
@@ -25,6 +25,7 @@ ApplicationWindow {
 
 	Shortcut {
 		sequence: "Esc"
+		enabled: !backend.kioskMode
 		onActivated: window.close()
 	}
 
@@ -137,6 +138,68 @@ ApplicationWindow {
 			color: "#ffffff"
 			font.pixelSize: 26
 			font.bold: true
+		}
+	}
+
+	// Kiosk mode: Exit button in bottom-right corner
+	Button {
+		id: kioskExitButton
+		visible: backend.kioskMode
+		z: 10
+		anchors.right: parent.right
+		anchors.bottom: parent.bottom
+		anchors.margins: 10
+		text: "✕ Exit"
+		flat: true
+		font.pixelSize: 14
+		Material.background: "#227b3d"
+		Material.foreground: "#ffffffff"
+		onClicked: kioskExitDialog.open()
+	}
+
+	// Kiosk mode: Exit confirmation dialog
+	Dialog {
+		id: kioskExitDialog
+		title: "Exit Application"
+		anchors.centerIn: parent
+		modal: true
+		standardButtons: Dialog.Cancel
+		z: 200
+
+		Material.roundedScale: Material.SmallScale
+
+		ColumnLayout {
+			spacing: 16
+			width: parent.width
+
+			Label {
+				text: "What would you like to do?"
+				font.pixelSize: 14
+				Layout.fillWidth: true
+				wrapMode: Text.WordWrap
+			}
+
+			Button {
+				text: "Quit Application"
+				Layout.fillWidth: true
+				Material.background: Material.primary
+				Material.foreground: "#ffffff"
+				onClicked: {
+					kioskExitDialog.close()
+					Qt.quit()
+				}
+			}
+
+			Button {
+				text: "Shut Down Computer"
+				Layout.fillWidth: true
+				Material.background: "#b71c1c"
+				Material.foreground: "#ffffff"
+				onClicked: {
+					kioskExitDialog.close()
+					backend.shutdownComputer()
+				}
+			}
 		}
 	}
 }

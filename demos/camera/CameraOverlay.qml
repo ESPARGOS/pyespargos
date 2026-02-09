@@ -127,9 +127,9 @@ Rectangle {
 		id: statsRectangle
 
 		anchors.bottom: parent.bottom
-		anchors.right: parent.right
-		anchors.rightMargin: 10
-		anchors.bottomMargin: 10
+		anchors.left: parent.left
+		anchors.leftMargin: 20
+		anchors.bottomMargin: 60
 		width: 180
 		height: 80
 		color: "black"
