@@ -9,7 +9,7 @@ from . import csi
 # Helper module defining board revision-specific constants
 class BoardRevision:
     @property
-    def identification(self) -> str:
+    def identification(self) -> tuple:
         raise NotImplementedError
 
     @property
@@ -57,57 +57,11 @@ class BoardRevision:
         return 0.119
 
 
-# Original ESPARGOS Prototype (2024 PCB)
-class BoardRevisionPrototype(BoardRevision):
-    @property
-    def identification(self) -> str:
-        return "ESPARGOS"
-
-    @property
-    def type_header(self) -> int:
-        return 0x5A1F19B1
-
-    @property
-    def csistream_pkt_t(self) -> type:
-        return csi.csistream_pkt_v1_t
-
-    @property
-    def serialized_csi_t(self) -> type:
-        return csi.serialized_csi_v1_t
-
-    def esp_num_to_row_col(self, esp_num: int) -> tuple:
-        row = 1 - esp_num // 4
-        col = 3 - esp_num % 4
-        return (row, col)
-
-    # Private, (potentially) revision-specific properties
-    @property
-    def _calib_trace_dielectric_constant(self) -> float:
-        return 4.3
-
-    @property
-    def _calib_trace_lengths(self) -> list:
-        return np.asarray(
-            [
-                [0.0708462, 0.0229349, 0.0786856, 0.1423600],
-                [0.0838888, 0.0295291, 0.0671322, 0.1308537],
-            ]
-        )
-
-    @property
-    def _calib_trace_width(self) -> float:
-        return 0.2
-
-    @property
-    def _calib_trace_height(self) -> float:
-        return 0.119
-
-
 # Codename "ESPARGOS-DENSIFLORUS" (2025/2026 PCB)
 class BoardRevisionDensiflorus(BoardRevision):
     @property
-    def identification(self) -> str:
-        return "ESPARGOS-DENSIFLORUS"
+    def identification(self) -> tuple:
+        return ("espargos", "densiflorus")
 
     @property
     def type_header(self) -> int:
@@ -149,4 +103,4 @@ class BoardRevisionDensiflorus(BoardRevision):
         return 0.119
 
 
-all_revisions = [BoardRevisionPrototype(), BoardRevisionDensiflorus()]
+all_revisions = [BoardRevisionDensiflorus()]

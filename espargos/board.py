@@ -4,6 +4,7 @@ import websockets.sync.client
 import http.client
 import threading
 import logging
+import socket
 import ctypes
 import json
 
@@ -21,6 +22,25 @@ class EspargosUnexpectedResponseError(Exception):
     "Raised when the server (ESPARGOS controller) provides unexpected response. Is the server really ESPARGOS?"
 
     pass
+
+
+class EspargosCsiStreamConnectionError(Exception):
+    "Raised when the CSI stream connection could not be established (e.g. magic packet not received)"
+
+    pass
+
+
+class EspargosAPIVersionError(Exception):
+    "Raised when the ESPARGOS controller runs an unsupported API version"
+
+    pass
+
+
+# Magic bytes sent by the controller as the first WebSocket frame to confirm a valid CSI stream connection
+CSISTREAM_MAGIC = bytes([0xE5, 0xA7, 0x60, 0x00])
+
+# Only this major API version is supported
+SUPPORTED_API_MAJOR = 1
 
 
 class Board(object):
@@ -63,19 +83,43 @@ class Board(object):
 
         self.host = host
         try:
-            identification = self._fetch("identify")
+            identification_raw = self._fetch("identify")
         except TimeoutError:
             self.logger.error(f"Could not connect to {self.host}")
             raise TimeoutError
 
+        try:
+            identification = json.loads(identification_raw)
+        except (json.JSONDecodeError, TypeError):
+            if "ESPARGOS" in identification_raw:
+                raise EspargosAPIVersionError(f"Server at {self.host} runs old firmware with unsupported API version. " f"Please update the controller firmware to a version compatible with this version of pyespargos.")
+            else:
+                raise EspargosUnexpectedResponseError(f"Server at {self.host} does not look like an ESPARGOS controller. Check if the host is correct.")
+
+        if "api-major" not in identification or "api-minor" not in identification:
+            raise EspargosUnexpectedResponseError(f"Server at {self.host} did not provide API version information in identify response.")
+
+        api_major = identification["api-major"]
+        api_minor = identification.get("api-minor", 0)
+
+        if api_major != SUPPORTED_API_MAJOR:
+            raise EspargosAPIVersionError(
+                f"ESPARGOS controller at {self.host} runs API version {api_major}.{api_minor}, "
+                f"but this version of pyespargos only supports API major version {SUPPORTED_API_MAJOR}. " + ("Please update pyespargos." if api_major > SUPPORTED_API_MAJOR else "Please update the controller firmware.")
+            )
+
+        self.api_version = (api_major, api_minor)
+
         self.revision = None
+        device = identification.get("device", "")
+        revision_name = identification.get("revision", "")
         for rev in revisions.all_revisions:
-            if identification == rev.identification:
+            if (device, revision_name) == rev.identification:
                 self.revision = rev
                 break
 
         if self.revision is None:
-            raise EspargosUnexpectedResponseError
+            raise EspargosUnexpectedResponseError(f"Unknown ESPARGOS revision: device={device!r}, revision={revision_name!r}")
 
         self.netconf = json.loads(self._fetch("get_netconf"))
         self.ip_info = json.loads(self._fetch("get_ip_info"))
@@ -99,10 +143,109 @@ class Board(object):
     def start(self):
         """
         Starts the CSI stream thread for the ESPARGOS controller. The thread will run indefinitely until the stop() method is called.
+        Tries to establish a UDP transport first for better performance, and falls back to WebSocket if UDP fails.
+
+        :raises EspargosCsiStreamConnectionError: If neither UDP nor WebSocket CSI stream could be established
         """
-        self.csistream_thread = threading.Thread(target=self._csistream_loop)
+        # Try UDP first
+        udp_error = self._try_start_udp()
+        if udp_error is None:
+            return
+
+        self.logger.warning(f"UDP CSI stream failed for {self.get_name()}: {udp_error}")
+        self.logger.info(f"Falling back to WebSocket CSI stream for {self.get_name()}")
+
+        # Fall back to WebSocket
+        ws_error = self._try_start_websocket()
+        if ws_error is None:
+            return
+
+        raise EspargosCsiStreamConnectionError(f"Could not establish CSI stream to {self.host} via UDP or WebSocket. " f"UDP error: {udp_error}. WebSocket error: {ws_error}")
+
+    def _try_start_udp(self) -> str | None:
+        """
+        Try to start the CSI stream via UDP.
+        Returns None on success, or an error message string on failure.
+        """
+        self.logger.info(f"Trying UDP CSI stream for {self.get_name()}")
+
+        # Open a local UDP socket on an ephemeral port
+        try:
+            udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            udp_sock.bind(("", 0))
+            local_port = udp_sock.getsockname()[1]
+        except OSError as e:
+            return f"Could not create UDP socket: {e}"
+
+        # Tell the server to start streaming to us via UDP
+        try:
+            res = self._fetch("csi_udp", json.dumps({"enable": True, "port": local_port}))
+            if res != "ok":
+                udp_sock.close()
+                return f"Server rejected UDP stream request: {res}"
+        except Exception as e:
+            udp_sock.close()
+            return f"HTTP request to enable UDP stream failed: {e}"
+
+        # Wait for the magic packet on the UDP socket
+        udp_sock.settimeout(3)
+        try:
+            data, addr = udp_sock.recvfrom(1024)
+        except socket.timeout:
+            udp_sock.close()
+            self._disable_udp_stream()
+            return "Timeout waiting for UDP magic packet"
+        except OSError as e:
+            udp_sock.close()
+            self._disable_udp_stream()
+            return f"Error receiving UDP magic packet: {e}"
+
+        if data != CSISTREAM_MAGIC:
+            udp_sock.close()
+            self._disable_udp_stream()
+            return f"Invalid UDP magic packet: expected {CSISTREAM_MAGIC.hex()}, got {data.hex()}"
+
+        # UDP stream established successfully
+        self._udp_sock = udp_sock
+        self._csistream_transport = "udp"
+        self.csistream_connected = True
+        self.csistream_thread = threading.Thread(target=self._csistream_loop_udp)
         self.csistream_thread.start()
-        self.logger.info(f"Started CSI stream for {self.get_name()}")
+        self.logger.info(f"Started UDP CSI stream for {self.get_name()} on local port {local_port}")
+        return None
+
+    def _try_start_websocket(self) -> str | None:
+        """
+        Try to start the CSI stream via WebSocket.
+        Returns None on success, or an error message string on failure.
+        """
+        self.logger.info(f"Trying WebSocket CSI stream for {self.get_name()}")
+
+        self._csistream_magic_event = threading.Event()
+        self._csistream_error = None
+        self._csistream_transport = "websocket"
+        self.csistream_thread = threading.Thread(target=self._csistream_loop_websocket)
+        self.csistream_thread.start()
+
+        if not self._csistream_magic_event.wait(timeout=3):
+            self.csistream_connected = False
+            self.csistream_thread.join()
+            return "Did not receive WebSocket magic packet within 3 seconds"
+
+        if self._csistream_error is not None:
+            self.csistream_connected = False
+            self.csistream_thread.join()
+            return str(self._csistream_error)
+
+        self.logger.info(f"Started WebSocket CSI stream for {self.get_name()}")
+        return None
+
+    def _disable_udp_stream(self):
+        """Tell the server to stop the UDP stream (best-effort)."""
+        try:
+            self._fetch("csi_udp", json.dumps({"enable": False}))
+        except Exception:
+            pass
 
     def stop(self):
         """
@@ -111,6 +254,12 @@ class Board(object):
         if self.csistream_connected:
             self.csistream_connected = False
             self.csistream_thread.join()
+
+            if getattr(self, "_csistream_transport", None) == "udp":
+                if hasattr(self, "_udp_sock"):
+                    self._udp_sock.close()
+                self._disable_udp_stream()
+
             self.logger.info(f"Stopped CSI stream for {self.get_name()}")
 
     def set_rfswitch(self, state: csi.rfswitch_state_t):
@@ -357,9 +506,54 @@ class Board(object):
                     clist.append((packet.esp_num, serialized_csi, *args))
                     cv.notify()
 
-    def _csistream_loop(self):
-        with websockets.sync.client.connect("ws://" + self.host + "/csi", close_timeout=0.5) as websocket:
+    def _csistream_loop_udp(self):
+        self._udp_sock.settimeout(0.2)
+        timeout_total = 0
+        while self.csistream_connected:
+            try:
+                data, addr = self._udp_sock.recvfrom(65535)
+                timeout_total = 0
+                self._csistream_handle_message(data)
+            except socket.timeout:
+                timeout_total += 0.2
+            except OSError as e:
+                self.logger.error(f"Board {self.host} has error in UDP socket: {e}")
+                self.csistream_connected = False
+                break
+
+            if timeout_total > self._csistream_timeout:
+                self.logger.warning("UDP timeout, disconnecting")
+                self.csistream_connected = False
+
+    def _csistream_loop_websocket(self):
+        try:
+            ws = websockets.sync.client.connect("ws://" + self.host + "/csi", close_timeout=0.5)
+        except Exception as e:
+            self._csistream_error = EspargosCsiStreamConnectionError(f"Could not connect to CSI stream WebSocket on {self.host}: {e}")
+            self._csistream_magic_event.set()
+            return
+
+        with ws as websocket:
+            # Wait for magic packet that confirms valid CSI stream connection
+            try:
+                magic = websocket.recv(timeout=3)
+            except TimeoutError:
+                self._csistream_error = EspargosCsiStreamConnectionError(f"Timeout waiting for CSI stream magic packet from {self.host}")
+                self._csistream_magic_event.set()
+                return
+            except Exception as e:
+                self._csistream_error = EspargosCsiStreamConnectionError(f"Error receiving CSI stream magic packet from {self.host}: {e}")
+                self._csistream_magic_event.set()
+                return
+
+            if magic != CSISTREAM_MAGIC:
+                self._csistream_error = EspargosCsiStreamConnectionError(f"Invalid CSI stream magic packet from {self.host}: expected {CSISTREAM_MAGIC.hex()}, got {magic.hex() if isinstance(magic, bytes) else repr(magic)}")
+                self._csistream_magic_event.set()
+                return
+
             self.csistream_connected = True
+            self._csistream_magic_event.set()
+
             timeout_total = 0
             timeout_once = 0.2
             while self.csistream_connected:
@@ -375,7 +569,7 @@ class Board(object):
                     break
 
                 if timeout_total > self._csistream_timeout:
-                    self.logger.warn("Websockets timeout, disconnecting")
+                    self.logger.warning("WebSocket timeout, disconnecting")
                     self.csistream_connected = False
 
     def _fetch(self, path, data=None):

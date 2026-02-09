@@ -63,7 +63,7 @@ class CSICluster(object):
         self,
         board_num: int,
         esp_num: int,
-        serialized_csi: csi.serialized_csi_v1_t | csi.serialized_csi_v3_t,
+        serialized_csi: csi.serialized_csi_v3_t,
     ):
         """
         Add CSI data to the cluster.
@@ -268,15 +268,11 @@ class CSICluster(object):
 
         def check_lltf(b, r, a, serialized_csi):
             nonlocal have_lltf_all
-            match type(serialized_csi):
-                case csi.serialized_csi_v1_t:
-                    pass  # V1 always has L-LTF
-                case csi.serialized_csi_v3_t:
-                    # We only need to check this if acquire_force_lltf is false (otherwise, sensor always provides L-LTF)
-                    if not serialized_csi.acquire_force_lltf:
-                        # If force lltf is false, sensor module is configured to only provide L-LTF if frame is 802.11g
-                        if not csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_11G:
-                            have_lltf_all = False
+            # We only need to check this if acquire_force_lltf is false (otherwise, sensor always provides L-LTF)
+            if not serialized_csi.acquire_force_lltf:
+                # If force lltf is false, sensor module is configured to only provide L-LTF if frame is 802.11g
+                if not csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_11G:
+                    have_lltf_all = False
 
         self._foreach_complete_sensor(check_lltf)
 
@@ -292,16 +288,12 @@ class CSICluster(object):
 
         def check_ht20(b, r, a, serialized_csi):
             nonlocal have_ht20_all
-            match type(serialized_csi):
-                case csi.serialized_csi_v1_t:
-                    pass  # TODO: Implement properly...
-                case csi.serialized_csi_v3_t:
-                    # If force lltf is true, sensor only provides L-LTF, never HT20-LTF
-                    if serialized_csi.acquire_force_lltf:
-                        have_ht20_all = False
+            # If force lltf is true, sensor only provides L-LTF, never HT20-LTF
+            if serialized_csi.acquire_force_lltf:
+                have_ht20_all = False
 
-                    if not csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_HT:
-                        have_ht20_all = False
+            if not csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_HT:
+                have_ht20_all = False
 
         self._foreach_complete_sensor(check_ht20)
 
@@ -317,22 +309,17 @@ class CSICluster(object):
 
         def check_ht40(b, r, a, serialized_csi):
             nonlocal have_ht40_all
-            match type(serialized_csi):
-                case csi.serialized_csi_v1_t:
-                    if not csi.wifi_pkt_rx_ctrl_v1_t(serialized_csi.rx_ctrl).cwb == 1:
-                        have_ht40_all = False
-                case csi.serialized_csi_v3_t:
-                    # If force lltf is true, sensor only provides L-LTF, never HT40-LTF
-                    if serialized_csi.acquire_force_lltf:
-                        have_ht40_all = False
+            # If force lltf is true, sensor only provides L-LTF, never HT40-LTF
+            if serialized_csi.acquire_force_lltf:
+                have_ht40_all = False
 
-                    # Check if packet is HT (HT20 or HT40)
-                    if not csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_HT:
-                        have_ht40_all = False
+            # Check if packet is HT (HT20 or HT40)
+            if not csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_HT:
+                have_ht40_all = False
 
-                    # Check if channel bonding is used: he_siga1 is actuall ht_sig1, which contains the CWB bit at bit 7
-                    if not (csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).he_siga1 & 0x80) != 0:
-                        have_ht40_all = False
+            # Check if channel bonding is used: he_siga1 is actuall ht_sig1, which contains the CWB bit at bit 7
+            if not (csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).he_siga1 & 0x80) != 0:
+                have_ht40_all = False
 
         self._foreach_complete_sensor(check_ht40)
 
@@ -344,25 +331,15 @@ class CSICluster(object):
 
         :return: 0 if no secondary channel is used, 1 if the secondary channel is above the primary channel, -1 if the secondary channel is below the primary channel
         """
-        match type(self._first_complete_sensor()):
-            case csi.serialized_csi_v1_t:
-                match csi.wifi_pkt_rx_ctrl_v1_t(self._first_complete_sensor().rx_ctrl).secondary_channel:
-                    case 0:
-                        return 0
-                    case 1:
-                        return 1
-                    case 2:
-                        return -1
-            case csi.serialized_csi_v3_t:
-                match csi.wifi_pkt_rx_ctrl_v3_t(self._first_complete_sensor().rx_ctrl).second:
-                    case 0:
-                        return 0
-                    case 1:
-                        return 1
-                    case 2:
-                        return -1
+        match csi.wifi_pkt_rx_ctrl_v3_t(self._first_complete_sensor().rx_ctrl).second:
+            case 0:
+                return 0
+            case 1:
+                return 1
+            case 2:
+                return -1
 
-        raise ValueError("Unknown serialized_csi type or secondary channel value")
+        raise ValueError("Unknown secondary channel value")
 
     def get_primary_channel(self) -> int:
         """

@@ -4,7 +4,7 @@ from .calibration import CSICalibration
 from .exithandler import ExitHandler
 from .backlog import CSIBacklog
 from .cluster import CSICluster
-from .board import Board
+from .board import Board, EspargosAPIVersionError, EspargosCsiStreamConnectionError, EspargosHTTPStatusError, EspargosUnexpectedResponseError
 from .pool import Pool
 import logging
 import sys
