@@ -90,10 +90,12 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         gain = self.pool.get_gain_settings()
         if isinstance(gain, dict):
             gain_cfg = {}
-            # "automatic" is true only if both rx_gain and fft_scale are in automatic mode
-            rx_auto = not bool(gain["rx_gain_enable"]) if "rx_gain_enable" in gain else True
-            fft_auto = not bool(gain["fft_scale_enable"]) if "fft_scale_enable" in gain else True
-            gain_cfg["automatic"] = rx_auto and fft_auto
+            # Make sure FFT gain and RX gain are consistent
+            rx_auto = not bool(gain["rx_gain_enable"])
+            fft_auto = not bool(gain["fft_scale_enable"])
+            if rx_auto != fft_auto:
+                raise ValueError("Inconsistent gain settings: rx_gain_enable and fft_scale_enable should be the same")
+            gain_cfg["automatic"] = rx_auto
             if "rx_gain_value" in gain:
                 gain_cfg["rx_gain_value"] = int(gain["rx_gain_value"])
             if "fft_scale_value" in gain:

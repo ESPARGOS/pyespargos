@@ -46,13 +46,22 @@ def build_jones_matrices(antenna_orientations: np.ndarray, base_jones_matrix: np
     rotation of each sub-array.
 
     The effective Jones matrix for each antenna maps from the R/L feed basis to the global H/V
-    linear polarization basis, taking into account the antenna's physical orientation:
+    linear polarization basis, taking into account the antenna's physical orientation.
+
+    The physical model: the R/L feed probes are mounted on the antenna and rotate with it,
+    while the incoming field has fixed global H/V polarization. Rotating the antenna by angle
+    :math:`\\theta` therefore acts in the feed (output) space of the Jones matrix:
 
     .. math::
-        J_{\\text{eff}}^{-1} = R(\\theta) \\cdot J_{\\text{base}}^{-1}
+        J_{\\text{eff}} = R^T(\\theta) \\cdot J_{\\text{base}}
+
+    Inverting to obtain the R/L → H/V mapping:
+
+    .. math::
+        J_{\\text{eff}}^{-1} = J_{\\text{base}}^{-1} \\cdot R(\\theta)
 
     where :math:`R(\\theta)` is the 2D rotation matrix for the antenna's orientation and
-    :math:`J_{\\text{base}}` is the base Jones matrix (feed-to-linear conversion for the default orientation).
+    :math:`J_{\\text{base}}` is the base Jones matrix (H/V to R/L conversion for the default orientation).
 
     :param antenna_orientations: Array of :class:`AntennaOrientation` values with shape (rows, cols).
     :param base_jones_matrix: The base Jones matrix mapping H/V to R/L for the default (N) orientation.
@@ -72,7 +81,7 @@ def build_jones_matrices(antenna_orientations: np.ndarray, base_jones_matrix: np
     for r in range(rows):
         for c in range(cols):
             rot = antenna_orientations[r, c].rotation_matrix()
-            jones_matrices[r, c] = rot @ base_jones_inv
+            jones_matrices[r, c] = base_jones_inv @ rot
 
     return jones_matrices
 
