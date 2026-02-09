@@ -90,7 +90,7 @@ Rectangle {
 
 		vertexShader: "spatialspectrum_vert.qsb"
 
-		property bool rawBeamspace: backend.rawBeamspace === "Beamspace"
+		property bool rawBeamspace: backend.visualizationSpace === "beamspace"
 		property bool flip: backend.cameraFlip
 		property vector2d fov: Qt.vector2d(backend.fovAzimuth, backend.fovElevation)
 		property real time: 0
@@ -119,7 +119,7 @@ Rectangle {
 		source: "img/beamspace_transform.png"
     	anchors.fill: spatialSpectrumShader
 	    fillMode: Image.Stretch
-		visible: backend.rawBeamspace === "Beamspace"
+		visible: backend.visualizationSpace === "beamspace"
     }
 
 	/* Statistics display in bottom right corner */

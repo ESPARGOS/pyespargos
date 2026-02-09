@@ -55,8 +55,9 @@ class EspargosDemoPolarization(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppli
 
         csi_backlog, rssi_backlog, rfswitch_state = result
 
-        # Scale CSI with RSSI to account for different signal strengths
-        # csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
+        # Weight CSI data with RSSI (only meaningful when gain is automatic / AGC is enabled)
+        if self.pooldrawer.cfgman.get("gain", "automatic"):
+            csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
 
         # Separate CSI by feeds
         csi_by_feed = espargos.util.separate_feeds(csi_backlog, rfswitch_state)  # (D, B, M, N, S, 2)

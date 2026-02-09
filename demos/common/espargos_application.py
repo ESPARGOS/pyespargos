@@ -392,6 +392,7 @@ class CombinedArrayMixin:
             cable_velocity_factors,
             self.n_rows,
             self.n_cols,
+            self.antenna_orientations,
         ) = espargos.util.parse_combined_array_config(combined_array_cfg)
 
         additional_calibrate_args["cable_lengths"] = cable_lengths

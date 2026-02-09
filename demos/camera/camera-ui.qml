@@ -324,17 +324,17 @@ Common.ESPARGOSApplication {
 			ComboBox {
 				id: spaceMode
 				property string configKey: "visualization.space"
-				property string configProp: "currentIndex"
-				property var encode: function(v) { return spaceMode.model[v] }
-				property var decode: function(v) {
-					let idx = spaceMode.model.indexOf(v)
-					return idx >= 0 ? idx : 0
-				}
+				property string configProp: "currentValue"
 				Component.onCompleted: appDrawer.configManager.register(this)
-				onCurrentIndexChanged: appDrawer.configManager.onControlChanged(this)
+				onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
 				implicitWidth: 210
-				model: ["Camera", "Beamspace"]
-				currentIndex: 0
+				model: [
+					{ value: "camera", text: "Camera"},
+					{ value: "beamspace", text: "Beamspace"}
+				]
+				textRole: "text"
+				valueRole: "value"
+				currentValue: "camera"
 			}
 
 			Label { text: "Overlay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }

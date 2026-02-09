@@ -116,14 +116,14 @@ void main() {
 		}
 	}
 
-	float glowContribution = 0.2;
+	float glowContribution = 0.4;
 	float pointContribution = minDist < pointRadius ? (pointRadius - minDist) / pointRadius : glowContribution;
 	// Combine the dot and trace, trace is dimmer than the dot itself
-	float totalContribution = max(pointContribution, traceContribution * 0.5 + glowContribution);
+	float totalContribution = max(pointContribution, traceContribution * 0.6 + glowContribution);
 
 	// If not in polarization "show" mode, skip dot/trace overlay
 	if (!polarizationVisible)
 		totalContribution = 1.0;
 
-	fragmentColor = vec4(gray * 0.25 + 0.6 * s.r, gray * 0.25 + 0.6 * s.g, gray * 0.25 + 0.6 * s.b, s.a) + beamspaceColor * totalContribution;
+	fragmentColor = vec4(gray * 0.25 + 0.5 * s.r, gray * 0.25 + 0.5 * s.g, gray * 0.25 + 0.5 * s.b, s.a) + beamspaceColor * totalContribution;
 }

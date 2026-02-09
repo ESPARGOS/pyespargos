@@ -68,8 +68,9 @@ class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppl
 
         csi_backlog, rssi_backlog = result
 
-        # Weight CSI data with RSSI
-        csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
+        # Weight CSI data with RSSI (only meaningful when gain is automatic / AGC is enabled)
+        if self.pooldrawer.cfgman.get("gain", "automatic"):
+            csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
 
         # Shift to first peak if requested
         csi_shifted = espargos.util.shift_to_firstpeak_sync(csi_backlog, peak_threshold=0.5) if self.appconfig.get("shift_peak") else csi_backlog

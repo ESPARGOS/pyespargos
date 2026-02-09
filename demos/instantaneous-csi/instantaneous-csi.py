@@ -151,8 +151,9 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
                 return
             csi_backlog *= csi_backlog.shape[0] / filtered_datapoint_count[..., np.newaxis]
 
-        # Weight CSI data with RSSI
-        csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
+        # Weight CSI data with RSSI (only meaningful when gain is automatic / AGC is enabled)
+        if self.pooldrawer.cfgman.get("gain", "automatic"):
+            csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
 
         if self.appconfig.get("shift_peak"):
             espargos.util.remove_mean_sto(csi_backlog)

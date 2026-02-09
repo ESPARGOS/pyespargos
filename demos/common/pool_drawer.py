@@ -19,13 +19,10 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         "calibration": {"per_board": False, "show_csi": False, "duration": 1.0},
         "rf_switch": 2,
         "acquire_lltf_force": False,
-        "rx_gain": {
+        "gain": {
             "automatic": True,
-            "value": 32,
-        },
-        "fft_gain": {
-            "automatic": True,
-            "value": 32,
+            "rx_gain_value": 32,
+            "fft_gain_value": 32,
         },
         "mac_filter": {
             "enable": False,
@@ -92,20 +89,16 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         # Gain settings -> UI fields
         gain = self.pool.get_gain_settings()
         if isinstance(gain, dict):
-            rx_gain_cfg = {}
-            fft_gain_cfg = {}
-            if "rx_gain_enable" in gain:
-                rx_gain_cfg["automatic"] = False if bool(gain["rx_gain_enable"]) else True
+            gain_cfg = {}
+            # "automatic" is true only if both rx_gain and fft_scale are in automatic mode
+            rx_auto = not bool(gain["rx_gain_enable"]) if "rx_gain_enable" in gain else True
+            fft_auto = not bool(gain["fft_scale_enable"]) if "fft_scale_enable" in gain else True
+            gain_cfg["automatic"] = rx_auto and fft_auto
             if "rx_gain_value" in gain:
-                rx_gain_cfg["value"] = int(gain["rx_gain_value"])
-            if "fft_scale_enable" in gain:
-                fft_gain_cfg["automatic"] = False if bool(gain["fft_scale_enable"]) else True
+                gain_cfg["rx_gain_value"] = int(gain["rx_gain_value"])
             if "fft_scale_value" in gain:
-                fft_gain_cfg["value"] = int(gain["fft_scale_value"])
-            if rx_gain_cfg:
-                cfg_out["rx_gain"] = rx_gain_cfg
-            if fft_gain_cfg:
-                cfg_out["fft_gain"] = fft_gain_cfg
+                gain_cfg["fft_gain_value"] = int(gain["fft_scale_value"])
+            cfg_out["gain"] = gain_cfg
 
         # RF switch config -> UI fields
         rf = self.pool.get_rfswitch()
@@ -170,25 +163,20 @@ class PoolDrawer(PyQt6.QtCore.QObject):
                     cfg["acquire_csi_force_lltf"] = bool(int(delta["acquire_lltf_force"]))
                     self.pool.set_csi_acquire_config(cfg)
 
-                # Gains
-                if "rx_gain" in delta or "fft_gain" in delta:
+                # Gains (unified: "automatic" controls both rx_gain and fft_scale)
+                if "gain" in delta:
+                    gain_delta = delta["gain"]
                     gain_settings = dict()
 
-                    if "rx_gain" in delta:
-                        rx_gain_delta = delta["rx_gain"]
-                        if "automatic" in rx_gain_delta:
-                            gain_settings["rx_gain_enable"] = not bool(rx_gain_delta["automatic"])
-                        if "value" in rx_gain_delta:
-                            gain_settings["rx_gain_value"] = int(rx_gain_delta["value"])
+                    if "automatic" in gain_delta:
+                        manual = not bool(gain_delta["automatic"])
+                        gain_settings["rx_gain_enable"] = manual
+                        gain_settings["fft_scale_enable"] = manual
+                    if "rx_gain_value" in gain_delta:
+                        gain_settings["rx_gain_value"] = int(gain_delta["rx_gain_value"])
+                    if "fft_gain_value" in gain_delta:
+                        gain_settings["fft_scale_value"] = int(gain_delta["fft_gain_value"])
 
-                    if "fft_gain" in delta:
-                        fft_gain_delta = delta["fft_gain"]
-                        if "automatic" in fft_gain_delta:
-                            gain_settings["fft_scale_enable"] = not bool(fft_gain_delta["automatic"])
-                        if "value" in fft_gain_delta:
-                            gain_settings["fft_scale_value"] = int(fft_gain_delta["value"])
-
-                    # Partial updates are also allowed
                     self.pool.set_gain_settings(gain_settings)
 
                 # MAC filter

@@ -26,7 +26,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     polarizationImagedataChanged = PyQt6.QtCore.pyqtSignal(list)
     recentMacsChanged = PyQt6.QtCore.pyqtSignal(list)
     cameraFlipChanged = PyQt6.QtCore.pyqtSignal()
-    rawBeamspaceChanged = PyQt6.QtCore.pyqtSignal()
+    visualizationSpaceChanged = PyQt6.QtCore.pyqtSignal()
     polarizationVisibleChanged = PyQt6.QtCore.pyqtSignal()
     normalizePolarizationChanged = PyQt6.QtCore.pyqtSignal()
     gridSpacingChanged = PyQt6.QtCore.pyqtSignal()
@@ -58,7 +58,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
             "resolution_elevation": 32,
         },
         "visualization": {
-            "space": "Camera",
+            "space": "camera",
             "overlay": "Default",
             "manual_exposure": False,
             "exposure": 0.5,
@@ -128,6 +128,10 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
 
         # Pre-compute 2d steering vectors (array manifold)
         self._update_steering_vectors()
+
+        # Pre-compute per-antenna effective inverse Jones matrices for polarization correction
+        # These account for the physical rotation of each sub-array in the combined array
+        self.jones_matrices_inv = espargos.util.build_jones_matrices(self.antenna_orientations)
 
         # Statistics display
         self.mean_rssi = -np.inf
@@ -218,8 +222,9 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                 np.exp(-1.0j * np.angle(self.additional_calibration)),
             )
 
-        # Weight CSI data with RSSI
-        csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
+        # Weight CSI data with RSSI (only meaningful when gain is automatic / AGC is enabled)
+        if self.pooldrawer.cfgman.get("gain", "automatic"):
+            csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
 
         # Build combined array CSI data and add fake array index dimension
         csi_combined = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)
@@ -266,6 +271,12 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         print("Must have measurements for both R and L feeds for polarization visualization")
                         return
 
+                    # Apply per-antenna Jones correction to convert R/L feeds to global H/V polarization
+                    # in the antenna domain (before beamforming), since each antenna may be rotated differently.
+                    # csi_combined: (D, B=1, M, N, S, 2) where last dim is R/L
+                    # jones_matrices_inv: (M, N, 2, 2) maps R/L -> global H/V
+                    csi_combined = np.einsum("dbmnsf,mnfp->dbmnsp", csi_combined, self.jones_matrices_inv)
+
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
                 # This assumes a constant channel except for CFO-induced phase rotations and noise
                 csi_combined = espargos.util.csi_interp_iterative(csi_combined, iterations=5)
@@ -309,6 +320,10 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                 beam_frequency_space = np.fft.fft2(csi_zeropadded, axes=(0, 1))
                 beam_frequency_space = np.fft.fftshift(beam_frequency_space, axes=(0, 1))
 
+                # Normalize by number of antenna elements so that beamspace power is
+                # independent of array size and comparable across beamformer types
+                beam_frequency_space = beam_frequency_space / (self.n_rows * self.n_cols)
+
                 if self.appconfig.get("beamformer", "polarization_mode") == "ignore":
                     # beam_frequency_space has shape (azimuth, elevation, subcarriers, 2)
                     # Compute total power over both polarizations
@@ -316,22 +331,16 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                 else:
                     # We are now either in polarization_mode "show" or "incorporate"
                     # beam_frequency_space has shape (azimuth, elevation, subcarriers, 2)
-                    # Separate polarizations into V/H components using antenna Jones matrix
-                    beam_frequency_polarization = np.einsum("aesf,fp->aesp", beam_frequency_space, np.linalg.inv(espargos.constants.ANTENNA_JONES_MATRIX))
+                    # Data is already in global H/V basis (per-antenna Jones correction applied before beamforming),
+                    # so index 0 = H and index 1 = V
 
                     # For power (brightness) of visualization: Use total power over both polarizations
-                    self.beamspace_power = np.mean(np.abs(beam_frequency_polarization) ** 2, axis=(-2, -1))
-
-                    # For delay (color hue) of visualization:
-                    # Move polarization axis to front, treating each as an independent observation
-                    # The delay computation sums phase derivatives over axis 0, so both polarizations
-                    # contribute their delay estimates constructively (no destructive interference)
-                    beam_frequency_space = np.moveaxis(beam_frequency_space, -1, 0)
+                    self.beamspace_power = np.mean(np.abs(beam_frequency_space) ** 2, axis=(-2, -1))
 
                     if self.appconfig.get("beamformer", "polarization_mode") == "show":
                         # Combine polarization information of all subcarriers into a single polarization estimate per beam
                         # while preserving absolute phase (and thus sign) of the beamformed signal.
-                        # beam_frequency_polarization: (azimuth, elevation, subcarriers, 2)
+                        # beam_frequency_space: (azimuth, elevation, subcarriers, 2)
                         #
                         # Unlike an eigenvector approach (which loses sign in the outer product),
                         # we directly average the per-subcarrier polarization vectors after removing
@@ -340,7 +349,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         # (e.g., flipped antenna) are displayed correctly.
 
                         # Find globally dominant polarization component (H=0, V=1) for phase reference
-                        total_power_per_component = np.sum(np.abs(beam_frequency_polarization) ** 2, axis=(0, 1, 2))
+                        total_power_per_component = np.sum(np.abs(beam_frequency_space) ** 2, axis=(0, 1, 2))
                         ref_comp = np.argmax(total_power_per_component)
 
                         # Remove per-subcarrier delay phase using the globally dominant component.
@@ -349,17 +358,14 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         # IMPORTANT: Only remove the subcarrier-varying part of the phase (the delay),
                         # NOT the per-pixel absolute phase — that carries the sign/polarity information
                         # between different source directions.
-                        ref_phase = np.angle(beam_frequency_polarization[..., ref_comp])  # (az, el, subcarriers)
+                        ref_phase = np.angle(beam_frequency_space[..., ref_comp])  # (az, el, subcarriers)
                         center_sc = ref_phase.shape[-1] // 2
-                        delay_phase = ref_phase - ref_phase[..., center_sc:center_sc + 1]  # subcarrier delay relative to center
-                        aligned = beam_frequency_polarization * np.exp(-1j * delay_phase)[..., np.newaxis]  # (az, el, subcarriers, 2)
+                        delay_phase = ref_phase - ref_phase[..., center_sc : center_sc + 1]  # subcarrier delay relative to center
+                        aligned = beam_frequency_space * np.exp(-1j * delay_phase)[..., np.newaxis]  # (az, el, subcarriers, 2)
                         polarization_estimate = np.mean(aligned, axis=2)  # (az, el, 2)
 
                         # Normalize so that total power is 1
                         polarization_estimate = polarization_estimate / (np.linalg.norm(polarization_estimate, axis=-1, keepdims=True) + 1e-12)
-
-                        # inv(ANTENNA_JONES_MATRIX) converts from R/L feed basis to H/V linear basis,
-                        # so index 0 = H and index 1 = V
 
                         # Apply a single global phase rotation to make V predominantly real.
                         # Use power-weighted aggregate to determine the global V phase.
@@ -375,7 +381,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         # real physical information that we preserve. V may also have small imaginary
                         # residuals which we discard (second-order effect from global phase approximation).
                         v_signed = polarization_estimate[..., 1].real  # signed, in [-1, 1]
-                        h_complex = polarization_estimate[..., 0]       # complex H
+                        h_complex = polarization_estimate[..., 0]  # complex H
 
                         # Compute per-pixel power scaling for un-normalized mode.
                         # Scale polarization components by sqrt(power/max_power) so oscillation
@@ -398,6 +404,11 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                         self.polarization_imagedata[3::4] = 255
                         self.polarizationImagedataChanged.emit(self.polarization_imagedata.tolist())
 
+                    # For delay colorization: move polarization axis to front so both H/V are treated
+                    # as independent observations. The delay computation sums phase derivatives over
+                    # axis 0, so both polarizations contribute constructively.
+                    beam_frequency_space = np.moveaxis(beam_frequency_space, -1, 0)
+
             case "Bartlett":
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
                 # This assumes a constant channel except for CFO-induced phase rotations and noise
@@ -413,6 +424,10 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                     csi_combined,
                     optimize=True,
                 )
+
+                # Normalize by number of antenna elements so that beamspace power is
+                # independent of array size and comparable across beamformer types
+                beam_frequency_space = beam_frequency_space / (self.n_rows * self.n_cols)
                 self.beamspace_power = np.mean(np.abs(beam_frequency_space) ** 2, axis=(0, 3))
 
         if self.appconfig.get("visualization", "overlay") == "Power":
@@ -429,10 +444,12 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
 
             if self.appconfig.get("visualization", "manual_exposure"):
                 match self.appconfig.get("beamformer", "type"):
-                    case "MUSIC" | "MVDR":
-                        value_range = 1e-2
+                    case "MUSIC":
+                        value_range = 1e-4
+                    case "MVDR":
+                        value_range = 1e-1 if self.pooldrawer.cfgman.get("gain", "automatic") else 1e15
                     case "FFT" | "Bartlett":
-                        value_range = 1e11
+                        value_range = 1e-1 if self.pooldrawer.cfgman.get("gain", "automatic") else 1e15
                 exposure = self.appconfig.get("visualization", "exposure")
                 color_value = power_visualization_beamspace / value_range * (10 ** (exposure / 0.1) + 1e-6)
             else:
@@ -443,9 +460,9 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                     raise NotImplementedError("Delay colorization not supported in MUSIC or MVDR mode")
 
                 # Ensure beam_frequency_space is 4D: (observations, azimuth, elevation, subcarriers)
-                # For FFT with polarization_mode="show", it's already (2, az, el, sc) after moveaxis
-                # For FFT with polarization_mode="ignore", it's (az, el, sc) - add fake axis
-                # For Bartlett, it's (datapoints, az, el, sc)
+                # For FFT with polarization (show/incorporate): (2, az, el, sc) after moveaxis
+                # For FFT without polarization (ignore): (az, el, sc) - add fake axis
+                # For Bartlett: (datapoints, az, el, sc)
                 if beam_frequency_space.ndim == 3:
                     beam_frequency_space = beam_frequency_space[np.newaxis, ...]
 
@@ -630,9 +647,9 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
 
         if "visualization" in newcfg and "space" in newcfg["visualization"]:
             try:
-                self.rawBeamspaceChanged.emit()
+                self.visualizationSpaceChanged.emit()
             except Exception as e:
-                print(f"Error setting raw beamspace: {e}")
+                print(f"Error setting visualization space: {e}")
 
         # Let base class handle the rest
         super()._on_update_app_state(newcfg)
@@ -657,8 +674,8 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     def fovElevation(self):
         return self.appconfig.get("camera", "fov_elevation")
 
-    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=rawBeamspaceChanged)
-    def rawBeamspace(self):
+    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=visualizationSpaceChanged)
+    def visualizationSpace(self):
         return self.appconfig.get("visualization", "space")
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=rssiChanged)

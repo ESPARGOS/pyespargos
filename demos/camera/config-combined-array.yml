@@ -3,11 +3,14 @@
 
 app:
   camera:
-    device: "/dev/video2"
+    device: "/dev/video4"
     format: null
     flip: False
   beamformer:
     type: "FFT"
+    polarization_mode: "show"
+  visualization:
+    space: "beamspace"
 
 generic:
   preamble_format: "lltf"

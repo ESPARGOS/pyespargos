@@ -203,11 +203,11 @@ Drawer {
 			}
 
 			// Section: Gain/AGC
-			Label { Layout.columnSpan: 2; text: "RX Gain"; color: "#9fb3c8" }
+			Label { Layout.columnSpan: 2; text: "Gain"; color: "#9fb3c8" }
 			Label { text: "Automatic"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {
-				id: rxGainSwitch
-				property string configKey: "rx_gain.automatic"
+				id: gainSwitch
+				property string configKey: "gain.automatic"
 				property string configProp: "checked"
 				property var encode: function(v) { return v ? 1 : 0 }
 				property var decode: function(v) { return !!v }
@@ -216,12 +216,12 @@ Drawer {
 				checked: true
 			}
 
-			Label { text: "Value"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "RX Gain"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			RowLayout {
 				spacing: 14
 				Slider {
 					id: lnaGainSlider
-					property string configKey: "rx_gain.value"
+					property string configKey: "gain.rx_gain_value"
 					property string configProp: "value"
 					property var encode: function(v) { return Math.round(v) }
 					property var decode: function(v) { return Math.max(0, Math.min(64, parseInt(v||32))) }
@@ -229,30 +229,18 @@ Drawer {
 					onValueChanged: poolConfigManager.onControlChanged(this)
 					from: 0; to: 64; value: 32; stepSize: 1
 					implicitWidth: 120
-					enabled: !rxGainSwitch.checked
+					enabled: !gainSwitch.checked
 					function isUserActive() { return pressed }
 				}
 				Label { text: lnaGainSlider.value; color: "#ffffff" }
 			}
 
-			Label { Layout.columnSpan: 2; text: "FFT Gain"; color: "#9fb3c8" }
-			Label { text: "Automatic"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Switch {
-				id: fftGainSwitch
-				property string configKey: "fft_gain.automatic"
-				property string configProp: "checked"
-				property var encode: function(v) { return v ? 1 : 0 }
-				property var decode: function(v) { return !!v }
-				Component.onCompleted: poolConfigManager.register(this)
-				onCheckedChanged: poolConfigManager.onControlChanged(this)
-				checked: true
-			}
-			Label { text: "Value"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "FFT Gain"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			RowLayout {
 				spacing: 14
 				Slider {
 					id: fftGainSlider
-					property string configKey: "fft_gain.value"
+					property string configKey: "gain.fft_gain_value"
 					property string configProp: "value"
 					property var encode: function(v) { return Math.round(v) }
 					property var decode: function(v) { return Math.max(0, Math.min(64, parseInt(v||32))) }
@@ -260,7 +248,7 @@ Drawer {
 					onValueChanged: poolConfigManager.onControlChanged(this)
 					from: 0; to: 64; value: 32; stepSize: 1
 					implicitWidth: 120
-					enabled: !fftGainSwitch.checked
+					enabled: !gainSwitch.checked
 					function isUserActive() { return pressed }
 				}
 				Label { text: fftGainSlider.value; color: "#ffffff" }
