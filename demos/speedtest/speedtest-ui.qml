@@ -79,23 +79,4 @@ Common.ESPARGOSApplication {
 			topPadding: 20
 		}
 	}
-
-	// Loading indicator
-	BusyIndicator {
-		anchors.centerIn: parent
-		running: backend.initializing
-		visible: backend.initializing
-		width: 80
-		height: 80
-	}
-
-	Label {
-		anchors.horizontalCenter: parent.horizontalCenter
-		anchors.top: parent.verticalCenter
-		anchors.topMargin: 60
-		text: "Initializing..."
-		font.pixelSize: 18
-		color: "#9fb3c8"
-		visible: backend.initializing
-	}
 }

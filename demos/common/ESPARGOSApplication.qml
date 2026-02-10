@@ -122,22 +122,29 @@ ApplicationWindow {
 
 	Rectangle {
 		anchors.centerIn: parent
-		width: Math.min(parent.width * 0.5, 420)
-		height: 100
-		radius: 12
+		width: Math.min(parent.width * 0.8, 220)
+		height: 220
 		color: "#80000000"
-		border.color: "#40ffffff"
-		border.width: 2
 		z: 100
 
 		visible: backend.initializing
 
-		Text {
+		BusyIndicator {
 			anchors.centerIn: parent
+			running: backend.initializing
+			visible: backend.initializing
+			width: 80
+			height: 80
+		}
+
+		Label {
+			anchors.horizontalCenter: parent.horizontalCenter
+			anchors.top: parent.verticalCenter
+			anchors.topMargin: 60
 			text: "Initializing..."
+			font.pixelSize: 18
 			color: "#ffffff"
-			font.pixelSize: 26
-			font.bold: true
+			visible: backend.initializing
 		}
 	}
 
