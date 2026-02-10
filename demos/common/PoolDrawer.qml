@@ -255,7 +255,7 @@ Drawer {
 			}
 
 			// Section MAC filter
-			Label { Layout.columnSpan: 2; text: "MAC Filter"; color: "#9fb3c8" }
+			Label { Layout.columnSpan: 2; text: "Firmware MAC Filter"; color: "#9fb3c8" }
 			Label { text: "Enable Filter"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {
 				id: macFilterSwitch

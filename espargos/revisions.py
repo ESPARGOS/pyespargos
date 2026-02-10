@@ -80,6 +80,19 @@ class BoardRevisionDensiflorus(BoardRevision):
         col = 3 - esp_num % 4
         return (row, col)
 
+    @property
+    def antid_to_esp_num(self) -> dict:
+        return {
+            0: 3,  # Sensor 0 -> ESP 0
+            1: 2,  # Sensor 1 -> ESP 1
+            2: 1,  # Sensor 2 -> ESP 2
+            3: 0,  # Sensor 3 -> ESP 3
+            4: 7,  # Sensor 4 -> ESP 4
+            5: 6,  # Sensor 5 -> ESP 5
+            6: 5,  # Sensor 6 -> ESP 6
+            7: 4,  # Sensor 7 -> ESP 7
+        }
+
     # Private, (potentially) revision-specific properties
     @property
     def _calib_trace_dielectric_constant(self) -> float:

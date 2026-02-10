@@ -264,6 +264,7 @@ class serialized_csi_v3_t(ctypes.LittleEndianStructure):
         ("is_radar", ctypes.c_bool),
         ("antid", ctypes.c_uint8),
         ("acquire_lltf_bit_mode", ctypes.c_bool),
+        ("crc32", ctypes.c_uint32),
     ]
 
     def __new__(self, buf=None):

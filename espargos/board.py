@@ -7,6 +7,7 @@ import logging
 import socket
 import ctypes
 import json
+import binascii
 
 from . import revisions
 from . import csi
@@ -40,7 +41,8 @@ class EspargosAPIVersionError(Exception):
 CSISTREAM_MAGIC = bytes([0xE5, 0xA7, 0x60, 0x00])
 
 # Only this major API version is supported
-SUPPORTED_API_MAJOR = 1
+SUPPORTED_API_MAJOR_MIN = 0
+SUPPORTED_API_MAJOR_MAX = 2
 
 
 class Board(object):
@@ -110,10 +112,11 @@ class Board(object):
         api_major = api_info["api-major"]
         api_minor = api_info.get("api-minor", 0)
 
-        if api_major > SUPPORTED_API_MAJOR:
+        if api_major < SUPPORTED_API_MAJOR_MIN or api_major > SUPPORTED_API_MAJOR_MAX:
             raise EspargosAPIVersionError(
                 f"ESPARGOS controller at {self.host} runs API version {api_major}.{api_minor}, "
-                f"but this version of pyespargos only supports API major version {SUPPORTED_API_MAJOR}. " + ("Please update pyespargos." if api_major > SUPPORTED_API_MAJOR else "Please update the controller firmware.")
+                f"but this version of pyespargos only supports API major version between {SUPPORTED_API_MAJOR_MIN} and {SUPPORTED_API_MAJOR_MAX}. "
+                + ("Please update pyespargos." if api_major > SUPPORTED_API_MAJOR_MAX else "Please update the controller firmware.")
             )
 
         self.api_version = (api_major, api_minor)
@@ -521,6 +524,21 @@ class Board(object):
         for i in range(0, len(message), pktsize):
             packet = self.revision.csistream_pkt_t(message[i : i + pktsize])
             serialized_csi = csi.deserialize_packet_buffer(self.revision, packet.buf)
+
+            # Two sanity checks before we process the packet:
+            # 1) Check CRC32 of the CSI data (if provided by the firmware)
+            # 2) Check if antid matches the expected sensor ID (antid is provided by sensors, sensor ID provided by controller)
+            # CRC32 check (for major API version 1 or higher)
+            if self.api_version[0] >= 2:
+                crc_data = bytes(serialized_csi)[: ctypes.sizeof(serialized_csi) - ctypes.sizeof(ctypes.c_uint32)]
+                computed_crc = binascii.crc32(crc_data) & 0xFFFFFFFF
+                if computed_crc != serialized_csi.crc32:
+                    self.logger.warning(f"CRC32 mismatch for CSI packet from sensor {packet.esp_num} (expected 0x{serialized_csi.crc32:08x}, computed 0x{computed_crc:08x}), dropping packet")
+                    continue
+
+            if self.revision.antid_to_esp_num[serialized_csi.antid] != packet.esp_num:
+                self.logger.warning(f"Received CSI packet with unexpected esp_num {packet.esp_num} (expected {self.revision.antid_to_esp_num[packet.esp_num]} for antid {serialized_csi.antid}), dropping packet")
+                continue
 
             for clist, cv, args in self.consumers:
                 with cv:
