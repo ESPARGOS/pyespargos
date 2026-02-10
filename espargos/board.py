@@ -85,24 +85,32 @@ class Board(object):
         try:
             identification_raw = self._fetch("identify")
         except TimeoutError:
-            self.logger.error(f"Could not connect to {self.host}")
+            self.logger.error(f"Could not connect to {self.host} to fetch identification information")
             raise TimeoutError
 
+        if not "ESPARGOS-DENSIFLORUS" in identification_raw:
+            raise EspargosUnexpectedResponseError(f"Server at {self.host} does not look like an ESPARGOS controller. Check if the host is correct.")
+
         try:
-            identification = json.loads(identification_raw)
-        except (json.JSONDecodeError, TypeError):
-            if "ESPARGOS" in identification_raw:
-                raise EspargosAPIVersionError(f"Server at {self.host} runs old firmware with unsupported API version. " f"Please update the controller firmware to a version compatible with this version of pyespargos.")
-            else:
-                raise EspargosUnexpectedResponseError(f"Server at {self.host} does not look like an ESPARGOS controller. Check if the host is correct.")
+            api_info_raw = self._fetch("api_info")
+            try:
+                api_info = json.loads(api_info_raw)
+            except (json.JSONDecodeError, TypeError):
+                raise EspargosUnexpectedResponseError(f"Server at {self.host} did not provide valid API information. Check if the host is correct and the server is running ESPARGOS firmware.")
+        except TimeoutError:
+            self.logger.error(f"Could not connect to {self.host} to fetch API information")
+            raise TimeoutError
+        except EspargosHTTPStatusError:
+            self.logger.warning(f"ESPARGOS at {self.host} runs older firmware with no API version information. " f"Please update the firmware.")
+            api_info = {"device": "espargos", "revision": "densiflorus", "api-major": 0, "api-minor": 0}
 
-        if "api-major" not in identification or "api-minor" not in identification:
-            raise EspargosUnexpectedResponseError(f"Server at {self.host} did not provide API version information in identify response.")
+        if "api-major" not in api_info or "api-minor" not in api_info:
+            raise EspargosUnexpectedResponseError(f"Server at {self.host} did not provide API version information in api_info response.")
 
-        api_major = identification["api-major"]
-        api_minor = identification.get("api-minor", 0)
+        api_major = api_info["api-major"]
+        api_minor = api_info.get("api-minor", 0)
 
-        if api_major != SUPPORTED_API_MAJOR:
+        if api_major > SUPPORTED_API_MAJOR:
             raise EspargosAPIVersionError(
                 f"ESPARGOS controller at {self.host} runs API version {api_major}.{api_minor}, "
                 f"but this version of pyespargos only supports API major version {SUPPORTED_API_MAJOR}. " + ("Please update pyespargos." if api_major > SUPPORTED_API_MAJOR else "Please update the controller firmware.")
@@ -111,8 +119,8 @@ class Board(object):
         self.api_version = (api_major, api_minor)
 
         self.revision = None
-        device = identification.get("device", "")
-        revision_name = identification.get("revision", "")
+        device = api_info.get("device", "")
+        revision_name = api_info.get("revision", "")
         for rev in revisions.all_revisions:
             if (device, revision_name) == rev.identification:
                 self.revision = rev
@@ -140,27 +148,39 @@ class Board(object):
         """
         return self.netconf["hostname"]
 
-    def start(self):
+    def start(self, transports=None):
         """
         Starts the CSI stream thread for the ESPARGOS controller. The thread will run indefinitely until the stop() method is called.
-        Tries to establish a UDP transport first for better performance, and falls back to WebSocket if UDP fails.
+        Supported transports:
+            - "udp": The controller will send CSI packets to a local UDP socket. This transport is lower-latency and more efficient (higher throughput), but requires API version 1 or higher and may not work in all network environments.
+            - "websocket": The controller will send CSI packets over a WebSocket connection. This transport is more widely compatible but may have higher latency and overhead.
+
+        :param transports: Optional list of transports to try, in order of preference. Valid values are "udp" and "websocket". If None (default), tries UDP first (if supported by API version) and then WebSocket.
 
         :raises EspargosCsiStreamConnectionError: If neither UDP nor WebSocket CSI stream could be established
         """
-        # Try UDP first
-        udp_error = self._try_start_udp()
-        if udp_error is None:
-            return
+        if transports is None:
+            transports = ["udp", "websocket"] if self.api_version[0] > 0 else ["websocket"]
 
-        self.logger.warning(f"UDP CSI stream failed for {self.get_name()}: {udp_error}")
-        self.logger.info(f"Falling back to WebSocket CSI stream for {self.get_name()}")
+        for transport in transports:
+            if transport == "udp":
+                if self.api_version[0] == 0:
+                    raise EspargosAPIVersionError(f"ESPARGOS controller at {self.host} runs API version {self.api_version[0]}.{self.api_version[1]}, which does not support UDP CSI streaming. Please update the controller firmware.")
+                udp_error = self._try_start_udp()
+                if udp_error is None:
+                    return
 
-        # Fall back to WebSocket
-        ws_error = self._try_start_websocket()
-        if ws_error is None:
-            return
+                self.logger.warning(f"UDP CSI stream failed for {self.get_name()}: {udp_error}")
+            elif transport == "websocket":
+                ws_error = self._try_start_websocket()
+                if ws_error is None:
+                    return
 
-        raise EspargosCsiStreamConnectionError(f"Could not establish CSI stream to {self.host} via UDP or WebSocket. " f"UDP error: {udp_error}. WebSocket error: {ws_error}")
+                self.logger.warning(f"WebSocket CSI stream failed for {self.get_name()}: {ws_error}")
+            else:
+                self.logger.error(f"Unknown transport {transport} specified for {self.get_name()}, skipping")
+
+        raise EspargosCsiStreamConnectionError(f"Could not establish CSI stream to {self.host} via any of the enabled transports, tried transports: {transports}")
 
     def _try_start_udp(self) -> str | None:
         """
@@ -227,6 +247,7 @@ class Board(object):
         self.csistream_thread = threading.Thread(target=self._csistream_loop_websocket)
         self.csistream_thread.start()
 
+        # Only API version major 1 or greater sends magic packet
         if not self._csistream_magic_event.wait(timeout=3):
             self.csistream_connected = False
             self.csistream_thread.join()
@@ -534,22 +555,25 @@ class Board(object):
             return
 
         with ws as websocket:
-            # Wait for magic packet that confirms valid CSI stream connection
-            try:
-                magic = websocket.recv(timeout=3)
-            except TimeoutError:
-                self._csistream_error = EspargosCsiStreamConnectionError(f"Timeout waiting for CSI stream magic packet from {self.host}")
-                self._csistream_magic_event.set()
-                return
-            except Exception as e:
-                self._csistream_error = EspargosCsiStreamConnectionError(f"Error receiving CSI stream magic packet from {self.host}: {e}")
-                self._csistream_magic_event.set()
-                return
+            # For major API version 1 or greater, wait for magic packet that confirms valid CSI stream connection
+            if self.api_version[0] >= 1:
+                try:
+                    magic = websocket.recv(timeout=3)
+                except TimeoutError:
+                    self._csistream_error = EspargosCsiStreamConnectionError(f"Timeout waiting for CSI stream magic packet from {self.host}")
+                    self._csistream_magic_event.set()
+                    return
+                except Exception as e:
+                    self._csistream_error = EspargosCsiStreamConnectionError(f"Error receiving CSI stream magic packet from {self.host}: {e}")
+                    self._csistream_magic_event.set()
+                    return
 
-            if magic != CSISTREAM_MAGIC:
-                self._csistream_error = EspargosCsiStreamConnectionError(f"Invalid CSI stream magic packet from {self.host}: expected {CSISTREAM_MAGIC.hex()}, got {magic.hex() if isinstance(magic, bytes) else repr(magic)}")
+                if magic != CSISTREAM_MAGIC:
+                    self._csistream_error = EspargosCsiStreamConnectionError(f"Invalid CSI stream magic packet from {self.host}: expected {CSISTREAM_MAGIC.hex()}, got {magic.hex() if isinstance(magic, bytes) else repr(magic)}")
+                    self._csistream_magic_event.set()
+                    return
+            else:
                 self._csistream_magic_event.set()
-                return
 
             self.csistream_connected = True
             self._csistream_magic_event.set()
