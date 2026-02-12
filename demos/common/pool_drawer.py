@@ -158,10 +158,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
 
                 # CSI acquire config
                 if "acquire_lltf_force" in delta:
-                    cfg = self.pool.get_csi_acquire_config()
-                    if not isinstance(cfg, dict):
-                        raise RuntimeError("pool.get_csi_acquire_config() returned non-dict")
-                    cfg = dict(cfg)
+                    cfg = dict()
                     cfg["acquire_csi_force_lltf"] = bool(int(delta["acquire_lltf_force"]))
                     self.pool.set_csi_acquire_config(cfg)
 
