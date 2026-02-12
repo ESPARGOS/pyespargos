@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import websockets.sync.client
 import http.client
@@ -9,8 +9,13 @@ import ctypes
 import json
 import binascii
 
+import time
+
 from . import revisions
 from . import csi
+
+# Port used by the controller as source port for UDP CSI packets
+CSISTREAM_CONTROLLER_SRC_PORT = 53330
 
 
 class EspargosHTTPStatusError(Exception):
@@ -200,6 +205,13 @@ class Board(object):
         except OSError as e:
             return f"Could not create UDP socket: {e}"
 
+        # Send an empty packet to the controller's source port to punch a hole
+        # in the Windows firewall so that incoming UDP packets are allowed through
+        try:
+            udp_sock.sendto(b"", (self.host, CSISTREAM_CONTROLLER_SRC_PORT))
+        except OSError as e:
+            self.logger.warning(f"Could not send firewall-punch packet: {e}")
+
         # Tell the server to start streaming to us via UDP
         try:
             res = self._fetch("csi_udp", json.dumps({"enable": True, "port": local_port}))
@@ -234,6 +246,12 @@ class Board(object):
         self.csistream_connected = True
         self.csistream_thread = threading.Thread(target=self._csistream_loop_udp)
         self.csistream_thread.start()
+
+        # Start keepalive thread that periodically sends empty packets to punch through the firewall
+        self._udp_keepalive_stop = threading.Event()
+        self._udp_keepalive_thread = threading.Thread(target=self._udp_keepalive_loop, daemon=True)
+        self._udp_keepalive_thread.start()
+
         self.logger.info(f"Started UDP CSI stream for {self.get_name()} on local port {local_port}")
         return None
 
@@ -280,6 +298,9 @@ class Board(object):
             self.csistream_thread.join()
 
             if getattr(self, "_csistream_transport", None) == "udp":
+                if hasattr(self, "_udp_keepalive_stop"):
+                    self._udp_keepalive_stop.set()
+                    self._udp_keepalive_thread.join()
                 if hasattr(self, "_udp_sock"):
                     self._udp_sock.close()
                 self._disable_udp_stream()
@@ -544,6 +565,14 @@ class Board(object):
                 with cv:
                     clist.append((packet.esp_num, serialized_csi, *args))
                     cv.notify()
+
+    def _udp_keepalive_loop(self):
+        """Periodically send empty UDP packets to the controller to keep the firewall hole open."""
+        while not self._udp_keepalive_stop.wait(timeout=1.0):
+            try:
+                self._udp_sock.sendto(b"", (self.host, CSISTREAM_CONTROLLER_SRC_PORT))
+            except OSError:
+                break
 
     def _csistream_loop_udp(self):
         self._udp_sock.settimeout(0.2)

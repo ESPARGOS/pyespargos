@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import numpy as np
 import binascii
@@ -391,11 +391,11 @@ class CSICluster(object):
 
         :return: A numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)` that contains the sensor timestamps in seconds
         """
-        sensor_timestamps = np.full(self.shape, np.nan, dtype=np.float128)
+        sensor_timestamps = np.full(self.shape, np.nan, dtype=np.float64)
 
         def append_sensor_timestamp(b, r, a, serialized_csi):
-            timestamp_ns = np.float128(self._nanosecond_timestamp(serialized_csi))
-            sensor_timestamps[b, r, a] = np.float128(timestamp_ns) / 1e9
+            timestamp_ns = np.float64(self._nanosecond_timestamp(serialized_csi))
+            sensor_timestamps[b, r, a] = np.float64(timestamp_ns) / 1e9
 
         self._foreach_complete_sensor(append_sensor_timestamp)
         return sensor_timestamps

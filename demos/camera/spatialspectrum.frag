@@ -4,7 +4,7 @@ layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 1) in vec4 beamspaceColor;
 layout(location = 2) in vec4 beamspacePolarization;
 layout(location = 0) out vec4 fragmentColor;
-layout(binding=2) uniform sampler2D cameraImage;
+layout(binding=3) uniform sampler2D cameraImage;
 
 layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;

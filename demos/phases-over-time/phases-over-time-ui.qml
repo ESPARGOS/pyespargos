@@ -160,7 +160,7 @@ Common.ESPARGOSApplication {
 						let phaseSeries = calibrationPhasesOverTime.createSeries(ChartView.SeriesTypeLine, "tx-" + ant, calibrationPhasesOverTimeXAxis, calibrationPhasesOverTimeYAxis)
 						phaseSeries.pointsVisible = false
 						phaseSeries.color = colorCycle[ant % colorCycle.length]
-						phaseSeries.useOpenGL = true
+						phaseSeries.useOpenGL = Qt.platform.os !== "windows"
 					}
 				}
 

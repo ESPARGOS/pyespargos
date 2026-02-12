@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 from .espargos_application import ESPARGOSApplication, BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
 from .backlog_settings import BacklogSettings

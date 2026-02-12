@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 from .calibration import CSICalibration
 from .exithandler import ExitHandler

@@ -1,4 +1,5 @@
 # Shader Compilation
 
-Before you can run the camera demo, you must compile the fragment and vertex shaders that are used to display the received power overlay.
-For this, just run the `compile_shader.sh` script.
+Before you can run the camera demo, the fragment and vertex shader must be compiled. Usually, the pre-compiled ones found in the repository will work just fine.
+
+Otherwise, use the `compile_shader.sh` (Linux / macOS) or `compile_shader.bat` (Windows) scripts (you may need to adapt the path to `qsb`).

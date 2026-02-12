@@ -36,8 +36,8 @@ class CSIBacklog(object):
         },
         "rssi": {"shape": (), "per_antenna": True, "dtype": np.float32},
         "rfswitch_state": {"shape": (), "per_antenna": True, "dtype": np.uint8},
-        "timestamp": {"shape": (), "per_antenna": True, "dtype": np.float128},
-        "host_timestamp": {"shape": (), "per_antenna": False, "dtype": np.float128},
+        "timestamp": {"shape": (), "per_antenna": True, "dtype": np.float64},
+        "host_timestamp": {"shape": (), "per_antenna": False, "dtype": np.float64},
         "mac": {"shape": (6,), "per_antenna": False, "dtype": np.uint8},
     }
 

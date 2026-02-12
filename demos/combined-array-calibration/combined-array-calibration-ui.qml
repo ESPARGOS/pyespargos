@@ -127,7 +127,7 @@ Common.ESPARGOSApplication {
 					const boardIndex = ~~(ant / backend.sensorCountPerBoard);
 					const colorIndex = (backend.colorBySensorIndex ? sensorIndexInBoard : boardIndex) % colorCycle.length;
 					series.color = colorCycle[colorIndex];
-					series.useOpenGL = true;
+					series.useOpenGL = Qt.platform.os !== "windows";
 
 					for (const s of backend.subcarrierRange) {
 						series.append(s, 0)

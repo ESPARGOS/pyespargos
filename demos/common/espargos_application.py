@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import PyQt6.QtWidgets
 import PyQt6.QtCore

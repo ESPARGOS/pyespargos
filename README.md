@@ -60,44 +60,210 @@ All demos are built on a common application framework (`demos/common`) that prov
 
 The following demos are provided in the `demos` folder of this repository:
 
-* `music-spectrum`: Use the [MUSIC algorithm](https://en.wikipedia.org/wiki/MUSIC_(algorithm)) to display a spatial (angular) spectrum. Demonstrates angle of arrival (AoA) estimation.
-* `phases-over-space`: Show the average received phase for each ESPARGOS antenna.
-* `instantaneous-csi`: Plot the current frequency-domain or time-domain transfer function of the measured channel.
-* `phases-over-time`: Plot the average received phase for every antenna over time.
-* `tdoas-over-time`: Visualize time difference of arrival (TDOA) measurements over time.
-* `azimuth-delay`: Display a 2D azimuth-delay diagram using beamspace processing. Requires shaders to be compiled first.
-* `combined-array`: Combine multiple ESPARGOS arrays into one large antenna array and visualize the average received phase for each antenna. Requires multiple ESPARGOS arrays.
-* `combined-array-calibration`: Tool for calibrating combined multi-board antenna arrays. Visualizes and exports calibration data.
-* `camera`: Overlay WiFi spatial spectrum on a live camera feed. Requires shaders to be compiled first (see `demos/camera/README.md`).
-* `radar-analysis`: Analyze WiFi signals in radar-like fashion.
+| Demo | Description |
+|------|-------------|
+| `music-spectrum` | Use the [MUSIC algorithm](https://en.wikipedia.org/wiki/MUSIC_(algorithm)) to display a spatial (angular) spectrum. Demonstrates angle of arrival (AoA) estimation. |
+| `phases-over-space` | Show the average received phase for each ESPARGOS antenna. |
+| `instantaneous-csi` | Plot the current frequency-domain or time-domain transfer function of the measured channel. |
+| `phases-over-time` | Plot the average received phase for every antenna over time. |
+| `tdoas-over-time` | Visualize time difference of arrival (TDOA) measurements over time. |
+| `azimuth-delay` | Display a 2D azimuth-delay diagram using beamspace processing. Requires shaders to be compiled first (see ``demos/azimuth-delay/README.md`). |
+| `polarization` | Visualize WiFi signal polarization using constellation diagrams and polarization ellipses. |
+| `speedtest` | Measure CSI packet throughput from ESPARGOS. |
+| `combined-array` | Combine multiple ESPARGOS arrays into one large antenna array and visualize the average received phase for each antenna. Requires multiple ESPARGOS arrays. |
+| `combined-array-calibration` | Tool for calibrating combined multi-board antenna arrays. Visualizes and exports calibration data. |
+| `camera` | Overlay WiFi spatial spectrum on a live camera feed. Requires shaders to be compiled first (see `demos/camera/README.md`). |
 
 Most demos support both single ESPARGOS arrays and combined multi-board setups via command-line arguments or YAML configuration files.
 
 ## Installation
-* Create a virtual environment for `pyespargos`
+
+*pyespargos* is tested with **Python 3.13 or newer**. Follow the instructions for your operating system below.
+
+---
+
+### <img src="img/linux-logo.svg" width="20" height="20" style="vertical-align: middle;"> Linux
+
+<details>
+<summary><b>Click to expand Linux instructions</b></summary>
+
+#### 1. Install Python
+
+Most Linux distributions ship with Python pre-installed. Verify by running:
+
 ```bash
-python -m venv ~/pyespargos-venv
+python3 --version
 ```
-* Activate the virtual environment. **You will need to execute this every time before running any `pyespargos`-based scripts**:
+
+If Python is not installed or the version is below 3.11, install it using your package manager:
+
 ```bash
-. ~/pyespargos-venv/bin/activate
+# Debian / Ubuntu
+sudo apt update && sudo apt install python3 python3-venv python3-pip
+
+# Fedora
+sudo dnf install python3 python3-pip
+
+# Arch Linux
+sudo pacman -S python python-pip
 ```
-* Install `pyespargos` to the new virtual environment with `pip`:
+
+#### 2. Create and activate a virtual environment
+
+```bash
+python3 -m venv ~/pyespargos-venv
+source ~/pyespargos-venv/bin/activate
+```
+
+> **Note:** You need to run `source ~/pyespargos-venv/bin/activate` every time you open a new terminal before using *pyespargos*.
+
+#### 3. Install pyespargos
+
 ```bash
 cd pyespargos
 pip install .
 ```
-* If you want to make changes to `pyespargos`, it is recommended to install it in editable mode. This way, if you make changes to the `espargos` library, they are immediately applied without needing to re-install anything:
+
+For development (editable install):
+
 ```bash
 pip install -e .
 ```
-* If you want to run the demo applications, you will need to install some additional Python dependencies:
+
+#### 4. Install demo dependencies (optional)
+
+If you want to run the demo applications:
+
 ```bash
-pip install pyqt6 pyqt6-charts pyyaml
+pip install pyqt6 pyqt6-charts pyyaml matplotlib
 ```
-* Import the `espargos` package in your Python application. Use this minimal sample code to get started:
+
+</details>
+
+---
+
+### <img src="img/windows-logo.svg" width="20" height="20" style="vertical-align: middle;"> Windows
+*(not recommended)*
+
+<details>
+<summary><b>Click to expand Windows instructions</b></summary>
+
+#### 1. Install Python
+
+If you don't have Python installed yet:
+
+1. Go to [python.org/downloads](https://www.python.org/downloads/) and download the latest Python installer (3.11 or newer).
+2. Run the installer. **Important: Check the box "Add python.exe to PATH"** at the bottom of the first installer screen before clicking "Install Now".
+3. After installation, open a new **Command Prompt** (not **PowerShell**) window and verify:
+
+```cmd
+python --version
+```
+
+> **Tip:** You can also install Python from the Microsoft Store by searching for "Python".
+
+#### 2. Create and activate a virtual environment
+
+Open a **Command Prompt** window (**not** PowerShell):
+
+```cmd
+python -m venv %USERPROFILE%\pyespargos-venv
+%USERPROFILE%\pyespargos-venv\Scripts\activate
+```
+
+> **Note:** You need to activate the virtual environment every time you open a new terminal before using *pyespargos*.
+
+#### 3. Install pyespargos
+
+```cmd
+cd pyespargos
+pip install .
+```
+
+For development (editable install):
+
+```cmd
+pip install -e .
+```
+
+#### 4. Install demo dependencies (optional)
+
+If you want to run the demo applications:
+
+```cmd
+pip install pyqt6 pyqt6-charts pyyaml matplotlib
+```
+
+</details>
+
+---
+
+### <img src="img/macos-logo.svg" width="20" height="20" style="vertical-align: middle;"> macOS
+*(not recommended)*
+
+<details>
+<summary><b>Click to expand macOS instructions</b></summary>
+
+#### 1. Install Python
+
+The recommended way to install Python on macOS is via [Homebrew](https://brew.sh/):
+
+```bash
+# Install Homebrew (if not already installed)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install Python
+brew install python
+```
+
+Verify the installation:
+
+```bash
+python3 --version
+```
+
+> **Alternative:** You can also download the installer from [python.org/downloads](https://www.python.org/downloads/).
+
+#### 2. Create and activate a virtual environment
+
+```bash
+python3 -m venv ~/pyespargos-venv
+source ~/pyespargos-venv/bin/activate
+```
+
+> **Note:** You need to run `source ~/pyespargos-venv/bin/activate` every time you open a new terminal before using *pyespargos*.
+
+#### 3. Install pyespargos
+
+```bash
+cd pyespargos
+pip install .
+```
+
+For development (editable install):
+
+```bash
+pip install -e .
+```
+
+#### 4. Install demo dependencies (optional)
+
+If you want to run the demo applications:
+
+```bash
+pip install pyqt6 pyqt6-charts pyyaml matplotlib
+```
+
+</details>
+
+---
+
+### Quick Start
+
+After installation, import the `espargos` package in your Python application. Use this minimal sample code to get started:
+
 ```python
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import espargos
 import time
@@ -118,9 +284,8 @@ print("Received CSI (L-LTF): ", csi_lltf)
 backlog.stop()
 pool.stop()
 ```
-* Take a look at the demo applications for advanced usage
-* To run the demos that come with *pyespargos*, you may need to install additional dependencies depending on the demo (most notably, PyQt6-related packages)
-* Many demos support YAML configuration files via the `-c` / `--config` option for easy setup of multi-board arrays and application-specific settings
+
+Take a look at the demo applications for advanced usage. Many demos support YAML configuration files via the `-c` / `--config` option for easy setup of multi-board arrays and application-specific settings.
 
 ## Basics
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 from weakref import WeakKeyDictionary
 from collections import OrderedDict

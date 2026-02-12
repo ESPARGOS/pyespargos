@@ -4,8 +4,8 @@ layout(location = 1) in vec2 qt_MultiTexCoord0;
 layout(location = 0) out vec2 qt_TexCoord0;
 layout(location = 1) out vec4 beamspaceColor;
 layout(location = 2) out vec4 beamspacePolarization;
-layout(binding = 0) uniform sampler2D spatialSpectrumCanvasSource;
-layout(binding = 1) uniform sampler2D polarizationCanvasSource;
+layout(binding = 1) uniform sampler2D spatialSpectrumCanvasSource;
+layout(binding = 2) uniform sampler2D polarizationCanvasSource;
 
 layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
