@@ -18,7 +18,7 @@ The library supports combining multiple ESPARGOS arrays into larger antenna arra
 		<td><img src="img/espargosv1.jpg" width="600px"></td>
 	</tr>
 	<tr>
-		<td>&rarr; You have a the current ESPARGOS, please use the <code>main</code> branch of this repository.</td>
+		<td>&rarr; You have the current ESPARGOS, please use the <code>main</code> branch of this repository.</td>
 		<td>&rarr; You have the older prototype generation of ESPARGOS, please use the <code>legacy-prototype</code> branch of this repository. This hardware revision is no longer supported.</td>
 	</tr>
 </table>
@@ -78,7 +78,7 @@ Most demos support both single ESPARGOS arrays and combined multi-board setups v
 
 ## Installation
 
-*pyespargos* is tested with **Python 3.13 or newer**. Follow the instructions for your operating system below.
+*pyespargos* requires **Python 3.11 or newer**. Follow the instructions for your operating system below.
 
 ---
 
@@ -95,7 +95,7 @@ Most Linux distributions ship with Python pre-installed. Verify by running:
 python3 --version
 ```
 
-If Python is not installed or the version is below 3.11, install it using your package manager:
+If Python is not installed or the version is too old, install it using your package manager:
 
 ```bash
 # Debian / Ubuntu
@@ -152,7 +152,7 @@ pip install pyqt6 pyqt6-charts pyyaml matplotlib
 
 If you don't have Python installed yet:
 
-1. Go to [python.org/downloads](https://www.python.org/downloads/) and download the latest Python installer (3.11 or newer).
+1. Go to [python.org/downloads](https://www.python.org/downloads/) and download the latest Python installer.
 2. Run the installer. **Important: Check the box "Add python.exe to PATH"** at the bottom of the first installer screen before clicking "Install Now".
 3. After installation, open a new **Command Prompt** (not **PowerShell**) window and verify:
 
@@ -258,7 +258,41 @@ pip install pyqt6 pyqt6-charts pyyaml matplotlib
 
 ---
 
-### Quick Start
+### Running a Demo
+
+After installing *pyespargos* and the demo dependencies (steps above), you can run a demo.
+Make sure the virtual environment is activated, then run the following from the *pyespargos* directory.
+
+For example, to run the **Instantaneous CSI** demo with an ESPARGOS controller at `192.168.1.2`:
+
+**Linux / macOS:**
+```bash
+./demos/instantaneous-csi/instantaneous-csi.py 192.168.1.2
+```
+
+**Windows (Command Prompt):**
+```cmd
+python demos\instantaneous-csi\instantaneous-csi.py 192.168.1.2
+```
+
+If you have multiple ESPARGOS boards, pass their addresses separated by commas:
+
+```
+python demos/instantaneous-csi/instantaneous-csi.py 192.168.1.2,192.168.1.3
+```
+
+Other demos may ask for different command line arguments.
+Run any demo with `--help` to see the available options.
+
+---
+
+### Custom Applications: Quick Start
+
+To create your own ESPARGOS-based application, you have two options:
+* Use the Python + PyQt6 + QML framework used by the other demos. This is the fastest way to get up and running, just start by modifying an existing demo.
+* Write your application from scratch using only the `pyespargos` library
+
+#### Applications from Scratch
 
 After installation, import the `espargos` package in your Python application. Use this minimal sample code to get started:
 
@@ -285,24 +319,25 @@ backlog.stop()
 pool.stop()
 ```
 
-Take a look at the demo applications for advanced usage. Many demos support YAML configuration files via the `-c` / `--config` option for easy setup of multi-board arrays and application-specific settings.
-
 ## Basics
 
 ### WiFi
 * ESPARGOS uses the L-LTF and/or HT-LTF fields of 802.11g/n/ax frames to extract channel state information (CSI).
 * ESPARGOS is totally passive, it only acts as a receiver in promiscuous mode. It provides CSI for any WiFi frames it receives.
 * To receive frames, the transmitter and ESPARGOS must use the same WiFi channel.
-* 802.11n supports channel bandwidths of 20MHz and 40MHz. The ESPARGOS hardware and firmware supports both bandwidth configurations.
-* *pyespargos* supports three preamble formats for CSI extraction:
+* 802.11n supports channel bandwidths of 20MHz and 40MHz. The ESPARGOS hardware and firmware support both bandwidth configurations.
+* *pyespargos* currently supports three preamble formats for CSI extraction:
   - **L-LTF**: Legacy Long Training Field, available in all 802.11g/n frames (52 subcarriers)
   - **HT20**: High Throughput 20MHz, available in 802.11n frames with 20MHz bandwidth (56 subcarriers)
   - **HT40**: High Throughput 40MHz, available in 802.11n frames with 40MHz channel bonding (114 subcarriers)
 
 ### Communication between pyespargos and ESPARGOS
-* ESPARGOS provides an HTTP / WebSockets API on port 80.
-* CSI is streamed in binary format over a WebSocket.
-* Control commands are issued via HTTP.
+* ESPARGOS provides an HTTP / WebSocket / UDP API.
+* Control commands (configuration, calibration, etc.) are issued via HTTP.
+* CSI data is streamed in binary format. Two transports are supported:
+  - **UDP** (default): Lower latency and higher throughput. The library automatically sends periodic keepalive packets to maintain firewall pinholes on platforms like Windows.
+  - **WebSocket**: More widely compatible fallback, but slightly higher latency and overhead.
+* By default, *pyespargos* tries UDP first and falls back to WebSocket if UDP fails.
 
 ### The Backlog
 * The L-LTF and HT-LTF fields used for channel estimation are really short compared to the total length of the WiFi frame.
