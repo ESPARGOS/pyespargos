@@ -573,26 +573,7 @@ class Board(object):
             return
 
         with ws as websocket:
-            # For major API version 1 or greater, wait for magic packet that confirms valid CSI stream connection
-            if self.api_version[0] >= 1:
-                try:
-                    magic = websocket.recv(timeout=3)
-                except TimeoutError:
-                    self._csistream_error = EspargosCsiStreamConnectionError(f"Timeout waiting for CSI stream magic packet from {self.host}")
-                    self._csistream_magic_event.set()
-                    return
-                except Exception as e:
-                    self._csistream_error = EspargosCsiStreamConnectionError(f"Error receiving CSI stream magic packet from {self.host}: {e}")
-                    self._csistream_magic_event.set()
-                    return
-
-                if magic != CSISTREAM_MAGIC:
-                    self._csistream_error = EspargosCsiStreamConnectionError(f"Invalid CSI stream magic packet from {self.host}: expected {CSISTREAM_MAGIC.hex()}, got {magic.hex() if isinstance(magic, bytes) else repr(magic)}")
-                    self._csistream_magic_event.set()
-                    return
-            else:
-                self._csistream_magic_event.set()
-
+            # Do not wait for magic packet, no need for that when using websockets
             self.csistream_connected = True
             self._csistream_magic_event.set()
 
@@ -601,6 +582,9 @@ class Board(object):
             while self.csistream_connected:
                 try:
                     message = websocket.recv(timeout_once)
+                    if message == CSISTREAM_MAGIC:
+                        # Ignore magic packet, only relevant for UDP transport
+                        continue
                     timeout_total = 0
                     self._csistream_handle_message(message)
                 except TimeoutError:
