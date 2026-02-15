@@ -150,6 +150,45 @@ Common.ESPARGOSApplication {
 				visible: advancedSettings.checked
 			}
 
+			Label { text: "Azi Correction"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Slider {
+				id: azimuthCorrection
+				property string configKey: "visualization.azimuth_correction"
+				property string configProp: "value"
+				property var encode: function(v) { return v }
+				property var decode: function(v) { return Number(v) }
+				from: -90.0
+				to: 90.0
+				stepSize: 1.0
+				implicitWidth: 210
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				value: 0.0
+				ToolTip.visible: hovered
+				ToolTip.text: "Angle: " + value.toFixed(1) + "°"
+				visible: advancedSettings.checked
+			}
+
+			Label { text: "Ele Correction"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Slider {
+				id: elevationCorrection
+				property string configKey: "visualization.elevation_correction"
+				property string configProp: "value"
+				property var encode: function(v) { return v }
+				property var decode: function(v) { return Number(v) }
+				from: -90.0
+				to: 90.0
+				stepSize: 1.0
+				implicitWidth: 210
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				value: 0.0
+				ToolTip.visible: hovered
+				ToolTip.text: "Angle: " + value.toFixed(1) + "°"
+				visible: advancedSettings.checked
+			}
+			
+
 			Label { Layout.columnSpan: 2; text: "Beamforming"; color: "#9fb3c8" }
 			Label { text: "Method"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			ComboBox {

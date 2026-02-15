@@ -17,6 +17,8 @@ layout(std140, binding = 0) uniform buf {
 	float time;
 	bool polarizationVisible;
 	float gridSpacing;
+	float azimuthCorrection;
+	float elevationCorrection;
 };
 
 // Converts cartesian coordinates of the camera projection into a pair of azimuth and elevation angle (in radians).
@@ -35,6 +37,10 @@ void main() {
 
 	vec2 angles = cameraPixelToAngles(coord);
 	vec2 textureCoords = rawBeamspace ? coord : (anglesToFFTBeamspace(angles) + 0.5);
+
+	angles.x += radians(azimuthCorrection);
+	angles.y += radians(elevationCorrection);
+	
 
 	beamspaceColor = texture(spatialSpectrumCanvasSource, textureCoords);
 	beamspacePolarization = texture(polarizationCanvasSource, textureCoords);

@@ -103,6 +103,9 @@ Rectangle {
 		}
 		property bool polarizationVisible: backend.polarizationVisible
 		property real gridSpacing: backend.gridSpacing
+		property real azimuthCorrection: backend.azimuth_correction
+		property real elevationCorrection: backend.elevation_correction
+		
 
 		fragmentShader: "spatialspectrum.qsb"
 

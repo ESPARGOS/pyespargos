@@ -35,6 +35,8 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     resolutionAzimuthChanged = PyQt6.QtCore.pyqtSignal()
     resolutionElevationChanged = PyQt6.QtCore.pyqtSignal()
     macListEnabledChanged = PyQt6.QtCore.pyqtSignal()
+    azimuthCorrectionChanged = PyQt6.QtCore.pyqtSignal()
+    elevationCorrectionChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
         "receiver": {"mac_list_enabled": False},
@@ -62,6 +64,8 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
             "overlay": "Default",
             "manual_exposure": False,
             "exposure": 0.5,
+            "azimuth_correction": 0.0,
+            "elevation_correction": 0.0,
         },
     }
 
@@ -645,11 +649,25 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                 except Exception as e:
                     print(f"Error setting beamformer resolution: {e}")
 
-        if "visualization" in newcfg and "space" in newcfg["visualization"]:
-            try:
-                self.visualizationSpaceChanged.emit()
-            except Exception as e:
-                print(f"Error setting visualization space: {e}")
+        if "visualization" in newcfg:
+            visualization_cfg = newcfg.get("visualization", {}) if isinstance(newcfg.get("visualization", {}), dict) else {}
+            if "space" in visualization_cfg:
+                try:
+                    self.visualizationSpaceChanged.emit()
+                except Exception as e:
+                    print(f"Error setting visualization space: {e}")
+
+            if "azimuth_correction" in visualization_cfg:
+                try:
+                    self.azimuthCorrectionChanged.emit()
+                except Exception as e:
+                    print(f"Error setting azimuth correction: {e}")
+
+            if "elevation_correction" in visualization_cfg:
+                try:
+                    self.elevationCorrectionChanged.emit()
+                except Exception as e:
+                    print(f"Error setting elevation correction: {e}")
 
         # Let base class handle the rest
         super()._on_update_app_state(newcfg)
@@ -719,6 +737,14 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=cameraFlipChanged)
     def cameraFlip(self):
         return self.appconfig.get("camera", "flip")
+
+    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=azimuthCorrectionChanged)
+    def azimuth_correction(self):
+        return float(self.appconfig.get("visualization", "azimuth_correction"))
+
+    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=elevationCorrectionChanged)
+    def elevation_correction(self):
+        return float(self.appconfig.get("visualization", "elevation_correction"))
 
 
 app = EspargosDemoCamera(sys.argv)
