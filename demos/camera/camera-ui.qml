@@ -150,7 +150,7 @@ Common.ESPARGOSApplication {
 				visible: advancedSettings.checked
 			}
 
-			Label { text: "Azi Correction"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "Azi Shift"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
 			Slider {
 				id: azimuthCorrection
 				property string configKey: "visualization.azimuth_correction"
@@ -169,7 +169,7 @@ Common.ESPARGOSApplication {
 				visible: advancedSettings.checked
 			}
 
-			Label { text: "Ele Correction"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "Ele Shift"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
 			Slider {
 				id: elevationCorrection
 				property string configKey: "visualization.elevation_correction"

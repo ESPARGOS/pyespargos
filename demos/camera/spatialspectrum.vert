@@ -36,11 +36,9 @@ void main() {
 	vec2 coord = vec2(flip ? 1.0 - qt_MultiTexCoord0.x : qt_MultiTexCoord0.x, qt_MultiTexCoord0.y);
 
 	vec2 angles = cameraPixelToAngles(coord);
-	vec2 textureCoords = rawBeamspace ? coord : (anglesToFFTBeamspace(angles) + 0.5);
-
 	angles.x += radians(azimuthCorrection);
 	angles.y += radians(elevationCorrection);
-	
+	vec2 textureCoords = rawBeamspace ? coord : (anglesToFFTBeamspace(angles) + 0.5);	
 
 	beamspaceColor = texture(spatialSpectrumCanvasSource, textureCoords);
 	beamspacePolarization = texture(polarizationCanvasSource, textureCoords);
