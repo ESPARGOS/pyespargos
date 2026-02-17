@@ -1,0 +1,17 @@
+combined-array:
+  boards:
+    ba1:
+      host: 192.168.4.1
+      cable:
+        length: 0.0
+        velocity_factor: 0.76
+
+  array:
+    - - "ba1.0.0"
+      - "ba1.0.1"
+      - "ba1.0.2"
+      - "ba1.0.3"
+    - - "ba1.1.0"
+      - "ba1.1.1"
+      - "ba1.1.2"
+      - "ba1.1.3"
