@@ -159,9 +159,11 @@ class Board(object):
     def start(self, transports=None):
         """
         Starts the CSI stream thread for the ESPARGOS controller. The thread will run indefinitely until the stop() method is called.
+
         Supported transports:
-            - "udp": The controller will send CSI packets to a local UDP socket. This transport is lower-latency and more efficient (higher throughput), but requires API version 1 or higher and may not work in all network environments.
-            - "websocket": The controller will send CSI packets over a WebSocket connection. This transport is more widely compatible but may have higher latency and overhead.
+
+        - "udp": The controller will send CSI packets to a local UDP socket. This transport is lower-latency and more efficient (higher throughput), but requires API version 1 or higher and may not work in all network environments.
+        - "websocket": The controller will send CSI packets over a WebSocket connection. This transport is more widely compatible but may have higher latency and overhead.
 
         :param transports: Optional list of transports to try, in order of preference. Valid values are "udp" and "websocket". If None (default), tries UDP first (if supported by API version) and then WebSocket.
 
@@ -344,6 +346,7 @@ class Board(object):
         Tell ESPARGOS board to only receive packets from transmitters with this sender MAC.
 
         mac_filter is a dict with the following format::
+
             {
               "enable": true|false,
               "mac": "00:11:22:33:44:55"
@@ -463,6 +466,7 @@ class Board(object):
           - val_scale_cfg: Value 0-3.
 
         Example payload::
+
             {
               "enable": true,
               "acquire_csi_legacy": true,
@@ -505,6 +509,7 @@ class Board(object):
           - rx_gain_value (int): RX gain value (meaning/range depends on firmware; commonly 0 when disabled).
 
         Example payload::
+
             {
               "fft_scale_enable": false,
               "fft_scale_value": 0,
