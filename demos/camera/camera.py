@@ -160,27 +160,10 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
 
     @PyQt6.QtCore.pyqtSlot()
     def updateSpatialSpectrum(self):
-        if not hasattr(self, "backlog"):
-            # No backlog available yet, demo has not fully initialized
+        result = self.get_backlog_csi("rssi", "host_timestamp", "mac", "rfswitch_state", allow_incomplete=True)
+        if result is None:
             return
-
-        try:
-            csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog, rfswitch_state_backlog = self.backlog.get_multiple(
-                [
-                    self.genericconfig.get("preamble_format"),
-                    "rssi",
-                    "host_timestamp",
-                    "mac",
-                    "rfswitch_state",
-                ]
-            )
-        except ValueError as e:
-            print(f"Error retrieving backlog data: {e}")
-            return
-
-        if csi_backlog.size == 0:
-            # No data available yet
-            return
+        csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog, rfswitch_state_backlog = result
 
         max_age = self.appconfig.get("beamformer", "max_age")
         if max_age > 0.0:
@@ -210,9 +193,6 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                 self.recent_macs = mac_strings_set
                 self.recentMacsChanged.emit(list(self.recent_macs))
 
-        # CSI backlog may be incomplete: If individual sensor did not provide packet, CSI value is NaN
-        # For the purpose of visualization, we treat these NaN values as 0
-        csi_backlog = np.nan_to_num(csi_backlog, nan=0.0)
         rssi_backlog = np.nan_to_num(rssi_backlog, nan=-np.inf)
 
         espargos.util.remove_mean_sto(csi_backlog)
@@ -235,13 +215,6 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         csi_combined = csi_combined[:, np.newaxis]
         rfswitch_state_combined = espargos.util.build_combined_array_data(self.indexing_matrix, rfswitch_state_backlog)
         rfswitch_state_combined = rfswitch_state_combined[:, np.newaxis]
-
-        # Get rid of gap in CSI data around DC
-        match self.genericconfig.get("preamble_format"):
-            case "ht20":
-                espargos.util.interpolate_ht20ltf_gap(csi_combined)
-            case "ht40":
-                espargos.util.interpolate_ht40ltf_gap(csi_combined)
 
         # Shift all CSI datapoints in time so that LoS component arrives at the same time
         csi_combined = espargos.util.shift_to_firstpeak_sync(

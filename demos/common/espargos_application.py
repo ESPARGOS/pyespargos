@@ -447,14 +447,16 @@ class SingleCSIFormatMixin:
     - Automatic backlog field configuration when combined with BacklogMixin
     """
 
-    def get_backlog_csi(self, *additional_keys: str) -> np.ndarray | tuple[np.ndarray, ...] | None:
+    def get_backlog_csi(self, *additional_keys: str, allow_incomplete: bool = False) -> np.ndarray | tuple[np.ndarray, ...] | None:
         """
         Retrieve latest CSI datapoints from backlog for the selected preamble format.
 
         Returns None if backlog does not exist (yet), is empty, or data is otherwise unavailable.
-        Automatically interpolates gaps for HT20/HT40 formats and filters out NaN values.
+        Automatically interpolates gaps for HT20/HT40 formats.
 
         :param additional_keys: Additional backlog keys to retrieve alongside the CSI data.
+        :param allow_incomplete: If True, replace NaN values (from incomplete CSI clusters) with zeros
+            instead of rejecting the data. Useful when a CSI completion timeout is configured.
         :return: CSI array if no additional keys, tuple of (csi, *additional) if keys specified, or None if unavailable.
         """
         if not hasattr(self, "backlog") or not self.backlog.nonempty():
@@ -463,7 +465,7 @@ class SingleCSIFormatMixin:
         csi_key = self.genericconfig.get("preamble_format")
 
         try:
-            results = self.backlog.get_multiple([csi_key, *additional_keys])
+            results = list(self.backlog.get_multiple([csi_key, *additional_keys]))
         except ValueError:
             print(f"Requested CSI key {csi_key} not in backlog")
             return None
@@ -476,9 +478,13 @@ class SingleCSIFormatMixin:
         elif csi_key == "ht20":
             espargos.util.interpolate_ht20ltf_gap(csi_backlog)
 
-        # Reject data containing NaN values
+        # Handle data containing NaN values (from incomplete CSI clusters)
         if np.any(np.isnan(csi_backlog)):
-            return None
+            if allow_incomplete:
+                csi_backlog = np.nan_to_num(csi_backlog, nan=0.0)
+                results[0] = csi_backlog
+            else:
+                return None
 
         if additional_keys:
             return tuple(results)

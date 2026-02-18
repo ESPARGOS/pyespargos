@@ -111,8 +111,14 @@ class EspargosDemoRadiationPattern3D(BacklogMixin, CombinedArrayMixin, SingleCSI
     def __init__(self, argv):
         parser = argparse.ArgumentParser(description="ESPARGOS Demo: 3D Radiation Pattern", add_help=False)
         parser.add_argument("--no-calib", default=False, help="Do not calibrate", action="store_true")
+        parser.add_argument(
+            "--csi-completion-timeout",
+            type=float,
+            default=0.2,
+            help="Time after which CSI cluster is considered complete even if not all antennas have provided data. Set to zero to disable processing incomplete clusters.",
+        )
         super().__init__(argv, argparse_parent=parser)
-        self.initialize_pool(calibrate=not self.args.no_calib)
+        self.initialize_pool(calibrate=not self.args.no_calib, backlog_cb_predicate=self._cb_predicate)
 
         # Element pattern on the front-hemisphere grid
         sin_max_az = SPHERE_AZIMUTH_STEPS / (SPHERE_AZIMUTH_STEPS + 1)
@@ -170,6 +176,13 @@ class EspargosDemoRadiationPattern3D(BacklogMixin, CombinedArrayMixin, SingleCSI
 
         return placements
 
+    def _cb_predicate(self, csi_completion_state, csi_age):
+        timeout_condition = False
+        if self.args.csi_completion_timeout > 0:
+            timeout_condition = np.sum(csi_completion_state) >= 2 and csi_age > self.args.csi_completion_timeout
+
+        return np.all(csi_completion_state) or timeout_condition
+
     def _on_update_app_state(self, newconfig):
         self.configChanged.emit()
         super()._on_update_app_state(newconfig)
@@ -179,12 +192,12 @@ class EspargosDemoRadiationPattern3D(BacklogMixin, CombinedArrayMixin, SingleCSI
         pol_mode = self.appconfig.get("polarization_mode")
 
         if pol_mode == "incorporate":
-            result = self.get_backlog_csi("rfswitch_state")
+            result = self.get_backlog_csi("rfswitch_state", allow_incomplete=True)
             if result is None:
                 return
             csi_backlog, rfswitch_state_backlog = result
         else:
-            if (csi_backlog := self.get_backlog_csi()) is None:
+            if (csi_backlog := self.get_backlog_csi(allow_incomplete=True)) is None:
                 return
 
         csi_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)
