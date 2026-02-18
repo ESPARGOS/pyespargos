@@ -8,3 +8,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: psf/black@stable
+      - name: Trigger espargos.github.io github-pages workflow
+        if: ${{ success() }}
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.ESPARGOS_GITHUB_IO_TOKEN }}
+          repository: ESPARGOS/espargos.github.io
+          event-type: firmware-update
