@@ -14,4 +14,4 @@ jobs:
         with:
           token: ${{ secrets.ESPARGOS_GITHUB_IO_TOKEN }}
           repository: ESPARGOS/espargos.github.io
-          event-type: firmware-update
+          event-type: pyespargos-update
