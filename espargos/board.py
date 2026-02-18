@@ -368,7 +368,7 @@ class Board(object):
         Fetches the current MAC filter configuration from the ESPARGOS controller.
 
         The returned JSON/dict matches what is configured via :meth:`set_mac_filter` / :meth:`clear_mac_filter`.
-        Format (inferred from setter payloads)::
+        Format::
 
             {
               "enable": true|false,

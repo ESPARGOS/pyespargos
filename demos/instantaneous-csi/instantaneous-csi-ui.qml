@@ -175,7 +175,7 @@ Common.ESPARGOSApplication {
 					let series = csiAmplitude.createSeries(ChartView.SeriesTypeLine, "tx-" + ant, csiAmplitudeSubcarrierAxis, csiAmplitudeAxis)
 					series.pointsVisible = false
 					series.color = colorCycle[ant % colorCycle.length]
-					series.useOpenGL = Qt.platform.os !== "windows"
+					series.useOpenGL = Qt.platform.os === "linux"
 				}
 			}
 		}
@@ -224,7 +224,7 @@ Common.ESPARGOSApplication {
 					let series = csiPhase.createSeries(ChartView.SeriesTypeLine, "tx-" + ant, csiPhaseSubcarrierAxis, csiPhaseAxis)
 					series.pointsVisible = false
 					series.color = colorCycle[ant % colorCycle.length]
-					series.useOpenGL = Qt.platform.os !== "windows"
+					series.useOpenGL = Qt.platform.os === "linux"
 				}
 			}
 		}

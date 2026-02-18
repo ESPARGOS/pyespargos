@@ -109,7 +109,13 @@ sudo dnf install python3 python3-pip
 sudo pacman -S python python-pip
 ```
 
-#### 2. Create and activate a virtual environment
+#### 2. Clone the repository
+
+```bash
+git clone https://github.com/ESPARGOS/pyespargos.git
+```
+
+#### 3. Create and activate a virtual environment
 
 ```bash
 python3 -m venv ~/pyespargos-venv
@@ -118,20 +124,23 @@ source ~/pyespargos-venv/bin/activate
 
 > **Note:** You need to run `source ~/pyespargos-venv/bin/activate` every time you open a new terminal before using *pyespargos*.
 
-#### 3. Install pyespargos
+#### 4. Install pyespargos
 
-```bash
-cd pyespargos
-pip install .
-```
+Choose **one** of the following options:
 
-For development (editable install):
+- **Option A** &ndash; Standard install:
+  ```bash
+  cd pyespargos
+  pip install .
+  ```
 
-```bash
-pip install -e .
-```
+- **Option B** &ndash; Editable install (for development, changes to the source take effect immediately):
+  ```bash
+  cd pyespargos
+  pip install -e .
+  ```
 
-#### 4. Install demo dependencies (optional)
+#### 5. Install demo dependencies (optional)
 
 If you want to run the demo applications:
 
@@ -163,7 +172,13 @@ python --version
 
 > **Tip:** You can also install Python from the Microsoft Store by searching for "Python".
 
-#### 2. Create and activate a virtual environment
+#### 2. Clone the repository
+
+```cmd
+git clone https://github.com/ESPARGOS/pyespargos.git
+```
+
+#### 3. Create and activate a virtual environment
 
 Open a **Command Prompt** window (**not** PowerShell):
 
@@ -174,20 +189,23 @@ python -m venv %USERPROFILE%\pyespargos-venv
 
 > **Note:** You need to activate the virtual environment every time you open a new terminal before using *pyespargos*.
 
-#### 3. Install pyespargos
+#### 4. Install pyespargos
 
-```cmd
-cd pyespargos
-pip install .
-```
+Choose **one** of the following options:
 
-For development (editable install):
+- **Option A** &ndash; Standard install:
+  ```cmd
+  cd pyespargos
+  pip install .
+  ```
 
-```cmd
-pip install -e .
-```
+- **Option B** &ndash; Editable install (for development, changes to the source take effect immediately):
+  ```cmd
+  cd pyespargos
+  pip install -e .
+  ```
 
-#### 4. Install demo dependencies (optional)
+#### 5. Install demo dependencies (optional)
 
 If you want to run the demo applications:
 
@@ -217,6 +235,8 @@ The recommended way to install Python on macOS is via [Homebrew](https://brew.sh
 brew install python
 ```
 
+> **Important:** After installing Python with Homebrew, **close and re-open your terminal** so that the Homebrew-installed Python is used instead of the older macOS system Python.
+
 Verify the installation:
 
 ```bash
@@ -225,7 +245,13 @@ python3 --version
 
 > **Alternative:** You can also download the installer from [python.org/downloads](https://www.python.org/downloads/).
 
-#### 2. Create and activate a virtual environment
+#### 2. Clone the repository
+
+```bash
+git clone https://github.com/ESPARGOS/pyespargos.git
+```
+
+#### 3. Create and activate a virtual environment
 
 ```bash
 python3 -m venv ~/pyespargos-venv
@@ -234,20 +260,23 @@ source ~/pyespargos-venv/bin/activate
 
 > **Note:** You need to run `source ~/pyespargos-venv/bin/activate` every time you open a new terminal before using *pyespargos*.
 
-#### 3. Install pyespargos
+#### 4. Install pyespargos
 
-```bash
-cd pyespargos
-pip install .
-```
+Choose **one** of the following options:
 
-For development (editable install):
+- **Option A** &ndash; Standard install:
+  ```bash
+  cd pyespargos
+  pip install .
+  ```
 
-```bash
-pip install -e .
-```
+- **Option B** &ndash; Editable install (for development, changes to the source take effect immediately):
+  ```bash
+  cd pyespargos
+  pip install -e .
+  ```
 
-#### 4. Install demo dependencies (optional)
+#### 5. Install demo dependencies (optional)
 
 If you want to run the demo applications:
 

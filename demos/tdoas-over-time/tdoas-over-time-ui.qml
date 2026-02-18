@@ -165,7 +165,7 @@ Common.ESPARGOSApplication {
 						let phaseSeries = tdoasOverTime.createSeries(ChartView.SeriesTypeLine, "rx-" + ant, tdoasOverTimeXAxis, tdoasOverTimeYAxis)
 						phaseSeries.pointsVisible = false
 						phaseSeries.color = colorCycle[ant % colorCycle.length]
-						phaseSeries.useOpenGL = Qt.platform.os !== "windows"
+						phaseSeries.useOpenGL = Qt.platform.os === "linux"
 					}
 				}
 
