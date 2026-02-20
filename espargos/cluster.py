@@ -176,7 +176,12 @@ class CSICluster(object):
 
             # The ESP32 provides CSI as int8_t values in (im, re) pairs (in this order!)
             # To go from the (re, im) interpretation to (im, re), compute conjugate and multiply by 1.0j.
-            csi_ht20_sensor[:] = np.asarray(csi.csi_buf_v3_ht20_t(serialized_csi.buf).htltf, dtype=np.int8).astype(np.float32).view(np.complex64)
+            # If channel bonding is used, provide CSI of primary channel
+            if csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).he_siga1 & 0x80 != 0:
+                primary = csi.csi_buf_v3_ht40_t(serialized_csi.buf).htltf_higher if self.get_secondary_channel_relative() == -1 else csi.csi_buf_v3_ht40_t(serialized_csi.buf).htltf_lower
+                csi_ht20_sensor[:] = np.asarray(primary, dtype=np.int8).astype(np.float32).view(np.complex64)
+            else:
+                csi_ht20_sensor[:] = np.asarray(csi.csi_buf_v3_ht20_t(serialized_csi.buf).htltf, dtype=np.int8).astype(np.float32).view(np.complex64)
             csi_ht20_sensor[:] = -1.0j * np.conj(csi_ht20_sensor)
 
         self._foreach_complete_sensor(deserialize_ht20_packet)
@@ -211,8 +216,8 @@ class CSICluster(object):
         def deserialize_ht40_packet(b, r, a, serialized_csi):
             nonlocal csi_ht40
             csi_ht40_sensor = csi_ht40[b, r, a, :].view()
-            csi_ht40_sensor_higher = csi_ht40[b, r, a, : csi.HT_COEFFICIENTS_PER_CHANNEL].view()
-            csi_ht40_sensor_lower = csi_ht40[b, r, a, -csi.HT_COEFFICIENTS_PER_CHANNEL :].view()
+            csi_ht40_sensor_lower = csi_ht40[b, r, a, : csi.HT_COEFFICIENTS_PER_CHANNEL].view()
+            csi_ht40_sensor_higher = csi_ht40[b, r, a, -csi.HT_COEFFICIENTS_PER_CHANNEL :].view()
 
             # The ESP32 provides CSI as int8_t values in (im, re) pairs (in this order!)
             # To go from the (re, im) interpretation to (im, re), compute conjugate and multiply by 1.0j.
@@ -233,12 +238,7 @@ class CSICluster(object):
         # This is likely due to the pi / 2 phase shift specified for the pilot symbols,
         # see IEEE 80211-2012 section 20.3.9.3.4 L-LTF definition
         csi_ht40_higher = csi_ht40[:, :, :, : csi.HT_COEFFICIENTS_PER_CHANNEL].view()
-        csi_ht40_lower = csi_ht40[:, :, :, -csi.HT_COEFFICIENTS_PER_CHANNEL :].view()
-
-        if loc == 1:
-            csi_ht40_higher[:] = csi_ht40_higher * np.exp(-1.0j * np.pi / 2)
-        else:
-            csi_ht40_lower[:] = csi_ht40_lower * np.exp(-1.0j * np.pi / 2)
+        csi_ht40_higher[:] = csi_ht40_higher * np.exp(1.0j * np.pi / 2)
 
         # Need to take timestamps into account to provide phase coherence across all sensors
         delay = self.get_sensor_timestamps()
@@ -308,7 +308,7 @@ class CSICluster(object):
                 have_ht40_all = False
 
             # Check if channel bonding is used: he_siga1 is actuall ht_sig1, which contains the CWB bit at bit 7
-            if not (csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).he_siga1 & 0x80) != 0:
+            if csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).he_siga1 & 0x80 == 0:
                 have_ht40_all = False
 
         self._foreach_complete_sensor(check_ht40)
