@@ -169,7 +169,7 @@ def csi_interp_eigenvec_per_subcarrier(csi: np.ndarray) -> np.ndarray:
 
 
 def fit_complex_sinusoid(csi_data: np.ndarray) -> np.ndarray:
-    """
+    r"""
     Fit a complex sinusoid (amplitude, phase offset, and linear phase slope) to CSI data
     along the subcarrier axis (last dimension).
 
