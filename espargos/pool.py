@@ -341,14 +341,12 @@ class Pool(object):
         self.logger.info(f"  - {len(complete_clusters_ht20)} complete clusters with HT20-LTF")
         self.logger.info(f"  - {len(complete_clusters_lltf)} complete clusters with L-LTF")
 
-        if len(complete_clusters_ht20) == 0 and len(complete_clusters_ht40) > 0:
-            # If we only have HT40 calibration, we can still proceed: Use corresponding subcarriers from HT40 for HT20 calibration
-            self.logger.warning("No HT20 calibration clusters received, deriving HT20 calibration from HT40 calibration")
-            complete_clusters_ht20 = [util.extract_ht20_subcarriers_from_ht40(csi_ht40, cluster.get_secondary_channel_relative()) for csi_ht40 in complete_clusters_ht40]
-        elif len(complete_clusters_ht20) > 0:
-            util.remove_mean_sto(np.asarray(complete_clusters_ht20))
+        if len(complete_clusters_ht20) > 0:
+            # If we only have HT20 but no LLTF calibration, we can still proceed: Use corresponding subcarriers from HT20 for LLTF calibration
+            if len(complete_clusters_lltf) == 0:
+                self.logger.warning("No LLTF calibration clusters received, deriving LLTF calibration from HT20 calibration")
+            complete_clusters_lltf.extend([util.extract_lltf_subcarriers_from_ht20(csi_ht20) for csi_ht20 in complete_clusters_ht20])
 
-        # Deriving L-LTF CSI from HT20 CSI is not supported, there appears to be an unknown phase offset between the two...?
         if any_csi_count < 5:
             raise Exception("ESPARGOS calibration failed, did not receive enough calibration clusters.")
 
