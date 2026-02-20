@@ -126,6 +126,86 @@ def csi_interp_iterative_by_array(csi: np.ndarray, weights: np.ndarray = None, i
     return csi_interp
 
 
+def csi_interp_eigenvec_per_subcarrier(csi: np.ndarray) -> np.ndarray:
+    """
+    Interpolates CSI data by finding the principal eigenvector of the per-subcarrier covariance matrix.
+    Unlike :func:`csi_interp_eigenvec`, this function computes a separate covariance matrix for each
+    subcarrier (last dimension), which preserves the frequency-domain structure of the CSI data.
+
+    The result is scaled by the square root of the principal eigenvalue and phase-referenced to the
+    first antenna element (index 0).
+
+    :param csi: Complex-valued CSI data with shape ``(n_samples, *antenna_shape, n_subcarriers)``.
+                The first dimension is the number of CSI datapoints (e.g., calibration clusters),
+                the last dimension is the number of subcarriers, and any intermediate dimensions
+                describe the antenna array geometry.
+    :return: Interpolated CSI data with shape ``(*antenna_shape, n_subcarriers)``.
+    """
+    antenna_shape = csi.shape[1:-1]
+    n_subcarriers = csi.shape[-1]
+
+    # Flatten antenna dimensions: (n_samples, n_antennas, n_subcarriers)
+    csi_flat = csi.reshape(csi.shape[0], -1, n_subcarriers)
+
+    # Per-subcarrier covariance matrix: (n_subcarriers, n_antennas, n_antennas)
+    R = np.einsum("nas,nbs->sab", csi_flat, np.conj(csi_flat))
+
+    # Eigendecomposition, sort by eigenvalue magnitude (descending)
+    eigvals, eigvecs = np.linalg.eig(R)
+    idx = np.argsort(np.abs(eigvals), axis=1)[:, ::-1]
+    eigvals = np.take_along_axis(eigvals, idx, axis=1)
+    eigvecs = np.take_along_axis(eigvecs, idx[:, np.newaxis, :], axis=2)
+
+    # Extract principal eigenvector and eigenvalue
+    principal_eigenvectors = eigvecs[:, :, 0]
+    principal_eigenvalues = eigvals[:, 0]
+
+    # Scale by sqrt of eigenvalue and use antenna 0 as phase reference
+    result_flat = np.sqrt(principal_eigenvalues)[:, np.newaxis] * principal_eigenvectors * np.exp(-1.0j * np.angle(principal_eigenvectors[:, 0][:, np.newaxis]))
+
+    # Swap from (n_subcarriers, n_antennas) to (n_antennas, n_subcarriers) and reshape
+    result_flat = np.swapaxes(result_flat, 0, 1)
+    return result_flat.reshape(antenna_shape + (n_subcarriers,))
+
+
+def fit_complex_sinusoid(csi_data: np.ndarray) -> np.ndarray:
+    """
+    Fit a complex sinusoid (amplitude, phase offset, and linear phase slope) to CSI data
+    along the subcarrier axis (last dimension).
+
+    Each antenna's frequency response over a reference channel is modeled as:
+
+    .. math::
+
+        H[k] = A \cdot \exp\!\bigl(j\,(\varphi_0 + \omega \, k)\bigr)
+
+    where *k* is the subcarrier index, *A* is the amplitude, :math:`\varphi_0` is the
+    phase offset, and :math:`\omega` is the phase slope (proportional to propagation delay).
+
+    The function estimates the parameters per antenna element and returns the
+    reconstructed (fitted) complex sinusoid evaluated at every subcarrier index.
+
+    :param csi_data: Complex-valued CSI array with arbitrary leading dimensions
+                     (e.g. antenna geometry) and subcarriers as the last dimension.
+                     Shape ``(*antenna_shape, n_subcarriers)``.
+    :return: Fitted complex sinusoid with the same shape as *csi_data*.
+    """
+    n_subcarriers = csi_data.shape[-1]
+    k = np.arange(n_subcarriers)
+
+    # Estimate phase slope from mean phase increment between adjacent subcarriers
+    phase_diff = csi_data[..., 1:] * np.conj(csi_data[..., :-1])
+    omega = np.angle(np.sum(phase_diff, axis=-1))  # (*antenna_shape,)
+
+    # Remove phase slope to estimate amplitude and phase offset
+    derotated = csi_data * np.exp(-1.0j * omega[..., np.newaxis] * k)
+    complex_amplitude = np.mean(derotated, axis=-1)  # A * exp(j * phi_0)
+
+    # Reconstruct fitted sinusoid
+    fitted = complex_amplitude[..., np.newaxis] * np.exp(1.0j * omega[..., np.newaxis] * k)
+    return fitted
+
+
 def csi_interp_eigenvec(csi: np.ndarray, weights: np.ndarray = None):
     """
     Interpolates CSI data (frequency-domain or time-domain) by finding the principal eigenvector of the covariance matrix.
@@ -244,18 +324,25 @@ def remove_mean_sto(csi_datapoints: np.ndarray):
     Removes the mean symbol timing offset (STO) from the CSI data by estimating the STO from the phase slope across subcarriers.
     All datapoints are corrected separately.
 
-    :param csi_datapoints: The CSI data (multiple datapoints) to remove the mean STO from, frequency-domain. Complex-valued NumPy array with shape (..., subcarriers).
+    :param csi_datapoints: The CSI data (multiple datapoints) to remove the mean STO from, frequency-domain.
+                           Complex-valued NumPy array with arbitrary shape as long as the first dimension
+                           is the datapoint dimension and the last dimension is the subcarrier dimension.
     """
+    # Sum over all axes except the first (datapoints) to get one phase slope per datapoint
+    sum_axes = tuple(range(1, csi_datapoints.ndim))
     phase_slope = np.angle(
         np.nansum(
             csi_datapoints[..., 1:] * np.conj(csi_datapoints[..., :-1]),
-            axis=(1, 2, 3, 4),
+            axis=sum_axes,
         )
     )
     subcarrier_range = np.arange(-csi_datapoints.shape[-1] // 2, csi_datapoints.shape[-1] // 2) + 1
-    mean_sto_correction = np.exp(-1.0j * phase_slope[:, np.newaxis] * subcarrier_range[np.newaxis, :])
 
-    csi_datapoints *= mean_sto_correction[:, np.newaxis, np.newaxis, np.newaxis, :]
+    # Reshape for broadcasting: (datapoints, 1, 1, ..., 1, subcarriers)
+    correction_shape = (csi_datapoints.shape[0],) + (1,) * (csi_datapoints.ndim - 2) + (subcarrier_range.shape[0],)
+    mean_sto_correction = np.exp(-1.0j * phase_slope.reshape(-1, 1) * subcarrier_range.reshape(1, -1))
+
+    csi_datapoints *= mean_sto_correction.reshape(correction_shape)
 
 
 def shift_to_firstpeak_sync(

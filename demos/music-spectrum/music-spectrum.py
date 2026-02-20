@@ -16,9 +16,8 @@ import PyQt6.QtCore
 
 
 class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
-    shiftPeakChanged = PyQt6.QtCore.pyqtSignal()
 
-    DEFAULT_CONFIG = {"shift_peak": False}
+    DEFAULT_CONFIG = {}
 
     def __init__(self, argv):
         # Parse command line arguments
@@ -50,17 +49,6 @@ class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppl
             pathlib.Path(__file__).resolve().parent / "music-spectrum-ui.qml",
         )
 
-    def _on_update_app_state(self, newcfg):
-        # Handle shift_peak changes
-        if "shift_peak" in newcfg:
-            self.shiftPeakChanged.emit()
-
-        super()._on_update_app_state(newcfg)
-
-    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=shiftPeakChanged)
-    def shiftPeak(self):
-        return self.appconfig.get("shift_peak")
-
     @PyQt6.QtCore.pyqtSlot(PyQt6.QtCharts.QLineSeries, PyQt6.QtCharts.QValueAxis)
     def updateSpatialSpectrum(self, series, axis):
         if (result := self.get_backlog_csi("rssi")) is None:
@@ -72,12 +60,9 @@ class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppl
         if self.pooldrawer.cfgman.get("gain", "automatic"):
             csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
 
-        # Shift to first peak if requested
-        csi_shifted = espargos.util.shift_to_firstpeak_sync(csi_backlog, peak_threshold=0.5) if self.appconfig.get("shift_peak") else csi_backlog
-
         # Compute array covariance matrix R over all backlog datapoints, all rows and all subcarriers
-        csi_shifted_los = np.sum(csi_shifted, axis=-1)
-        R = np.einsum("dbri,dbrj->ij", csi_shifted_los, np.conj(csi_shifted_los))
+        csi_los = np.sum(csi_backlog, axis=-1)
+        R = np.einsum("dbri,dbrj->ij", csi_los, np.conj(csi_los))
         eig_val, eig_vec = np.linalg.eig(R)
         order = np.argsort(eig_val)[::-1]
 

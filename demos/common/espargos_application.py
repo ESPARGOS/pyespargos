@@ -447,7 +447,7 @@ class SingleCSIFormatMixin:
     - Automatic backlog field configuration when combined with BacklogMixin
     """
 
-    def get_backlog_csi(self, *additional_keys: str, allow_incomplete: bool = False) -> np.ndarray | tuple[np.ndarray, ...] | None:
+    def get_backlog_csi(self, *additional_keys: str, allow_incomplete: bool = False, remove_global_sto=True) -> np.ndarray | tuple[np.ndarray, ...] | None:
         """
         Retrieve latest CSI datapoints from backlog for the selected preamble format.
 
@@ -457,6 +457,8 @@ class SingleCSIFormatMixin:
         :param additional_keys: Additional backlog keys to retrieve alongside the CSI data.
         :param allow_incomplete: If True, replace NaN values (from incomplete CSI clusters) with zeros
             instead of rejecting the data. Useful when a CSI completion timeout is configured.
+        :param remove_global_sto: If True, remove global STO from CSI data by re-centering the cluster on the mean STO.
+            This should be true unless you want to do processing across multiple subsequent CSI datapoints where the global STO would be relevant.
         :return: CSI array if no additional keys, tuple of (csi, *additional) if keys specified, or None if unavailable.
         """
         if not hasattr(self, "backlog") or not self.backlog.nonempty():
@@ -471,6 +473,10 @@ class SingleCSIFormatMixin:
             return None
 
         csi_backlog = results[0]
+
+        # Apply STO removal if requested
+        if remove_global_sto:
+            espargos.util.remove_mean_sto(csi_backlog)
 
         # Interpolate DC subcarrier gap for HT formats
         if csi_key == "ht40":

@@ -33,7 +33,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
     def __init__(self, argv):
         parser = argparse.ArgumentParser(description="Combined Array Calibration Tool", add_help=False)
         parser.add_argument(
-            "-o",
+            "-f",
             "--outfile",
             type=str,
             default="",
@@ -136,6 +136,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
                 return
             csi = clustered_csi.deserialize_csi_lltf()
             csi = self.pool.get_calibration().apply_lltf(csi)
+            espargos.util.remove_mean_sto(csi)
             espargos.util.interpolate_lltf_gap(csi)
         elif preamble_format == "ht20":
             if not clustered_csi.has_ht20ltf():
@@ -143,6 +144,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
                 return
             csi = clustered_csi.deserialize_csi_ht20ltf()
             csi = self.pool.get_calibration().apply_ht20(csi)
+            espargos.util.remove_mean_sto(csi)
             espargos.util.interpolate_ht20ltf_gap(csi)
         elif preamble_format == "ht40":
             if not clustered_csi.has_ht40ltf():
@@ -150,6 +152,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
                 return
             csi = clustered_csi.deserialize_csi_ht40ltf()
             csi = self.pool.get_calibration().apply_ht40(csi)
+            espargos.util.remove_mean_sto(csi)
             espargos.util.interpolate_ht40ltf_gap(csi)
 
         else:

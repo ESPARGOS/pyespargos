@@ -60,17 +60,6 @@ Common.ESPARGOSApplication {
 				visible: backend.timeDomain
 			}
 
-			Label { text: "Shift Peak"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Switch {
-				id: shiftPeakSwitch
-				property string configKey: "shift_peak"
-				property string configProp: "checked"
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 80
-				checked: false
-			}
-
 			Label { text: "Feed Filter"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			ComboBox {
 				id: feedFilterCombo

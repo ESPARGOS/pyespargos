@@ -300,6 +300,7 @@ class Pool(object):
         with self.cluster_cache_calib_lock:
             clusters = list(self.cluster_cache_calib.values())
 
+        # Collection of complete clusters (= reference CSI data from all antennas available): L-LTF, HT20-LTF, and HT40-LTF
         complete_clusters_lltf = []
         complete_clusters_ht20 = []
         complete_clusters_ht40 = []
@@ -352,9 +353,9 @@ class Pool(object):
             raise Exception("ESPARGOS calibration failed, did not receive enough calibration clusters.")
 
         return (
-            complete_clusters_lltf,
-            complete_clusters_ht20,
-            complete_clusters_ht40,
+            np.asarray(complete_clusters_lltf),
+            np.asarray(complete_clusters_ht20),
+            np.asarray(complete_clusters_ht40),
             channel_primary,
             channel_secondary,
         )
@@ -423,7 +424,7 @@ class Pool(object):
                 ) = self._clusters_to_calibration(board_num)
 
                 (
-                    phase_calibrations_lltf.append(util.csi_interp_iterative(np.asarray(complete_clusters_lltf)))
+                    phase_calibrations_lltf.append(util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf)))
                     if len(complete_clusters_lltf) > 0
                     else np.full(
                         self.get_shape()[1:] + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,),
@@ -431,7 +432,7 @@ class Pool(object):
                     )
                 )
                 (
-                    phase_calibrations_ht20.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht20)))
+                    phase_calibrations_ht20.append(util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20)))
                     if len(complete_clusters_ht20) > 0
                     else np.full(
                         self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL,),
@@ -439,7 +440,7 @@ class Pool(object):
                     )
                 )
                 (
-                    phase_calibrations_ht40.append(util.csi_interp_iterative(np.asarray(complete_clusters_ht40)))
+                    phase_calibrations_ht40.append(util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40)))
                     if len(complete_clusters_ht40) > 0
                     else np.full(
                         self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,),
@@ -465,16 +466,23 @@ class Pool(object):
                 channel_secondary,
             ) = self._clusters_to_calibration()
 
-            phase_calibrations_lltf = util.csi_interp_iterative(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
-            phase_calibrations_ht20 = util.csi_interp_iterative(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
+            phase_calibrations_lltf = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
+            phase_calibrations_ht20 = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
             phase_calibration_ht40 = (
-                util.csi_interp_iterative(np.asarray(complete_clusters_ht40))
+                util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
                 if len(complete_clusters_ht40) > 0
                 else np.full(
                     self.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,),
                     np.nan,
                 )
             )
+
+            # Each antenna just gets a delayed and phase-shifted version of the reference signal,
+            # so frequency response is just a complex sinusoid over subcarrier axis.
+            # Fit optimal complex sinusoid to the CSI of each antenna across subcarriers to extract the phase shift and delay, which we can then use for calibration.
+            phase_calibrations_lltf = util.fit_complex_sinusoid(phase_calibrations_lltf)
+            phase_calibrations_ht20 = util.fit_complex_sinusoid(phase_calibrations_ht20)
+            phase_calibration_ht40 = util.fit_complex_sinusoid(phase_calibration_ht40)
 
             self.stored_calibration = calibration.CSICalibration(
                 self.boards,

@@ -151,16 +151,12 @@ class CSICluster(object):
         self._foreach_complete_sensor(deserialize_lltf_packet)
 
         # Need to take timestamps into account to provide phase coherence across all sensors
-        # TODO: For timestamp synchronization across datapoints, do not subtract mean, but use known reference point!
-        delay = self.get_sensor_timestamps() - np.nanmean(self.get_sensor_timestamps())
-
+        delay = self.get_sensor_timestamps()
         subcarrier_range = np.arange(-csi_lltf.shape[-1] // 2, csi_lltf.shape[-1] // 2)[np.newaxis, np.newaxis, np.newaxis, :]
 
         # Need to adjust range if using 40MHz wide channel since LO is either above or below the primary channel that L-LTF is on
         subcarrier_range -= self.get_secondary_channel_relative() * int(2 * constants.WIFI_CHANNEL_SPACING / constants.WIFI_SUBCARRIER_SPACING)
-
-        # 128 bit delay is overkill here, CSI is only 2x32 bit, product would be 2x128 bit
-        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range).astype(np.complex64)
+        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
         csi_lltf = np.einsum("bras,bras->bras", csi_lltf, sto_delay_correction)
 
         return csi_lltf
@@ -186,16 +182,14 @@ class CSICluster(object):
         self._foreach_complete_sensor(deserialize_ht20_packet)
 
         # Need to take timestamps into account to provide phase coherence across all sensors
-        # TODO: For timestamp synchronization across datapoints, do not subtract mean, but use known reference point!
-        delay = self.get_sensor_timestamps() - np.nanmean(self.get_sensor_timestamps())
-
+        delay = self.get_sensor_timestamps()
         subcarrier_range = np.arange(-csi_ht20.shape[-1] // 2, csi_ht20.shape[-1] // 2)[np.newaxis, np.newaxis, np.newaxis, :]
 
         # Need to adjust range if using 40MHz wide channel since LO is either above or below the primary channel that HT20 is on
         subcarrier_range -= self.get_secondary_channel_relative() * int(2 * constants.WIFI_CHANNEL_SPACING / constants.WIFI_SUBCARRIER_SPACING)
 
         # 128 bit delay is overkill here, CSI is only 2x32 bit, product would be 2x128 bit
-        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range).astype(np.complex64)
+        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
         csi_ht20 = np.einsum("bras,bras->bras", csi_ht20, sto_delay_correction)
         return csi_ht20
 
@@ -247,13 +241,9 @@ class CSICluster(object):
             csi_ht40_lower[:] = csi_ht40_lower * np.exp(-1.0j * np.pi / 2)
 
         # Need to take timestamps into account to provide phase coherence across all sensors
-        # TODO: For timestamp synchronization across datapoints, do not subtract mean, but use known reference point!
-        delay = self.get_sensor_timestamps() - np.nanmean(self.get_sensor_timestamps())
-
+        delay = self.get_sensor_timestamps()
         subcarrier_range = np.arange(-csi_ht40.shape[-1] // 2, csi_ht40.shape[-1] // 2)[np.newaxis, np.newaxis, np.newaxis, :]
-
-        # 128 bit delay is overkill here, CSI is only 2x32 bit, product would be 2x128 bit
-        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range).astype(np.complex64)
+        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
         csi_ht40 = np.einsum("bras,bras->bras", csi_ht40, sto_delay_correction)
 
         return csi_ht40

@@ -22,12 +22,10 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
 
     displayModeChanged = PyQt6.QtCore.pyqtSignal()
     oversamplingChanged = PyQt6.QtCore.pyqtSignal()
-    shiftPeakChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
         "display_mode": "frequency",  # "frequency", "timedomain", "music", "mvdr"
         "oversampling": 4,
-        "shift_peak": False,
         "feed_filter": "all",
     }
 
@@ -69,10 +67,6 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             self.stable_power_maximum = None
             self.oversamplingChanged.emit()
 
-        # Handle shift_peak changes
-        if "shift_peak" in newcfg:
-            self.shiftPeakChanged.emit()
-
         super()._on_update_app_state(newcfg)
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
@@ -86,10 +80,6 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=oversamplingChanged)
     def oversampling(self):
         return self.appconfig.get("oversampling")
-
-    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=shiftPeakChanged)
-    def shiftPeak(self):
-        return self.appconfig.get("shift_peak")
 
     # Mapping from config string to rfswitch_state_t
     FEED_FILTER_MAP = {
@@ -154,9 +144,6 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         # Weight CSI data with RSSI (only meaningful when gain is automatic / AGC is enabled)
         if self.pooldrawer.cfgman.get("gain", "automatic"):
             csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
-
-        if self.appconfig.get("shift_peak"):
-            espargos.util.remove_mean_sto(csi_backlog)
 
         # TODO: If using per-board calibration, interpolation should also be per-board
         csi_interp = espargos.util.csi_interp_iterative(csi_backlog, iterations=5)

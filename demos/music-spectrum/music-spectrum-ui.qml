@@ -20,19 +20,6 @@ Common.ESPARGOSApplication {
 			title: "Settings"
 			endpoint: appconfig
 
-			Label { Layout.columnSpan: 2; text: "MUSIC Settings"; color: "#9fb3c8" }
-
-			Label { text: "Shift Peak"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Switch {
-				id: shiftPeakSwitch
-				property string configKey: "shift_peak"
-				property string configProp: "checked"
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 80
-				checked: false
-			}
-
 			Common.GenericAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
