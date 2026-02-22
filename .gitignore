@@ -2,6 +2,7 @@ __pycache__/
 docs/_build
 *.prof
 .vscode
+.venv/
 
 # setuptools-related
 *.egg

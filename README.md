@@ -118,27 +118,18 @@ git clone https://github.com/ESPARGOS/pyespargos.git
 #### 3. Create and activate a virtual environment
 
 ```bash
-python3 -m venv ~/pyespargos-venv
-source ~/pyespargos-venv/bin/activate
+cd pyespargos
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-> **Note:** You need to run `source ~/pyespargos-venv/bin/activate` every time you open a new terminal before using *pyespargos*.
+> **Note:** You need to run `source .venv/bin/activate` (from the `pyespargos` directory) every time you open a new terminal before using *pyespargos*.
 
 #### 4. Install pyespargos
 
-Choose **one** of the following options:
-
-- **Option A** &ndash; Standard install:
-  ```bash
-  cd pyespargos
-  pip install .
-  ```
-
-- **Option B** &ndash; Editable install (for development, changes to the source take effect immediately):
-  ```bash
-  cd pyespargos
-  pip install -e .
-  ```
+```bash
+pip install -e .
+```
 
 #### 5. Install demo dependencies (optional)
 
@@ -183,27 +174,18 @@ git clone https://github.com/ESPARGOS/pyespargos.git
 Open a **Command Prompt** window (**not** PowerShell):
 
 ```cmd
-python -m venv %USERPROFILE%\pyespargos-venv
-%USERPROFILE%\pyespargos-venv\Scripts\activate
+cd pyespargos
+python -m venv .venv
+.venv\Scripts\activate
 ```
 
 > **Note:** You need to activate the virtual environment every time you open a new terminal before using *pyespargos*.
 
 #### 4. Install pyespargos
 
-Choose **one** of the following options:
-
-- **Option A** &ndash; Standard install:
-  ```cmd
-  cd pyespargos
-  pip install .
-  ```
-
-- **Option B** &ndash; Editable install (for development, changes to the source take effect immediately):
-  ```cmd
-  cd pyespargos
-  pip install -e .
-  ```
+```cmd
+pip install -e .
+```
 
 #### 5. Install demo dependencies (optional)
 
@@ -254,27 +236,18 @@ git clone https://github.com/ESPARGOS/pyespargos.git
 #### 3. Create and activate a virtual environment
 
 ```bash
-python3 -m venv ~/pyespargos-venv
-source ~/pyespargos-venv/bin/activate
+cd pyespargos
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-> **Note:** You need to run `source ~/pyespargos-venv/bin/activate` every time you open a new terminal before using *pyespargos*.
+> **Note:** You need to run `source .venv/bin/activate` (from the `pyespargos` directory) every time you open a new terminal before using *pyespargos*.
 
 #### 4. Install pyespargos
 
-Choose **one** of the following options:
-
-- **Option A** &ndash; Standard install:
-  ```bash
-  cd pyespargos
-  pip install .
-  ```
-
-- **Option B** &ndash; Editable install (for development, changes to the source take effect immediately):
-  ```bash
-  cd pyespargos
-  pip install -e .
-  ```
+```bash
+pip install -e .
+```
 
 #### 5. Install demo dependencies (optional)
 
