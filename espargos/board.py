@@ -199,10 +199,31 @@ class Board(object):
         """
         self.logger.info(f"Trying UDP CSI stream for {self.get_name()}")
 
+        # Resolve remote endpoint first so we can create a socket with the right family
+        try:
+            host_is_bracketed_ipv6 = self.host.startswith("[") and self.host.endswith("]")
+            udp_host = self.host[1:-1] if host_is_bracketed_ipv6 else self.host
+            host_for_ipv6_check = udp_host.split("%", 1)[0]
+            try:
+                socket.inet_pton(socket.AF_INET6, host_for_ipv6_check)
+                host_is_ipv6_literal = True
+            except OSError:
+                host_is_ipv6_literal = False
+            preferred_family = socket.AF_INET6 if (host_is_bracketed_ipv6 or host_is_ipv6_literal) else socket.AF_INET
+            udp_info = socket.getaddrinfo(udp_host, CSISTREAM_CONTROLLER_SRC_PORT, preferred_family, socket.SOCK_DGRAM)
+            if len(udp_info) == 0:
+                return f"Could not resolve UDP endpoint for host {self.host}"
+            udp_family, udp_socktype, udp_proto, _, udp_remote_addr = udp_info[0]
+        except OSError as e:
+            return f"Could not resolve UDP endpoint for host {self.host}: {e}"
+
         # Open a local UDP socket on an ephemeral port
         try:
-            udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            udp_sock.bind(("", 0))
+            udp_sock = socket.socket(udp_family, udp_socktype, udp_proto)
+            if udp_family == socket.AF_INET6:
+                udp_sock.bind(("::", 0, 0, 0))
+            else:
+                udp_sock.bind(("", 0))
             local_port = udp_sock.getsockname()[1]
         except OSError as e:
             return f"Could not create UDP socket: {e}"
@@ -210,7 +231,7 @@ class Board(object):
         # Send an empty packet to the controller's source port to punch a hole
         # in the Windows firewall so that incoming UDP packets are allowed through
         try:
-            udp_sock.sendto(b"", (self.host, CSISTREAM_CONTROLLER_SRC_PORT))
+            udp_sock.sendto(b"", udp_remote_addr)
         except OSError as e:
             self.logger.warning(f"Could not send firewall-punch packet: {e}")
 
@@ -244,6 +265,7 @@ class Board(object):
 
         # UDP stream established successfully
         self._udp_sock = udp_sock
+        self._udp_remote_addr = udp_remote_addr
         self._csistream_transport = "udp"
         self.csistream_connected = True
         self.csistream_thread = threading.Thread(target=self._csistream_loop_udp)
@@ -575,7 +597,7 @@ class Board(object):
         """Periodically send empty UDP packets to the controller to keep the firewall hole open."""
         while not self._udp_keepalive_stop.wait(timeout=1.0):
             try:
-                self._udp_sock.sendto(b"", (self.host, CSISTREAM_CONTROLLER_SRC_PORT))
+                self._udp_sock.sendto(b"", self._udp_remote_addr)
             except OSError:
                 break
 
