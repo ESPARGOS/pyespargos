@@ -11,6 +11,7 @@ import numpy as np
 import espargos
 import argparse
 import time
+import threading
 
 import PyQt6.QtCore
 
@@ -37,7 +38,9 @@ class EspargosDemoSpeedtest(ESPARGOSApplication):
         self._throughput = 0.0
         self._packet_count = 0
         self._last_reset = time.time()
-        self._lock = __import__("threading").Lock()
+        self._lock = threading.Lock()
+        self._pool_runner_running = threading.Event()
+        self._pool_runner_thread = None
 
         self.initialize_pool(calibrate=not self.args.no_calib)
 
@@ -71,6 +74,10 @@ class EspargosDemoSpeedtest(ESPARGOSApplication):
         with self._lock:
             self._packet_count += 1
 
+    def _pool_runner(self):
+        while self._pool_runner_running.is_set():
+            self.pool.run()
+
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
         now = time.time()
@@ -81,8 +88,6 @@ class EspargosDemoSpeedtest(ESPARGOSApplication):
                 self._packet_count = 0
                 self._last_reset = now
                 self.throughputChanged.emit()
-
-        self.pool.run()
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=throughputChanged)
     def throughput(self):
@@ -98,6 +103,9 @@ class EspargosDemoSpeedtest(ESPARGOSApplication):
 
     def onInitComplete(self):
         self._register_callback()
+        self._pool_runner_running.set()
+        self._pool_runner_thread = threading.Thread(target=self._pool_runner, daemon=True)
+        self._pool_runner_thread.start()
 
         self.poll_timer = PyQt6.QtCore.QTimer(self)
         self.poll_timer.timeout.connect(self.update)
@@ -106,6 +114,12 @@ class EspargosDemoSpeedtest(ESPARGOSApplication):
     def initialize_pool(self, **kwargs):
         super().initialize_pool(**kwargs)
         self.initComplete.connect(self.onInitComplete)
+
+    def onAboutToQuit(self):
+        self._pool_runner_running.clear()
+        if self._pool_runner_thread is not None:
+            self._pool_runner_thread.join(timeout=1.0)
+        super().onAboutToQuit()
 
 
 app = EspargosDemoSpeedtest(sys.argv)
