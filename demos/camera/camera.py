@@ -173,7 +173,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
             recent_rssi_backlog = rssi_backlog
 
         # Update mean RSSI
-        self.mean_rssi = 10 * np.log10(np.nanmean(10 ** (recent_rssi_backlog / 10)) + 1e-6) if recent_rssi_backlog.size > 0 else -np.inf
+        self.mean_rssi = 10 * np.log10(np.nanmean(10 ** (recent_rssi_backlog / 10)) + 1e-15) if recent_rssi_backlog.size > 0 else -np.inf
         self.rssiChanged.emit(self.mean_rssi)
 
         # Update mean number of active antennas
