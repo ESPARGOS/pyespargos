@@ -428,9 +428,9 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                     case "FFT" | "Bartlett":
                         value_range = 1e-1 if self.pooldrawer.cfgman.get("gain", "automatic") else 1e15
                 exposure = self.appconfig.get("visualization", "exposure")
-                color_value = power_visualization_beamspace / value_range * (10 ** (exposure / 0.1) + 1e-6)
+                color_value = power_visualization_beamspace / value_range * (10 ** (exposure / 0.1) + 1e-15)
             else:
-                color_value = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-6)
+                color_value = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-15)
 
             if self.appconfig.get("beamformer", "colorize_delay"):
                 if self.appconfig.get("beamformer", "type") in ["MUSIC", "MVDR"]:
