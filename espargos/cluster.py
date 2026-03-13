@@ -323,6 +323,10 @@ class CSICluster(object):
 
         :return: 0 if no secondary channel is used, 1 if the secondary channel is above the primary channel, -1 if the secondary channel is below the primary channel
         """
+        # 802.11b packets: No secondary channel, return 0
+        if csi.wifi_pkt_rx_ctrl_v3_t(self._first_complete_sensor().rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_11B:
+            return 0
+
         match csi.wifi_pkt_rx_ctrl_v3_t(self._first_complete_sensor().rx_ctrl).second:
             case 0:
                 return 0

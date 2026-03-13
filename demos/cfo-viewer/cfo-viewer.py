@@ -2,7 +2,6 @@
 
 import pathlib
 import sys
-import threading
 import time
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
@@ -35,14 +34,11 @@ class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
             argparse_parent=parser,
         )
 
-        self._pool_runner_running = threading.Event()
-        self._pool_runner_thread = None
         self.startTimestamp = time.time()
         self._channel_primary = None
         self._secondary_channel_mode = None
 
         self.initialize_pool(calibrate=False)
-        self.initComplete.connect(self._on_init_complete)
         self.initialize_qml(
             pathlib.Path(__file__).resolve().parent / "cfo-viewer.qml",
         )
@@ -56,11 +52,6 @@ class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
 
         super()._on_update_app_state(newcfg)
 
-    def _on_init_complete(self):
-        self._pool_runner_running.set()
-        self._pool_runner_thread = threading.Thread(target=self._pool_runner, daemon=True)
-        self._pool_runner_thread.start()
-
     def _on_pool_config_changed(self, delta):
         if "channel" in delta or "secondary_channel" in delta:
             self._update_channel_config_from_pooldrawer()
@@ -73,10 +64,6 @@ class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
             self._channel_primary = primary
             self._secondary_channel_mode = secondary_mode
             self.channelConfigChanged.emit()
-
-    def _pool_runner(self):
-        while self._pool_runner_running.is_set():
-            self.pool.run()
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
@@ -121,12 +108,6 @@ class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
             secondary_channel = self._channel_primary - 4
 
         return espargos.util.get_center_frequency(self._channel_primary, secondary_channel)
-
-    def onAboutToQuit(self):
-        self._pool_runner_running.clear()
-        if self._pool_runner_thread is not None:
-            self._pool_runner_thread.join(timeout=1.0)
-        super().onAboutToQuit()
 
 
 app = EspargosDemoCFOViewer(sys.argv)
