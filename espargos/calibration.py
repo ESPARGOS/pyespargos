@@ -87,7 +87,7 @@ class CSICalibration(object):
         # prop_calib_each_board_lltf = np.exp(-1.0j * 2 * np.pi * tracelengths[:,:,np.newaxis] / wavelengths_lltf[np.newaxis, np.newaxis])
         # prop_calib_each_board_ht40 = np.exp(-1.0j * 2 * np.pi * tracelengths[:,:,np.newaxis] / wavelengths_ht40[np.newaxis, np.newaxis])
         # prop_delay_each_board = np.asarray(constants.CALIB_TRACE_LENGTH) / np.asarray(constants.CALIB_TRACE_GROUP_VELOCITY)
-        self.receiver_lo_freq = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * ((self.channel_primary + self.channel_secondary) / 2 - 1)
+        self.receiver_lo_freq = util.get_center_frequency(self.channel_primary, self.channel_secondary)
 
         self.calibration_values_lltf = np.einsum("bras,bras->bras", calibration_values_lltf, np.conj(prop_phase_offsets_lltf))
         self.calibration_values_ht20 = np.einsum("bras,bras->bras", calibration_values_ht20, np.conj(prop_phase_offsets_ht20))

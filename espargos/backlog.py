@@ -11,7 +11,7 @@ class CSIBacklog(object):
     CSI backlog class. Stores CSI data in a ringbuffer for processing when needed.
 
     :param pool: CSI pool object to collect CSI data from
-    :param fields: List of fields to store (default: all), e.g., ["lltf", "ht40", "rssi", "timestamp", "host_timestamp", "mac"]
+    :param fields: List of fields to store (default: all), e.g., ["lltf", "ht40", "rssi", "cfo", "timestamp", "host_timestamp", "mac"]
     :param calibrate: Apply calibration to CSI data (default: True)
     :param cb_predicate: A function that defines the conditions under which clustered CSI is regarded as completed and thus added to the backlog.
         See :meth:`espargos.pool.Pool.add_csi_callback` for more details.
@@ -35,6 +35,7 @@ class CSIBacklog(object):
             "dtype": np.complex64,
         },
         "rssi": {"shape": (), "per_antenna": True, "dtype": np.float32},
+        "cfo": {"shape": (), "per_antenna": True, "dtype": np.float32},
         "rfswitch_state": {"shape": (), "per_antenna": True, "dtype": np.uint8},
         "timestamp": {"shape": (), "per_antenna": True, "dtype": np.float64},
         "host_timestamp": {"shape": (), "per_antenna": False, "dtype": np.float64},
@@ -186,6 +187,10 @@ class CSIBacklog(object):
             # Store RSSI
             if "rssi" in self.fields:
                 self.storage["rssi"][self.head] = clustered_csi.get_rssi()
+
+            # Store CFO
+            if "cfo" in self.fields:
+                self.storage["cfo"][self.head] = clustered_csi.get_cfo()
 
             # Store RF switch states
             if "rfswitch_state" in self.fields:

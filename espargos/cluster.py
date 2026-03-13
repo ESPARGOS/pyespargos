@@ -58,6 +58,7 @@ class CSICluster(object):
         self.rssi_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
         self.rfswitch_state_all = np.full(self.shape, fill_value=csi.rfswitch_state_t.SENSOR_RFSWITCH_UNKNOWN, dtype=np.uint8)
         self.noise_floor_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
+        self.cfo_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
 
     def add_csi(
         self,
@@ -95,6 +96,7 @@ class CSICluster(object):
         self.rssi_all[board_num, row, col] = (rssi - 0x100) if (rssi & 0x80) else rssi
         self.noise_floor_all[board_num, row, col] = (noise_floor - 0x100) if (noise_floor & 0x80) else noise_floor
         self.rfswitch_state_all[board_num, row, col] = serialized_csi.rfswitch_state
+        self.cfo_all[board_num, row, col] = csi.get_cfo_from_rx_ctrl(serialized_csi.rx_ctrl)
 
     def deserialize_csi_lltf(self):
         """
@@ -409,6 +411,12 @@ class CSICluster(object):
         Get the RF switch state of all sensors when the WiFi packet was received.
         """
         return self.rfswitch_state_all
+
+    def get_cfo(self):
+        """
+        Get the CFO values decoded from the sensor rx_ctrl metadata.
+        """
+        return self.cfo_all
 
     def get_source_mac(self):
         """

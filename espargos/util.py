@@ -234,12 +234,31 @@ def get_frequencies_ht40(primary_channel: int, secondary_channel: int):
     :param secondary_channel: The secondary channel number.
     :return: The frequencies of the subcarriers, in Hz, NumPy array.
     """
-    center_primary = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (primary_channel - 1)
-    center_secondary = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (secondary_channel - 1)
-    center_ht40 = (center_primary + center_secondary) / 2
+    center_ht40 = get_center_frequency(primary_channel, secondary_channel)
     ht40_subcarrier_count = csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL
     assert ht40_subcarrier_count % 2 == 1
     return center_ht40 + np.arange(-ht40_subcarrier_count // 2, ht40_subcarrier_count // 2) * constants.WIFI_SUBCARRIER_SPACING
+
+
+def get_center_frequency(primary_channel: int, secondary_channel: int | None = None):
+    """
+    Returns the RF center frequency for the provided Wi-Fi channel configuration.
+
+    If only ``primary_channel`` is given, this returns the center frequency of that
+    20 MHz channel. If ``secondary_channel`` is also given, this returns the center
+    frequency halfway between primary and secondary, which corresponds to the HT40 LO.
+
+    :param primary_channel: The primary Wi-Fi channel number.
+    :param secondary_channel: The secondary Wi-Fi channel number. If omitted or equal
+        to ``primary_channel``, the 20 MHz channel center is returned.
+    :return: Center frequency in Hz.
+    """
+    center_primary = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (primary_channel - 1)
+    if secondary_channel is None or secondary_channel == primary_channel:
+        return center_primary
+
+    center_secondary = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (secondary_channel - 1)
+    return (center_primary + center_secondary) / 2
 
 
 def get_frequencies_ht20(channel: int):
@@ -249,7 +268,7 @@ def get_frequencies_ht20(channel: int):
     :param primary_channel: The primary channel number (= primary channel, but there is only one channel).
     :return: The frequencies of the subcarriers, in Hz, NumPy array.
     """
-    center_ht20 = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (channel - 1)
+    center_ht20 = get_center_frequency(channel)
     ht20_subcarrier_count = csi.HT_COEFFICIENTS_PER_CHANNEL
     return center_ht20 + np.arange(-ht20_subcarrier_count // 2, ht20_subcarrier_count // 2) * constants.WIFI_SUBCARRIER_SPACING
 
@@ -261,7 +280,7 @@ def get_frequencies_lltf(channel: int):
     :param primary_channel: The primary channel number (= primary channel, but there is only one channel).
     :return: The frequencies of the subcarriers, in Hz, NumPy array.
     """
-    center_lltf = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (channel - 1)
+    center_lltf = get_center_frequency(channel)
     lltf_subcarrier_count = csi.LEGACY_COEFFICIENTS_PER_CHANNEL
     return center_lltf + np.arange(-lltf_subcarrier_count // 2, lltf_subcarrier_count // 2) * constants.WIFI_SUBCARRIER_SPACING
 

@@ -1,3 +1,4 @@
+from curses.ascii import ctrl
 from enum import IntEnum
 import ctypes
 
@@ -97,7 +98,7 @@ class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
         ("rssi", ctypes.c_uint32, 8),
         ("rate", ctypes.c_uint32, 5),
         ("_reserved1", ctypes.c_uint32, 1),
-        ("_reserved2", ctypes.c_uint32, 2),
+        ("rate_type", ctypes.c_uint32, 2),
         ("_reserved3", ctypes.c_uint32, 12),
         ("rxmatch0", ctypes.c_uint32, 1),
         ("rxmatch1", ctypes.c_uint32, 1),
@@ -109,8 +110,8 @@ class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
         ("rxstart_time_cyc", ctypes.c_uint32, 7),
         ("is_group", ctypes.c_uint32, 1),
         ("timestamp", ctypes.c_uint32, 32),
-        ("_reserved5", ctypes.c_uint32, 15),
-        ("_reserved6", ctypes.c_uint32, 15),
+        ("cfo_low_rate", ctypes.c_uint32, 15),
+        ("cfo_high_rate", ctypes.c_uint32, 15),
         ("_reserved7", ctypes.c_uint32, 2),
         ("noise_floor", ctypes.c_uint32, 8),
         ("_reserved8", ctypes.c_uint32, 8),
@@ -272,6 +273,30 @@ class serialized_csi_v3_t(ctypes.LittleEndianStructure):
 
     def __init__(self, buf=None):
         pass
+
+
+def _extract_signed15(x: int) -> int:
+    x &= 0x7FFF
+    return x - 0x8000 if (x & 0x4000) else x
+
+
+def get_cfo_from_rx_ctrl(rx_ctrl) -> int:
+    """
+    Compute the CFO value (in Hz) from a `wifi_pkt_rx_ctrl_v3_t` byte buffer.
+
+    This was reverse engineered from librftest.a (bb_common.o) and libphy.a (phy_feature.o)
+    """
+    ctrl = rx_ctrl if isinstance(rx_ctrl, wifi_pkt_rx_ctrl_v3_t) else wifi_pkt_rx_ctrl_v3_t(rx_ctrl)
+
+    if ctrl.rate_type == 0:
+        rate_index = ctrl.rate
+    else:
+        rate_index = (ctrl.rate_type << 4) + (ctrl.he_siga1 & 0x7F)
+
+    if rate_index < 8:
+        return float(_extract_signed15(ctrl.cfo_low_rate) / -48) * 25000 * 5 / 128
+
+    return float((_extract_signed15(ctrl.cfo_high_rate) * -5) / 128) * 25000 * 5 / 128
 
 
 def deserialize_packet_buffer(revision, pktbuf):
