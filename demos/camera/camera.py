@@ -37,6 +37,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     macListEnabledChanged = PyQt6.QtCore.pyqtSignal()
     azimuthCorrectionChanged = PyQt6.QtCore.pyqtSignal()
     elevationCorrectionChanged = PyQt6.QtCore.pyqtSignal()
+    cameraEnabledChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
         "receiver": {"mac_list_enabled": False},
@@ -152,9 +153,10 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         )
 
     def exec(self):
-        # disable auto-focus and enable camera stream
-        self.videocamera.setFocusMode(PyQt6.QtMultimedia.QCamera.FocusMode.FocusModeManual)
-        self.videocamera.start()
+        if self.cameraEnabled:
+            # disable auto-focus and enable camera stream
+            self.videocamera.setFocusMode(PyQt6.QtMultimedia.QCamera.FocusMode.FocusModeManual)
+            self.videocamera.start()
 
         return super().exec()
 
@@ -544,7 +546,8 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         return np.all(csi_completion_state) or timeout_condition
 
     def onAboutToQuit(self):
-        self.videocamera.stop()
+        if self.cameraEnabled:
+            self.videocamera.stop()
         super().onAboutToQuit()
 
     @PyQt6.QtCore.pyqtSlot(dict)
@@ -553,14 +556,20 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         if not isinstance(camera_cfg, dict):
             camera_cfg = {}
 
+        if "enable" in camera_cfg:
+            try:
+                self.cameraEnabledChanged.emit()
+            except Exception as e:
+                print(f"Error updating camera enabled state: {e}")
+
         # Only update camera settings if changed
-        if "device" in camera_cfg:
+        if self.cameraEnabled and "device" in camera_cfg:
             try:
                 self.videocamera.setDevice(camera_cfg.get("device"))
             except Exception as e:
                 print(f"Error setting camera device: {e}")
 
-        if "format" in camera_cfg:
+        if self.cameraEnabled and "format" in camera_cfg:
             try:
                 self.videocamera.setFormat(camera_cfg.get("format"))
             except Exception as e:
@@ -710,6 +719,10 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=cameraFlipChanged)
     def cameraFlip(self):
         return self.appconfig.get("camera", "flip")
+
+    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=cameraEnabledChanged)
+    def cameraEnabled(self):
+        return bool(self.appconfig.get("camera", "enable"))
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=azimuthCorrectionChanged)
     def azimuth_correction(self):

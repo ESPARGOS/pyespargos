@@ -8,7 +8,7 @@ Rectangle {
 
 	CaptureSession {
 		id: captureSession
-		camera: WebCam
+		camera: backend.cameraEnabled ? WebCam : null
 		videoOutput: videoOutput
 	}
 
