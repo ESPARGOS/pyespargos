@@ -16,12 +16,14 @@ import espargos.util
 
 
 class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
-    updateCFOs = PyQt6.QtCore.pyqtSignal(float, list)
+    updateCFOs = PyQt6.QtCore.pyqtSignal(float, list, list)
     maxAgeChanged = PyQt6.QtCore.pyqtSignal()
+    minAntennasChanged = PyQt6.QtCore.pyqtSignal()
     channelConfigChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
         "max_age": 10.0,
+        "min_antennas": None,
     }
 
     def __init__(self, argv):
@@ -49,6 +51,9 @@ class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
     def _on_update_app_state(self, newcfg):
         if "max_age" in newcfg:
             self.maxAgeChanged.emit()
+        if "min_antennas" in newcfg:
+            self._register_backlog_callback()
+            self.minAntennasChanged.emit()
 
         super()._on_update_app_state(newcfg)
 
@@ -71,6 +76,7 @@ class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
             return
 
         cfo_backlog, timestamp_backlog = self.backlog.get_multiple(("cfo", "host_timestamp"))
+        latest_reception = ~np.isnan(cfo_backlog[-1])
         valid = np.sum(~np.isnan(cfo_backlog), axis=0)
         cfo_averaged = np.divide(
             np.nansum(cfo_backlog, axis=0),
@@ -80,7 +86,33 @@ class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
         )
         timestamp = timestamp_backlog[-1] - self.startTimestamp
 
-        self.updateCFOs.emit(timestamp, np.array(cfo_averaged, dtype=np.float32, copy=True).flatten().tolist())
+        self.updateCFOs.emit(
+            timestamp,
+            np.array(cfo_averaged, dtype=np.float32, copy=True).flatten().tolist(),
+            np.array(latest_reception, dtype=bool, copy=True).flatten().tolist(),
+        )
+
+    def _make_predicate(self):
+        min_antennas = self._effective_min_antennas()
+
+        def predicate(completion, age):
+            del age
+            return np.sum(completion) >= min_antennas
+
+        return predicate
+
+    def _effective_min_antennas(self):
+        min_antennas = self.appconfig.get("min_antennas")
+        if min_antennas is None:
+            return int(np.prod(self.pool.get_shape()))
+        return int(min_antennas)
+
+    def _register_backlog_callback(self):
+        if not hasattr(self, "pool") or not hasattr(self, "backlog"):
+            return
+
+        self.pool.callbacks = [callback for callback in self.pool.callbacks if getattr(callback.cb, "__self__", None) is not self.backlog or getattr(callback.cb, "__func__", None) is not self.backlog._on_new_csi.__func__]
+        self.pool.add_csi_callback(self.backlog._on_new_csi, cb_predicate=self._make_predicate())
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=maxAgeChanged)
     def maxCSIAge(self):
@@ -89,6 +121,10 @@ class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def sensorCount(self):
         return np.prod(self.pool.get_shape())
+
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=minAntennasChanged)
+    def minAntennas(self):
+        return self._effective_min_antennas()
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=channelConfigChanged)
     def cfoPpmScale(self):
@@ -109,6 +145,10 @@ class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
 
         return espargos.util.get_center_frequency(self._channel_primary, secondary_channel)
 
+    def onInitComplete(self):
+        self._register_backlog_callback()
+
 
 app = EspargosDemoCFOViewer(sys.argv)
+app.initComplete.connect(app.onInitComplete)
 sys.exit(app.exec())

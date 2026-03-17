@@ -39,6 +39,21 @@ Common.ESPARGOSApplication {
 				value: 10
 			}
 
+			Label { text: "Min. Antennas"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			SpinBox {
+				id: minAntennasSpinBox
+				property string configKey: "min_antennas"
+				property string configProp: "value"
+				property var encode: function(v) { return v }
+				property var decode: function(v) { return Number(v) }
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+				from: 1
+				to: backend.sensorCount
+				value: backend.sensorCount
+			}
+
 			Common.GenericAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
@@ -171,7 +186,7 @@ Common.ESPARGOSApplication {
 					for (const elem of cfoChart.newDataBacklog) {
 						for (let ant = 1; ant < cfoChart.count; ++ant) {
 							let value = elem.cfos[ant - 1]
-							if (!Number.isNaN(value)) {
+							if (elem.received[ant - 1] && !Number.isNaN(value)) {
 								cfoChart.series(ant).append(elem.time, value)
 								minY = Math.min(minY, value)
 								maxY = Math.max(maxY, value)
@@ -217,10 +232,11 @@ Common.ESPARGOSApplication {
 			Connections {
 				target: backend
 
-				function onUpdateCFOs(time, cfos) {
+				function onUpdateCFOs(time, cfos, received) {
 					cfoChart.newDataBacklog.push({
 						"time": time,
-						"cfos": cfos
+						"cfos": cfos,
+						"received": received
 					})
 				}
 
