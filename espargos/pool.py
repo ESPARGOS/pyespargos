@@ -421,24 +421,24 @@ class Pool(object):
                     channel_secondary,
                 ) = self._clusters_to_calibration(board_num)
 
-                (
-                    phase_calibrations_lltf.append(util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf)))
+                phase_calibrations_lltf.append(
+                    util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf))
                     if len(complete_clusters_lltf) > 0
                     else np.full(
                         self.get_shape()[1:] + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,),
                         np.nan,
                     )
                 )
-                (
-                    phase_calibrations_ht20.append(util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20)))
+                phase_calibrations_ht20.append(
+                    util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20))
                     if len(complete_clusters_ht20) > 0
                     else np.full(
                         self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL,),
                         np.nan,
                     )
                 )
-                (
-                    phase_calibrations_ht40.append(util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40)))
+                phase_calibrations_ht40.append(
+                    util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
                     if len(complete_clusters_ht40) > 0
                     else np.full(
                         self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,),

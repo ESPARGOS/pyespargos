@@ -83,7 +83,7 @@ Most demos support both single ESPARGOS arrays and combined multi-board setups v
 
 ---
 
-### <img src="img/linux-logo.svg" width="20" height="20" style="vertical-align: middle;"> Linux
+### <img src="img/linux-logo.svg" width="20" height="20" style="vertical-align: middle;"> Linux / <img src="img/rpi-logo.svg" width="20" height="20" style="vertical-align: middle;"> Raspberry Pi
 
 <details>
 <summary><b>Click to expand Linux instructions</b></summary>
@@ -99,7 +99,7 @@ python3 --version
 If Python is not installed or the version is too old, install it using your package manager:
 
 ```bash
-# Debian / Ubuntu
+# Debian / Ubuntu / Raspberry Pi OS (Raspbian)
 sudo apt update && sudo apt install python3 python3-venv python3-pip
 
 # Fedora
@@ -138,6 +138,21 @@ If you want to run the demo applications:
 ```bash
 pip install pyqt6 pyqt6-charts pyyaml matplotlib
 ```
+
+If you want to run demos such as `camera` and `azimuth-delay`, you will also need Qt Shader Baker (`qsb`):
+
+```bash
+# Debian / Ubuntu / Raspberry Pi OS (Raspbian)
+sudo apt install qt6-shader-baker
+
+# Fedora
+sudo dnf install qt6-qtshadertools
+
+# Arch Linux
+sudo pacman -S qt6-shadertools
+```
+
+> **Note:** The `compile_shader.sh` scripts currently expect `qsb` at `/usr/lib/qt6/bin/qsb`. If your distribution installs it elsewhere, update the script accordingly.
 
 </details>
 
@@ -194,6 +209,10 @@ If you want to run the demo applications:
 ```cmd
 pip install pyqt6 pyqt6-charts pyyaml matplotlib
 ```
+
+If you want to run demos such as `camera` and `azimuth-delay`, you will also need Qt 6 so that `qsb.exe` (Qt Shader Baker) is available. The simplest option is to use the Qt Online Installer and install a desktop Qt 6 kit.
+
+> **Note:** The shader batch scripts currently default to `C:\Qt\6.10.2\mingw_64\bin\qsb.exe`. If your Qt installation is in a different location, either update the `QSB` path in the `.bat` scripts or add the Qt `bin` directory to `PATH`.
 
 </details>
 
@@ -257,6 +276,20 @@ If you want to run the demo applications:
 pip install pyqt6 pyqt6-charts pyyaml matplotlib
 ```
 
+If you want to run demos such as `camera` and `azimuth-delay`, you will also need Qt Shader Baker (`qsb`). One option is:
+
+```bash
+brew install qt
+```
+
+Then verify that `qsb` is available:
+
+```bash
+qsb --version
+```
+
+> **Note:** If `qsb` is not on your `PATH`, use the full path from your Qt installation when running `compile_shader.sh`.
+
 </details>
 
 ---
@@ -307,19 +340,24 @@ import time
 
 pool = espargos.Pool([espargos.Board("192.168.1.2")])
 pool.start()
-pool.calibrate(duration = 2)
-backlog = espargos.CSIBacklog(pool, size = 20)
+pool.calibrate(duration=2)
+
+backlog = espargos.CSIBacklog(pool, fields=["lltf", "rssi"], size=20)
 backlog.start()
 
-# Wait for a while to collect some WiFi packets to the backlog...
-time.sleep(4)
+try:
+    # Wait a moment so the backlog can collect some WiFi packets.
+    time.sleep(4)
 
-# Get CSI data from the backlog (L-LTF format)
-csi_lltf = backlog.get_lltf()
-print("Received CSI (L-LTF): ", csi_lltf)
-
-backlog.stop()
-pool.stop()
+    if backlog.nonempty():
+        csi_lltf, rssi = backlog.get_multiple(("lltf", "rssi"))
+        print("L-LTF backlog shape:", csi_lltf.shape)
+        print("RSSI backlog:", rssi)
+    else:
+        print("No CSI data received yet.")
+finally:
+    backlog.stop()
+    pool.stop()
 ```
 
 ## Basics

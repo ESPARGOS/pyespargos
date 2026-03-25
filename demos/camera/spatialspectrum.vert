@@ -11,11 +11,11 @@ layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
     float qt_Opacity;
 
-	bool rawBeamspace;
-	bool flip;
+	int rawBeamspace;
+	int flip;
 	vec2 fov;
 	float time;
-	bool polarizationVisible;
+	int polarizationVisible;
 	float gridSpacing;
 	float azimuthCorrection;
 	float elevationCorrection;
@@ -33,12 +33,12 @@ vec2 anglesToFFTBeamspace(vec2 angles) {
 }
 
 void main() {
-	vec2 coord = vec2(flip ? 1.0 - qt_MultiTexCoord0.x : qt_MultiTexCoord0.x, qt_MultiTexCoord0.y);
+	vec2 coord = vec2(flip == 1 ? 1.0 - qt_MultiTexCoord0.x : qt_MultiTexCoord0.x, qt_MultiTexCoord0.y);
 
 	vec2 angles = cameraPixelToAngles(coord);
 	angles.x += radians(azimuthCorrection);
 	angles.y += radians(elevationCorrection);
-	vec2 textureCoords = rawBeamspace ? coord : (anglesToFFTBeamspace(angles) + 0.5);	
+	vec2 textureCoords = rawBeamspace == 1 ? coord : (anglesToFFTBeamspace(angles) + 0.5);	
 
 	beamspaceColor = texture(spatialSpectrumCanvasSource, textureCoords);
 	beamspacePolarization = texture(polarizationCanvasSource, textureCoords);
