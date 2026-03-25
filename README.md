@@ -83,7 +83,7 @@ Most demos support both single ESPARGOS arrays and combined multi-board setups v
 
 ---
 
-### <img src="img/linux-logo.svg" width="20" height="20" style="vertical-align: middle;"> Linux / <img src="img/rpi-logo.svg" width="20" height="20" style="vertical-align: middle;"> Raspberry Pi
+### <img src="img/linux-logo.svg" width="20" height="20" style="vertical-align: middle;"> Linux / <img src="img/rpi-logo.svg" height="20" style="vertical-align: middle;"> Raspberry Pi
 
 <details>
 <summary><b>Click to expand Linux instructions</b></summary>
