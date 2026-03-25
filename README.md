@@ -14,8 +14,8 @@ The library supports combining multiple ESPARGOS arrays into larger antenna arra
 		<th>Your ESPARGOS looks like this:</th>
 	</tr>
 	<tr>
-		<td><img src="img/espargosv2.jpg" width="600px"></td>
-		<td><img src="img/espargosv1.jpg" width="600px"></td>
+		<td><img src="img/espargosv2.jpg" height="300px"></td>
+		<td><img src="img/espargosv1.jpg" height="300px"></td>
 	</tr>
 	<tr>
 		<td>&rarr; You have the current ESPARGOS, please use the <code>main</code> branch of this repository.</td>
