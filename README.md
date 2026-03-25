@@ -10,16 +10,16 @@ The library supports combining multiple ESPARGOS arrays into larger antenna arra
 ## Different Hardware Revisions
 <table>
 	<tr>
-		<th>Your ESPARGOS looks like this:</th>
-		<th>Your ESPARGOS looks like this:</th>
+		<th width="50%">Your ESPARGOS looks like this:</th>
+		<th width="50%">Your ESPARGOS looks like this:</th>
 	</tr>
 	<tr>
-		<td><img src="img/espargosv2.jpg" width="600"></td>
-		<td><img src="img/espargosv1.jpg" width="600"></td>
+		<td width="50%"><img src="img/espargosv2.jpg" width="100%"></td>
+		<td width="50%"><img src="img/espargosv1.jpg" width="100%"></td>
 	</tr>
 	<tr>
-		<td>&rarr; You have the current ESPARGOS, please use the <code>main</code> branch of this repository.</td>
-		<td>&rarr; You have the older prototype generation of ESPARGOS, please use the <code>legacy-prototype</code> branch of this repository. This hardware revision is no longer supported.</td>
+		<td width="50%">&rarr; You have the current ESPARGOS, please use the <code>main</code> branch of this repository.</td>
+		<td width="50%">&rarr; You have the older prototype generation of ESPARGOS, please use the <code>legacy-prototype</code> branch of this repository. This hardware revision is no longer supported.</td>
 	</tr>
 </table>
 
