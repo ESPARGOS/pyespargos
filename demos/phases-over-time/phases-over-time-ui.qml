@@ -70,7 +70,7 @@ Common.ESPARGOSApplication {
 			Common.GenericAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
-				implicitWidth: 160
+				controlWidth: 160
 			}
 
 			Item {
