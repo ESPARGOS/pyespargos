@@ -15,7 +15,13 @@ import espargos.csi
 from demos.common import BacklogMixin, ESPARGOSApplication, SingleCSIFormatMixin
 
 
-class EspargosDemoRayleighFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class EspargosDemoStochasticFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+    RAYLEIGH_SIGMA = 1.0 / np.sqrt(2.0)
+    DEFAULT_X_MAX = 4.0
+    AXIS_SMOOTHING = 0.15
+    X_AXIS_PERCENTILE = 90.0
+    X_AXIS_HEADROOM = 1.5
+
     preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
     binCountChanged = PyQt6.QtCore.pyqtSignal()
     maxSamplesChanged = PyQt6.QtCore.pyqtSignal()
@@ -50,36 +56,36 @@ class EspargosDemoRayleighFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApp
 
         self._samples = np.empty(0, dtype=np.float32)
         self._last_processed_timestamp = -np.inf
-        self._fit_sigma = 1.0 / np.sqrt(2.0)
+        self._fit_sigma = self.RAYLEIGH_SIGMA
         self._fit_nu = 0.0
         self._normalization_scale = 1.0
         self._total_samples_seen = 0
+        self._display_x_max = self.DEFAULT_X_MAX
         self.preambleFormatChanged.connect(self.resetHistogram)
 
         self.initialize_qml(pathlib.Path(__file__).resolve().parent / "stochastic-fading-ui.qml")
 
     def _on_update_app_state(self, newcfg):
-        should_reset = False
-
-        if "bin_count" in newcfg:
-            self.binCountChanged.emit()
-
+        reset_keys = {"compensate_rssi"}
+        signal_map = {
+            "bin_count": self.binCountChanged,
+            "max_samples": self.maxSamplesChanged,
+            "compensate_rssi": self.compensateRssiChanged,
+            "fit_model": self.fitModelChanged,
+        }
         if "max_samples" in newcfg:
             self._trim_samples()
-            self.maxSamplesChanged.emit()
-            self.sampleCountChanged.emit()
+            self._emit_sample_state_changed()
             self._update_fit_parameters()
 
-        if "compensate_rssi" in newcfg:
-            self.compensateRssiChanged.emit()
-            should_reset = True
+        for key, signal in signal_map.items():
+            if key in newcfg:
+                signal.emit()
 
-        if "fit_model" in newcfg:
-            self.fitModelChanged.emit()
-            self._update_fit_parameters()
-
-        if should_reset:
+        if reset_keys & set(newcfg):
             self.resetHistogram()
+        elif "fit_model" in newcfg:
+            self._update_fit_parameters()
 
         super()._on_update_app_state(newcfg)
 
@@ -146,9 +152,9 @@ class EspargosDemoRayleighFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApp
     def resetHistogram(self):
         self._samples = np.empty(0, dtype=np.float32)
         self._total_samples_seen = 0
+        self._display_x_max = self.DEFAULT_X_MAX
         self._mark_backlog_as_seen()
-        self.sampleCountChanged.emit()
-        self.sampleProgressChanged.emit()
+        self._emit_sample_state_changed()
         self._update_fit_parameters()
 
     def _mark_backlog_as_seen(self):
@@ -169,14 +175,16 @@ class EspargosDemoRayleighFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApp
         self._last_processed_timestamp = float(np.nanmax(timestamp_backlog))
 
     def _trim_samples(self):
-        max_samples = max(1, self.maxSamples)
-        if self._samples.size > max_samples:
-            self._samples = self._samples[-max_samples:]
+        self._samples = self._samples[-max(1, self.maxSamples) :]
+
+    def _emit_sample_state_changed(self):
+        self.sampleCountChanged.emit()
+        self.sampleProgressChanged.emit()
 
     def _partial_cluster_predicate(self, completion, age):
         timeout_condition = False
         if self.args.csi_completion_timeout > 0:
-            timeout_condition = np.sum(completion) >= 1 and age > self.args.csi_completion_timeout
+            timeout_condition = np.sum(completion) >= 2 and age > self.args.csi_completion_timeout
         return bool(np.all(completion) or timeout_condition)
 
     def _get_partial_backlog_csi(self, *additional_keys: str, remove_global_sto=True):
@@ -205,8 +213,17 @@ class EspargosDemoRayleighFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApp
             return tuple(results)
         return csi_backlog
 
+    def _normalized_samples(self):
+        return self._samples / max(self.normalizationScale, 1e-12)
+
+    def _update_display_x_max(self, target_x_max):
+        target_x_max = max(self.DEFAULT_X_MAX, float(target_x_max), 1e-3)
+        self._display_x_max = (1.0 - self.AXIS_SMOOTHING) * self._display_x_max + self.AXIS_SMOOTHING * target_x_max
+        self._display_x_max = max(self._display_x_max, self.DEFAULT_X_MAX)
+        return self._display_x_max
+
     def _update_fit_parameters(self):
-        sigma = 1.0 / np.sqrt(2.0)
+        sigma = self.RAYLEIGH_SIGMA
         nu = 0.0
         normalization_scale = 1.0
 
@@ -288,9 +305,39 @@ class EspargosDemoRayleighFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApp
         self._samples = np.concatenate((self._samples, magnitudes.astype(np.float32, copy=False)))
         self._total_samples_seen += int(magnitudes.size)
         self._trim_samples()
-        self.sampleCountChanged.emit()
-        self.sampleProgressChanged.emit()
+        self._emit_sample_state_changed()
         self._update_fit_parameters()
+
+    def _fit_density(self, x):
+        if self.fitModel == "rayleigh":
+            return self._rayleigh_pdf(x, max(self.fitSigma, 1e-6))
+        if self.fitModel == "rice":
+            return self._rice_pdf(x, self.fitNu, max(self.fitSigma, 1e-6))
+        return None
+
+    @staticmethod
+    def _histogram_points(edges, hist):
+        points = [PyQt6.QtCore.QPointF(edges[0], 0.0)]
+        for left, right, density in zip(edges[:-1], edges[1:], hist):
+            points.append(PyQt6.QtCore.QPointF(left, density))
+            points.append(PyQt6.QtCore.QPointF(right, density))
+        points.append(PyQt6.QtCore.QPointF(edges[-1], 0.0))
+        return points
+
+    @staticmethod
+    def _replace_series(series, x, y):
+        series.replace([PyQt6.QtCore.QPointF(px, py) for px, py in zip(x, y)])
+
+    @staticmethod
+    def _set_axes(magnitudeAxis, densityAxis, x_max, density_max):
+        magnitudeAxis.setMin(0.0)
+        magnitudeAxis.setMax(x_max)
+        densityAxis.setMin(0.0)
+        densityAxis.setMax(density_max * 1.1)
+        magnitudeAxis.setTickType(PyQt6.QtCharts.QValueAxis.TickType.TicksDynamic)
+        densityAxis.setTickType(PyQt6.QtCharts.QValueAxis.TickType.TicksDynamic)
+        magnitudeAxis.setTickInterval(x_max / 8.0)
+        densityAxis.setTickInterval(max(density_max / 6.0, 1e-3))
 
     @PyQt6.QtCore.pyqtSlot(
         PyQt6.QtCharts.QLineSeries,
@@ -302,80 +349,32 @@ class EspargosDemoRayleighFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApp
     def updateDistribution(self, histogramUpperSeries, histogramLowerSeries, fitSeries, magnitudeAxis, densityAxis):
         self._append_new_samples()
 
-        if self._samples.size < 2:
-            x_max = 4.0
-            fit_x = np.linspace(0.0, x_max, 200)
-            empty_histogram = [
-                PyQt6.QtCore.QPointF(0.0, 0.0),
-                PyQt6.QtCore.QPointF(x_max, 0.0),
-            ]
-
-            histogramUpperSeries.replace(empty_histogram)
-            histogramLowerSeries.replace(empty_histogram)
-
-            if self.fitModel == "rayleigh":
-                fit_density = self._rayleigh_pdf(fit_x, 1.0 / np.sqrt(2.0))
-                fitSeries.replace([PyQt6.QtCore.QPointF(x, y) for x, y in zip(fit_x, fit_density)])
-                density_max = float(np.max(fit_density))
-            elif self.fitModel == "rice":
-                fit_density = self._rice_pdf(fit_x, 0.0, 1.0 / np.sqrt(2.0))
-                fitSeries.replace([PyQt6.QtCore.QPointF(x, y) for x, y in zip(fit_x, fit_density)])
-                density_max = float(np.max(fit_density))
-            else:
-                fitSeries.replace(empty_histogram)
-                density_max = 1.0
-
-            magnitudeAxis.setMin(0.0)
-            magnitudeAxis.setMax(x_max)
-            densityAxis.setMin(0.0)
-            densityAxis.setMax(density_max * 1.1)
-            magnitudeAxis.setTickType(PyQt6.QtCharts.QValueAxis.TickType.TicksDynamic)
-            densityAxis.setTickType(PyQt6.QtCharts.QValueAxis.TickType.TicksDynamic)
-            magnitudeAxis.setTickInterval(x_max / 8.0)
-            densityAxis.setTickInterval(max(density_max / 6.0, 1e-3))
-            return
-
-        normalized_samples = self._samples / max(self.normalizationScale, 1e-12)
-        sigma = max(self.fitSigma, 1e-6)
-        max_sample = float(np.max(normalized_samples))
-        x_max = max(max_sample * 1.05, 4.0)
-        x_max = max(x_max, 1e-3)
-
         bin_count = max(5, self.binCount)
-        hist, edges = np.histogram(normalized_samples, bins=bin_count, range=(0.0, x_max), density=True)
+        target_x_max = self.DEFAULT_X_MAX
+        hist = np.array([0.0])
+        if self._samples.size >= 2:
+            normalized_samples = self._normalized_samples()
+            target_x_max = float(np.percentile(normalized_samples, self.X_AXIS_PERCENTILE)) * self.X_AXIS_HEADROOM
+
+        x_max = self._update_display_x_max(target_x_max)
+        edges = np.array([0.0, x_max])
+        if self._samples.size >= 2:
+            hist, edges = np.histogram(normalized_samples, bins=bin_count, range=(0.0, x_max), density=True)
+
         fit_x = np.linspace(0.0, x_max, max(200, 8 * bin_count))
-
-        histogram_points = [PyQt6.QtCore.QPointF(edges[0], 0.0)]
-        for left, right, density in zip(edges[:-1], edges[1:], hist):
-            histogram_points.append(PyQt6.QtCore.QPointF(left, density))
-            histogram_points.append(PyQt6.QtCore.QPointF(right, density))
-        histogram_points.append(PyQt6.QtCore.QPointF(edges[-1], 0.0))
-
-        histogramUpperSeries.replace(histogram_points)
+        histogramUpperSeries.replace(self._histogram_points(edges, hist))
         histogramLowerSeries.replace([PyQt6.QtCore.QPointF(edges[0], 0.0), PyQt6.QtCore.QPointF(edges[-1], 0.0)])
 
-        fit_density = None
-        if self.fitModel == "rayleigh":
-            fit_density = self._rayleigh_pdf(fit_x, sigma)
-        elif self.fitModel == "rice":
-            fit_density = self._rice_pdf(fit_x, self.fitNu, sigma)
-
+        fit_density = self._fit_density(fit_x)
         if fit_density is None:
-            fitSeries.clear()
+            fitSeries.replace([PyQt6.QtCore.QPointF(0.0, 0.0), PyQt6.QtCore.QPointF(x_max, 0.0)])
             density_max = float(np.max(hist))
         else:
-            fitSeries.replace([PyQt6.QtCore.QPointF(x, y) for x, y in zip(fit_x, fit_density)])
+            self._replace_series(fitSeries, fit_x, fit_density)
             density_max = max(float(np.max(hist)), float(np.max(fit_density)))
 
-        magnitudeAxis.setMin(0.0)
-        magnitudeAxis.setMax(x_max)
-        densityAxis.setMin(0.0)
-        densityAxis.setMax(density_max * 1.1)
-        magnitudeAxis.setTickType(PyQt6.QtCharts.QValueAxis.TickType.TicksDynamic)
-        densityAxis.setTickType(PyQt6.QtCharts.QValueAxis.TickType.TicksDynamic)
-        magnitudeAxis.setTickInterval(x_max / 8.0)
-        densityAxis.setTickInterval(max(density_max / 6.0, 1e-3))
+        self._set_axes(magnitudeAxis, densityAxis, x_max, density_max if density_max > 0 else 1.0)
 
 
-app = EspargosDemoRayleighFading(sys.argv)
+app = EspargosDemoStochasticFading(sys.argv)
 sys.exit(app.exec())
