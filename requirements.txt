@@ -1,2 +1,5 @@
 websockets>=12.0
 numpy>=1.26.0
+pyserial>=3.5
+aiohttp>=3.9.0
+numpy>=1.26.0

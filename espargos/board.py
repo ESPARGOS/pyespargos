@@ -13,6 +13,7 @@ import time
 
 from . import revisions
 from . import csi
+from . import uart
 
 # Port used by the controller as source port for UDP CSI packets
 CSISTREAM_CONTROLLER_SRC_PORT = 53330
@@ -89,6 +90,13 @@ class Board(object):
         self.logger = logging.getLogger("pyespargos.board")
 
         self.host = host
+        self._uart_client = None
+        self._transport_kind = "network"
+        if uart.is_uart_host(host):
+            self._transport_kind = "uart"
+            self._uart_client = uart.UARTClient(host)
+            self._uart_client.add_log_callback(self._handle_uart_log)
+            self._uart_client.connect()
         try:
             identification_raw = self._fetch("identify")
         except TimeoutError:
@@ -145,7 +153,7 @@ class Board(object):
 
         self.logger.info(f"Identified ESPARGOS at {self.ip_info['ip']} as {self.get_name()}")
 
-        self.csistream_connected = True
+        self.csistream_connected = False
         self.consumers = []
 
     def get_name(self):
@@ -164,16 +172,25 @@ class Board(object):
 
         - "udp": The controller will send CSI packets to a local UDP socket. This transport is lower-latency and more efficient (higher throughput), but requires API version 1 or higher and may not work in all network environments.
         - "websocket": The controller will send CSI packets over a WebSocket connection. This transport is more widely compatible but may have higher latency and overhead.
+        - "uart": The controller will stream CSI data over the local serial/UART link. This transport is only available for hosts specified as ``uart:<port>``.
 
         :param transports: Optional list of transports to try, in order of preference. Valid values are "udp" and "websocket". If None (default), tries UDP first (if supported by API version) and then WebSocket.
 
         :raises EspargosCsiStreamConnectionError: If neither UDP nor WebSocket CSI stream could be established
         """
-        if transports is None:
+        if self._transport_kind == "uart":
+            transports = ["uart"] if transports is None else transports
+        elif transports is None:
             transports = ["udp", "websocket"] if self.api_version[0] > 0 else ["websocket"]
 
         for transport in transports:
-            if transport == "udp":
+            if transport == "uart":
+                uart_error = self._try_start_uart()
+                if uart_error is None:
+                    return
+
+                self.logger.warning(f"UART CSI stream failed for {self.get_name()}: {uart_error}")
+            elif transport == "udp":
                 if self.api_version[0] == 0:
                     raise EspargosAPIVersionError(f"ESPARGOS controller at {self.host} runs API version {self.api_version[0]}.{self.api_version[1]}, which does not support UDP CSI streaming. Please update the controller firmware.")
                 udp_error = self._try_start_udp()
@@ -191,6 +208,28 @@ class Board(object):
                 self.logger.error(f"Unknown transport {transport} specified for {self.get_name()}, skipping")
 
         raise EspargosCsiStreamConnectionError(f"Could not establish CSI stream to {self.host} via any of the enabled transports, tried transports: {transports}")
+
+    def _try_start_uart(self) -> str | None:
+        if self._uart_client is None:
+            return f"Host {self.host!r} is not a UART host"
+
+        self.logger.info(f"Trying UART CSI stream for {self.get_name()}")
+
+        def _callback(payload: bytes):
+            self._csistream_handle_message(payload)
+
+        self._uart_csi_callback = _callback
+        self._uart_client.add_csi_callback(self._uart_csi_callback)
+        try:
+            self._uart_client.enable_csi_stream()
+        except Exception as e:
+            self._uart_client.remove_csi_callback(self._uart_csi_callback)
+            return f"Could not enable UART CSI stream: {e}"
+
+        self._csistream_transport = "uart"
+        self.csistream_connected = True
+        self.logger.info(f"Started UART CSI stream for {self.get_name()} on {self.host}")
+        return None
 
     def _try_start_udp(self) -> str | None:
         """
@@ -319,7 +358,8 @@ class Board(object):
         """
         if self.csistream_connected:
             self.csistream_connected = False
-            self.csistream_thread.join()
+            if hasattr(self, "csistream_thread"):
+                self.csistream_thread.join()
 
             if getattr(self, "_csistream_transport", None) == "udp":
                 if hasattr(self, "_udp_keepalive_stop"):
@@ -328,8 +368,24 @@ class Board(object):
                 if hasattr(self, "_udp_sock"):
                     self._udp_sock.close()
                 self._disable_udp_stream()
+            elif getattr(self, "_csistream_transport", None) == "uart":
+                if hasattr(self, "_uart_csi_callback"):
+                    self._uart_client.remove_csi_callback(self._uart_csi_callback)
+                if self._uart_client is not None:
+                    self._uart_client.disable_csi_stream()
 
             self.logger.info(f"Stopped CSI stream for {self.get_name()}")
+
+    def close(self):
+        """
+        Close transport resources associated with this board.
+
+        For UART-backed boards, this releases the serial port lock. Calling this on
+        network-backed boards is harmless.
+        """
+        self.stop()
+        if self._uart_client is not None:
+            self._uart_client.close()
 
     def set_rfswitch(self, state: csi.rfswitch_state_t):
         """
@@ -656,6 +712,13 @@ class Board(object):
 
     def _fetch(self, path, data=None):
         method = "GET" if data is None else "POST"
+
+        if self._uart_client is not None:
+            response = self._uart_client.request(method, path, data, timeout=5)
+            if response.status != 200:
+                raise EspargosHTTPStatusError
+            return response.body_text()
+
         conn = http.client.HTTPConnection(self.host, timeout=5)
         conn.request(method, "/" + path, data)
 
@@ -689,3 +752,6 @@ class Board(object):
         except json.JSONDecodeError:
             self.logger.error(f"Invalid response: {res}")
             raise EspargosUnexpectedResponseError(str(res))
+
+    def _handle_uart_log(self, message: str):
+        self.logger.info(f"[device] {message.rstrip()}")
