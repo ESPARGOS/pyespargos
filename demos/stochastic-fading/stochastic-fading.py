@@ -12,10 +12,10 @@ sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
 import espargos
 import espargos.csi
-from demos.common import BacklogMixin, ESPARGOSApplication, SingleCSIFormatMixin
+from demos.common import BacklogMixin, CombinedArrayMixin, ESPARGOSApplication, SingleCSIFormatMixin
 
 
-class EspargosDemoStochasticFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
     RAYLEIGH_SIGMA = 1.0 / np.sqrt(2.0)
     DEFAULT_X_MAX = 4.0
     AXIS_SMOOTHING = 0.15
@@ -43,6 +43,13 @@ class EspargosDemoStochasticFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             description="ESPARGOS Demo: Accumulate the magnitude distribution of a single CSI coefficient",
             add_help=False,
         )
+        parser.add_argument(
+            "hosts",
+            nargs="?",
+            type=str,
+            default="",
+            help="Comma-separated list of host addresses (IP or hostname) of ESPARGOS devices",
+        )
         parser.add_argument("--no-calib", default=False, help="Do not calibrate", action="store_true")
         parser.add_argument(
             "--csi-completion-timeout",
@@ -64,6 +71,18 @@ class EspargosDemoStochasticFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         self.preambleFormatChanged.connect(self.resetHistogram)
 
         self.initialize_qml(pathlib.Path(__file__).resolve().parent / "stochastic-fading-ui.qml")
+
+    def _process_args(self):
+        super()._process_args()
+        self._use_combined_array = bool(self.args.single_array) or self.get_initial_config("combined-array") not in (None, {})
+
+        if not self._use_combined_array and self.args.hosts:
+            self.initial_config["pool"]["hosts"] = self.args.hosts.split(",")
+
+    def _prepare_pool_init(self, additional_calibrate_args):
+        if self._use_combined_array:
+            return super()._prepare_pool_init(additional_calibrate_args)
+        return ESPARGOSApplication._prepare_pool_init(self, additional_calibrate_args)
 
     def _on_update_app_state(self, newcfg):
         reset_keys = {"compensate_rssi"}
@@ -295,6 +314,9 @@ class EspargosDemoStochasticFading(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
 
         if self.compensateRSSI and self.pooldrawer.cfgman.get("gain", "automatic"):
             csi_new *= 10 ** (rssi_new[..., np.newaxis] / 20)
+
+        if getattr(self, "_use_combined_array", False):
+            csi_new = espargos.util.build_combined_array_data(self.indexing_matrix, csi_new)
 
         magnitudes = np.abs(csi_new).reshape(-1)
         magnitudes = magnitudes[np.isfinite(magnitudes)]
