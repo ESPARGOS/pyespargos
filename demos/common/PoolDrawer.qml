@@ -202,6 +202,18 @@ Drawer {
 				checked: false
 			}
 
+			Label { text: "Compressed CSI"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: compressCSISwitch
+				property string configKey: "compress_csi"
+				property string configProp: "checked"
+				property var encode: function(v) { return v ? 1 : 0 }
+				property var decode: function(v) { return !!v }
+				Component.onCompleted: poolConfigManager.register(this)
+				onCheckedChanged: poolConfigManager.onControlChanged(this)
+				checked: false
+			}
+
 			// Section: Gain/AGC
 			Label { Layout.columnSpan: 2; text: "Gain"; color: "#9fb3c8" }
 			Label { text: "Automatic"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }

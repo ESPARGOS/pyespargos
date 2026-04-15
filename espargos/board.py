@@ -59,6 +59,7 @@ class Board(object):
         "enable": True,
         "acquire_csi_legacy": True,
         "acquire_csi_force_lltf": False,
+        "compress_csi": False,
         "acquire_csi_ht20": True,
         "acquire_csi_ht40": True,
         "acquire_csi_vht": True,
@@ -527,6 +528,7 @@ class Board(object):
           - enable: Enable to acquire CSI.
           - acquire_csi_legacy: Enable to acquire L-LTF when receiving a 11g PPDU.
           - acquire_csi_force_lltf: Force receiver to acquire L-LTF, regardless of PPDU type.
+          - compress_csi: Transform CSI to a time-domain CIR before transport.
           - acquire_csi_ht20: Enable to acquire HT-LTF when receiving an HT20 PPDU.
           - acquire_csi_ht40: Enable to acquire HT-LTF when receiving an HT40 PPDU.
           - acquire_csi_vht: Present in the HTTP API; semantics depend on firmware build / PHY mode support.
@@ -549,6 +551,7 @@ class Board(object):
               "enable": true,
               "acquire_csi_legacy": true,
               "acquire_csi_force_lltf": false,
+              "compress_csi": false,
               "acquire_csi_ht20": true,
               "acquire_csi_ht40": true,
               "acquire_csi_vht": true,

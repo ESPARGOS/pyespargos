@@ -112,6 +112,10 @@ class CSICluster(object):
             nonlocal csi_lltf
             csi_lltf_sensor = csi_lltf[b, r, a, :].view()
 
+            if serialized_csi.is_compressed:
+                csi_lltf_sensor[:] = csi.decode_compressed_lltf(serialized_csi.buf, serialized_csi.acquire_force_lltf)
+                return
+
             # The ESP32 PHY v3 uses the weirdest format for L-LTF CSI.
             # It is provided as 27 subcarriers, each as a 12-bit signed integer stored in a 16-bit container.
             lltf_bytes = np.asarray(csi.csi_buf_v3_lltf_t(serialized_csi.buf).lltf, dtype=np.uint8)
@@ -176,6 +180,10 @@ class CSICluster(object):
             nonlocal csi_ht20
             csi_ht20_sensor = csi_ht20[b, r, a, :].view()
 
+            if serialized_csi.is_compressed:
+                csi_ht20_sensor[:] = csi.decode_compressed_ht20(serialized_csi.buf)
+                return
+
             # The ESP32 provides CSI as int8_t values in (im, re) pairs (in this order!)
             # To go from the (re, im) interpretation to (im, re), compute conjugate and multiply by 1.0j.
             # If channel bonding is used, provide CSI of primary channel
@@ -221,6 +229,10 @@ class CSICluster(object):
             csi_ht40_sensor_lower = csi_ht40[b, r, a, : csi.HT_COEFFICIENTS_PER_CHANNEL].view()
             csi_ht40_sensor_higher = csi_ht40[b, r, a, -csi.HT_COEFFICIENTS_PER_CHANNEL :].view()
 
+            if serialized_csi.is_compressed:
+                csi_ht40_sensor[:] = csi.decode_compressed_ht40(serialized_csi.buf)
+                return
+
             # The ESP32 provides CSI as int8_t values in (im, re) pairs (in this order!)
             # To go from the (re, im) interpretation to (im, re), compute conjugate and multiply by 1.0j.
             csi_ht40_sensor_higher[:] = (
@@ -236,11 +248,12 @@ class CSICluster(object):
 
         self._foreach_complete_sensor(deserialize_ht40_packet)
 
-        # Secondary channel experiences phase shift by pi / 2
-        # This is likely due to the pi / 2 phase shift specified for the pilot symbols,
-        # see IEEE 80211-2012 section 20.3.9.3.4 L-LTF definition
-        csi_ht40_higher = csi_ht40[:, :, :, : csi.HT_COEFFICIENTS_PER_CHANNEL].view()
-        csi_ht40_higher[:] = csi_ht40_higher * np.exp(1.0j * np.pi / 2)
+        if not self._first_complete_sensor().is_compressed:
+            # Secondary channel experiences phase shift by pi / 2
+            # This is likely due to the pi / 2 phase shift specified for the pilot symbols,
+            # see IEEE 80211-2012 section 20.3.9.3.4 L-LTF definition
+            csi_ht40_higher = csi_ht40[:, :, :, : csi.HT_COEFFICIENTS_PER_CHANNEL].view()
+            csi_ht40_higher[:] = csi_ht40_higher * np.exp(1.0j * np.pi / 2)
 
         # Need to take timestamps into account to provide phase coherence across all sensors
         delay = self.get_sensor_timestamps()

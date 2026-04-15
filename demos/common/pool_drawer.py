@@ -19,6 +19,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         "calibration": {"per_board": False, "show_csi": False, "duration": 1.0},
         "rf_switch": 2,
         "acquire_lltf_force": False,
+        "compress_csi": False,
         "gain": {
             "automatic": True,
             "rx_gain_value": 32,
@@ -85,6 +86,8 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         csi_cfg = self.pool.get_csi_acquire_config()
         if isinstance(csi_cfg, dict) and "acquire_csi_force_lltf" in csi_cfg:
             cfg_out["acquire_lltf_force"] = bool(csi_cfg["acquire_csi_force_lltf"])
+        if isinstance(csi_cfg, dict) and "compress_csi" in csi_cfg:
+            cfg_out["compress_csi"] = bool(csi_cfg["compress_csi"])
 
         # Gain settings -> UI fields
         gain = self.pool.get_gain_settings()
@@ -157,9 +160,12 @@ class PoolDrawer(PyQt6.QtCore.QObject):
                     self.pool.set_rfswitch(espargos.csi.rfswitch_state_t(int(delta["rf_switch"])))
 
                 # CSI acquire config
-                if "acquire_lltf_force" in delta:
+                if "acquire_lltf_force" in delta or "compress_csi" in delta:
                     cfg = dict()
-                    cfg["acquire_csi_force_lltf"] = bool(int(delta["acquire_lltf_force"]))
+                    if "acquire_lltf_force" in delta:
+                        cfg["acquire_csi_force_lltf"] = bool(int(delta["acquire_lltf_force"]))
+                    if "compress_csi" in delta:
+                        cfg["compress_csi"] = bool(int(delta["compress_csi"]))
                     self.pool.set_csi_acquire_config(cfg)
 
                 # Gains (unified: "automatic" controls both rx_gain and fft_scale)
