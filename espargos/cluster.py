@@ -116,34 +116,25 @@ class CSICluster(object):
                 csi_lltf_sensor[:] = csi.decode_compressed_lltf(serialized_csi.buf, serialized_csi.acquire_force_lltf)
                 return
 
-            # The ESP32 PHY v3 uses the weirdest format for L-LTF CSI.
-            # It is provided as 27 subcarriers, each as a 12-bit signed integer stored in a 16-bit container.
             lltf_bytes = np.asarray(csi.csi_buf_v3_lltf_t(serialized_csi.buf).lltf, dtype=np.uint8)
 
-            lo = lltf_bytes[0::2].astype(np.int16)
-            hi = lltf_bytes[1::2].astype(np.int16) & 0x0F
-            lltf_all = ((hi << 12) >> 4) | lo
-            final_re = lltf_all[-1].astype(np.float32)
-            lltf_all = lltf_all[:-1]  # Last two bytes of buffer are padding
-            lltf_all_cplx = lltf_all.astype(np.float32).view(np.complex64)
-
-            # lltf_all_cplx only contains every second subcarrier, starting from the lowest frequency subcarrier
-            # array index = |   0 |   1 |   2 |   3 | ... |     |     |     |  26 |  27 |  28 |  29 | ... |  52 |  50 |   * |   A |
-            # subc. index = | -26 |   * | -24 |   * | ... |   * |  -2 |   * |  DC |  *  |   2 |   * | ... |   * |  24 |   * |   * |
-            # Numbers = existing subcarriers
-            #       * = missing subcarriers that need to be interpolated
-            #      DC = DC subcarrier, only exists in forced L-LTF mode, otherwise needs to be interpolated
-            #       A = only real part provided if acquire_force_lltf is false, not provided at all if acquire_force_lltf is true
-            # Note that the subcarrier with index 26 is *not* measured, so it needs to be *extrapolated*
-            csi_lltf_sensor[:-1:2] = lltf_all_cplx
-
-            # If acquire_force_lltf is false, the real part of the last subcarrier is provided.
-            # In that case, set real part of last subcarrier to the provided value, copy imaginary part from second last subcarrier.
-            # Otherwise, extrapolate last subcarrier.
-            if not serialized_csi.acquire_force_lltf:
-                csi_lltf_sensor[-1] = final_re + 1.0j * csi_lltf_sensor[-3].imag
-            else:
+            if serialized_csi.acquire_force_lltf:
+                # In forced LLTF mode the ESP32-C61 reports 52 signed 12-bit values:
+                # 26 complex coefficients for every second subcarrier, including DC.
+                # The last active subcarrier is not measured and must be extrapolated.
+                lltf_all = csi.unpack_lltf12_values(lltf_bytes, 52)
+                csi_lltf_sensor[:-1:2] = lltf_all.astype(np.float32).view(np.complex64)
                 csi_lltf_sensor[-1] = 2 * csi_lltf_sensor[-3] - csi_lltf_sensor[-5]
+            else:
+                # Non-forced LLTF follows the legacy format used previously: every second
+                # subcarrier is present, the DC subcarrier is missing, and the final real-only
+                # sample is carried separately before the padding word.
+                lltf_all = csi.unpack_lltf12_values(lltf_bytes, 27)
+                final_re = lltf_all[-1].astype(np.float32)
+                lltf_all = lltf_all[:-1]  # Last two bytes of buffer are padding / final metadata.
+                lltf_all_cplx = lltf_all.astype(np.float32).view(np.complex64)
+                csi_lltf_sensor[:-1:2] = lltf_all_cplx
+                csi_lltf_sensor[-1] = final_re + 1.0j * csi_lltf_sensor[-3].imag
 
             # DC subcarrier
             # Only provided if acquire_force_lltf is true, otherwise needs to be interpolated
@@ -248,12 +239,11 @@ class CSICluster(object):
 
         self._foreach_complete_sensor(deserialize_ht40_packet)
 
-        if not self._first_complete_sensor().is_compressed:
-            # Secondary channel experiences phase shift by pi / 2
-            # This is likely due to the pi / 2 phase shift specified for the pilot symbols,
-            # see IEEE 80211-2012 section 20.3.9.3.4 L-LTF definition
-            csi_ht40_higher = csi_ht40[:, :, :, : csi.HT_COEFFICIENTS_PER_CHANNEL].view()
-            csi_ht40_higher[:] = csi_ht40_higher * np.exp(1.0j * np.pi / 2)
+        # Secondary channel experiences phase shift by pi / 2
+        # This is likely due to the pi / 2 phase shift specified for the pilot symbols,
+        # see IEEE 80211-2012 section 20.3.9.3.4 L-LTF definition
+        csi_ht40_higher = csi_ht40[:, :, :, : csi.HT_COEFFICIENTS_PER_CHANNEL].view()
+        csi_ht40_higher[:] = csi_ht40_higher * np.exp(1.0j * np.pi / 2)
 
         # Need to take timestamps into account to provide phase coherence across all sensors
         delay = self.get_sensor_timestamps()

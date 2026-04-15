@@ -20,11 +20,14 @@ HT40_GAP_SUBCARRIERS = 3
 COMPRESSED_LLTF_FFT_SIZE = 64
 COMPRESSED_HT20_FFT_SIZE = 64
 COMPRESSED_HT40_FFT_SIZE = 128
+COMPRESSED_LLTF_FIX32_SHIFT = 20
+COMPRESSED_HT20_FIX32_SHIFT = 24
+COMPRESSED_HT40_FIX32_SHIFT = 23
 COMPRESSED_LLTF_TAP_START = 27
 COMPRESSED_LLTF_TAP_COUNT = 16
 COMPRESSED_HT20_TAP_START = 27
 COMPRESSED_HT20_TAP_COUNT = 16
-COMPRESSED_HT40_TAP_START = 54
+COMPRESSED_HT40_TAP_START = 55
 COMPRESSED_HT40_TAP_COUNT = 32
 HT20_SIMULATION_MODES = (
     "float",
@@ -319,6 +322,12 @@ def _decode_wire_complex_float32(buf, pair_count):
     return (values[0::2] + 1.0j * values[1::2]).astype(np.complex64)
 
 
+def unpack_lltf12_values(buf, value_count: int) -> np.ndarray:
+    raw = np.asarray(buf[: value_count * 2], dtype=np.uint8)
+    words = (raw[0::2].astype(np.uint16) | (raw[1::2].astype(np.uint16) << 8)).astype(np.uint16)
+    return (((words.astype(np.int16) << 4) >> 4)).astype(np.int16)
+
+
 def _ifftshift_1d(values: np.ndarray) -> np.ndarray:
     half = values.shape[-1] // 2
     return np.concatenate((values[..., half:], values[..., :half]), axis=-1)
@@ -385,7 +394,7 @@ _SC32_TWIDDLES_64 = _build_sc32_twiddles(COMPRESSED_HT20_FFT_SIZE)
 
 def _sensor_centered_spectrum_to_ht20_observed_taps(centered_spectrum: np.ndarray) -> np.ndarray:
     fft_size = COMPRESSED_HT20_FFT_SIZE
-    shift = 24
+    shift = COMPRESSED_HT20_FIX32_SHIFT
     round_const = 1 << 31
     max_s32 = np.iinfo(np.int32).max
     fft_data = np.zeros((fft_size,), dtype=np.complex128)
@@ -451,7 +460,7 @@ def _fix32_mpy(a: int, b: int, precise_rounding: bool = False) -> int:
 
 def _sensor_centered_spectrum_to_ht20_observed_taps_fix32(centered_spectrum: np.ndarray, precise_rounding: bool = False) -> np.ndarray:
     fft_size = COMPRESSED_HT20_FFT_SIZE
-    shift = 24
+    shift = COMPRESSED_HT20_FIX32_SHIFT
     scale_divisor = 8.0
     fr = np.zeros((fft_size,), dtype=np.int64)
     fi = np.zeros((fft_size,), dtype=np.int64)
@@ -517,6 +526,150 @@ def _sensor_centered_spectrum_to_ht20_observed_taps_fix32(centered_spectrum: np.
     return observed
 
 
+def _sensor_centered_spectrum_to_ht40_observed_taps_fix32(centered_spectrum: np.ndarray) -> np.ndarray:
+    fft_size = COMPRESSED_HT40_FFT_SIZE
+    shift = COMPRESSED_HT40_FIX32_SHIFT
+    scale_divisor = 8.0
+    fr = np.zeros((fft_size,), dtype=np.int64)
+    fi = np.zeros((fft_size,), dtype=np.int64)
+    natural_input = np.conj(_ifftshift_1d(_sensor_ht40_model_input(np.asarray(centered_spectrum, dtype=np.complex64))))
+
+    for fft_index, coeff in enumerate(natural_input):
+        fr[fft_index] = _clamp_s32(int(np.rint(coeff.real * (1 << shift))))
+        fi[fft_index] = _clamp_s32(-int(np.rint(coeff.imag * (1 << shift))))
+
+    order = int(np.log2(fft_size))
+    for i in range(1, fft_size):
+        j = _reverse_bits16(i, order)
+        if j <= i:
+            continue
+        fr[i], fr[j] = fr[j], fr[i]
+        fi[i], fi[j] = fi[j], fi[i]
+
+    stage = 0
+    l = 1
+    while l < fft_size:
+        istep = l << 1
+        for m in range(l):
+            angle = (2.0 * np.pi * m) / istep
+            wr = int(np.rint(np.cos(angle) * np.iinfo(np.int32).max))
+            wi = int(np.rint(np.sin(angle) * np.iinfo(np.int32).max))
+
+            for i in range(m, fft_size, istep):
+                j = i + l
+                tmpr = int(fr[j])
+                tmpi = int(fi[j])
+                zr = _fix32_mpy(wr, tmpr) - _fix32_mpy(wi, tmpi)
+                zi = _fix32_mpy(wr, tmpi) + _fix32_mpy(wi, tmpr)
+                qr = int(fr[i])
+                qi = int(fi[i])
+
+                if stage & 1:
+                    qr >>= 1
+                    qi >>= 1
+                else:
+                    zr = _clamp_s32(zr << 1)
+                    zi = _clamp_s32(zi << 1)
+
+                fr[j] = _clamp_s32(qr - zr)
+                fi[j] = _clamp_s32(qi - zi)
+                fr[i] = _clamp_s32(qr + zr)
+                fi[i] = _clamp_s32(qi + zi)
+
+        l = istep
+        stage += 1
+
+    centered_cir = _fftshift_1d((fr + 1.0j * fi).astype(np.complex128) / float(1 << shift) / scale_divisor)
+    observed = np.zeros((COMPRESSED_HT40_TAP_COUNT,), dtype=np.complex64)
+    for i in range(COMPRESSED_HT40_TAP_COUNT):
+        centered_index = COMPRESSED_HT40_TAP_START + i
+        observed[i] = np.complex64(centered_cir[centered_index])
+
+    return observed
+
+
+def _sensor_ht40_model_input(centered_spectrum: np.ndarray) -> np.ndarray:
+    modeled = np.zeros_like(centered_spectrum, dtype=np.complex64)
+    active = _active_slice(COMPRESSED_HT40_FFT_SIZE, HT_COEFFICIENTS_PER_CHANNEL * 2 + HT40_GAP_SUBCARRIERS)
+    lower = slice(active.start, active.start + HT_COEFFICIENTS_PER_CHANNEL)
+    gap = slice(active.start + HT_COEFFICIENTS_PER_CHANNEL, active.start + HT_COEFFICIENTS_PER_CHANNEL + HT40_GAP_SUBCARRIERS)
+    higher = slice(gap.stop, active.stop)
+    modeled[lower] = centered_spectrum[lower]
+    modeled[gap] = 0.0
+    modeled[higher] = centered_spectrum[higher]
+    return modeled
+
+
+def _sensor_centered_spectrum_to_lltf_force_observed_taps_fix32(centered_spectrum: np.ndarray) -> np.ndarray:
+    fft_size = COMPRESSED_LLTF_FFT_SIZE
+    shift = 24
+    scale_divisor = 8.0
+    active_start = (fft_size - LEGACY_COEFFICIENTS_PER_CHANNEL) // 2
+    fr = np.zeros((fft_size,), dtype=np.int64)
+    fi = np.zeros((fft_size,), dtype=np.int64)
+
+    coeff = np.zeros((LEGACY_COEFFICIENTS_PER_CHANNEL,), dtype=np.complex64)
+    active_spectrum = np.asarray(centered_spectrum, dtype=np.complex64)
+    coeff[:-1:2] = active_spectrum[:-1:2]
+    coeff[-1] = 2.0 * coeff[-3] - coeff[-5]
+    coeff[1::2] = 0.5 * (coeff[0:-1:2] + coeff[2::2])
+
+    for i in range(LEGACY_COEFFICIENTS_PER_CHANNEL):
+        centered_index = active_start + i
+        fft_index = (centered_index + fft_size // 2) % fft_size
+        fr[fft_index] = int(np.rint(coeff[i].real * (1 << shift)))
+        fi[fft_index] = int(np.rint(coeff[i].imag * (1 << shift)))
+
+    order = int(np.log2(fft_size))
+    for i in range(1, fft_size):
+        j = _reverse_bits16(i, order)
+        if j <= i:
+            continue
+        fr[i], fr[j] = fr[j], fr[i]
+        fi[i], fi[j] = fi[j], fi[i]
+
+    stage = 0
+    l = 1
+    while l < fft_size:
+        istep = l << 1
+        for m in range(l):
+            angle = (2.0 * np.pi * m) / istep
+            wr = int(np.rint(np.cos(angle) * np.iinfo(np.int32).max))
+            wi = int(np.rint(np.sin(angle) * np.iinfo(np.int32).max))
+
+            for i in range(m, fft_size, istep):
+                j = i + l
+                tmpr = int(fr[j])
+                tmpi = int(fi[j])
+                zr = _fix32_mpy(wr, tmpr) - _fix32_mpy(wi, tmpi)
+                zi = _fix32_mpy(wr, tmpi) + _fix32_mpy(wi, tmpr)
+                qr = int(fr[i])
+                qi = int(fi[i])
+
+                if stage & 1:
+                    qr >>= 1
+                    qi >>= 1
+                else:
+                    zr <<= 1
+                    zi <<= 1
+
+                fr[j] = _clamp_s32(qr - zr)
+                fi[j] = _clamp_s32(qi - zi)
+                fr[i] = _clamp_s32(qr + zr)
+                fi[i] = _clamp_s32(qi + zi)
+
+        l = istep
+        stage += 1
+
+    observed = np.zeros((COMPRESSED_LLTF_TAP_COUNT,), dtype=np.complex64)
+    for i in range(COMPRESSED_LLTF_TAP_COUNT):
+        centered_index = COMPRESSED_LLTF_TAP_START + i
+        fft_index = (centered_index + fft_size // 2) % fft_size
+        observed[i] = np.complex64((float(fr[fft_index]) + 1.0j * float(fi[fft_index])) / float(1 << shift) / scale_divisor)
+
+    return observed
+
+
 def _build_ht20_sensor_tap_correction() -> np.ndarray:
     correction = np.zeros((COMPRESSED_HT20_TAP_COUNT, COMPRESSED_HT20_TAP_COUNT), dtype=np.complex64)
     active = _active_slice(COMPRESSED_HT20_FFT_SIZE, HT_COEFFICIENTS_PER_CHANNEL)
@@ -549,6 +702,36 @@ def _build_ht20_fix32_tap_correction() -> np.ndarray:
     return np.linalg.pinv(correction).astype(np.complex64)
 
 
+def _build_lltf_force_fix32_tap_correction() -> np.ndarray:
+    correction = np.zeros((COMPRESSED_LLTF_TAP_COUNT, COMPRESSED_LLTF_TAP_COUNT), dtype=np.complex64)
+
+    for col in range(COMPRESSED_LLTF_TAP_COUNT):
+        centered_cir = np.zeros((COMPRESSED_LLTF_FFT_SIZE,), dtype=np.complex64)
+        centered_cir[COMPRESSED_LLTF_TAP_START + col] = 1.0
+        centered_spectrum = _centered_fft(centered_cir, COMPRESSED_LLTF_FFT_SIZE)
+        active_spectrum = centered_spectrum[_active_slice(COMPRESSED_LLTF_FFT_SIZE, LEGACY_COEFFICIENTS_PER_CHANNEL)].copy()
+        correction[:, col] = _sensor_centered_spectrum_to_lltf_force_observed_taps_fix32(active_spectrum)
+
+    return np.linalg.pinv(correction).astype(np.complex64)
+
+
+def _build_ht40_fix32_tap_correction() -> np.ndarray:
+    correction = np.zeros((COMPRESSED_HT40_TAP_COUNT, COMPRESSED_HT40_TAP_COUNT), dtype=np.complex64)
+    active = _active_slice(COMPRESSED_HT40_FFT_SIZE, HT_COEFFICIENTS_PER_CHANNEL * 2 + HT40_GAP_SUBCARRIERS)
+    gap_start = active.start + HT_COEFFICIENTS_PER_CHANNEL
+
+    for col in range(COMPRESSED_HT40_TAP_COUNT):
+        centered_cir = np.zeros((COMPRESSED_HT40_FFT_SIZE,), dtype=np.complex64)
+        centered_cir[COMPRESSED_HT40_TAP_START + col] = 1.0
+        centered_spectrum = _centered_fft(centered_cir, COMPRESSED_HT40_FFT_SIZE)
+        masked_spectrum = np.zeros((COMPRESSED_HT40_FFT_SIZE,), dtype=np.complex64)
+        masked_spectrum[active] = centered_spectrum[active]
+        masked_spectrum[gap_start : gap_start + HT40_GAP_SUBCARRIERS] = 0.0
+        correction[:, col] = _sensor_centered_spectrum_to_ht40_observed_taps_fix32(masked_spectrum)
+
+    return np.linalg.pinv(correction).astype(np.complex64)
+
+
 _COMPRESSED_LLTF_CORRECTION = _build_masked_tap_correction(
     COMPRESSED_LLTF_FFT_SIZE,
     LEGACY_COEFFICIENTS_PER_CHANNEL,
@@ -563,6 +746,7 @@ _COMPRESSED_LLTF_FORCE_CORRECTION = _build_masked_tap_correction(
     COMPRESSED_LLTF_TAP_COUNT,
     [],
 )
+_COMPRESSED_LLTF_FORCE_FIX32_CORRECTION = _build_lltf_force_fix32_tap_correction()
 _COMPRESSED_HT20_FLOAT_CORRECTION = _build_masked_tap_correction(
     COMPRESSED_HT20_FFT_SIZE,
     HT_COEFFICIENTS_PER_CHANNEL,
@@ -572,13 +756,7 @@ _COMPRESSED_HT20_FLOAT_CORRECTION = _build_masked_tap_correction(
 )
 _COMPRESSED_HT20_CORRECTION = _build_ht20_sensor_tap_correction()
 _COMPRESSED_HT20_FIX32_CORRECTION = _build_ht20_fix32_tap_correction()
-_COMPRESSED_HT40_CORRECTION = _build_masked_tap_correction(
-    COMPRESSED_HT40_FFT_SIZE,
-    HT_COEFFICIENTS_PER_CHANNEL * 2 + HT40_GAP_SUBCARRIERS,
-    COMPRESSED_HT40_TAP_START,
-    COMPRESSED_HT40_TAP_COUNT,
-    [HT_COEFFICIENTS_PER_CHANNEL + i for i in range(HT40_GAP_SUBCARRIERS)],
-)
+_COMPRESSED_HT40_FIX32_CORRECTION = _build_ht40_fix32_tap_correction()
 
 
 def _build_ht20_masked_centered_spectrum(spectrum: np.ndarray) -> np.ndarray:
@@ -656,7 +834,7 @@ def _decode_compressed_tap_window(
 
 
 def decode_compressed_lltf(buf, acquire_force_lltf: bool = False) -> np.ndarray:
-    correction = _COMPRESSED_LLTF_FORCE_CORRECTION if acquire_force_lltf else _COMPRESSED_LLTF_CORRECTION
+    correction = _COMPRESSED_LLTF_FORCE_FIX32_CORRECTION if acquire_force_lltf else _COMPRESSED_LLTF_CORRECTION
     spectrum = _decode_compressed_tap_window(
         buf,
         COMPRESSED_LLTF_FFT_SIZE,
@@ -665,7 +843,10 @@ def decode_compressed_lltf(buf, acquire_force_lltf: bool = False) -> np.ndarray:
         LEGACY_COEFFICIENTS_PER_CHANNEL,
         correction,
     )
-    if not acquire_force_lltf:
+    if acquire_force_lltf:
+        spectrum[-1] = 2.0 * spectrum[-3] - spectrum[-5]
+        spectrum[1::2] = 0.5 * (spectrum[0:-1:2] + spectrum[2::2])
+    else:
         spectrum[LEGACY_COEFFICIENTS_PER_CHANNEL // 2] = 0.0
     return spectrum
 
@@ -689,7 +870,7 @@ def decode_compressed_ht40(buf) -> np.ndarray:
         COMPRESSED_HT40_TAP_START,
         COMPRESSED_HT40_TAP_COUNT,
         HT_COEFFICIENTS_PER_CHANNEL * 2 + HT40_GAP_SUBCARRIERS,
-        _COMPRESSED_HT40_CORRECTION,
+        _COMPRESSED_HT40_FIX32_CORRECTION,
     )
     gap_start = HT_COEFFICIENTS_PER_CHANNEL
     spectrum[gap_start : gap_start + HT40_GAP_SUBCARRIERS] = 0.0
