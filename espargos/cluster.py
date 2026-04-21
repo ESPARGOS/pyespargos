@@ -126,15 +126,12 @@ class CSICluster(object):
                 csi_lltf_sensor[:-1:2] = lltf_all.astype(np.float32).view(np.complex64)
                 csi_lltf_sensor[-1] = 2 * csi_lltf_sensor[-3] - csi_lltf_sensor[-5]
             else:
-                # Non-forced LLTF follows the legacy format used previously: every second
-                # subcarrier is present, the DC subcarrier is missing, and the final real-only
-                # sample is carried separately before the padding word.
-                lltf_all = csi.unpack_lltf12_values(lltf_bytes, 27)
-                final_re = lltf_all[-1].astype(np.float32)
-                lltf_all = lltf_all[:-1]  # Last two bytes of buffer are padding / final metadata.
-                lltf_all_cplx = lltf_all.astype(np.float32).view(np.complex64)
-                csi_lltf_sensor[:-1:2] = lltf_all_cplx
-                csi_lltf_sensor[-1] = final_re + 1.0j * csi_lltf_sensor[-3].imag
+                # Native 11g LLTF carries 26 complex coefficients for even-indexed
+                # subcarriers plus a final real-only sample for the last subcarrier.
+                lltf_all = csi.unpack_lltf12_values(lltf_bytes, 53)
+                even_coeffs = lltf_all[:52].astype(np.float32).view(np.complex64)
+                csi_lltf_sensor[0:52:2] = even_coeffs
+                csi_lltf_sensor[-1] = lltf_all[52].astype(np.float32) + 1.0j * csi_lltf_sensor[-3].imag
 
             # DC subcarrier
             # Only provided if acquire_force_lltf is true, otherwise needs to be interpolated

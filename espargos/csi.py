@@ -20,9 +20,9 @@ HT40_GAP_SUBCARRIERS = 3
 COMPRESSED_LLTF_FFT_SIZE = 64
 COMPRESSED_HT20_FFT_SIZE = 64
 COMPRESSED_HT40_FFT_SIZE = 128
-COMPRESSED_LLTF_FIX32_SHIFT = 20
-COMPRESSED_HT20_FIX32_SHIFT = 24
-COMPRESSED_HT40_FIX32_SHIFT = 23
+COMPRESSED_LLTF_FIX32_SHIFT = 17
+COMPRESSED_HT20_FIX32_SHIFT = 21
+COMPRESSED_HT40_FIX32_SHIFT = 21
 COMPRESSED_LLTF_TAP_START = 27
 COMPRESSED_LLTF_TAP_COUNT = 16
 COMPRESSED_HT20_TAP_START = 27
@@ -602,7 +602,7 @@ def _sensor_ht40_model_input(centered_spectrum: np.ndarray) -> np.ndarray:
 
 def _sensor_centered_spectrum_to_lltf_force_observed_taps_fix32(centered_spectrum: np.ndarray) -> np.ndarray:
     fft_size = COMPRESSED_LLTF_FFT_SIZE
-    shift = 24
+    shift = COMPRESSED_LLTF_FIX32_SHIFT
     scale_divisor = 8.0
     active_start = (fft_size - LEGACY_COEFFICIENTS_PER_CHANNEL) // 2
     fr = np.zeros((fft_size,), dtype=np.int64)
@@ -670,6 +670,75 @@ def _sensor_centered_spectrum_to_lltf_force_observed_taps_fix32(centered_spectru
     return observed
 
 
+def _sensor_centered_spectrum_to_lltf_observed_taps_fix32(centered_spectrum: np.ndarray) -> np.ndarray:
+    fft_size = COMPRESSED_LLTF_FFT_SIZE
+    shift = COMPRESSED_LLTF_FIX32_SHIFT
+    scale_divisor = 8.0
+    active_start = (fft_size - LEGACY_COEFFICIENTS_PER_CHANNEL) // 2
+    fr = np.zeros((fft_size,), dtype=np.int64)
+    fi = np.zeros((fft_size,), dtype=np.int64)
+
+    coeff = np.asarray(centered_spectrum, dtype=np.complex64).copy()
+    coeff[LEGACY_COEFFICIENTS_PER_CHANNEL - 1] = np.complex64(coeff[-1].real + 1.0j * coeff[-3].imag)
+    coeff[LEGACY_COEFFICIENTS_PER_CHANNEL // 2] = 0.5 * (coeff[LEGACY_COEFFICIENTS_PER_CHANNEL // 2 - 2] + coeff[LEGACY_COEFFICIENTS_PER_CHANNEL // 2 + 2])
+    coeff[1::2] = 0.5 * (coeff[0:-1:2] + coeff[2::2])
+
+    for i in range(LEGACY_COEFFICIENTS_PER_CHANNEL):
+        centered_index = active_start + i
+        fft_index = (centered_index + fft_size // 2) % fft_size
+        fr[fft_index] = _clamp_s32(int(np.rint(coeff[i].real * (1 << shift))))
+        fi[fft_index] = _clamp_s32(int(np.rint(coeff[i].imag * (1 << shift))))
+
+    order = int(np.log2(fft_size))
+    for i in range(1, fft_size):
+        j = _reverse_bits16(i, order)
+        if j <= i:
+            continue
+        fr[i], fr[j] = fr[j], fr[i]
+        fi[i], fi[j] = fi[j], fi[i]
+
+    stage = 0
+    l = 1
+    while l < fft_size:
+        istep = l << 1
+        for m in range(l):
+            angle = (2.0 * np.pi * m) / istep
+            wr = int(np.rint(np.cos(angle) * np.iinfo(np.int32).max))
+            wi = int(np.rint(np.sin(angle) * np.iinfo(np.int32).max))
+
+            for i in range(m, fft_size, istep):
+                j = i + l
+                tmpr = int(fr[j])
+                tmpi = int(fi[j])
+                zr = _fix32_mpy(wr, tmpr) - _fix32_mpy(wi, tmpi)
+                zi = _fix32_mpy(wr, tmpi) + _fix32_mpy(wi, tmpr)
+                qr = int(fr[i])
+                qi = int(fi[i])
+
+                if stage & 1:
+                    qr >>= 1
+                    qi >>= 1
+                else:
+                    zr = _clamp_s32(zr << 1)
+                    zi = _clamp_s32(zi << 1)
+
+                fr[j] = _clamp_s32(qr - zr)
+                fi[j] = _clamp_s32(qi - zi)
+                fr[i] = _clamp_s32(qr + zr)
+                fi[i] = _clamp_s32(qi + zi)
+
+        l = istep
+        stage += 1
+
+    observed = np.zeros((COMPRESSED_LLTF_TAP_COUNT,), dtype=np.complex64)
+    for i in range(COMPRESSED_LLTF_TAP_COUNT):
+        centered_index = COMPRESSED_LLTF_TAP_START + i
+        fft_index = (centered_index + fft_size // 2) % fft_size
+        observed[i] = np.complex64((float(fr[fft_index]) + 1.0j * float(fi[fft_index])) / float(1 << shift) / scale_divisor)
+
+    return observed
+
+
 def _build_ht20_sensor_tap_correction() -> np.ndarray:
     correction = np.zeros((COMPRESSED_HT20_TAP_COUNT, COMPRESSED_HT20_TAP_COUNT), dtype=np.complex64)
     active = _active_slice(COMPRESSED_HT20_FFT_SIZE, HT_COEFFICIENTS_PER_CHANNEL)
@@ -715,6 +784,19 @@ def _build_lltf_force_fix32_tap_correction() -> np.ndarray:
     return np.linalg.pinv(correction).astype(np.complex64)
 
 
+def _build_lltf_fix32_tap_correction() -> np.ndarray:
+    correction = np.zeros((COMPRESSED_LLTF_TAP_COUNT, COMPRESSED_LLTF_TAP_COUNT), dtype=np.complex64)
+
+    for col in range(COMPRESSED_LLTF_TAP_COUNT):
+        centered_cir = np.zeros((COMPRESSED_LLTF_FFT_SIZE,), dtype=np.complex64)
+        centered_cir[COMPRESSED_LLTF_TAP_START + col] = 1.0
+        centered_spectrum = _centered_fft(centered_cir, COMPRESSED_LLTF_FFT_SIZE)
+        active_spectrum = centered_spectrum[_active_slice(COMPRESSED_LLTF_FFT_SIZE, LEGACY_COEFFICIENTS_PER_CHANNEL)].copy()
+        correction[:, col] = _sensor_centered_spectrum_to_lltf_observed_taps_fix32(active_spectrum)
+
+    return np.linalg.pinv(correction).astype(np.complex64)
+
+
 def _build_ht40_fix32_tap_correction() -> np.ndarray:
     correction = np.zeros((COMPRESSED_HT40_TAP_COUNT, COMPRESSED_HT40_TAP_COUNT), dtype=np.complex64)
     active = _active_slice(COMPRESSED_HT40_FFT_SIZE, HT_COEFFICIENTS_PER_CHANNEL * 2 + HT40_GAP_SUBCARRIERS)
@@ -747,6 +829,7 @@ _COMPRESSED_LLTF_FORCE_CORRECTION = _build_masked_tap_correction(
     [],
 )
 _COMPRESSED_LLTF_FORCE_FIX32_CORRECTION = _build_lltf_force_fix32_tap_correction()
+_COMPRESSED_LLTF_FIX32_CORRECTION = _build_lltf_fix32_tap_correction()
 _COMPRESSED_HT20_FLOAT_CORRECTION = _build_masked_tap_correction(
     COMPRESSED_HT20_FFT_SIZE,
     HT_COEFFICIENTS_PER_CHANNEL,
@@ -834,7 +917,7 @@ def _decode_compressed_tap_window(
 
 
 def decode_compressed_lltf(buf, acquire_force_lltf: bool = False) -> np.ndarray:
-    correction = _COMPRESSED_LLTF_FORCE_FIX32_CORRECTION if acquire_force_lltf else _COMPRESSED_LLTF_CORRECTION
+    correction = _COMPRESSED_LLTF_FORCE_FIX32_CORRECTION if acquire_force_lltf else _COMPRESSED_LLTF_FIX32_CORRECTION
     spectrum = _decode_compressed_tap_window(
         buf,
         COMPRESSED_LLTF_FFT_SIZE,
@@ -847,7 +930,9 @@ def decode_compressed_lltf(buf, acquire_force_lltf: bool = False) -> np.ndarray:
         spectrum[-1] = 2.0 * spectrum[-3] - spectrum[-5]
         spectrum[1::2] = 0.5 * (spectrum[0:-1:2] + spectrum[2::2])
     else:
-        spectrum[LEGACY_COEFFICIENTS_PER_CHANNEL // 2] = 0.0
+        spectrum[-1] = np.complex64(spectrum[-1].real + 1.0j * spectrum[-3].imag)
+        spectrum[LEGACY_COEFFICIENTS_PER_CHANNEL // 2] = 0.5 * (spectrum[LEGACY_COEFFICIENTS_PER_CHANNEL // 2 - 2] + spectrum[LEGACY_COEFFICIENTS_PER_CHANNEL // 2 + 2])
+        spectrum[1::2] = 0.5 * (spectrum[0:-1:2] + spectrum[2::2])
     return spectrum
 
 
