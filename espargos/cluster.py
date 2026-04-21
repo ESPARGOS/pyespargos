@@ -113,7 +113,7 @@ class CSICluster(object):
             csi_lltf_sensor = csi_lltf[b, r, a, :].view()
 
             if serialized_csi.is_compressed:
-                csi_lltf_sensor[:] = csi.decode_compressed_lltf(serialized_csi.buf, serialized_csi.acquire_force_lltf)
+                csi_lltf_sensor[:] = csi.decode_compressed_lltf(serialized_csi.buf, serialized_csi.acquire_force_lltf, serialized_csi.reserved_meta)
                 return
 
             lltf_bytes = np.asarray(csi.csi_buf_v3_lltf_t(serialized_csi.buf).lltf, dtype=np.uint8)
@@ -169,7 +169,7 @@ class CSICluster(object):
             csi_ht20_sensor = csi_ht20[b, r, a, :].view()
 
             if serialized_csi.is_compressed:
-                csi_ht20_sensor[:] = csi.decode_compressed_ht20(serialized_csi.buf)
+                csi_ht20_sensor[:] = csi.decode_compressed_ht20(serialized_csi.buf, serialized_csi.reserved_meta)
                 return
 
             # The ESP32 provides CSI as int8_t values in (im, re) pairs (in this order!)
@@ -218,7 +218,7 @@ class CSICluster(object):
             csi_ht40_sensor_higher = csi_ht40[b, r, a, -csi.HT_COEFFICIENTS_PER_CHANNEL :].view()
 
             if serialized_csi.is_compressed:
-                csi_ht40_sensor[:] = csi.decode_compressed_ht40(serialized_csi.buf)
+                csi_ht40_sensor[:] = csi.decode_compressed_ht40(serialized_csi.buf, serialized_csi.reserved_meta)
                 return
 
             # The ESP32 provides CSI as int8_t values in (im, re) pairs (in this order!)

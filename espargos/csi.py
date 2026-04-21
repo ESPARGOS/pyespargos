@@ -45,6 +45,7 @@ HT20_SIMULATION_MODES = (
 SERIALIZED_CSI_INFO_FLAG_RADAR = 1 << 0
 SERIALIZED_CSI_INFO_FLAG_LLTF_BIT_MODE = 1 << 1
 SERIALIZED_CSI_INFO_FLAG_COMPRESSED_CSI = 1 << 2
+COMPRESSED_FORMAT_VERSION_INT16_SHIFT = 0
 
 
 #####################################################
@@ -342,6 +343,13 @@ def _decode_wire_complex_int8(buf, pair_count):
 
 def _decode_wire_complex_float32(buf, pair_count):
     values = np.frombuffer(np.asarray(buf[: pair_count * 8], dtype=np.int8).tobytes(), dtype="<f4")
+    return (values[0::2] + 1.0j * values[1::2]).astype(np.complex64)
+
+
+def _decode_wire_complex_i16_scaled(buf, pair_count, tap_scale: float):
+    right_shift = int(np.asarray(buf[:1], dtype=np.uint8)[0])
+    values = np.frombuffer(np.asarray(buf[1 : 1 + pair_count * 4], dtype=np.int8).tobytes(), dtype="<i2").astype(np.float32)
+    values *= float(1 << right_shift) / tap_scale
     return (values[0::2] + 1.0j * values[1::2]).astype(np.complex64)
 
 
@@ -930,8 +938,13 @@ def _decode_compressed_tap_window(
     tap_count: int,
     active_count: int,
     correction: np.ndarray,
+    tap_scale: float,
+    compressed_format_version: int,
 ) -> np.ndarray:
-    observed_taps = _decode_wire_complex_float32(buf, tap_count)
+    if compressed_format_version != COMPRESSED_FORMAT_VERSION_INT16_SHIFT:
+        raise ValueError(f"Unsupported compressed CSI format version: {compressed_format_version}")
+
+    observed_taps = _decode_wire_complex_i16_scaled(buf, tap_count, tap_scale)
     corrected_taps = np.matmul(correction, observed_taps.astype(np.complex64))
     centered_cir = np.zeros((fft_size,), dtype=np.complex64)
     centered_cir[tap_start : tap_start + tap_count] = corrected_taps
@@ -939,7 +952,7 @@ def _decode_compressed_tap_window(
     return centered_spectrum[_active_slice(fft_size, active_count)].copy()
 
 
-def decode_compressed_lltf(buf, acquire_force_lltf: bool = False) -> np.ndarray:
+def decode_compressed_lltf(buf, acquire_force_lltf: bool = False, compressed_format_version: int = COMPRESSED_FORMAT_VERSION_INT16_SHIFT) -> np.ndarray:
     correction = _COMPRESSED_LLTF_FORCE_FIX32_CORRECTION if acquire_force_lltf else _COMPRESSED_LLTF_FIX32_CORRECTION
     spectrum = _decode_compressed_tap_window(
         buf,
@@ -948,6 +961,8 @@ def decode_compressed_lltf(buf, acquire_force_lltf: bool = False) -> np.ndarray:
         COMPRESSED_LLTF_TAP_COUNT,
         LEGACY_COEFFICIENTS_PER_CHANNEL,
         correction,
+        float((1 << COMPRESSED_LLTF_FIX32_SHIFT) * 8.0),
+        compressed_format_version,
     )
     if acquire_force_lltf:
         spectrum[-1] = 2.0 * spectrum[-3] - spectrum[-5]
@@ -959,7 +974,7 @@ def decode_compressed_lltf(buf, acquire_force_lltf: bool = False) -> np.ndarray:
     return spectrum
 
 
-def decode_compressed_ht20(buf) -> np.ndarray:
+def decode_compressed_ht20(buf, compressed_format_version: int = COMPRESSED_FORMAT_VERSION_INT16_SHIFT) -> np.ndarray:
     spectrum = _decode_compressed_tap_window(
         buf,
         COMPRESSED_HT20_FFT_SIZE,
@@ -967,11 +982,13 @@ def decode_compressed_ht20(buf) -> np.ndarray:
         COMPRESSED_HT20_TAP_COUNT,
         HT_COEFFICIENTS_PER_CHANNEL,
         _COMPRESSED_HT20_FIX32_CORRECTION,
+        float((1 << COMPRESSED_HT20_FIX32_SHIFT) * 8.0),
+        compressed_format_version,
     )
     return _interpolate_ht20_dc(spectrum)
 
 
-def decode_compressed_ht40(buf) -> np.ndarray:
+def decode_compressed_ht40(buf, compressed_format_version: int = COMPRESSED_FORMAT_VERSION_INT16_SHIFT) -> np.ndarray:
     spectrum = _decode_compressed_tap_window(
         buf,
         COMPRESSED_HT40_FFT_SIZE,
@@ -979,6 +996,8 @@ def decode_compressed_ht40(buf) -> np.ndarray:
         COMPRESSED_HT40_TAP_COUNT,
         HT_COEFFICIENTS_PER_CHANNEL * 2 + HT40_GAP_SUBCARRIERS,
         _COMPRESSED_HT40_FIX32_CORRECTION,
+        float((1 << COMPRESSED_HT40_FIX32_SHIFT) * 8.0),
+        compressed_format_version,
     )
     gap_start = HT_COEFFICIENTS_PER_CHANNEL
     spectrum[gap_start : gap_start + HT40_GAP_SUBCARRIERS] = 0.0
