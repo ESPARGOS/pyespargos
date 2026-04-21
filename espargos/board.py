@@ -156,6 +156,7 @@ class Board(object):
 
         self.csistream_connected = False
         self.consumers = []
+        self._fragment_reassembly = {}
 
     def get_name(self):
         """
@@ -626,30 +627,71 @@ class Board(object):
         self.consumers.append((clist, cv, args))
 
     def _csistream_handle_message(self, message):
-        pktsize = ctypes.sizeof(self.revision.csistream_pkt_t)
-        assert len(message) % pktsize == 0
-        for i in range(0, len(message), pktsize):
-            packet = self.revision.csistream_pkt_t(message[i : i + pktsize])
-            serialized_csi = csi.deserialize_packet_buffer(self.revision, packet.buf)
+        try:
+            esp_num, jumbo = csi.parse_csistream_jumbo_message(message)
+            fragments = list(csi.iter_csistream_fragments(jumbo))
+        except ValueError as exc:
+            self.logger.debug(f"Ignoring malformed CSI stream message: {exc}")
+            return
+
+        now = time.monotonic()
+        stale_keys = [key for key, entry in self._fragment_reassembly.items() if now - entry["timestamp"] > 5.0]
+        for key in stale_keys:
+            self._fragment_reassembly.pop(key, None)
+
+        completed_packets = []
+        for header, payload in fragments:
+            key = (esp_num, int(header.uid))
+            entry = self._fragment_reassembly.get(key)
+            if entry is None or entry["total_fragments"] != int(header.total_fragments):
+                entry = {
+                    "timestamp": now,
+                    "total_fragments": int(header.total_fragments),
+                    "parts": {},
+                }
+                self._fragment_reassembly[key] = entry
+
+            entry["timestamp"] = now
+            entry["parts"][int(header.fragment_index)] = bytes(payload)
+
+            if entry["total_fragments"] <= 0:
+                self._fragment_reassembly.pop(key, None)
+                continue
+
+            if len(entry["parts"]) != entry["total_fragments"]:
+                continue
+
+            if any(index not in entry["parts"] for index in range(entry["total_fragments"])):
+                continue
+
+            completed_packets.append((esp_num, b"".join(entry["parts"][index] for index in range(entry["total_fragments"]))))
+            self._fragment_reassembly.pop(key, None)
+
+        for packet_esp_num, packet_payload in completed_packets:
+            try:
+                serialized_csi = csi.deserialize_packet_buffer(self.revision, packet_payload)
+            except (AssertionError, ValueError):
+                self.logger.debug("Ignoring CSI payload with unexpected logical type header")
+                continue
 
             # Two sanity checks before we process the packet:
             # 1) Check CRC32 of the CSI data (if provided by the firmware)
             # 2) Check if antid matches the expected sensor ID (antid is provided by sensors, sensor ID provided by controller)
-            # CRC32 check (for major API version 1 or higher)
             if self.api_version[0] >= 2:
                 crc_data = bytes(serialized_csi)[: ctypes.sizeof(serialized_csi) - ctypes.sizeof(ctypes.c_uint32)]
                 computed_crc = binascii.crc32(crc_data) & 0xFFFFFFFF
                 if computed_crc != serialized_csi.crc32:
-                    self.logger.warning(f"CRC32 mismatch for CSI packet from sensor {packet.esp_num} (expected 0x{serialized_csi.crc32:08x}, computed 0x{computed_crc:08x}), dropping packet")
+                    self.logger.warning(f"CRC32 mismatch for CSI packet from sensor {packet_esp_num} " f"(expected 0x{serialized_csi.crc32:08x}, computed 0x{computed_crc:08x}), dropping packet")
                     continue
 
-            if self.revision.antid_to_esp_num[serialized_csi.antid] != packet.esp_num:
-                self.logger.warning(f"Received CSI packet with unexpected esp_num {packet.esp_num} (expected {self.revision.antid_to_esp_num[packet.esp_num]} for antid {serialized_csi.antid}), dropping packet")
+            expected_esp_num = self.revision.antid_to_esp_num[serialized_csi.antid]
+            if expected_esp_num != packet_esp_num:
+                self.logger.warning(f"Received CSI packet with unexpected esp_num {packet_esp_num} " f"(expected {expected_esp_num} for antid {serialized_csi.antid}), dropping packet")
                 continue
 
             for clist, cv, args in self.consumers:
                 with cv:
-                    clist.append((packet.esp_num, serialized_csi, *args))
+                    clist.append((packet_esp_num, serialized_csi, *args))
                     cv.notify()
 
     def _udp_keepalive_loop(self):

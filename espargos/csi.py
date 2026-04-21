@@ -6,6 +6,10 @@ from . import constants
 
 # Internal constants
 _ESPARGOS_SPI_BUFFER_SIZE_V3 = 384
+CSISTREAM_FRAME_PREFIX_SIZE = 4
+SPI_TYPE_HEADER_CSI = 0xE4CD0BAC
+SPI_TYPE_HEADER_JUMBO_FRAME = 0xDECAFBAD
+JUMBO_FRAGMENT_TERMINATOR_UID = 0
 
 # Other constants
 HT_COEFFICIENTS_PER_CHANNEL = 57
@@ -197,6 +201,25 @@ class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
 
 
 assert ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t) == 64
+
+
+class csistream_fragment_header_t(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ("uid", ctypes.c_uint32),
+        ("size", ctypes.c_uint16),
+        ("fragment_index", ctypes.c_uint8),
+        ("total_fragments", ctypes.c_uint8),
+    ]
+
+    def __new__(self, buf=None):
+        return self.from_buffer_copy(buf)
+
+    def __init__(self, buf=None):
+        pass
+
+
+assert ctypes.sizeof(csistream_fragment_header_t) == 8
 
 
 # 0-56: htltf primary
@@ -994,3 +1017,39 @@ def deserialize_packet_buffer(revision, pktbuf):
     assert type_header == revision.type_header
 
     return revision.serialized_csi_t(pktbuf)
+
+
+def parse_csistream_jumbo_message(message: bytes) -> tuple[int, bytes]:
+    if len(message) < CSISTREAM_FRAME_PREFIX_SIZE + 4:
+        raise ValueError("CSI stream message too short")
+
+    esp_num = int.from_bytes(message[:CSISTREAM_FRAME_PREFIX_SIZE], byteorder="little")
+    jumbo = message[CSISTREAM_FRAME_PREFIX_SIZE:]
+    if int.from_bytes(jumbo[:4], byteorder="little") != SPI_TYPE_HEADER_JUMBO_FRAME:
+        raise ValueError("CSI stream message does not contain a jumbo frame")
+
+    return esp_num, jumbo
+
+
+def iter_csistream_fragments(jumbo: bytes):
+    if len(jumbo) < 4:
+        raise ValueError("Jumbo frame too short")
+    if int.from_bytes(jumbo[:4], byteorder="little") != SPI_TYPE_HEADER_JUMBO_FRAME:
+        raise ValueError("Invalid jumbo frame type header")
+
+    offset = 4
+    header_size = ctypes.sizeof(csistream_fragment_header_t)
+    while offset + header_size <= len(jumbo):
+        header = csistream_fragment_header_t(jumbo[offset : offset + header_size])
+        offset += header_size
+        if header.uid == JUMBO_FRAGMENT_TERMINATOR_UID:
+            return
+
+        end = offset + header.size
+        if end > len(jumbo):
+            raise ValueError("Fragment exceeds jumbo frame boundary")
+
+        yield header, jumbo[offset:end]
+        offset = end
+
+    raise ValueError("Jumbo frame terminator missing")

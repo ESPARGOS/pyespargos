@@ -12,6 +12,8 @@ import urllib.parse
 
 import serial
 
+from . import csi
+
 UART_PROTOCOL_VERSION = 1
 
 FRAME_TYPE_HELLO_REQ = 0x01
@@ -481,5 +483,13 @@ class UARTClient:
 
 
 def validate_csistream_payload(payload: bytes, revision) -> bool:
-    pktsize = ctypes.sizeof(revision.csistream_pkt_t)
-    return len(payload) > 0 and len(payload) % pktsize == 0
+    del revision
+    if len(payload) < csi.CSISTREAM_FRAME_PREFIX_SIZE + 4:
+        return False
+    try:
+        _, jumbo = csi.parse_csistream_jumbo_message(payload)
+        for _header, _fragment in csi.iter_csistream_fragments(jumbo):
+            pass
+    except ValueError:
+        return False
+    return True
