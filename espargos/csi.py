@@ -1,5 +1,6 @@
 from enum import IntEnum
 import ctypes
+import binascii
 import numpy as np
 
 from . import constants
@@ -42,10 +43,21 @@ HT20_SIMULATION_MODES = (
     "fix32_corrected",
 )
 
-SERIALIZED_CSI_INFO_FLAG_RADAR = 1 << 0
-SERIALIZED_CSI_INFO_FLAG_LLTF_BIT_MODE = 1 << 1
-SERIALIZED_CSI_INFO_FLAG_COMPRESSED_CSI = 1 << 2
-COMPRESSED_FORMAT_VERSION_INT16_SHIFT = 0
+SERIALIZED_CSI_TLV_TYPE_SENSOR_META = 1
+SERIALIZED_CSI_TLV_TYPE_FRAME_META = 2
+SERIALIZED_CSI_TLV_TYPE_TIMING_META = 3
+SERIALIZED_CSI_TLV_TYPE_ACQUIRE_META = 4
+SERIALIZED_CSI_TLV_TYPE_RX_CTRL_RAW = 5
+SERIALIZED_CSI_TLV_TYPE_CSI_RAW = 6
+SERIALIZED_CSI_TLV_TYPE_CSI_COMPRESSED = 7
+SERIALIZED_CSI_TLV_TYPE_CRC32 = 255
+
+SERIALIZED_CSI_TLV_FRAME_FLAG_IS_CALIB = 1 << 0
+SERIALIZED_CSI_TLV_FRAME_FLAG_IS_RADAR = 1 << 1
+SERIALIZED_CSI_TLV_FRAME_FLAG_FIRST_WORD_INVALID = 1 << 2
+
+SERIALIZED_CSI_TLV_ACQUIRE_FLAG_FORCE_LLTF = 1 << 0
+SERIALIZED_CSI_TLV_ACQUIRE_FLAG_LLTF_BIT_MODE = 1 << 1
 
 
 #####################################################
@@ -95,7 +107,7 @@ class seq_ctrl_t(ctypes.LittleEndianStructure):
 class csistream_pkt_v3_t(ctypes.LittleEndianStructure):
     """
     A ctypes structure representing a CSI packet as received from the ESPARGOS controller, i.e.,
-    sensor number and the raw data buffer that should contain the serialized_csi_v3_t structure if the type_header matches.
+    sensor number and the raw data buffer that should contain the serialized CSI TLV packet if the type_header matches.
     """
 
     _pack_ = 1
@@ -288,52 +300,122 @@ class csi_buf_v3_lltf_t(ctypes.LittleEndianStructure):
 assert ctypes.sizeof(csi_buf_v3_lltf_t) == ctypes.sizeof(csi_buf_v3_ht20_t) == ctypes.sizeof(csi_buf_v3_ht40_t) == 256
 
 
-class serialized_csi_v3_t(ctypes.LittleEndianStructure):
-    """
-    A ctypes structure representing the CSI buffer and metadata as provided by the ESPARGOS firmware.
-
-    Variant for Espressif PHY version 3.
-    """
-
-    _pack_ = 1
-    _fields_ = [
-        ("type_header", ctypes.c_uint32),
-        ("rx_ctrl", ctypes.c_uint8 * ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t)),
-        ("source_mac", ctypes.c_uint8 * 6),
-        ("dest_mac", ctypes.c_uint8 * 6),
-        ("seq_ctrl", seq_ctrl_t),
-        ("timestamp", ctypes.c_uint32),
-        ("is_calib", ctypes.c_bool),
-        ("first_word_invalid", ctypes.c_bool),
-        ("buf", ctypes.c_int8 * (ctypes.sizeof(csi_buf_v3_lltf_t))),
-        ("global_timestamp_us", ctypes.c_uint64),
-        ("csi_len", ctypes.c_uint16),
-        ("acquire_force_lltf", ctypes.c_bool),
-        ("acquire_val_scale_cfg", ctypes.c_uint8),
-        ("rfswitch_state", ctypes.c_uint32),
-        ("info_flags", ctypes.c_uint8),
-        ("antid", ctypes.c_uint8),
-        ("reserved_meta", ctypes.c_uint8),
-        ("crc32", ctypes.c_uint32),
-    ]
-
-    def __new__(self, buf=None):
-        return self.from_buffer_copy(buf)
-
+class serialized_csi_tlv_t:
     def __init__(self, buf=None):
-        pass
+        raw = bytes(buf if buf is not None else b"")
+        if len(raw) < 4:
+            raise ValueError("CSI TLV packet too short")
+
+        self._raw = raw
+        self.type_header = int.from_bytes(raw[0:4], byteorder="little")
+        self.source_mac = bytes(6)
+        self.dest_mac = bytes(6)
+        self.seq_ctrl = seq_ctrl_t(b"\x00\x00")
+        self.frame_flags = 0
+        self.timestamp = 0
+        self.global_timestamp_us = 0
+        self.acquire_flags = 0
+        self.acquire_val_scale_cfg = 0
+        self.rfswitch_state = rfswitch_state_t.SENSOR_RFSWITCH_UNKNOWN
+        self.antid = 0
+        self.rx_ctrl = bytes()
+        self.buf = bytes()
+        self.csi_len = 0
+        self._is_compressed = False
+        self.crc32 = None
+        self._crc_valid = False
+
+        offset = 4
+        while offset < len(raw):
+            if offset + 3 > len(raw):
+                raise ValueError("Malformed CSI TLV header")
+
+            tlv_type = raw[offset]
+            tlv_len = int.from_bytes(raw[offset + 1 : offset + 3], byteorder="little")
+            tlv_start = offset
+            offset += 3
+            tlv_end = offset + tlv_len
+            if tlv_end > len(raw):
+                raise ValueError("Malformed CSI TLV length")
+
+            value = raw[offset:tlv_end]
+
+            if tlv_type == SERIALIZED_CSI_TLV_TYPE_SENSOR_META:
+                if tlv_len < 1:
+                    raise ValueError("Invalid sensor meta TLV")
+                self.antid = value[0]
+            elif tlv_type == SERIALIZED_CSI_TLV_TYPE_FRAME_META:
+                if tlv_len != 16:
+                    raise ValueError("Invalid frame meta TLV")
+                self.source_mac = bytes(value[0:6])
+                self.dest_mac = bytes(value[6:12])
+                self.seq_ctrl = seq_ctrl_t(value[12:14])
+                self.frame_flags = int.from_bytes(value[14:16], byteorder="little")
+            elif tlv_type == SERIALIZED_CSI_TLV_TYPE_TIMING_META:
+                if tlv_len != 8:
+                    raise ValueError("Invalid timing meta TLV")
+                self.global_timestamp_us = int.from_bytes(value, byteorder="little")
+            elif tlv_type == SERIALIZED_CSI_TLV_TYPE_ACQUIRE_META:
+                if tlv_len != 4:
+                    raise ValueError("Invalid acquire meta TLV")
+                self.acquire_flags = int.from_bytes(value[0:2], byteorder="little")
+                self.acquire_val_scale_cfg = value[2]
+                self.rfswitch_state = value[3]
+            elif tlv_type == SERIALIZED_CSI_TLV_TYPE_RX_CTRL_RAW:
+                self.rx_ctrl = bytes(value)
+                if len(self.rx_ctrl) >= ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t):
+                    self.timestamp = wifi_pkt_rx_ctrl_v3_t(self.rx_ctrl).timestamp
+            elif tlv_type == SERIALIZED_CSI_TLV_TYPE_CSI_RAW:
+                self.buf = bytes(value)
+                self.csi_len = tlv_len
+                self._is_compressed = False
+            elif tlv_type == SERIALIZED_CSI_TLV_TYPE_CSI_COMPRESSED:
+                self.buf = bytes(value)
+                self.csi_len = tlv_len
+                self._is_compressed = True
+            elif tlv_type == SERIALIZED_CSI_TLV_TYPE_CRC32:
+                if tlv_len != 4:
+                    raise ValueError("Invalid CRC32 TLV")
+                if tlv_end != len(raw):
+                    raise ValueError("CRC32 TLV must be last")
+                self.crc32 = int.from_bytes(value, byteorder="little")
+                computed_crc = binascii.crc32(raw[:tlv_start]) & 0xFFFFFFFF
+                if computed_crc != self.crc32:
+                    raise ValueError(f"CSI TLV CRC32 mismatch (expected 0x{self.crc32:08x}, computed 0x{computed_crc:08x})")
+                self._crc_valid = True
+            offset = tlv_end
+
+        if not self._crc_valid:
+            raise ValueError("CSI TLV CRC32 missing")
+        if not self.rx_ctrl:
+            raise ValueError("CSI TLV missing RX_CTRL_RAW")
+
+    def __bytes__(self):
+        return self._raw
 
     @property
     def is_radar(self):
-        return bool(self.info_flags & SERIALIZED_CSI_INFO_FLAG_RADAR)
+        return bool(self.frame_flags & SERIALIZED_CSI_TLV_FRAME_FLAG_IS_RADAR)
+
+    @property
+    def is_calib(self):
+        return bool(self.frame_flags & SERIALIZED_CSI_TLV_FRAME_FLAG_IS_CALIB)
+
+    @property
+    def first_word_invalid(self):
+        return bool(self.frame_flags & SERIALIZED_CSI_TLV_FRAME_FLAG_FIRST_WORD_INVALID)
+
+    @property
+    def acquire_force_lltf(self):
+        return bool(self.acquire_flags & SERIALIZED_CSI_TLV_ACQUIRE_FLAG_FORCE_LLTF)
 
     @property
     def acquire_lltf_bit_mode(self):
-        return bool(self.info_flags & SERIALIZED_CSI_INFO_FLAG_LLTF_BIT_MODE)
+        return bool(self.acquire_flags & SERIALIZED_CSI_TLV_ACQUIRE_FLAG_LLTF_BIT_MODE)
 
     @property
     def is_compressed(self):
-        return bool(self.info_flags & SERIALIZED_CSI_INFO_FLAG_COMPRESSED_CSI)
+        return self._is_compressed
 
 
 def _decode_wire_complex_int8(buf, pair_count):
@@ -939,11 +1021,7 @@ def _decode_compressed_tap_window(
     active_count: int,
     correction: np.ndarray,
     tap_scale: float,
-    compressed_format_version: int,
 ) -> np.ndarray:
-    if compressed_format_version != COMPRESSED_FORMAT_VERSION_INT16_SHIFT:
-        raise ValueError(f"Unsupported compressed CSI format version: {compressed_format_version}")
-
     observed_taps = _decode_wire_complex_i16_scaled(buf, tap_count, tap_scale)
     corrected_taps = np.matmul(correction, observed_taps.astype(np.complex64))
     centered_cir = np.zeros((fft_size,), dtype=np.complex64)
@@ -952,7 +1030,7 @@ def _decode_compressed_tap_window(
     return centered_spectrum[_active_slice(fft_size, active_count)].copy()
 
 
-def decode_compressed_lltf(buf, acquire_force_lltf: bool = False, compressed_format_version: int = COMPRESSED_FORMAT_VERSION_INT16_SHIFT) -> np.ndarray:
+def decode_compressed_lltf(buf, acquire_force_lltf: bool = False) -> np.ndarray:
     correction = _COMPRESSED_LLTF_FORCE_FIX32_CORRECTION if acquire_force_lltf else _COMPRESSED_LLTF_FIX32_CORRECTION
     spectrum = _decode_compressed_tap_window(
         buf,
@@ -962,7 +1040,6 @@ def decode_compressed_lltf(buf, acquire_force_lltf: bool = False, compressed_for
         LEGACY_COEFFICIENTS_PER_CHANNEL,
         correction,
         float((1 << COMPRESSED_LLTF_FIX32_SHIFT) * 8.0),
-        compressed_format_version,
     )
     if acquire_force_lltf:
         spectrum[-1] = 2.0 * spectrum[-3] - spectrum[-5]
@@ -974,7 +1051,7 @@ def decode_compressed_lltf(buf, acquire_force_lltf: bool = False, compressed_for
     return spectrum
 
 
-def decode_compressed_ht20(buf, compressed_format_version: int = COMPRESSED_FORMAT_VERSION_INT16_SHIFT) -> np.ndarray:
+def decode_compressed_ht20(buf) -> np.ndarray:
     spectrum = _decode_compressed_tap_window(
         buf,
         COMPRESSED_HT20_FFT_SIZE,
@@ -983,12 +1060,11 @@ def decode_compressed_ht20(buf, compressed_format_version: int = COMPRESSED_FORM
         HT_COEFFICIENTS_PER_CHANNEL,
         _COMPRESSED_HT20_FIX32_CORRECTION,
         float((1 << COMPRESSED_HT20_FIX32_SHIFT) * 8.0),
-        compressed_format_version,
     )
     return _interpolate_ht20_dc(spectrum)
 
 
-def decode_compressed_ht40(buf, compressed_format_version: int = COMPRESSED_FORMAT_VERSION_INT16_SHIFT) -> np.ndarray:
+def decode_compressed_ht40(buf) -> np.ndarray:
     spectrum = _decode_compressed_tap_window(
         buf,
         COMPRESSED_HT40_FFT_SIZE,
@@ -997,7 +1073,6 @@ def decode_compressed_ht40(buf, compressed_format_version: int = COMPRESSED_FORM
         HT_COEFFICIENTS_PER_CHANNEL * 2 + HT40_GAP_SUBCARRIERS,
         _COMPRESSED_HT40_FIX32_CORRECTION,
         float((1 << COMPRESSED_HT40_FIX32_SHIFT) * 8.0),
-        compressed_format_version,
     )
     gap_start = HT_COEFFICIENTS_PER_CHANNEL
     spectrum[gap_start : gap_start + HT40_GAP_SUBCARRIERS] = 0.0

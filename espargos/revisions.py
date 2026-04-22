@@ -73,7 +73,7 @@ class BoardRevisionDensiflorus(BoardRevision):
 
     @property
     def serialized_csi_t(self) -> type:
-        return csi.serialized_csi_v3_t
+        return csi.serialized_csi_tlv_t
 
     def esp_num_to_row_col(self, esp_num: int) -> tuple:
         row = 1 - esp_num // 4

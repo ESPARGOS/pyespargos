@@ -674,16 +674,7 @@ class Board(object):
                 self.logger.debug("Ignoring CSI payload with unexpected logical type header")
                 continue
 
-            # Two sanity checks before we process the packet:
-            # 1) Check CRC32 of the CSI data (if provided by the firmware)
-            # 2) Check if antid matches the expected sensor ID (antid is provided by sensors, sensor ID provided by controller)
-            if self.api_version[0] >= 2:
-                crc_data = bytes(serialized_csi)[: ctypes.sizeof(serialized_csi) - ctypes.sizeof(ctypes.c_uint32)]
-                computed_crc = binascii.crc32(crc_data) & 0xFFFFFFFF
-                if computed_crc != serialized_csi.crc32:
-                    self.logger.warning(f"CRC32 mismatch for CSI packet from sensor {packet_esp_num} " f"(expected 0x{serialized_csi.crc32:08x}, computed 0x{computed_crc:08x}), dropping packet")
-                    continue
-
+            # Check if antid matches the expected sensor ID (antid is provided by sensors, sensor ID provided by controller)
             expected_esp_num = self.revision.antid_to_esp_num[serialized_csi.antid]
             if expected_esp_num != packet_esp_num:
                 self.logger.warning(f"Received CSI packet with unexpected esp_num {packet_esp_num} " f"(expected {expected_esp_num} for antid {serialized_csi.antid}), dropping packet")

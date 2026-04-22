@@ -8,6 +8,10 @@ from . import revisions
 from . import constants
 from . import csi
 
+_RAW_LLTF_BYTES = csi.LEGACY_COEFFICIENTS_PER_CHANNEL * 2
+_RAW_HT20_BYTES = csi.HT_COEFFICIENTS_PER_CHANNEL * 2
+_RAW_HT40_BYTES = (csi.HT_COEFFICIENTS_PER_CHANNEL * 2) + (csi.HT40_GAP_SUBCARRIERS * 2) + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2)
+
 
 class CSICluster(object):
     """
@@ -64,7 +68,7 @@ class CSICluster(object):
         self,
         board_num: int,
         esp_num: int,
-        serialized_csi: csi.serialized_csi_v3_t,
+        serialized_csi: csi.serialized_csi_tlv_t,
     ):
         """
         Add CSI data to the cluster.
@@ -113,10 +117,10 @@ class CSICluster(object):
             csi_lltf_sensor = csi_lltf[b, r, a, :].view()
 
             if serialized_csi.is_compressed:
-                csi_lltf_sensor[:] = csi.decode_compressed_lltf(serialized_csi.buf, serialized_csi.acquire_force_lltf, serialized_csi.reserved_meta)
+                csi_lltf_sensor[:] = csi.decode_compressed_lltf(serialized_csi.buf, serialized_csi.acquire_force_lltf)
                 return
 
-            lltf_bytes = np.asarray(csi.csi_buf_v3_lltf_t(serialized_csi.buf).lltf, dtype=np.uint8)
+            lltf_bytes = np.frombuffer(serialized_csi.buf[:_RAW_LLTF_BYTES], dtype=np.uint8)
 
             if serialized_csi.acquire_force_lltf:
                 # In forced LLTF mode the ESP32-C61 reports 52 signed 12-bit values:
@@ -169,17 +173,20 @@ class CSICluster(object):
             csi_ht20_sensor = csi_ht20[b, r, a, :].view()
 
             if serialized_csi.is_compressed:
-                csi_ht20_sensor[:] = csi.decode_compressed_ht20(serialized_csi.buf, serialized_csi.reserved_meta)
+                csi_ht20_sensor[:] = csi.decode_compressed_ht20(serialized_csi.buf)
                 return
 
             # The ESP32 provides CSI as int8_t values in (im, re) pairs (in this order!)
             # To go from the (re, im) interpretation to (im, re), compute conjugate and multiply by 1.0j.
             # If channel bonding is used, provide CSI of primary channel
             if csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).he_siga1 & 0x80 != 0:
-                primary = csi.csi_buf_v3_ht40_t(serialized_csi.buf).htltf_higher if self.get_secondary_channel_relative() == -1 else csi.csi_buf_v3_ht40_t(serialized_csi.buf).htltf_lower
+                ht40_bytes = np.frombuffer(serialized_csi.buf[:_RAW_HT40_BYTES], dtype=np.int8)
+                htltf_lower = ht40_bytes[:_RAW_HT20_BYTES]
+                htltf_higher = ht40_bytes[_RAW_HT20_BYTES + (csi.HT40_GAP_SUBCARRIERS * 2) : _RAW_HT40_BYTES]
+                primary = htltf_higher if self.get_secondary_channel_relative() == -1 else htltf_lower
                 csi_ht20_sensor[:] = np.asarray(primary, dtype=np.int8).astype(np.float32).view(np.complex64)
             else:
-                csi_ht20_sensor[:] = np.asarray(csi.csi_buf_v3_ht20_t(serialized_csi.buf).htltf, dtype=np.int8).astype(np.float32).view(np.complex64)
+                csi_ht20_sensor[:] = np.frombuffer(serialized_csi.buf[:_RAW_HT20_BYTES], dtype=np.int8).astype(np.float32).view(np.complex64)
             csi_ht20_sensor[:] = -1.0j * np.conj(csi_ht20_sensor)
 
         self._foreach_complete_sensor(deserialize_ht20_packet)
@@ -218,20 +225,14 @@ class CSICluster(object):
             csi_ht40_sensor_higher = csi_ht40[b, r, a, -csi.HT_COEFFICIENTS_PER_CHANNEL :].view()
 
             if serialized_csi.is_compressed:
-                csi_ht40_sensor[:] = csi.decode_compressed_ht40(serialized_csi.buf, serialized_csi.reserved_meta)
+                csi_ht40_sensor[:] = csi.decode_compressed_ht40(serialized_csi.buf)
                 return
 
             # The ESP32 provides CSI as int8_t values in (im, re) pairs (in this order!)
             # To go from the (re, im) interpretation to (im, re), compute conjugate and multiply by 1.0j.
-            csi_ht40_sensor_higher[:] = (
-                np.asarray(
-                    csi.csi_buf_v3_ht40_t(serialized_csi.buf).htltf_higher,
-                    dtype=np.int8,
-                )
-                .astype(np.float32)
-                .view(np.complex64)
-            )
-            csi_ht40_sensor_lower[:] = np.asarray(csi.csi_buf_v3_ht40_t(serialized_csi.buf).htltf_lower, dtype=np.int8).astype(np.float32).view(np.complex64)
+            ht40_bytes = np.frombuffer(serialized_csi.buf[:_RAW_HT40_BYTES], dtype=np.int8)
+            csi_ht40_sensor_higher[:] = ht40_bytes[_RAW_HT20_BYTES + (csi.HT40_GAP_SUBCARRIERS * 2) : _RAW_HT40_BYTES].astype(np.float32).view(np.complex64)
+            csi_ht40_sensor_lower[:] = ht40_bytes[:_RAW_HT20_BYTES].astype(np.float32).view(np.complex64)
             csi_ht40_sensor[:] = -1.0j * np.conj(csi_ht40_sensor)
 
         self._foreach_complete_sensor(deserialize_ht40_packet)
@@ -260,6 +261,9 @@ class CSICluster(object):
 
         def check_lltf(b, r, a, serialized_csi):
             nonlocal have_lltf_all
+            if serialized_csi.csi_len == 0:
+                have_lltf_all = False
+                return
             # We only need to check this if acquire_force_lltf is false (otherwise, sensor always provides L-LTF)
             if not serialized_csi.acquire_force_lltf:
                 # If force lltf is false, sensor module is configured to only provide L-LTF if frame is 802.11g
@@ -280,6 +284,9 @@ class CSICluster(object):
 
         def check_ht20(b, r, a, serialized_csi):
             nonlocal have_ht20_all
+            if serialized_csi.csi_len == 0:
+                have_ht20_all = False
+                return
             # If force lltf is true, sensor only provides L-LTF, never HT20-LTF
             if serialized_csi.acquire_force_lltf:
                 have_ht20_all = False
@@ -301,6 +308,9 @@ class CSICluster(object):
 
         def check_ht40(b, r, a, serialized_csi):
             nonlocal have_ht40_all
+            if serialized_csi.csi_len == 0:
+                have_ht40_all = False
+                return
             # If force lltf is true, sensor only provides L-LTF, never HT40-LTF
             if serialized_csi.acquire_force_lltf:
                 have_ht40_all = False
