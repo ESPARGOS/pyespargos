@@ -48,6 +48,7 @@ SERIALIZED_CSI_TLV_TYPE_ACQUIRE_META = 4
 SERIALIZED_CSI_TLV_TYPE_RX_CTRL_RAW = 5
 SERIALIZED_CSI_TLV_TYPE_CSI_RAW = 6
 SERIALIZED_CSI_TLV_TYPE_CSI_COMPRESSED = 7
+SERIALIZED_CSI_TLV_TYPE_RX_CTRL_COMPRESSED = 8
 SERIALIZED_CSI_TLV_TYPE_CRC32 = 255
 
 SERIALIZED_CSI_TLV_FRAME_FLAG_IS_CALIB = 1 << 0
@@ -56,6 +57,8 @@ SERIALIZED_CSI_TLV_FRAME_FLAG_FIRST_WORD_INVALID = 1 << 2
 
 SERIALIZED_CSI_TLV_ACQUIRE_FLAG_FORCE_LLTF = 1 << 0
 SERIALIZED_CSI_TLV_ACQUIRE_FLAG_LLTF_BIT_MODE = 1 << 1
+SERIALIZED_CSI_TLV_RX_CTRL_COMPRESSED_FLAG_IS_HT40 = 1 << 0
+SERIALIZED_CSI_TLV_RX_CTRL_COMPRESSED_FLAG_CHANNEL_ESTIMATE_INFO_VLD = 1 << 1
 
 
 #####################################################
@@ -193,6 +196,63 @@ class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
 
 
 assert ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t) == 64
+
+
+class compressed_rx_ctrl_t(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ("rssi", ctypes.c_uint8),
+        ("noise_floor", ctypes.c_uint8),
+        ("channel", ctypes.c_uint8),
+        ("secondary_channel", ctypes.c_int8),
+        ("cur_bb_format", ctypes.c_uint8),
+        ("rate", ctypes.c_uint8),
+        ("rate_type", ctypes.c_uint8),
+        ("rxstart_time_cyc", ctypes.c_uint8),
+        ("rx_channel_estimate_len", ctypes.c_uint16),
+        ("flags", ctypes.c_uint16),
+        ("timestamp", ctypes.c_uint32),
+        ("cfo_low_rate", ctypes.c_uint16),
+        ("cfo_high_rate", ctypes.c_uint16),
+        ("he_sig1_mcs", ctypes.c_uint8),
+        ("reserved", ctypes.c_uint8),
+    ]
+
+    def __new__(self, buf=None):
+        return self.from_buffer_copy(buf)
+
+    def __init__(self, buf=None):
+        pass
+
+
+assert ctypes.sizeof(compressed_rx_ctrl_t) == 22
+
+
+def _build_rx_ctrl_v3_from_compressed(compact_raw: bytes) -> bytes:
+    compact = compressed_rx_ctrl_t(compact_raw)
+    ctrl = wifi_pkt_rx_ctrl_v3_t(bytes(ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t)))
+    ctrl.rssi = int(compact.rssi)
+    ctrl.rate = int(compact.rate)
+    ctrl.rate_type = int(compact.rate_type)
+    ctrl.he_siga1 = int(compact.he_sig1_mcs)
+    if compact.flags & SERIALIZED_CSI_TLV_RX_CTRL_COMPRESSED_FLAG_IS_HT40:
+        ctrl.he_siga1 |= 0x80
+    ctrl.rxstart_time_cyc = int(compact.rxstart_time_cyc)
+    ctrl.timestamp = int(compact.timestamp)
+    ctrl.cfo_low_rate = int(compact.cfo_low_rate)
+    ctrl.cfo_high_rate = int(compact.cfo_high_rate)
+    ctrl.noise_floor = int(compact.noise_floor)
+    ctrl.channel = int(compact.channel)
+    if compact.secondary_channel > 0:
+        ctrl.second = 1
+    elif compact.secondary_channel < 0:
+        ctrl.second = 2
+    else:
+        ctrl.second = 0
+    ctrl.cur_bb_format = int(compact.cur_bb_format)
+    ctrl.rx_channel_estimate_len = int(compact.rx_channel_estimate_len)
+    ctrl.rx_channel_estimate_info_vld = 1 if (compact.flags & SERIALIZED_CSI_TLV_RX_CTRL_COMPRESSED_FLAG_CHANNEL_ESTIMATE_INFO_VLD) else 0
+    return ctypes.string_at(ctypes.byref(ctrl), ctypes.sizeof(ctrl))
 
 
 class csistream_fragment_header_t(ctypes.LittleEndianStructure):
@@ -342,6 +402,11 @@ class serialized_csi_tlv_t:
                 self.rx_ctrl = bytes(value)
                 if len(self.rx_ctrl) >= ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t):
                     self.timestamp = wifi_pkt_rx_ctrl_v3_t(self.rx_ctrl).timestamp
+            elif tlv_type == SERIALIZED_CSI_TLV_TYPE_RX_CTRL_COMPRESSED:
+                if tlv_len < ctypes.sizeof(compressed_rx_ctrl_t):
+                    raise ValueError("Invalid compressed RX CTRL TLV")
+                self.rx_ctrl = _build_rx_ctrl_v3_from_compressed(bytes(value[: ctypes.sizeof(compressed_rx_ctrl_t)]))
+                self.timestamp = wifi_pkt_rx_ctrl_v3_t(self.rx_ctrl).timestamp
             elif tlv_type == SERIALIZED_CSI_TLV_TYPE_CSI_RAW:
                 self._raw_csi_tlv = bytes(value)
                 self._raw_csi_padded_len = tlv_len
@@ -365,7 +430,7 @@ class serialized_csi_tlv_t:
         if not self._crc_valid:
             raise ValueError("CSI TLV CRC32 missing")
         if not self.rx_ctrl:
-            raise ValueError("CSI TLV missing RX_CTRL_RAW")
+            raise ValueError("CSI TLV missing RX CTRL metadata")
 
         if self._raw_csi_tlv is not None:
             if self._is_compressed:
@@ -405,24 +470,24 @@ class serialized_csi_tlv_t:
 
 
 def _decode_wire_complex_int8(buf, pair_count):
-    values = np.asarray(buf[: pair_count * 2], dtype=np.int8).astype(np.float32).view(np.complex64)
+    values = np.frombuffer(buf[: pair_count * 2], dtype=np.int8).astype(np.float32).view(np.complex64)
     return -1.0j * np.conj(values)
 
 
 def _decode_wire_complex_float32(buf, pair_count):
-    values = np.frombuffer(np.asarray(buf[: pair_count * 8], dtype=np.int8).tobytes(), dtype="<f4")
+    values = np.frombuffer(buf[: pair_count * 8], dtype="<f4")
     return (values[0::2] + 1.0j * values[1::2]).astype(np.complex64)
 
 
 def _decode_wire_complex_i16_scaled(buf, pair_count, tap_scale: float):
-    right_shift = int(np.asarray(buf[:1], dtype=np.uint8)[0])
-    values = np.frombuffer(np.asarray(buf[1 : 1 + pair_count * 4], dtype=np.int8).tobytes(), dtype="<i2").astype(np.float32)
+    right_shift = int(np.frombuffer(buf[:1], dtype=np.uint8)[0])
+    values = np.frombuffer(buf[1 : 1 + pair_count * 4], dtype="<i2").astype(np.float32)
     values *= float(1 << right_shift) / tap_scale
     return (values[0::2] + 1.0j * values[1::2]).astype(np.complex64)
 
 
 def unpack_lltf12_values(buf, value_count: int) -> np.ndarray:
-    raw = np.asarray(buf[: value_count * 2], dtype=np.uint8)
+    raw = np.frombuffer(buf[: value_count * 2], dtype=np.uint8)
     words = (raw[0::2].astype(np.uint16) | (raw[1::2].astype(np.uint16) << 8)).astype(np.uint16)
     return (((words.astype(np.int16) << 4) >> 4)).astype(np.int16)
 

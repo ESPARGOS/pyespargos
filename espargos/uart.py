@@ -8,9 +8,11 @@ import queue
 import struct
 import threading
 import time
+import termios
 import urllib.parse
 
 import serial
+import serial.tools.list_ports
 
 from . import csi
 
@@ -35,6 +37,13 @@ DEFAULT_BOOT_BAUDRATE = 115200
 DEFAULT_TIMEOUT = 5.0
 DEFAULT_READ_TIMEOUT = 0.001
 DEFAULT_LATENCY_TIMER_MS = 1
+HARDWARE_FLOW_CONTROL_PIDS = {
+    0xEA64,  # SiLabs CP2102C USB to UART Bridge Controller
+}
+DEFAULT_IDLE_DTR = False
+DEFAULT_IDLE_RTS = False
+FLOW_CONTROL_IDLE_DTR = True
+FLOW_CONTROL_IDLE_RTS = False
 
 
 class UARTProtocolError(Exception):
@@ -185,6 +194,7 @@ class UARTClient:
         self._reader_running = False
         self._latency_timer_restore_path = None
         self._latency_timer_restore_value = None
+        self._flow_control_workaround = self._device_needs_flow_control_workaround()
 
     def connect(self):
         if self._connected:
@@ -231,6 +241,10 @@ class UARTClient:
         self._reader_running = False
 
         try:
+            try:
+                self._apply_modem_idle_state(self._serial)
+            except Exception:
+                pass
             self._serial.close()
         finally:
             self._restore_latency_timer()
@@ -372,11 +386,64 @@ class UARTClient:
         self._reader_running = True
 
     def _open_serial(self, baudrate: int) -> serial.Serial:
-        ser = serial.Serial(self.device, baudrate=baudrate, timeout=self.read_timeout, exclusive=True)
+        # Some USB-UART bridges, such as CP2102C variants, keep hardware flow
+        # control active in a way that lets RTS transitions reset the ESP32 via
+        # the standard auto-reset circuitry. Mirror esptool's workaround by
+        # holding DTR in the safe state for those bridges from the moment the
+        # port opens.
+        ser = serial.Serial(
+            port=None,
+            baudrate=baudrate,
+            timeout=self.read_timeout,
+            exclusive=True,
+            xonxoff=False,
+            rtscts=False,
+            dsrdtr=False,
+        )
+        self._apply_modem_idle_state(ser)
+        ser.port = self.device
+        ser.open()
+        self._configure_termios(ser)
+        self._apply_modem_idle_state(ser)
         self._apply_low_latency_tuning()
         ser.reset_input_buffer()
         ser.reset_output_buffer()
         return ser
+
+    def _configure_termios(self, ser: serial.Serial):
+        if os.name != "posix":
+            return
+
+        try:
+            attrs = termios.tcgetattr(ser.fileno())
+        except Exception as exc:
+            self.logger.debug(f"Could not read termios state for {self.device}: {exc}")
+            return
+
+        attrs[2] |= termios.CLOCAL
+        if hasattr(termios, "HUPCL"):
+            attrs[2] &= ~termios.HUPCL
+
+        try:
+            termios.tcsetattr(ser.fileno(), termios.TCSANOW, attrs)
+        except Exception as exc:
+            self.logger.debug(f"Could not update termios state for {self.device}: {exc}")
+
+    def _apply_modem_idle_state(self, ser: serial.Serial):
+        if self._flow_control_workaround:
+            ser.dtr = FLOW_CONTROL_IDLE_DTR
+            ser.rts = FLOW_CONTROL_IDLE_RTS
+        else:
+            ser.dtr = DEFAULT_IDLE_DTR
+            ser.rts = DEFAULT_IDLE_RTS
+
+    def _device_needs_flow_control_workaround(self) -> bool:
+        device_realpath = os.path.realpath(self.device)
+        for portinfo in serial.tools.list_ports.comports():
+            if os.path.realpath(portinfo.device) != device_realpath:
+                continue
+            return portinfo.pid in HARDWARE_FLOW_CONTROL_PIDS
+        return False
 
     def _apply_low_latency_tuning(self):
         if os.name != "posix":
