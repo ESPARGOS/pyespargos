@@ -16,6 +16,7 @@ from . import cluster
 from . import board
 from . import util
 from . import csi
+from . import radar
 
 
 class _CSICallback(object):
@@ -221,6 +222,37 @@ class Pool(object):
             b.set_gain_settings(settings)
         _ = self.get_gain_settings()
 
+    def get_radar_configs(self) -> list[dict]:
+        """
+        Return radar TX configuration for all boards in the pool.
+        """
+        return [b.get_radar_config() for b in self.boards]
+
+    def get_radar_config(self) -> dict:
+        """
+        Return radar TX configuration; sanity-check all boards report the same value.
+        """
+        configs = self.get_radar_configs()
+        self._assert_same_across_boards(configs, "Radar config")
+        return configs[0]
+
+    def set_radar_config(self, config: dict | radar.RadarPoolConfig):
+        """
+        Set radar TX configuration on the boards in this pool.
+
+        ``config`` may either be a single controller config dict applied to every board,
+        or a :class:`pyespargos.espargos.radar.RadarPoolConfig` containing one config per board.
+        """
+        if isinstance(config, radar.RadarPoolConfig):
+            if len(config.board_configs) != len(self.boards):
+                raise ValueError(f"RadarPoolConfig contains {len(config.board_configs)} board configs, expected {len(self.boards)}")
+            for board_obj, board_config in zip(self.boards, config.board_configs):
+                board_obj.set_radar_config(board_config)
+            return
+
+        for b in self.boards:
+            b.set_radar_config(config)
+
     def get_wificonf(self) -> dict:
         """
         Return WiFi config; sanity-check boards report the same value.
@@ -304,6 +336,7 @@ class Pool(object):
         complete_clusters_lltf = []
         complete_clusters_ht20 = []
         complete_clusters_ht40 = []
+        complete_cluster_timestamps = []
 
         # Read wificonf to determine primary/secondary channel
         wificonf = self.get_wificonf()
@@ -326,6 +359,7 @@ class Pool(object):
                 any_csi_count = any_csi_count + 1
 
             if np.all(completion):
+                complete_cluster_timestamps.append(cluster.get_sensor_timestamps()[board_num] if board_num is not None else cluster.get_sensor_timestamps())
                 if cluster.has_lltf():
                     complete_clusters_lltf.append(cluster.deserialize_csi_lltf()[board_num] if board_num is not None else cluster.deserialize_csi_lltf())
                 if cluster.has_ht20ltf():
@@ -354,9 +388,24 @@ class Pool(object):
             np.asarray(complete_clusters_lltf),
             np.asarray(complete_clusters_ht20),
             np.asarray(complete_clusters_ht40),
+            np.asarray(complete_cluster_timestamps),
             channel_primary,
             channel_secondary,
         )
+
+    def _compute_sensor_clock_offsets(self, complete_cluster_timestamps: np.ndarray) -> np.ndarray:
+        """
+        Compute per-sensor clock offsets relative to sensor 0 from complete calibration clusters.
+
+        :param complete_cluster_timestamps: Array of shape ``(clusters, boards, rows, columns)`` containing per-sensor timestamps in seconds.
+        :return: Array of shape ``(boards, rows, columns)`` with offsets in seconds relative to sensor 0.
+        """
+        if len(complete_cluster_timestamps) == 0:
+            return np.full(self.get_shape(), np.nan, dtype=np.float64)
+
+        sensor_clock_offsets = np.asarray(complete_cluster_timestamps, dtype=np.float64)
+        sensor_clock_offsets -= sensor_clock_offsets[:, 0:1, 0:1, 0:1]
+        return np.mean(sensor_clock_offsets, axis=0)
 
     def calibrate(
         self,
@@ -407,6 +456,16 @@ class Pool(object):
         self.set_mac_filter(previous_mac_filter)
 
         # Collect calibration packets and compute calibration phases
+        (
+            complete_clusters_lltf,
+            complete_clusters_ht20,
+            complete_clusters_ht40,
+            complete_cluster_timestamps,
+            channel_primary,
+            channel_secondary,
+        ) = self._clusters_to_calibration()
+        sensor_clock_offsets = self._compute_sensor_clock_offsets(complete_cluster_timestamps)
+
         if per_board:
             phase_calibrations_lltf = []
             phase_calibrations_ht20 = []
@@ -417,8 +476,9 @@ class Pool(object):
                     complete_clusters_lltf,
                     complete_clusters_ht20,
                     complete_clusters_ht40,
-                    channel_primary,
-                    channel_secondary,
+                    _complete_cluster_timestamps,
+                    _channel_primary,
+                    _channel_secondary,
                 ) = self._clusters_to_calibration(board_num)
 
                 phase_calibrations_lltf.append(
@@ -453,17 +513,10 @@ class Pool(object):
                 np.asarray(phase_calibrations_lltf),
                 np.asarray(phase_calibrations_ht20),
                 np.asarray(phase_calibrations_ht40),
+                sensor_clock_offsets=sensor_clock_offsets,
             )
 
         else:
-            (
-                complete_clusters_lltf,
-                complete_clusters_ht20,
-                complete_clusters_ht40,
-                channel_primary,
-                channel_secondary,
-            ) = self._clusters_to_calibration()
-
             phase_calibrations_lltf = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
             phase_calibrations_ht20 = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
             phase_calibration_ht40 = (
@@ -489,6 +542,7 @@ class Pool(object):
                 phase_calibrations_lltf,
                 phase_calibrations_ht20,
                 phase_calibration_ht40,
+                sensor_clock_offsets=sensor_clock_offsets,
                 board_cable_lengths=cable_lengths,
                 board_cable_vfs=cable_velocity_factors,
             )

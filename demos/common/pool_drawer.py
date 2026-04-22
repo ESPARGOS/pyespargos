@@ -33,6 +33,8 @@ class PoolDrawer(PyQt6.QtCore.QObject):
 
     # Init complete signal
     initComplete = PyQt6.QtCore.pyqtSignal()
+    calibrationStarted = PyQt6.QtCore.pyqtSignal()
+    calibrationFinished = PyQt6.QtCore.pyqtSignal(bool, str)
 
     def __init__(self, pool: espargos.pool.Pool, force_config=None, parent=None):
         # Note that the current pool config is authoritative, the default config is just for UI initialization
@@ -227,10 +229,20 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         self.calibration_running = True
         duration = self.cfgman.get("calibration", "duration")
         per_board = bool(self.cfgman.get("calibration", "per_board"))
+        self.calibrationStarted.emit()
 
         def _calibrate_thread():
-            self.pool.calibrate(per_board=per_board, duration=duration, run_in_thread=False)
-            self.calibration_running = False
+            success = False
+            error_message = ""
+            try:
+                self.pool.calibrate(per_board=per_board, duration=duration, run_in_thread=False)
+                success = True
+            except Exception as e:
+                error_message = str(e)
+                self.cfgman.emitShowError("Calibration failed", error_message)
+            finally:
+                self.calibration_running = False
+                self.calibrationFinished.emit(success, error_message)
 
         # Perform calibration in separate thread to avoid blocking UI
         threading.Thread(target=_calibrate_thread, daemon=True).start()

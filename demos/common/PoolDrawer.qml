@@ -201,6 +201,8 @@ Drawer {
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false
+				ToolTip.visible: hovered
+				ToolTip.text: "Always acquire the legacy L-LTF CSI (20 MHz bandwidth), regardless of packet format. Useful when you want a common CSI format across mixed traffic, but it will prevent access to format-specific training fields."
 			}
 
 			Label { text: "Compressed CSI"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -213,6 +215,8 @@ Drawer {
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false
+				ToolTip.visible: hovered
+				ToolTip.text: "Compress CSI in firmware by converting it to a sparser time-domain representation before transport. This reduces bandwidth, but the received CSI is no longer the raw frequency-domain estimate."
 			}
 
 			// Section: Gain/AGC

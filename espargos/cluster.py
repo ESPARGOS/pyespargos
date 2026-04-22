@@ -448,6 +448,20 @@ class CSICluster(object):
         """
         return self.source_mac
 
+    def is_radar(self) -> bool:
+        """
+        Check whether this cluster corresponds to a radar packet.
+        """
+        serialized_csi = self._first_complete_sensor()
+        return False if serialized_csi is None else serialized_csi.is_radar
+
+    def is_calib(self) -> bool:
+        """
+        Check whether this cluster corresponds to a calibration packet.
+        """
+        serialized_csi = self._first_complete_sensor()
+        return False if serialized_csi is None else serialized_csi.is_calib
+
     def get_noise_floor(self):
         """
         Get the noise floor of the WiFi packet.

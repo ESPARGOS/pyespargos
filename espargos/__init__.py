@@ -6,6 +6,8 @@ from .backlog import BacklogFilter, CSIBacklog, Exclude11bFilter, MacFilter
 from .cluster import CSICluster
 from .board import Board, EspargosAPIVersionError, EspargosCsiStreamConnectionError, EspargosHTTPStatusError, EspargosUnexpectedResponseError
 from .pool import Pool
+from . import radar
+from .radar import RadarPoolConfig
 import logging
 import sys
 

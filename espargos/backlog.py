@@ -170,11 +170,7 @@ class CSIBacklog(object):
 
         with self.storage_mutex:
             # Store timestamp
-            sensor_timestamps_raw = clustered_csi.get_sensor_timestamps()
-            sensor_timestamps = np.copy(sensor_timestamps_raw)
-            if self.calibrate:
-                assert self.pool.get_calibration() is not None
-                sensor_timestamps = self.pool.get_calibration().apply_timestamps(sensor_timestamps)
+            sensor_timestamps = clustered_csi.get_sensor_timestamps()
 
             if "timestamp" in self.fields:
                 self.storage["timestamp"][self.head] = sensor_timestamps

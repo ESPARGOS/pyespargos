@@ -47,8 +47,7 @@ class EspargosAPIVersionError(Exception):
 CSISTREAM_MAGIC = bytes([0xE5, 0xA7, 0x60, 0x00])
 
 # Only this major API version is supported
-SUPPORTED_API_MAJOR_MIN = 0
-SUPPORTED_API_MAJOR_MAX = 2
+SUPPORTED_API_MAJOR = 3
 
 
 class Board(object):
@@ -117,8 +116,7 @@ class Board(object):
             self.logger.error(f"Could not connect to {self.host} to fetch API information")
             raise TimeoutError
         except EspargosHTTPStatusError:
-            self.logger.warning(f"ESPARGOS at {self.host} runs older firmware with no API version information. " f"Please update the firmware.")
-            api_info = {"device": "espargos", "revision": "densiflorus", "api-major": 0, "api-minor": 0}
+            raise EspargosAPIVersionError(f"ESPARGOS controller at {self.host} did not provide API version information. " f"This version of pyespargos only supports API major version {SUPPORTED_API_MAJOR}. " "Please update the controller firmware.")
 
         if "api-major" not in api_info or "api-minor" not in api_info:
             raise EspargosUnexpectedResponseError(f"Server at {self.host} did not provide API version information in api_info response.")
@@ -126,11 +124,10 @@ class Board(object):
         api_major = api_info["api-major"]
         api_minor = api_info.get("api-minor", 0)
 
-        if api_major < SUPPORTED_API_MAJOR_MIN or api_major > SUPPORTED_API_MAJOR_MAX:
+        if api_major != SUPPORTED_API_MAJOR:
             raise EspargosAPIVersionError(
                 f"ESPARGOS controller at {self.host} runs API version {api_major}.{api_minor}, "
-                f"but this version of pyespargos only supports API major version between {SUPPORTED_API_MAJOR_MIN} and {SUPPORTED_API_MAJOR_MAX}. "
-                + ("Please update pyespargos." if api_major > SUPPORTED_API_MAJOR_MAX else "Please update the controller firmware.")
+                f"but this version of pyespargos only supports API major version {SUPPORTED_API_MAJOR}. " + ("Please update pyespargos." if api_major > SUPPORTED_API_MAJOR else "Please update the controller firmware.")
             )
 
         self.api_version = (api_major, api_minor)
@@ -172,7 +169,7 @@ class Board(object):
 
         Supported transports:
 
-        - "udp": The controller will send CSI packets to a local UDP socket. This transport is lower-latency and more efficient (higher throughput), but requires API version 1 or higher and may not work in all network environments.
+        - "udp": The controller will send CSI packets to a local UDP socket. This transport is lower-latency and more efficient (higher throughput), but may not work in all network environments.
         - "websocket": The controller will send CSI packets over a WebSocket connection. This transport is more widely compatible but may have higher latency and overhead.
         - "uart": The controller will stream CSI data over the local serial/UART link. This transport is only available for hosts specified as ``uart:<port>``.
 
@@ -183,7 +180,7 @@ class Board(object):
         if self._transport_kind == "uart":
             transports = ["uart"] if transports is None else transports
         elif transports is None:
-            transports = ["udp", "websocket"] if self.api_version[0] > 0 else ["websocket"]
+            transports = ["udp", "websocket"]
 
         for transport in transports:
             if transport == "uart":
@@ -193,8 +190,6 @@ class Board(object):
 
                 self.logger.warning(f"UART CSI stream failed for {self.get_name()}: {uart_error}")
             elif transport == "udp":
-                if self.api_version[0] == 0:
-                    raise EspargosAPIVersionError(f"ESPARGOS controller at {self.host} runs API version {self.api_version[0]}.{self.api_version[1]}, which does not support UDP CSI streaming. Please update the controller firmware.")
                 udp_error = self._try_start_udp()
                 if udp_error is None:
                     return
@@ -612,6 +607,41 @@ class Board(object):
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
         return self._get_json("get_gain_settings")
+
+    def set_radar_config(self, config: dict):
+        """
+        Sets the low-level radar TX configuration on the ESPARGOS controller.
+
+        The payload mirrors the controller's ``/set_tx_control`` API. Supported fields are:
+
+          - ``rfswitch_state`` (int)
+          - ``active_by_antid`` (list[bool], length 8)
+          - ``start_by_antid`` (list[int], length 8)
+          - ``period_by_antid`` (list[int], length 8)
+          - ``mac_by_antid`` (list[str], length 8, MAC addresses like ``"72:61:64:61:72:00"``)
+          - ``tx_power`` (int)
+          - ``tx_phymode`` (int)
+          - ``tx_rate`` (int)
+
+        Only provided fields are changed; others remain unchanged on the controller.
+
+        :param config: Radar TX configuration dict
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        self._post_json_ok("set_tx_control", config)
+
+    def get_radar_config(self) -> dict:
+        """
+        Fetches the current low-level radar TX configuration from the ESPARGOS controller.
+
+        The returned dict mirrors the controller's ``/get_tx_control`` response and contains fields such as
+        ``rfswitch_state``, ``active_by_antid``, ``start_by_antid``, ``period_by_antid``, ``mac_by_antid``,
+        ``tx_power``, ``tx_phymode``, and ``tx_rate``.
+
+        :return: Radar TX configuration dict
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        return self._get_json("get_tx_control")
 
     def add_consumer(self, clist: list, cv: threading.Condition, *args):
         """
