@@ -34,7 +34,11 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
     """
 
     BASE_DEFAULT_CONFIG = {
-        "backlog": {"size": 20, "fields": {"lltf": True, "ht20": False, "ht40": False}},
+        "backlog": {
+            "size": 20,
+            "fields": {"lltf": True, "ht20": False, "ht40": False},
+            "filters": {"exclude_11b": True},
+        },
         "pool": {
             # Pool configuration settings, partially handled by PoolDrawer
             "hosts": []
@@ -455,11 +459,14 @@ class SingleCSIFormatMixin:
         Automatically interpolates gaps for HT20/HT40 formats.
 
         :param additional_keys: Additional backlog keys to retrieve alongside the CSI data.
-        :param allow_incomplete: If True, replace NaN values (from incomplete CSI clusters) with zeros
-            instead of rejecting the data. Useful when a CSI completion timeout is configured.
+        :param allow_incomplete: If True, keep only CSI datapoints that are fully finite and drop
+            datapoints containing NaN values (from incomplete CSI clusters), instead of rejecting
+            the whole backlog request. Additional returned backlog fields are filtered accordingly.
+            Useful when a CSI completion timeout is configured.
         :param remove_global_sto: If True, remove global STO from CSI data by re-centering the cluster on the mean STO.
             This should be true unless you want to do processing across multiple subsequent CSI datapoints where the global STO would be relevant.
-        :return: CSI array if no additional keys, tuple of (csi, *additional) if keys specified, or None if unavailable.
+        :return: CSI array if no additional keys, tuple of (csi, *additional) if keys specified, or
+                 None if unavailable or no complete datapoints remain.
         """
         if not hasattr(self, "backlog") or not self.backlog.nonempty():
             return None
@@ -487,8 +494,11 @@ class SingleCSIFormatMixin:
         # Handle data containing NaN values (from incomplete CSI clusters)
         if np.any(np.isnan(csi_backlog)):
             if allow_incomplete:
-                csi_backlog = np.nan_to_num(csi_backlog, nan=0.0)
-                results[0] = csi_backlog
+                valid_datapoints = ~np.any(np.isnan(csi_backlog.reshape(csi_backlog.shape[0], -1)), axis=1)
+                if not np.any(valid_datapoints):
+                    return None
+                results = [result[valid_datapoints] for result in results]
+                csi_backlog = results[0]
             else:
                 return None
 

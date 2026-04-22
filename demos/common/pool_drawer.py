@@ -226,9 +226,10 @@ class PoolDrawer(PyQt6.QtCore.QObject):
 
         self.calibration_running = True
         duration = self.cfgman.get("calibration", "duration")
+        per_board = bool(self.cfgman.get("calibration", "per_board"))
 
         def _calibrate_thread():
-            self.pool.calibrate(per_board=False, duration=duration, run_in_thread=False)
+            self.pool.calibrate(per_board=per_board, duration=duration, run_in_thread=False)
             self.calibration_running = False
 
         # Perform calibration in separate thread to avoid blocking UI

@@ -355,6 +355,14 @@ class CSICluster(object):
         """
         return csi.wifi_pkt_rx_ctrl_v3_t(self._first_complete_sensor().rx_ctrl).channel
 
+    def is_11b(self) -> bool:
+        """
+        Check whether this packet uses the 802.11b baseband format.
+
+        :return: True if the packet is 802.11b, False otherwise
+        """
+        return csi.wifi_pkt_rx_ctrl_v3_t(self._first_complete_sensor().rx_ctrl).cur_bb_format == csi.wifi_rx_bb_format_t.RX_BB_FORMAT_11B
+
     def get_secondary_channel(self) -> int:
         """
         Get the secondary channel number.

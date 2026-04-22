@@ -145,7 +145,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     # list parameters contain PyQt6.QtCharts.QLineSeries
     @PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis, PyQt6.QtCharts.QValueAxis)
     def updateCSI(self, powerSeries, phaseSeries, subcarrierAxis, axis):
-        if (result := self.get_backlog_csi("rssi", "rfswitch_state")) is None:
+        if (result := self.get_backlog_csi("rssi", "rfswitch_state", allow_incomplete=True)) is None:
             return
 
         csi_backlog, rssi_backlog, rfswitch_state = result
@@ -178,8 +178,10 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         if self.pooldrawer.cfgman.get("gain", "automatic"):
             csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
 
-        # TODO: If using per-board calibration, interpolation should also be per-board
-        csi_interp = espargos.util.csi_interp_iterative(csi_backlog, iterations=5)
+        if self.pooldrawer.cfgman.get("calibration", "per_board"):
+            csi_interp = espargos.util.csi_interp_iterative_by_array(csi_backlog, iterations=5)
+        else:
+            csi_interp = espargos.util.csi_interp_iterative(csi_backlog, iterations=5)
         csi_flat = np.reshape(csi_interp, (-1, csi_interp.shape[-1]))
 
         display_mode = self.appconfig.get("display_mode")

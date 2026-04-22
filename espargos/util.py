@@ -88,16 +88,19 @@ def build_jones_matrices(antenna_orientations: np.ndarray, base_jones_matrix: np
 
 def csi_interp_iterative(csi: np.ndarray, weights: np.ndarray = None, iterations=10):
     """
-    Interpolates CSI data (frequency-domain or time-domain) using an iterative algorithm.
-    Tries to sum up the CSI data phase-coherently with the least error.
-    More details about the algorithm (which is quite straightforward) can be found in section
-    "IV. Linear Interpolation Baseline" in the paper "GAN-based Massive MIMO Channel Model Trained on Measured Data".
+    Coherently combines repeated CSI observations by iteratively phase-aligning them.
+
+    Each CSI snapshot is assumed to differ from the others mainly by a single
+    global phase rotation. The algorithm alternates between two steps:
+    estimating a combined CSI from the current phase offsets, and updating the
+    phase offset of each snapshot to best match that combined CSI.
 
     :param csi: The CSI data to interpolate. Complex-valued NumPy array. Can be an array with arbitrary dimensions, but the first dimension must be the number of CSI datapoints.
     :param weights: The weights to use for each CSI datapoint. If None, all datapoints are weighted equally.
     :param iterations: The number of iterations to perform. Default is 10.
 
-    :return: The interpolated CSI data. Complex-valued NumPy array with the same shape as the input CSI data.
+    :return: A phase-aligned weighted average of the input CSI data, with the
+             same shape as one CSI datapoint.
     """
     if weights is None:
         weights = np.ones(len(csi), dtype=csi.dtype) / len(csi)

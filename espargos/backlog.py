@@ -6,6 +6,43 @@ import re
 from . import csi
 
 
+class BacklogFilter(object):
+    """
+    Base class for CSI backlog filters.
+
+    Subclasses implement :meth:`matches` to decide whether a clustered CSI frame
+    should be admitted to the backlog.
+    """
+
+    def matches(self, clustered_csi):
+        raise NotImplementedError("BacklogFilter subclasses must implement matches()")
+
+
+class MacFilter(BacklogFilter):
+    """
+    Backlog filter that matches source MAC addresses against a regular
+    expression.
+
+    :param filter_regex: Regular expression applied to the source MAC string
+    """
+
+    def __init__(self, filter_regex):
+        self.filter_regex = filter_regex
+        self._compiled_regex = re.compile(filter_regex)
+
+    def matches(self, clustered_csi):
+        return self._compiled_regex.match(clustered_csi.get_source_mac()) is not None
+
+
+class Exclude11bFilter(BacklogFilter):
+    """
+    Backlog filter that drops 802.11b packets, which do not carry CSI.
+    """
+
+    def matches(self, clustered_csi):
+        return not clustered_csi.is_11b()
+
+
 class CSIBacklog(object):
     """
     CSI backlog class. Stores CSI data in a ringbuffer for processing when needed.
@@ -53,7 +90,8 @@ class CSIBacklog(object):
         self.head = 0
         self.latest = None
         self.filllevel = 0
-        self.mac_filter = None
+        self.filter_mutex = threading.Lock()
+        self.filters = []
 
         self._initialize_storage(
             size=size,
@@ -123,9 +161,11 @@ class CSIBacklog(object):
                     self.filllevel = min(self.filllevel + 1, self.size)
 
     def _on_new_csi(self, clustered_csi):
-        # Check MAC address if filter is installed
-        if self.mac_filter is not None:
-            if not self.mac_filter.match(clustered_csi.get_source_mac()):
+        with self.filter_mutex:
+            filters = tuple(self.filters)
+
+        for backlog_filter in filters:
+            if not backlog_filter.matches(clustered_csi):
                 return
 
         with self.storage_mutex:
@@ -294,13 +334,44 @@ class CSIBacklog(object):
         self.running = False
         self.thread.join()
 
-    def set_mac_filter(self, filter_regex):
+    def add_filter(self, backlog_filter):
         """
-        Set a MAC address filter for the backlog
+        Add a filter to the backlog.
 
-        :param filter_regex: MAC address filter regex
+        :param backlog_filter: Instance of :class:`BacklogFilter`
         """
-        self.mac_filter = re.compile(filter_regex)
+        if not isinstance(backlog_filter, BacklogFilter):
+            raise TypeError("backlog_filter must be an instance of BacklogFilter")
+
+        with self.filter_mutex:
+            if backlog_filter not in self.filters:
+                self.filters.append(backlog_filter)
+
+    def remove_filter(self, backlog_filter):
+        """
+        Remove a previously added filter from the backlog.
+
+        :param backlog_filter: Instance of :class:`BacklogFilter`
+        """
+        with self.filter_mutex:
+            if backlog_filter in self.filters:
+                self.filters.remove(backlog_filter)
+
+    def clear_filters(self):
+        """
+        Remove all filters from the backlog.
+        """
+        with self.filter_mutex:
+            self.filters.clear()
+
+    def get_filters(self):
+        """
+        Get the list of currently active backlog filters.
+
+        :return: List of :class:`BacklogFilter` instances
+        """
+        with self.filter_mutex:
+            return list(self.filters)
 
     def get_size(self):
         """

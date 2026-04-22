@@ -20,7 +20,9 @@ Item  {
 			ht20EnableLabel,
 			ht20EnableSwitch,
 			ht40EnableLabel,
-			ht40EnableSwitch
+			ht40EnableSwitch,
+			exclude11bLabel,
+			exclude11bSwitch
 		]
 
 		let targetLayout = insertBefore.parent
@@ -155,5 +157,25 @@ Item  {
 		onCheckedChanged: backlogConfigManager.onControlChanged(this)
 
 		checked: false
+	}
+
+	Label {
+		id: exclude11bLabel
+		text: "Exclude 802.11b"
+		color: "#ffffff"
+		horizontalAlignment: Text.AlignRight
+		Layout.alignment: Qt.AlignRight
+		Layout.fillWidth: true
+	}
+
+	Switch {
+		id: exclude11bSwitch
+		property string configKey: "filters.exclude_11b"
+		property string configProp: "checked"
+
+		Component.onCompleted: backlogConfigManager.register(this)
+		onCheckedChanged: backlogConfigManager.onControlChanged(this)
+
+		checked: true
 	}
 }

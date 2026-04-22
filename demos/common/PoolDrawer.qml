@@ -148,8 +148,6 @@ Drawer {
 				visible: root.calibrationInProgress
 			}
 
-			// Calibration settings are still TODO
-			/*
 			Label { text: "Per Board"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {
 				id: perBoardCalibSwitch
@@ -160,7 +158,10 @@ Drawer {
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false
+				ToolTip.visible: hovered
+				ToolTip.text: "For multi-board setups: Calibrate each ESPARGOS board independently. Enable this when boards do not share one common clock and phase reference signal."
 			}
+			/*
 			Label { text: "Show Raw"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {
 				id: showCalibSwitch
