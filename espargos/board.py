@@ -680,9 +680,7 @@ class Board(object):
                 self.logger.debug("Ignoring CSI payload with unexpected logical type header")
                 continue
 
-            if serialized_csi.antid != packet_antid:
-                self.logger.warning(f"Received CSI packet with unexpected antid {packet_antid} " f"(packet says {serialized_csi.antid}), dropping packet")
-                continue
+            serialized_csi.antid = packet_antid
 
             packet_esp_num = self.revision.antid_to_esp_num[packet_antid]
 

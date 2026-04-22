@@ -42,7 +42,6 @@ HT20_SIMULATION_MODES = (
     "fix32_corrected",
 )
 
-SERIALIZED_CSI_TLV_TYPE_SENSOR_META = 1
 SERIALIZED_CSI_TLV_TYPE_FRAME_META = 2
 SERIALIZED_CSI_TLV_TYPE_TIMING_META = 3
 SERIALIZED_CSI_TLV_TYPE_ACQUIRE_META = 4
@@ -297,7 +296,7 @@ class serialized_csi_tlv_t:
         self.acquire_flags = 0
         self.acquire_val_scale_cfg = 0
         self.rfswitch_state = rfswitch_state_t.SENSOR_RFSWITCH_UNKNOWN
-        self.antid = 0
+        self.antid = 0xFF
         self.rx_ctrl = bytes()
         self.buf = bytes()
         self.csi_len = 0
@@ -322,11 +321,7 @@ class serialized_csi_tlv_t:
 
             value = raw[offset:tlv_end]
 
-            if tlv_type == SERIALIZED_CSI_TLV_TYPE_SENSOR_META:
-                if tlv_len < 1:
-                    raise ValueError("Invalid sensor meta TLV")
-                self.antid = value[0]
-            elif tlv_type == SERIALIZED_CSI_TLV_TYPE_FRAME_META:
+            if tlv_type == SERIALIZED_CSI_TLV_TYPE_FRAME_META:
                 if tlv_len < 16:
                     raise ValueError("Invalid frame meta TLV")
                 self.source_mac = bytes(value[0:6])
