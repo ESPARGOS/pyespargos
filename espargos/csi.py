@@ -7,10 +7,11 @@ from . import constants
 
 # Internal constants
 _ESPARGOS_SPI_BUFFER_SIZE_V3 = 384
-CSISTREAM_FRAME_PREFIX_SIZE = 4
 SPI_TYPE_HEADER_CSI = 0xE4CD0BAC
 SPI_TYPE_HEADER_JUMBO_FRAME = 0xDECAFBAD
 JUMBO_FRAGMENT_TERMINATOR_UID = 0
+CSISTREAM_UID_SENSOR_SHIFT = 29
+CSISTREAM_UID_SENSOR_MASK = 0x7
 
 # Other constants
 HT_COEFFICIENTS_PER_CHANNEL = 57
@@ -94,25 +95,6 @@ class seq_ctrl_t(ctypes.LittleEndianStructure):
 
     _pack_ = 1
     _fields_ = [("frag", ctypes.c_uint16, 4), ("seg", ctypes.c_uint16, 12)]
-
-    def __new__(self, buf=None):
-        return self.from_buffer_copy(buf)
-
-    def __init__(self, buf=None):
-        pass
-
-
-class csistream_pkt_v3_t(ctypes.LittleEndianStructure):
-    """
-    A ctypes structure representing a CSI packet as received from the ESPARGOS controller, i.e.,
-    sensor number and the raw data buffer that should contain the serialized CSI TLV packet if the type_header matches.
-    """
-
-    _pack_ = 1
-    _fields_ = [
-        ("esp_num", ctypes.c_uint32),
-        ("buf", ctypes.c_uint8 * _ESPARGOS_SPI_BUFFER_SIZE_V3),
-    ]
 
     def __new__(self, buf=None):
         return self.from_buffer_copy(buf)
@@ -1122,16 +1104,19 @@ def deserialize_packet_buffer(revision, pktbuf):
     return revision.serialized_csi_t(pktbuf)
 
 
-def parse_csistream_jumbo_message(message: bytes) -> tuple[int, bytes]:
-    if len(message) < CSISTREAM_FRAME_PREFIX_SIZE + 4:
+def csistream_uid_to_antid(uid: int) -> int:
+    return (uid >> CSISTREAM_UID_SENSOR_SHIFT) & CSISTREAM_UID_SENSOR_MASK
+
+
+def parse_csistream_jumbo_message(message: bytes) -> bytes:
+    if len(message) < 4:
         raise ValueError("CSI stream message too short")
 
-    esp_num = int.from_bytes(message[:CSISTREAM_FRAME_PREFIX_SIZE], byteorder="little")
-    jumbo = message[CSISTREAM_FRAME_PREFIX_SIZE:]
+    jumbo = bytes(message)
     if int.from_bytes(jumbo[:4], byteorder="little") != SPI_TYPE_HEADER_JUMBO_FRAME:
         raise ValueError("CSI stream message does not contain a jumbo frame")
 
-    return esp_num, jumbo
+    return jumbo
 
 
 def iter_csistream_fragments(jumbo: bytes):

@@ -628,7 +628,7 @@ class Board(object):
 
     def _csistream_handle_message(self, message):
         try:
-            esp_num, jumbo = csi.parse_csistream_jumbo_message(message)
+            jumbo = csi.parse_csistream_jumbo_message(message)
             fragments = list(csi.iter_csistream_fragments(jumbo))
         except ValueError as exc:
             self.logger.debug(f"Ignoring malformed CSI stream message: {exc}")
@@ -641,15 +641,21 @@ class Board(object):
 
         completed_packets = []
         for header, payload in fragments:
-            key = (esp_num, int(header.uid))
+            packet_antid = csi.csistream_uid_to_antid(int(header.uid))
+            key = int(header.uid)
             entry = self._fragment_reassembly.get(key)
             if entry is None or entry["total_fragments"] != int(header.total_fragments):
                 entry = {
                     "timestamp": now,
+                    "antid": packet_antid,
                     "total_fragments": int(header.total_fragments),
                     "parts": {},
                 }
                 self._fragment_reassembly[key] = entry
+            elif entry["antid"] != packet_antid:
+                self.logger.warning(f"Received jumbo fragments with inconsistent UID-derived antid for uid {int(header.uid)}")
+                self._fragment_reassembly.pop(key, None)
+                continue
 
             entry["timestamp"] = now
             entry["parts"][int(header.fragment_index)] = bytes(payload)
@@ -664,21 +670,21 @@ class Board(object):
             if any(index not in entry["parts"] for index in range(entry["total_fragments"])):
                 continue
 
-            completed_packets.append((esp_num, b"".join(entry["parts"][index] for index in range(entry["total_fragments"]))))
+            completed_packets.append((entry["antid"], b"".join(entry["parts"][index] for index in range(entry["total_fragments"]))))
             self._fragment_reassembly.pop(key, None)
 
-        for packet_esp_num, packet_payload in completed_packets:
+        for packet_antid, packet_payload in completed_packets:
             try:
                 serialized_csi = csi.deserialize_packet_buffer(self.revision, packet_payload)
             except (AssertionError, ValueError):
                 self.logger.debug("Ignoring CSI payload with unexpected logical type header")
                 continue
 
-            # Check if antid matches the expected sensor ID (antid is provided by sensors, sensor ID provided by controller)
-            expected_esp_num = self.revision.antid_to_esp_num[serialized_csi.antid]
-            if expected_esp_num != packet_esp_num:
-                self.logger.warning(f"Received CSI packet with unexpected esp_num {packet_esp_num} " f"(expected {expected_esp_num} for antid {serialized_csi.antid}), dropping packet")
+            if serialized_csi.antid != packet_antid:
+                self.logger.warning(f"Received CSI packet with unexpected antid {packet_antid} " f"(packet says {serialized_csi.antid}), dropping packet")
                 continue
+
+            packet_esp_num = self.revision.antid_to_esp_num[packet_antid]
 
             for clist, cv, args in self.consumers:
                 with cv:

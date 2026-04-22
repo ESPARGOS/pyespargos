@@ -484,10 +484,10 @@ class UARTClient:
 
 def validate_csistream_payload(payload: bytes, revision) -> bool:
     del revision
-    if len(payload) < csi.CSISTREAM_FRAME_PREFIX_SIZE + 4:
+    if len(payload) < 4:
         return False
     try:
-        _, jumbo = csi.parse_csistream_jumbo_message(payload)
+        jumbo = csi.parse_csistream_jumbo_message(payload)
         for _header, _fragment in csi.iter_csistream_fragments(jumbo):
             pass
     except ValueError:
