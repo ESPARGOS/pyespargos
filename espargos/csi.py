@@ -994,42 +994,9 @@ _COMPRESSED_LLTF_FORCE_CORRECTION = _build_masked_tap_correction(
 )
 _COMPRESSED_LLTF_FORCE_FIX32_CORRECTION = _build_lltf_force_fix32_tap_correction()
 _COMPRESSED_LLTF_FIX32_CORRECTION = _build_lltf_fix32_tap_correction()
-_COMPRESSED_HT20_FLOAT_CORRECTION = _build_masked_tap_correction(
-    COMPRESSED_HT20_FFT_SIZE,
-    HT_COEFFICIENTS_PER_CHANNEL,
-    COMPRESSED_HT20_TAP_START,
-    COMPRESSED_TAP_COUNT,
-    [HT_COEFFICIENTS_PER_CHANNEL // 2],
-)
 _COMPRESSED_HT20_CORRECTION = _build_ht20_sensor_tap_correction()
 _COMPRESSED_HT20_FIX32_CORRECTION = _build_ht20_fix32_tap_correction()
 _COMPRESSED_HT40_FIX32_CORRECTION = _build_ht40_fix32_tap_correction()
-
-
-def _build_ht20_masked_centered_spectrum(spectrum: np.ndarray) -> np.ndarray:
-    centered = np.zeros((COMPRESSED_HT20_FFT_SIZE,), dtype=np.complex64)
-    active = _active_slice(COMPRESSED_HT20_FFT_SIZE, HT_COEFFICIENTS_PER_CHANNEL)
-    centered[active] = np.asarray(spectrum, dtype=np.complex64)
-    centered[active][HT_COEFFICIENTS_PER_CHANNEL // 2] = 0.0
-    return centered
-
-
-def _ht20_float_observed_taps(centered_spectrum: np.ndarray) -> np.ndarray:
-    centered_cir = _centered_ifft(centered_spectrum)
-    return centered_cir[COMPRESSED_HT20_TAP_START : COMPRESSED_HT20_TAP_START + COMPRESSED_TAP_COUNT].astype(np.complex64)
-
-
-def _recover_ht20_spectrum_from_taps(observed_taps: np.ndarray, correction: np.ndarray | None) -> np.ndarray:
-    taps = np.asarray(observed_taps, dtype=np.complex64)
-    if correction is not None:
-        taps = np.matmul(correction, taps.astype(np.complex64))
-
-    centered_cir = np.zeros((COMPRESSED_HT20_FFT_SIZE,), dtype=np.complex64)
-    centered_cir[COMPRESSED_HT20_TAP_START : COMPRESSED_HT20_TAP_START + COMPRESSED_TAP_COUNT] = taps
-    centered_spectrum = _centered_fft(centered_cir, COMPRESSED_HT20_FFT_SIZE)
-    spectrum = centered_spectrum[_active_slice(COMPRESSED_HT20_FFT_SIZE, HT_COEFFICIENTS_PER_CHANNEL)].copy()
-    spectrum[HT_COEFFICIENTS_PER_CHANNEL // 2] = 0.0
-    return spectrum
 
 
 def _interpolate_ht20_dc(spectrum: np.ndarray) -> np.ndarray:
@@ -1037,31 +1004,6 @@ def _interpolate_ht20_dc(spectrum: np.ndarray) -> np.ndarray:
     dc_index = HT_COEFFICIENTS_PER_CHANNEL // 2
     spectrum[dc_index] = 0.5 * (spectrum[dc_index - 1] + spectrum[dc_index + 1])
     return spectrum
-
-
-def simulate_ht20_compression(spectrum: np.ndarray, mode: str) -> np.ndarray:
-    centered = _build_ht20_masked_centered_spectrum(spectrum)
-
-    if mode == "float":
-        taps = _ht20_float_observed_taps(centered)
-        return _interpolate_ht20_dc(_recover_ht20_spectrum_from_taps(taps, None))
-    if mode == "float_corrected":
-        taps = _ht20_float_observed_taps(centered)
-        return _interpolate_ht20_dc(_recover_ht20_spectrum_from_taps(taps, _COMPRESSED_HT20_FLOAT_CORRECTION))
-    if mode == "sc32":
-        taps = _sensor_centered_spectrum_to_ht20_observed_taps(centered)
-        return _interpolate_ht20_dc(_recover_ht20_spectrum_from_taps(taps, None))
-    if mode == "sc32_corrected":
-        taps = _sensor_centered_spectrum_to_ht20_observed_taps(centered)
-        return _interpolate_ht20_dc(_recover_ht20_spectrum_from_taps(taps, _COMPRESSED_HT20_CORRECTION))
-    if mode == "fix32":
-        taps = _sensor_centered_spectrum_to_ht20_observed_taps_fix32(centered)
-        return _interpolate_ht20_dc(_recover_ht20_spectrum_from_taps(taps, None))
-    if mode == "fix32_corrected":
-        taps = _sensor_centered_spectrum_to_ht20_observed_taps_fix32(centered)
-        return _interpolate_ht20_dc(_recover_ht20_spectrum_from_taps(taps, _COMPRESSED_HT20_FIX32_CORRECTION))
-
-    raise ValueError(f"Unknown HT20 simulation mode: {mode}")
 
 
 def _decode_compressed_tap_window(

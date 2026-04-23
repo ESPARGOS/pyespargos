@@ -22,15 +22,11 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
 
     displayModeChanged = PyQt6.QtCore.pyqtSignal()
     oversamplingChanged = PyQt6.QtCore.pyqtSignal()
-    simulatedCompressionChanged = PyQt6.QtCore.pyqtSignal()
-    simulatedCompressionTechniqueChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
         "display_mode": "frequency",  # "frequency", "timedomain", "music", "mvdr"
         "oversampling": 4,
         "feed_filter": "all",
-        "simulated_compression_enabled": False,
-        "simulated_compression_technique": "float_corrected",
     }
 
     def __init__(self, argv):
@@ -71,16 +67,6 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             self.stable_power_maximum = None
             self.oversamplingChanged.emit()
 
-        if "simulated_compression_enabled" in newcfg:
-            self.stable_power_minimum = None
-            self.stable_power_maximum = None
-            self.simulatedCompressionChanged.emit()
-
-        if "simulated_compression_technique" in newcfg:
-            self.stable_power_minimum = None
-            self.stable_power_maximum = None
-            self.simulatedCompressionTechniqueChanged.emit()
-
         super()._on_update_app_state(newcfg)
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
@@ -94,14 +80,6 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=oversamplingChanged)
     def oversampling(self):
         return self.appconfig.get("oversampling")
-
-    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=simulatedCompressionChanged)
-    def simulatedCompressionEnabled(self):
-        return self.appconfig.get("simulated_compression_enabled")
-
-    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=simulatedCompressionTechniqueChanged)
-    def simulatedCompressionTechnique(self):
-        return self.appconfig.get("simulated_compression_technique")
 
     # Mapping from config string to rfswitch_state_t
     FEED_FILTER_MAP = {
@@ -134,14 +112,6 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         else:
             return previous * 0.97 + new * 0.03
 
-    def _apply_simulated_ht20_compression(self, csi_backlog: np.ndarray) -> np.ndarray:
-        mode = self.appconfig.get("simulated_compression_technique")
-        flat = np.reshape(csi_backlog, (-1, csi_backlog.shape[-1]))
-        simulated = np.zeros_like(flat)
-        for i, spectrum in enumerate(flat):
-            simulated[i] = espargos.csi.simulate_ht20_compression(spectrum, mode)
-        return np.reshape(simulated, csi_backlog.shape)
-
     # list parameters contain PyQt6.QtCharts.QLineSeries
     @PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis, PyQt6.QtCharts.QValueAxis)
     def updateCSI(self, powerSeries, phaseSeries, subcarrierAxis, axis):
@@ -153,9 +123,6 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         # If RSSI contains NaN, skip this update
         if np.isnan(rssi_backlog).any():
             return
-
-        if self.genericconfig.get("preamble_format") == "ht20" and self.appconfig.get("simulated_compression_enabled"):
-            csi_backlog = self._apply_simulated_ht20_compression(csi_backlog)
 
         # Apply feed filter if not "all"
         feed_mask = np.full(rfswitch_state.shape, True, dtype=bool)
@@ -223,7 +190,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
                 )
                 / oversampling
             )
-            csi_power = (csi_flat_zeropadded.shape[1] * np.abs(csi_flat_zeropadded)) ** 2
+            csi_power = csi_flat_zeropadded.shape[1] * np.abs(csi_flat_zeropadded) ** 2
             self.stable_power_minimum = 0
             self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, np.max(csi_power) * 1.1)
 

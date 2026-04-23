@@ -81,50 +81,6 @@ Common.ESPARGOSApplication {
 				currentValue: "all"
 			}
 
-			Label { Layout.columnSpan: 2; text: "Simulated Compression"; color: "#9fb3c8" }
-
-			Label { text: "Enable"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Switch {
-				id: simulatedCompressionSwitch
-				property string configKey: "simulated_compression_enabled"
-				property string configProp: "checked"
-				property var encode: function(v) { return v ? 1 : 0 }
-				property var decode: function(v) { return !!v }
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
-				checked: false
-			}
-
-			Label {
-				text: "Technique"
-				color: "#ffffff"
-				horizontalAlignment: Text.AlignRight
-				Layout.alignment: Qt.AlignRight
-				Layout.fillWidth: true
-				enabled: simulatedCompressionSwitch.checked && backend.preambleFormat === "ht20"
-			}
-			ComboBox {
-				id: simulatedCompressionCombo
-				property string configKey: "simulated_compression_technique"
-				property string configProp: "currentValue"
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 210
-				enabled: simulatedCompressionSwitch.checked && backend.preambleFormat === "ht20"
-
-				model: [
-					{ value: "float", text: "Float, No Correction" },
-					{ value: "float_corrected", text: "Float, Corrected" },
-					{ value: "sc32", text: "Fixed-Point SC32, No Correction" },
-					{ value: "sc32_corrected", text: "Fixed-Point SC32, Corrected" },
-					{ value: "fix32", text: "Fixed-Point FIX32, No Correction" },
-					{ value: "fix32_corrected", text: "Fixed-Point FIX32, Corrected" }
-				]
-				textRole: "text"
-				valueRole: "value"
-				currentValue: "float_corrected"
-			}
-
 			Common.GenericAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
@@ -197,7 +153,9 @@ Common.ESPARGOSApplication {
 					titleText: (backend.timeDomain || backend.superResolution) ? "<font color=\"#e0e0e0\">Power [linear]</font>" : "<font color=\"#e0e0e0\">Power [dB]</font>"
 					titleFont.bold: false
 					gridLineColor: "#c0c0c0"
-					tickInterval: backend.timeDomain ? 100000 : (backend.superResolution ? 0.5 : 5)
+					tickInterval: (backend.timeDomain || backend.superResolution)
+						? Math.max(0.2, (max - min) / 6)
+						: 5
 					tickType: ValueAxis.TicksDynamic
 					labelsColor: "#e0e0e0"
 				}
@@ -264,6 +222,7 @@ Common.ESPARGOSApplication {
 	}
 
 	Timer {
+		id: updateTimer
 		interval: (backend.superResolution ? 1 / 30 : 1 / 60) * 1000
 		running: true
 		repeat: true

@@ -161,7 +161,7 @@ Item  {
 
 	Label {
 		id: exclude11bLabel
-		text: "Exclude 802.11b"
+		text: "Exclude 11b"
 		color: "#ffffff"
 		horizontalAlignment: Text.AlignRight
 		Layout.alignment: Qt.AlignRight
