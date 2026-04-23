@@ -60,8 +60,6 @@ RADAR_TX_REPORT_TLV_TYPE_RAW_META = 5
 RADAR_TX_REPORT_TLV_TYPE_CRC32 = 255
 
 RADAR_TX_REPORT_FLAG_HAS_HW_TIMESTAMP = 1 << 0
-RADAR_TX_REPORT_FLAG_FTM_DESCRIPTOR_EXPERIMENT = 1 << 1
-RADAR_TX_REPORT_FLAG_FTM_SHAPED_FRAME = 1 << 2
 
 SERIALIZED_CSI_TLV_FRAME_FLAG_IS_CALIB = 1 << 0
 SERIALIZED_CSI_TLV_FRAME_FLAG_IS_RADAR = 1 << 1
@@ -587,14 +585,6 @@ class radar_tx_report_tlv_t:
     @property
     def has_hardware_tx_timestamp(self):
         return bool(self.flags & RADAR_TX_REPORT_FLAG_HAS_HW_TIMESTAMP)
-
-    @property
-    def has_ftm_descriptor_experiment(self):
-        return bool(self.flags & RADAR_TX_REPORT_FLAG_FTM_DESCRIPTOR_EXPERIMENT)
-
-    @property
-    def is_ftm_shaped_frame(self):
-        return bool(self.flags & RADAR_TX_REPORT_FLAG_FTM_SHAPED_FRAME)
 
     def get_hardware_tx_timestamp_ns(self) -> float:
         """
