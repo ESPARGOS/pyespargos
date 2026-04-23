@@ -48,6 +48,8 @@ class CSICluster(object):
         self.timestamp = time.time()
         self.board_revisions = board_revisions
         self.serialized_csi_all = [[[None for c in range(constants.ANTENNAS_PER_ROW)] for r in range(constants.ROWS_PER_BOARD)] for b in self.board_revisions]
+        self.radar_tx_report = None
+        self.radar_tx_index = -1
         self.shape = (
             len(self.board_revisions),
             constants.ROWS_PER_BOARD,
@@ -82,6 +84,8 @@ class CSICluster(object):
         assert binascii.hexlify(bytearray(serialized_csi.dest_mac)).decode("utf-8") == self.dest_mac
         assert serialized_csi.seq_ctrl.seg == self.seq_ctrl.seg
         assert serialized_csi.seq_ctrl.frag == self.seq_ctrl.frag
+        if self.radar_tx_report is not None:
+            assert serialized_csi.is_radar
 
         # TODO: Assert that esp_num matches self-identified antenna ID
 
@@ -101,6 +105,45 @@ class CSICluster(object):
         self.noise_floor_all[board_num, row, col] = (noise_floor - 0x100) if (noise_floor & 0x80) else noise_floor
         self.rfswitch_state_all[board_num, row, col] = serialized_csi.rfswitch_state
         self.cfo_all[board_num, row, col] = csi.get_cfo_from_rx_ctrl(serialized_csi.rx_ctrl)
+
+    def set_radar_tx_report(self, radar_tx_report: csi.radar_tx_report_tlv_t, board_num: int | None = None, esp_num: int | None = None):
+        """
+        Attach radar transmit metadata for the Wi-Fi packet represented by this cluster.
+        """
+        assert binascii.hexlify(bytearray(radar_tx_report.source_mac)).decode("utf-8") == self.source_mac
+        assert binascii.hexlify(bytearray(radar_tx_report.dest_mac)).decode("utf-8") == self.dest_mac
+        assert radar_tx_report.seq_ctrl.seg == self.seq_ctrl.seg
+        assert radar_tx_report.seq_ctrl.frag == self.seq_ctrl.frag
+
+        serialized_csi = self._first_complete_sensor()
+        if serialized_csi is not None:
+            assert serialized_csi.is_radar
+
+        if self.radar_tx_report is not None:
+            assert bytes(self.radar_tx_report) == bytes(radar_tx_report)
+
+        self.radar_tx_report = radar_tx_report
+        if board_num is not None and esp_num is not None:
+            row, col = self.board_revisions[board_num].esp_num_to_row_col(esp_num)
+            self.radar_tx_index = board_num * constants.ROWS_PER_BOARD * constants.ANTENNAS_PER_ROW + row * constants.ANTENNAS_PER_ROW + col
+
+    def has_radar_tx_report(self) -> bool:
+        """
+        Check whether this cluster has transmit-side radar metadata attached.
+        """
+        return self.radar_tx_report is not None
+
+    def get_radar_tx_info(self):
+        """
+        Return the transmit-side radar report for this packet, or None if not available.
+        """
+        return self.radar_tx_report
+
+    def get_radar_tx_index(self) -> int:
+        """
+        Return the flattened TX sensor index derived from the CSI stream UID, or -1 if unknown.
+        """
+        return int(self.radar_tx_index)
 
     def deserialize_csi_lltf(self):
         """

@@ -59,9 +59,9 @@ class EspargosDemoSpeedtest(ESPARGOSApplication):
     def _make_predicate(self):
         min_antennas = self.appconfig.get("min_antennas")
 
-        def predicate(completion, age):
+        def predicate(cluster):
             # Minimum age so that we don't count packets that are still being acquired (and thus have incomplete CSI data)
-            return np.sum(completion) >= min_antennas and age > 0.5
+            return np.sum(cluster.get_completion()) >= min_antennas and cluster.get_age() > 0.5
 
         return predicate
 

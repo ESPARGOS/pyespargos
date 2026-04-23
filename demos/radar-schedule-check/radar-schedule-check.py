@@ -23,6 +23,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
     statusTextChanged = PyQt6.QtCore.pyqtSignal()
     sensorCountChanged = PyQt6.QtCore.pyqtSignal()
     scheduleOffsetChanged = PyQt6.QtCore.pyqtSignal()
+    txRxTimestampTableChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
         "period_us": 80000,
@@ -51,6 +52,8 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
         self._packet_schedule_offsets_us = []
         self._schedule_offset_us = np.nan
         self._residual_history_us = [[] for _ in range(len(self._residuals_us))]
+        self._tx_rx_latest_delta_ns = np.full((len(self._residuals_us), len(self._residuals_us)), np.nan, dtype=np.float64)
+        self._tx_rx_timestamp_table_text = "No TX/RX timestamp pairs yet"
         self._run_worker_enabled = True
         self._run_worker_thread = None
 
@@ -63,10 +66,13 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
         self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
         self.pool.calibrate(duration=2, per_board=False, run_in_thread=True)
         self._residuals_us = np.full(np.prod(self.pool.get_shape()), np.nan, dtype=np.float64)
+        self._residual_std_us = np.full_like(self._residuals_us, np.nan, dtype=np.float64)
+        self._reset_tx_rx_timestamp_table()
         self.sensorCountChanged.emit()
+        self.txRxTimestampTableChanged.emit()
         self.pool.add_csi_callback(
             self._on_csi_cluster,
-            cb_predicate=lambda completion, age: np.sum(completion) >= np.prod(completion.shape) - 1,
+            cb_predicate=lambda cluster: cluster.has_radar_tx_report() and np.sum(cluster.get_completion()) >= np.prod(cluster.get_completion().shape) - 1,
         )
         self.pooldrawer.calibrationStarted.connect(self._on_calibration_started)
         self.pooldrawer.calibrationFinished.connect(self._on_calibration_finished)
@@ -94,10 +100,17 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
         self._packet_count = 0
         self._packet_schedule_offsets_us.clear()
         self._schedule_offset_us = np.nan
+        self._reset_tx_rx_timestamp_table()
         self.radarResidualsChanged.emit()
         self.latestSourceChanged.emit()
         self.packetCountChanged.emit()
         self.scheduleOffsetChanged.emit()
+        self.txRxTimestampTableChanged.emit()
+
+    def _reset_tx_rx_timestamp_table(self):
+        sensor_count = len(self._residuals_us)
+        self._tx_rx_latest_delta_ns = np.full((sensor_count, sensor_count), np.nan, dtype=np.float64)
+        self._tx_rx_timestamp_table_text = "No TX/RX timestamp pairs yet"
 
     @PyQt6.QtCore.pyqtSlot()
     def _on_calibration_started(self):
@@ -171,6 +184,10 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
     def scheduleOffsetUs(self):
         return float(self._schedule_offset_us) if np.isfinite(self._schedule_offset_us) else 0.0
 
+    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=txRxTimestampTableChanged)
+    def txRxTimestampTableText(self):
+        return self._tx_rx_timestamp_table_text
+
     @PyQt6.QtCore.pyqtSlot()
     def applyRadarSchedule(self):
         self._ensure_run_worker()
@@ -231,6 +248,8 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
     def _on_csi_cluster(self, csi_cluster: espargos.CSICluster):
         if not csi_cluster.is_radar():
             return
+        if not csi_cluster.has_radar_tx_report():
+            return
 
         schedule = self._radar_schedule_by_source_mac.get(self._normalize_mac(csi_cluster.get_source_mac()))
         if schedule is None:
@@ -238,6 +257,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
 
         calibration = self.pool.get_calibration()
         timestamps = csi_cluster.get_sensor_timestamps()
+        self._update_tx_rx_timestamp_table(schedule, csi_cluster.get_radar_tx_info(), timestamps)
         reference_timestamps = timestamps - calibration.sensor_clock_offsets
 
         expected_reference_time = np.full_like(reference_timestamps, schedule["reference_start_s"], dtype=np.float64)
@@ -291,6 +311,63 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
         self.packetCountChanged.emit()
         self.scheduleOffsetChanged.emit()
         self.statusTextChanged.emit()
+        self.txRxTimestampTableChanged.emit()
+
+    def _sensor_flat_index(self, board_index: int, row: int, col: int) -> int:
+        return board_index * espargos.constants.ANTENNAS_PER_BOARD + row * espargos.constants.ANTENNAS_PER_ROW + col
+
+    def _tx_flat_index_from_schedule(self, schedule: dict) -> int:
+        row, col = self._antid_to_row_col(self.pool.boards[schedule["board_index"]].revision, schedule["antid"])
+        return self._sensor_flat_index(schedule["board_index"], row, col)
+
+    def _update_tx_rx_timestamp_table(self, schedule: dict, tx_report, rx_timestamps_s: np.ndarray):
+        tx_timestamp_ns = tx_report.get_hardware_tx_timestamp_ns()
+        if not np.isfinite(tx_timestamp_ns):
+            return
+
+        tx_index = self._tx_flat_index_from_schedule(schedule)
+        print(
+            "radar tx timestamp raw:",
+            f"tx_sensor={tx_index}",
+            f"source_mac={self._normalize_mac(bytes(tx_report.source_mac).hex())}",
+            f"seq={tx_report.seq_ctrl.seg}",
+            f"slot={tx_report.descriptor_slot}",
+            f"reg0=0x{tx_report.timestamp_reg0:08x}",
+            f"reg1=0x{tx_report.timestamp_reg1:08x}",
+            f"reg2=0x{tx_report.timestamp_reg2:08x}",
+            f"phase_raw={tx_report.get_hardware_tx_phase_raw()}",
+            flush=True,
+        )
+
+        for (board_index, row, col), rx_timestamp_s in np.ndenumerate(rx_timestamps_s):
+            if not np.isfinite(rx_timestamp_s):
+                continue
+            rx_index = self._sensor_flat_index(board_index, row, col)
+            self._tx_rx_latest_delta_ns[rx_index, tx_index] = float(rx_timestamp_s * 1e9 - tx_timestamp_ns)
+
+        self._tx_rx_timestamp_table_text = self._format_tx_rx_timestamp_table()
+
+    def _format_tx_rx_timestamp_table(self) -> str:
+        sensor_count = len(self._residuals_us)
+        cell_width = 24
+        lines = [
+            "latest rx - tx timestamp difference [ns]",
+            " " * 7 + "".join(f"TX{i:02d}".rjust(cell_width) for i in range(sensor_count)),
+        ]
+
+        for rx_index in range(sensor_count):
+            cells = []
+            for tx_index in range(sensor_count):
+                value = self._tx_rx_latest_delta_ns[rx_index, tx_index]
+                if not np.isfinite(value):
+                    cells.append(".".rjust(cell_width))
+                    continue
+
+                cells.append(f"{value:+.1f}".rjust(cell_width))
+
+            lines.append(f"RX{rx_index:02d}  " + "".join(cells))
+
+        return "\n".join(lines)
 
     def onAboutToQuit(self):
         self._run_worker_enabled = False

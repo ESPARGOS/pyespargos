@@ -200,10 +200,11 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
         self.sampleCountChanged.emit()
         self.sampleProgressChanged.emit()
 
-    def _partial_cluster_predicate(self, completion, age):
+    def _partial_cluster_predicate(self, cluster):
+        completion = cluster.get_completion()
         timeout_condition = False
         if self.args.csi_completion_timeout > 0:
-            timeout_condition = np.sum(completion) >= 2 and age > self.args.csi_completion_timeout
+            timeout_condition = np.sum(completion) >= 2 and cluster.get_age() > self.args.csi_completion_timeout
         return bool(np.all(completion) or timeout_condition)
 
     def _get_partial_backlog_csi(self, *additional_keys: str, remove_global_sto=True):

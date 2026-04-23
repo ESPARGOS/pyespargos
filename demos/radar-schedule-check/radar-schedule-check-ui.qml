@@ -166,6 +166,28 @@ Common.ESPARGOSApplication {
 			font.pixelSize: 14
 		}
 
+		Rectangle {
+			Layout.fillWidth: true
+			Layout.minimumHeight: 210
+			radius: 8
+			color: "#0d1418"
+			border.color: "#2e4656"
+			border.width: 1
+
+			ScrollView {
+				anchors.fill: parent
+				anchors.margins: 12
+				clip: true
+
+				Label {
+					text: backend.txRxTimestampTableText
+					color: "#b7f7c0"
+					font.pixelSize: 13
+					font.family: "monospace"
+				}
+			}
+		}
+
 		GridLayout {
 			Layout.fillWidth: true
 			Layout.fillHeight: true

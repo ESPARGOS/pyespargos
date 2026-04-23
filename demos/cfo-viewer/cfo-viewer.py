@@ -95,9 +95,8 @@ class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
     def _make_predicate(self):
         min_antennas = self._effective_min_antennas()
 
-        def predicate(completion, age):
-            del age
-            return np.sum(completion) >= min_antennas
+        def predicate(cluster):
+            return np.sum(cluster.get_completion()) >= min_antennas
 
         return predicate
 

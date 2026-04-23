@@ -8,6 +8,67 @@ from . import calibration
 from . import constants
 
 RADAR_TIME_SCALE = 1e6
+FTM_TIMESTAMP_UNIT_S = 1.5625e-9
+
+
+def ftm_get_phy_comp(
+    *,
+    responder: bool,
+    primary_channel: int,
+    secondary_channel: int = 0,
+    mode: int = 0,
+    sta_connected: bool = False,
+) -> int:
+    """
+    Reimplementation of ESP32-C61 ``ftm_get_phy_comp`` from the Wi-Fi blob.
+
+    The returned value is in raw FTM timestamp units. Multiply by
+    :data:`FTM_TIMESTAMP_UNIT_S` to convert to seconds. ``secondary_channel``
+    follows ESP-IDF's ``wifi_second_chan_t`` convention: ``0`` none, ``1``
+    above, ``2`` below.
+
+    ``sta_connected`` only affects the initiator/nonzero-mode branch in the
+    recovered implementation.
+    """
+    primary = int(primary_channel) & 0xFF
+    secondary = int(secondary_channel) & 0xFF
+    mode_nonzero = int(mode) != 0
+
+    if not responder:
+        if mode_nonzero:
+            if sta_connected and primary > 10:
+                return 0x3AD
+            return 0x399
+
+        if secondary == 1:
+            if ((primary - 1) & 0xFF) <= 8:
+                return 0x2EA if primary > 10 else 0x2EC
+        elif secondary == 2:
+            if ((primary - 5) & 0xFF) <= 8:
+                return 0x2EA if primary > 10 else 0x2EC
+
+        return 0x35C if primary > 10 else 0x361
+
+    if mode_nonzero:
+        return 0x23F if primary > 10 else 0x23E
+
+    if secondary == 1:
+        if primary == 0:
+            return 0x363
+        if primary <= 9:
+            return 0x2EE
+    elif secondary == 2:
+        if ((primary - 5) & 0xFF) <= 8:
+            return 0x2F4 if primary > 10 else 0x2EE
+
+    return 0x365 if primary > 10 else 0x363
+
+
+def ftm_get_phy_comp_s(**kwargs) -> float:
+    """
+    Return :func:`ftm_get_phy_comp` converted to seconds.
+    """
+    return ftm_get_phy_comp(**kwargs) * FTM_TIMESTAMP_UNIT_S
 
 
 @dataclass
@@ -123,3 +184,81 @@ def build_pool_config(
         )
 
     return RadarPoolConfig(board_configs=board_configs)
+
+
+def correct_radar_csi_tx_timestamps(
+    csi_data: np.ndarray,
+    tx_timestamps_s,
+    tx_sensor_indices,
+    subcarrier_frequencies_hz,
+    calibration: calibration.CSICalibration,
+    *,
+    axis: int = -1,
+    tx_timestamp_offset_s: float = 0.0,
+    tx_timestamp_offsets_s=None,
+    correction_sign: float = 1.0,
+) -> np.ndarray:
+    """
+    Apply radar TX timestamp phase correction to frequency-domain CSI.
+
+    The CSI deserialization path already applies the receive-side timestamp/STO
+    correction. This helper applies the complementary transmit-side correction
+    using the radar TX report timestamp. ``tx_timestamps_s`` are sensor-local TX
+    timestamps; they are converted into the calibration reference clock by
+    subtracting the transmitting sensor's clock offset.
+
+    ``subcarrier_frequencies_hz`` may be absolute RF frequencies or baseband
+    subcarrier offsets. For consistency with the existing CSI deserialization
+    timestamp correction, callers usually want baseband offsets.
+
+    :param csi_data: Complex CSI array. The subcarrier axis is selected by ``axis``.
+    :param tx_timestamps_s: TX timestamp(s), in seconds. Scalar or leading-shape array.
+    :param tx_sensor_indices: Flattened TX sensor index/indices matching ``tx_timestamps_s``.
+    :param subcarrier_frequencies_hz: Frequency for each subcarrier, in Hz.
+    :param calibration: Calibration object that provides sensor clock offsets.
+    :param axis: Subcarrier axis in ``csi_data``.
+    :param tx_timestamp_offset_s: Constant offset added to each TX timestamp
+        before correction. This accounts for packet-boundary conventions in the
+        hardware TX timestamp source.
+    :param tx_timestamp_offsets_s: Optional per-TX-sensor offsets added to the
+        corresponding TX timestamps, in seconds. This mirrors the FTM responder
+        model where a calibrated offset is added to T1.
+    :param correction_sign: Sign of the phase correction. The default matches the
+        expected transmit-time inverse of the receive timestamp correction.
+    :return: Corrected CSI array with the same shape as ``csi_data``.
+    """
+    csi_array = np.asarray(csi_data)
+    frequencies = np.asarray(subcarrier_frequencies_hz, dtype=np.float64)
+    if frequencies.ndim != 1:
+        raise ValueError("subcarrier_frequencies_hz must be one-dimensional")
+
+    csi_moved = np.moveaxis(csi_array, axis, -1)
+    if csi_moved.shape[-1] != frequencies.shape[0]:
+        raise ValueError("subcarrier_frequencies_hz length must match the CSI subcarrier axis")
+
+    tx_timestamps = np.asarray(tx_timestamps_s, dtype=np.float64)
+    tx_indices = np.asarray(tx_sensor_indices, dtype=np.int64)
+    tx_timestamps, tx_indices = np.broadcast_arrays(tx_timestamps, tx_indices)
+
+    flat_offsets = np.asarray(calibration.sensor_clock_offsets, dtype=np.float64).reshape(-1)
+    per_tx_timestamp_offsets = np.zeros(flat_offsets.shape, dtype=np.float64)
+    if tx_timestamp_offsets_s is not None:
+        per_tx_timestamp_offsets = np.asarray(tx_timestamp_offsets_s, dtype=np.float64)
+        if per_tx_timestamp_offsets.ndim == 0:
+            per_tx_timestamp_offsets = np.full(flat_offsets.shape, float(per_tx_timestamp_offsets), dtype=np.float64)
+        if per_tx_timestamp_offsets.shape != flat_offsets.shape:
+            raise ValueError("tx_timestamp_offsets_s must be a scalar or match the flattened sensor count")
+
+    tx_reference_timestamps = np.full(tx_timestamps.shape, np.nan, dtype=np.float64)
+    valid = np.isfinite(tx_timestamps) & (tx_indices >= 0) & (tx_indices < flat_offsets.size)
+    valid_tx_indices = tx_indices[valid]
+    tx_reference_timestamps[valid] = tx_timestamps[valid] + float(tx_timestamp_offset_s) + per_tx_timestamp_offsets[valid_tx_indices] - flat_offsets[valid_tx_indices]
+
+    if tx_reference_timestamps.ndim > csi_moved.ndim - 1:
+        raise ValueError("tx_timestamps_s has too many dimensions for csi_data")
+
+    correction_shape = tx_reference_timestamps.shape + (1,) * (csi_moved.ndim - 1 - tx_reference_timestamps.ndim) + (frequencies.shape[0],)
+    tx_reference_timestamps = tx_reference_timestamps.reshape(correction_shape[:-1])
+    phase = correction_sign * 2.0 * np.pi * tx_reference_timestamps[..., np.newaxis] * frequencies.reshape((1,) * (len(correction_shape) - 1) + (-1,))
+    corrected = csi_moved * np.exp(1.0j * phase).astype(csi_moved.dtype, copy=False)
+    return np.moveaxis(corrected, -1, axis)

@@ -8,6 +8,7 @@ from . import constants
 # Internal constants
 _ESPARGOS_SPI_BUFFER_SIZE_V3 = 384
 SPI_TYPE_HEADER_CSI = 0xE4CD0BAC
+SPI_TYPE_HEADER_RADAR_TX_REPORT = 0x52545852
 SPI_TYPE_HEADER_JUMBO_FRAME = 0xDECAFBAD
 JUMBO_FRAGMENT_TERMINATOR_UID = 0
 CSISTREAM_UID_SENSOR_SHIFT = 29
@@ -50,6 +51,17 @@ SERIALIZED_CSI_TLV_TYPE_CSI_RAW = 6
 SERIALIZED_CSI_TLV_TYPE_CSI_COMPRESSED = 7
 SERIALIZED_CSI_TLV_TYPE_RX_CTRL_COMPRESSED = 8
 SERIALIZED_CSI_TLV_TYPE_CRC32 = 255
+
+RADAR_TX_REPORT_TLV_TYPE_FRAME_META = 1
+RADAR_TX_REPORT_TLV_TYPE_TIMING_META = 2
+RADAR_TX_REPORT_TLV_TYPE_RADAR_META = 3
+RADAR_TX_REPORT_TLV_TYPE_TX_META = 4
+RADAR_TX_REPORT_TLV_TYPE_RAW_META = 5
+RADAR_TX_REPORT_TLV_TYPE_CRC32 = 255
+
+RADAR_TX_REPORT_FLAG_HAS_HW_TIMESTAMP = 1 << 0
+RADAR_TX_REPORT_FLAG_FTM_DESCRIPTOR_EXPERIMENT = 1 << 1
+RADAR_TX_REPORT_FLAG_FTM_SHAPED_FRAME = 1 << 2
 
 SERIALIZED_CSI_TLV_FRAME_FLAG_IS_CALIB = 1 << 0
 SERIALIZED_CSI_TLV_FRAME_FLAG_IS_RADAR = 1 << 1
@@ -467,6 +479,145 @@ class serialized_csi_tlv_t:
     @property
     def is_compressed(self):
         return self._is_compressed
+
+
+class radar_tx_report_tlv_t:
+    def __init__(self, buf=None):
+        raw = bytes(buf if buf is not None else b"")
+        if len(raw) < 4:
+            raise ValueError("Radar TX report TLV packet too short")
+
+        self._raw = raw
+        self.type_header = int.from_bytes(raw[0:4], byteorder="little")
+        if self.type_header != SPI_TYPE_HEADER_RADAR_TX_REPORT:
+            raise ValueError("Unexpected radar TX report type header")
+
+        self.source_mac = bytes(6)
+        self.dest_mac = bytes(6)
+        self.seq_ctrl = seq_ctrl_t(b"\x00\x00")
+        self.frame_len = 0
+        self.software_enqueue_timestamp_us = 0
+        self.tx_count = 0
+        self.rfswitch_state = rfswitch_state_t.SENSOR_RFSWITCH_UNKNOWN
+        self.flags = 0
+        self.tx_status = 0
+        self.ifidx = 0
+        self.descriptor_slot = 0xFF
+        self.txdesc_word0 = 0
+        self.txdesc_word4 = 0
+        self.txdesc_word8 = 0
+        self.txdesc_word10 = 0
+        self.timestamp_reg0 = 0
+        self.timestamp_reg1 = 0
+        self.timestamp_reg2 = 0
+        self.antid = 0xFF
+        self.crc32 = None
+        self._crc_valid = False
+
+        offset = 4
+        while offset < len(raw):
+            if offset + 3 > len(raw):
+                raise ValueError("Malformed radar TX report TLV header")
+
+            tlv_type = raw[offset]
+            tlv_len = int.from_bytes(raw[offset + 1 : offset + 3], byteorder="little")
+            tlv_start = offset
+            offset += 3
+            tlv_end = offset + tlv_len
+            if tlv_end > len(raw):
+                raise ValueError("Malformed radar TX report TLV length")
+
+            value = raw[offset:tlv_end]
+
+            if tlv_type == RADAR_TX_REPORT_TLV_TYPE_FRAME_META:
+                if tlv_len < 16:
+                    raise ValueError("Invalid radar TX report frame meta TLV")
+                self.source_mac = bytes(value[0:6])
+                self.dest_mac = bytes(value[6:12])
+                self.seq_ctrl = seq_ctrl_t(value[12:14])
+                self.frame_len = int.from_bytes(value[14:16], byteorder="little")
+            elif tlv_type == RADAR_TX_REPORT_TLV_TYPE_TIMING_META:
+                if tlv_len < 8:
+                    raise ValueError("Invalid radar TX report timing meta TLV")
+                self.software_enqueue_timestamp_us = int.from_bytes(value[0:8], byteorder="little")
+            elif tlv_type == RADAR_TX_REPORT_TLV_TYPE_RADAR_META:
+                if tlv_len < 8:
+                    raise ValueError("Invalid radar TX report radar meta TLV")
+                self.tx_count = int.from_bytes(value[0:4], byteorder="little")
+                self.rfswitch_state = value[4]
+            elif tlv_type == RADAR_TX_REPORT_TLV_TYPE_TX_META:
+                if tlv_len < 8:
+                    raise ValueError("Invalid radar TX report TX meta TLV")
+                self.flags = int.from_bytes(value[0:2], byteorder="little")
+                self.tx_status = value[2]
+                self.ifidx = value[3]
+                self.descriptor_slot = value[4]
+            elif tlv_type == RADAR_TX_REPORT_TLV_TYPE_RAW_META:
+                if tlv_len < 28:
+                    raise ValueError("Invalid radar TX report raw meta TLV")
+                self.txdesc_word0 = int.from_bytes(value[0:4], byteorder="little")
+                self.txdesc_word4 = int.from_bytes(value[4:8], byteorder="little")
+                self.txdesc_word8 = int.from_bytes(value[8:12], byteorder="little")
+                self.txdesc_word10 = int.from_bytes(value[12:16], byteorder="little")
+                self.timestamp_reg0 = int.from_bytes(value[16:20], byteorder="little")
+                self.timestamp_reg1 = int.from_bytes(value[20:24], byteorder="little")
+                self.timestamp_reg2 = int.from_bytes(value[24:28], byteorder="little")
+            elif tlv_type == RADAR_TX_REPORT_TLV_TYPE_CRC32:
+                if tlv_len != 4:
+                    raise ValueError("Invalid radar TX report CRC32 TLV")
+                if tlv_end != len(raw):
+                    raise ValueError("Radar TX report CRC32 TLV must be last")
+                self.crc32 = int.from_bytes(value, byteorder="little")
+                computed_crc = binascii.crc32(raw[:tlv_start]) & 0xFFFFFFFF
+                if computed_crc != self.crc32:
+                    raise ValueError(f"Radar TX report TLV CRC32 mismatch (expected 0x{self.crc32:08x}, computed 0x{computed_crc:08x})")
+                self._crc_valid = True
+            offset = tlv_end
+
+        if not self._crc_valid:
+            raise ValueError("Radar TX report TLV CRC32 missing")
+
+    def __bytes__(self):
+        return self._raw
+
+    @property
+    def tx_succeeded(self):
+        return self.tx_status != 0
+
+    @property
+    def has_hardware_tx_timestamp(self):
+        return bool(self.flags & RADAR_TX_REPORT_FLAG_HAS_HW_TIMESTAMP)
+
+    @property
+    def has_ftm_descriptor_experiment(self):
+        return bool(self.flags & RADAR_TX_REPORT_FLAG_FTM_DESCRIPTOR_EXPERIMENT)
+
+    @property
+    def is_ftm_shaped_frame(self):
+        return bool(self.flags & RADAR_TX_REPORT_FLAG_FTM_SHAPED_FRAME)
+
+    def get_hardware_tx_timestamp_ns(self) -> float:
+        """
+        Decode the raw ESP32-C61 TX timestamp registers into sensor-local nanoseconds.
+
+        The wire format intentionally keeps the raw register values. This helper mirrors
+        the low-level recovery formula from the firmware so analysis code can choose
+        whether and how to use the decoded timestamp.
+        """
+        if not self.has_hardware_tx_timestamp:
+            return float("nan")
+
+        raw = (((int(self.timestamp_reg0) * 80) + (int(self.timestamp_reg1) & 0x7F)) - 640) << 3
+        return float(raw) * 1.5625
+
+    def get_hardware_tx_phase_raw(self) -> int:
+        """
+        Extract the apparent signed 11-bit phase-ish field from timestamp register 2.
+        """
+        phase = (int(self.timestamp_reg2) >> 7) & 0x7FF
+        if phase & 0x400:
+            phase = 0x800 - phase
+        return phase
 
 
 def _decode_wire_complex_int8(buf, pair_count):
@@ -1098,12 +1249,15 @@ def get_cfo_from_rx_ctrl(rx_ctrl) -> int:
 
 def deserialize_packet_buffer(revision, pktbuf):
     """
-    Deserialize a raw buffer into the appropriate serialized CSI structure based on the type header.
+    Deserialize a raw stream payload into the appropriate packet structure based on the type header.
     """
     type_header = int.from_bytes(pktbuf[0:4], byteorder="little")
-    assert type_header == revision.type_header
+    if type_header == revision.type_header:
+        return revision.serialized_csi_t(pktbuf)
+    if type_header == SPI_TYPE_HEADER_RADAR_TX_REPORT:
+        return radar_tx_report_tlv_t(pktbuf)
 
-    return revision.serialized_csi_t(pktbuf)
+    raise ValueError("Unexpected logical packet type header")
 
 
 def csistream_uid_to_antid(uid: int) -> int:

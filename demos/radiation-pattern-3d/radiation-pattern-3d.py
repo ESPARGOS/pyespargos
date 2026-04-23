@@ -176,10 +176,11 @@ class EspargosDemoRadiationPattern3D(BacklogMixin, CombinedArrayMixin, SingleCSI
 
         return placements
 
-    def _cb_predicate(self, csi_completion_state, csi_age):
+    def _cb_predicate(self, cluster):
+        csi_completion_state = cluster.get_completion()
         timeout_condition = False
         if self.args.csi_completion_timeout > 0:
-            timeout_condition = np.sum(csi_completion_state) >= 2 and csi_age > self.args.csi_completion_timeout
+            timeout_condition = np.sum(csi_completion_state) >= 2 and cluster.get_age() > self.args.csi_completion_timeout
 
         return np.all(csi_completion_state) or timeout_condition
 

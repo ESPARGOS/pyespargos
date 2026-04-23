@@ -362,9 +362,19 @@ class BacklogMixin:
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
-        # Do not enable any preamble formats for now, will be set later based on config
+        fields_cfg = self.get_initial_config("backlog", "fields", default=None)
+        initial_fields = None
+        if isinstance(fields_cfg, dict):
+            initial_fields = set(espargos.CSIBacklog.DATA_FORMATS.keys())
+            for field, enabled in fields_cfg.items():
+                if enabled:
+                    initial_fields.add(field)
+                else:
+                    initial_fields.discard(field)
+
         self.backlog = espargos.CSIBacklog(
             self.pool,
+            fields=initial_fields,
             cb_predicate=backlog_cb_predicate,
             calibrate=calibrate,
         )
