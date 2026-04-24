@@ -300,6 +300,8 @@ class CSICluster(object):
         Deserialize the HE20 HE-LTF part of the CSI data.
 
         The internal HE20 ordering is ascending subcarrier index ``-122..122``.
+        The invalid / null tones ``-1, 0, 1`` are explicitly zeroed because
+        the raw PHY payload may contain meaningless values there.
         """
         assert self.has_he20ltf()
         csi_he20 = np.zeros(self.shape + (csi.HE20_COEFFICIENTS_PER_CHANNEL,), dtype=np.complex64)
@@ -320,6 +322,7 @@ class CSICluster(object):
         subcarrier_range = np.arange(-122, 123, dtype=np.float64)[np.newaxis, np.newaxis, np.newaxis, :]
         sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * (constants.WIFI_SUBCARRIER_SPACING / 4.0) * subcarrier_range)
         csi_he20 = np.einsum("bras,bras->bras", csi_he20, sto_delay_correction)
+        csi_he20[..., 121:124] = 0.0
         return csi_he20
 
     def has_lltf(self) -> bool:

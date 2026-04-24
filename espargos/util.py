@@ -490,7 +490,6 @@ def remove_mean_sto(csi_datapoints: np.ndarray):
 
     csi_datapoints *= mean_sto_correction.reshape(correction_shape)
 
-
 def shift_to_firstpeak_sync(
     csi_datapoints: np.ndarray,
     max_delay_taps=3,
