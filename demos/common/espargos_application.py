@@ -36,7 +36,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
     BASE_DEFAULT_CONFIG = {
         "backlog": {
             "size": 20,
-            "fields": {"lltf": True, "ht20": False, "ht40": False},
+            "fields": {"lltf": True, "ht20": False, "ht40": False, "he20": False},
             "filters": {"exclude_11b": True},
         },
         "pool": {
@@ -457,7 +457,7 @@ class SingleCSIFormatMixin:
     Mixin that adds single preamble format selection to an ESPARGOSApplication.
 
     Provides:
-    - Mutually exclusive command-line arguments (--lltf, --ht20, --ht40)
+    - Mutually exclusive command-line arguments (--lltf, --ht20, --ht40, --he20)
     - Automatic backlog field configuration when combined with BacklogMixin
     """
 
@@ -500,6 +500,8 @@ class SingleCSIFormatMixin:
             espargos.util.interpolate_ht40ltf_gap(csi_backlog)
         elif csi_key == "ht20":
             espargos.util.interpolate_ht20ltf_gap(csi_backlog)
+        elif csi_key == "he20":
+            espargos.util.interpolate_he20ltf_gaps(csi_backlog)
 
         # Handle data containing NaN values (from incomplete CSI clusters)
         if np.any(np.isnan(csi_backlog)):
@@ -537,6 +539,12 @@ class SingleCSIFormatMixin:
             help="Use only CSI from HT20 (set up backlog and application accordingly)",
             action="store_true",
         )
+        format_group.add_argument(
+            "--he20",
+            default=False,
+            help="Use only CSI from HE20 (set up backlog and application accordingly)",
+            action="store_true",
+        )
 
     def _process_args(self):
         super()._process_args()
@@ -549,8 +557,10 @@ class SingleCSIFormatMixin:
             selected_formats.append("ht40")
         if self.args.ht20:
             selected_formats.append("ht20")
+        if self.args.he20:
+            selected_formats.append("he20")
         if len(selected_formats) > 1:
-            raise ValueError("At most one of --lltf, --ht40 or --ht20 can be selected!")
+            raise ValueError("At most one of --lltf, --ht40, --ht20 or --he20 can be selected!")
 
         # Remember choice in generic app config
         if len(selected_formats) == 1:
@@ -562,4 +572,5 @@ class SingleCSIFormatMixin:
                     "lltf": self.args.lltf,
                     "ht20": self.args.ht20,
                     "ht40": self.args.ht40,
+                    "he20": self.args.he20,
                 }

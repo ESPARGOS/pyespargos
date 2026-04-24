@@ -74,13 +74,7 @@ class AzimuthDelayApp(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ES
         return image_data_list
 
     def get_subcarrier_count(self):
-        preamble_format = self.genericconfig.get("preamble_format")
-        if preamble_format == "lltf":
-            return espargos.csi.LEGACY_COEFFICIENTS_PER_CHANNEL
-        elif preamble_format == "ht20":
-            return espargos.csi.HT_COEFFICIENTS_PER_CHANNEL
-        else:
-            return espargos.csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + espargos.csi.HT40_GAP_SUBCARRIERS
+        return espargos.csi.get_csi_format_subcarrier_count(self.genericconfig.get("preamble_format"))
 
     @PyQt6.QtCore.pyqtSlot()
     def update_data(self):

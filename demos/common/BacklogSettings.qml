@@ -21,6 +21,8 @@ Item  {
 			ht20EnableSwitch,
 			ht40EnableLabel,
 			ht40EnableSwitch,
+			he20EnableLabel,
+			he20EnableSwitch,
 			exclude11bLabel,
 			exclude11bSwitch
 		]
@@ -151,6 +153,26 @@ Item  {
 	Switch {
 		id: ht40EnableSwitch
 		property string configKey: "fields.ht40"
+		property string configProp: "checked"
+
+		Component.onCompleted: backlogConfigManager.register(this)
+		onCheckedChanged: backlogConfigManager.onControlChanged(this)
+
+		checked: false
+	}
+
+	Label {
+		id: he20EnableLabel
+		text: "Store HE20"
+		color: "#ffffff"
+		horizontalAlignment: Text.AlignRight
+		Layout.alignment: Qt.AlignRight
+		Layout.fillWidth: true
+	}
+
+	Switch {
+		id: he20EnableSwitch
+		property string configKey: "fields.he20"
 		property string configProp: "checked"
 
 		Component.onCompleted: backlogConfigManager.register(this)

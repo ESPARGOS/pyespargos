@@ -643,6 +643,21 @@ class Board(object):
         """
         return self._get_json("get_tx_control")
 
+    def reboot(self):
+        """
+        Trigger a controller reboot.
+
+        The controller responds with ``"ok"`` and then reboots shortly after
+        sending the reply.
+
+        :raises EspargosUnexpectedResponseError: If the server at the given host
+            is not an ESPARGOS controller or the request was invalid
+        """
+        res = self._fetch("reboot")
+        if res != "ok":
+            self.logger.error(f"Invalid response: {res}")
+            raise EspargosUnexpectedResponseError(str(res))
+
     def add_consumer(self, clist: list, cv: threading.Condition, *args):
         """
         Adds a consumer to the CSI stream.

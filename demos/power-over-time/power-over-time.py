@@ -49,6 +49,7 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         "lltf": espargos.csi.LEGACY_COEFFICIENTS_PER_CHANNEL,
         "ht20": espargos.csi.HT_COEFFICIENTS_PER_CHANNEL,
         "ht40": 2 * espargos.csi.HT_COEFFICIENTS_PER_CHANNEL + espargos.csi.HT40_GAP_SUBCARRIERS,
+        "he20": espargos.csi.HE20_COEFFICIENTS_PER_CHANNEL,
     }
 
     def __init__(self, argv):
@@ -143,8 +144,8 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     @property
     def _subcarrier_bounds(self):
-        half = self.subcarrierCount // 2
-        return -half, half - 1
+        subcarrier_indices = espargos.csi.get_csi_format_subcarrier_indices(self.genericconfig.get("preamble_format"))
+        return int(subcarrier_indices[0]), int(subcarrier_indices[-1])
 
     @staticmethod
     def _interpolate_axis_max(previous, new):
@@ -169,7 +170,8 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     def _subcarrier_array_index(self):
         selected = int(np.clip(self.subcarrier, *self._subcarrier_bounds))
-        return selected + self.subcarrierCount // 2
+        subcarrier_indices = espargos.csi.get_csi_format_subcarrier_indices(self.genericconfig.get("preamble_format"))
+        return int(np.argmin(np.abs(subcarrier_indices - selected)))
 
     def _compute_power_datapoints(self, csi_backlog, rssi_backlog):
         csi = np.array(csi_backlog, copy=True)

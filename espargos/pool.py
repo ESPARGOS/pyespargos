@@ -303,6 +303,13 @@ class Pool(object):
         for board in self.boards:
             board.stop()
 
+    def reboot(self):
+        """
+        Trigger a reboot on all boards in the pool.
+        """
+        for board in self.boards + self.refgen_boards:
+            board.reboot()
+
     def add_csi_callback(
         self,
         cb: Callable[[cluster.CSICluster], None],
@@ -463,6 +470,7 @@ class Pool(object):
             channel_secondary,
         ) = self._clusters_to_calibration()
         sensor_clock_offsets = self._compute_sensor_clock_offsets(complete_cluster_timestamps)
+        phase_calibration_he20 = util.derive_he20_calibration_from_ht20(complete_clusters_lltf, complete_cluster_timestamps, channel_secondary)
 
         if per_board:
             phase_calibrations_lltf = []
@@ -511,6 +519,7 @@ class Pool(object):
                 np.asarray(phase_calibrations_lltf),
                 np.asarray(phase_calibrations_ht20),
                 np.asarray(phase_calibrations_ht40),
+                phase_calibration_he20,
                 sensor_clock_offsets=sensor_clock_offsets,
             )
 
@@ -540,6 +549,7 @@ class Pool(object):
                 phase_calibrations_lltf,
                 phase_calibrations_ht20,
                 phase_calibration_ht40,
+                phase_calibration_he20,
                 sensor_clock_offsets=sensor_clock_offsets,
                 board_cable_lengths=cable_lengths,
                 board_cable_vfs=cable_velocity_factors,

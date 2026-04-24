@@ -111,14 +111,9 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
 
         # Calculate subcarrier range based on preamble format
         preamble_format = self.genericconfig.get("preamble_format")
-        if preamble_format == "lltf":
-            self.subcarrier_count = espargos.csi.LEGACY_COEFFICIENTS_PER_CHANNEL
-        elif preamble_format == "ht20":
-            self.subcarrier_count = espargos.csi.HT_COEFFICIENTS_PER_CHANNEL
-        else:
-            self.subcarrier_count = espargos.csi.HT_COEFFICIENTS_PER_CHANNEL + espargos.csi.HT40_GAP_SUBCARRIERS + espargos.csi.HT_COEFFICIENTS_PER_CHANNEL
+        self.subcarrier_count = espargos.csi.get_csi_format_subcarrier_count(preamble_format)
 
-        self._subcarrier_range = list(range(-self.subcarrier_count // 2, self.subcarrier_count // 2))
+        self._subcarrier_range = list(espargos.csi.get_csi_format_subcarrier_indices(preamble_format))
         self.subcarrierRangeChanged.emit()
 
     def poll_csi(self):
@@ -154,6 +149,14 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
             csi = self.pool.get_calibration().apply_ht40(csi)
             espargos.util.remove_mean_sto(csi)
             espargos.util.interpolate_ht40ltf_gap(csi)
+        elif preamble_format == "he20":
+            if not clustered_csi.has_he20ltf():
+                print("Received CSI without HE20-LTF data; skipping calibration update.")
+                return
+            csi = clustered_csi.deserialize_csi_he20ltf()
+            csi = self.pool.get_calibration().apply_he20(csi)
+            espargos.util.remove_mean_sto(csi)
+            espargos.util.interpolate_he20ltf_gaps(csi)
 
         else:
             raise ValueError(f"Unsupported preamble format: {preamble_format}")

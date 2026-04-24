@@ -22,6 +22,11 @@ def ftm_get_phy_comp(
     """
     Reimplementation of ESP32-C61 ``ftm_get_phy_comp`` from the Wi-Fi blob.
 
+    This raw-units version is kept as a reference to the recovered original
+    control flow. New code should prefer
+    :func:`get_ftm_tx_timestamp_reciprocity_delay_s`, which expresses the same
+    logic in a table-driven form and returns seconds directly.
+
     The returned value is in raw FTM timestamp units. Multiply by
     :data:`FTM_TIMESTAMP_UNIT_S` to convert to seconds. ``secondary_channel``
     follows ESP-IDF's ``wifi_second_chan_t`` convention: ``0`` none, ``1``
@@ -30,7 +35,7 @@ def ftm_get_phy_comp(
     ``sta_connected`` only affects the initiator/nonzero-mode branch in the
     recovered implementation.
     """
-    primary = int(primary_channel) & 0xFF
+    primary = int(primary_channel)
     secondary = int(secondary_channel) & 0xFF
     mode_nonzero = int(mode) != 0
 
@@ -64,11 +69,87 @@ def ftm_get_phy_comp(
     return 0x365 if primary > 10 else 0x363
 
 
+def _ftm_channel_group(primary_channel: int) -> str:
+    """
+    Group 2.4 GHz channels into the low and high ranges used by the blob logic.
+    """
+    return "high" if int(primary_channel) > 10 else "low"
+
+
+def get_ftm_tx_timestamp_reciprocity_delay_s(
+    *,
+    responder: bool,
+    primary_channel: int,
+    secondary_channel: int = 0,
+    home_channel_ht40: bool = False,
+    mode: int | None = None,
+    sta_connected: bool = False,
+) -> float:
+    """
+    Return the PHY reciprocity delay used to align TX/RX FTM timestamps.
+
+    This is the same compensation modeled by :func:`ftm_get_phy_comp`, but
+    expressed in terms of role, HT40 home-channel state, channel layout, and
+    channel group instead of reproducing the recovered branch tree. The returned
+    value is in seconds.
+
+    ``home_channel_ht40`` is intentionally separate from
+    ``secondary_channel``. The blob does not use the nonzero ``mode`` branch as
+    a generic "secondary channel present" test; it switches into a distinct PHY
+    compensation regime used when the current/home channel context is HT40.
+    That is why this flag remains separate even though ``primary_channel`` and
+    ``secondary_channel`` are also provided.
+
+    ``mode`` is kept as a backward-compatible alias for the recovered blob
+    parameter. When provided, only its zero/nonzero state matters.
+
+    ``secondary_channel`` follows ESP-IDF's ``wifi_second_chan_t`` convention:
+    ``0`` none, ``1`` above, ``2`` below.
+    """
+    secondary = int(secondary_channel) & 0xFF
+    if secondary == 1:
+        layout = "ht40_above"
+    elif secondary == 2:
+        layout = "ht40_below"
+    else:
+        layout = "ht20"
+    channel_group = _ftm_channel_group(primary_channel)
+    use_ht40_home_channel_comp = bool(home_channel_ht40)
+    if mode is not None:
+        use_ht40_home_channel_comp = bool(mode)
+
+    if not responder and use_ht40_home_channel_comp:
+        ftm_units = 941 if sta_connected and channel_group == "high" else 921
+    elif responder and use_ht40_home_channel_comp:
+        ftm_units = {
+            "low": 574,
+            "high": 575,
+        }[channel_group]
+    elif not responder:
+        ftm_units = {
+            "ht20": {"low": 865, "high": 860},
+            "ht40_above": {"low": 748, "high": 746},
+            "ht40_below": {"low": 748, "high": 746},
+        }[
+            layout
+        ][channel_group]
+    else:
+        ftm_units = {
+            "ht20": {"low": 867, "high": 869},
+            "ht40_above": {"low": 750, "high": 869},
+            "ht40_below": {"low": 750, "high": 756},
+        }[
+            layout
+        ][channel_group]
+
+    return ftm_units * FTM_TIMESTAMP_UNIT_S
+
+
 def ftm_get_phy_comp_s(**kwargs) -> float:
     """
-    Return :func:`ftm_get_phy_comp` converted to seconds.
+    Backward-compatible wrapper returning the PHY compensation in seconds.
     """
-    return ftm_get_phy_comp(**kwargs) * FTM_TIMESTAMP_UNIT_S
+    return get_ftm_tx_timestamp_reciprocity_delay_s(**kwargs)
 
 
 @dataclass

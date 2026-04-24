@@ -9,7 +9,7 @@ from .config_manager import ConfigManager
 class BacklogSettings(PyQt6.QtCore.QObject):
     DEFAULT_CONFIG = {
         "size": 20,
-        "fields": {"ht20": False, "ht40": False, "lltf": True},
+        "fields": {"ht20": False, "ht40": False, "he20": False, "lltf": True},
         "filters": {"exclude_11b": True},
     }
 
@@ -38,6 +38,7 @@ class BacklogSettings(PyQt6.QtCore.QObject):
                 "fields": {
                     "ht20": "ht20" in self.backlog.get_fields(),
                     "ht40": "ht40" in self.backlog.get_fields(),
+                    "he20": "he20" in self.backlog.get_fields(),
                     "lltf": "lltf" in self.backlog.get_fields(),
                 },
                 "filters": {

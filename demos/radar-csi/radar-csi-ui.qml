@@ -26,86 +26,70 @@ Common.ESPARGOSApplication {
 
 			Label { Layout.columnSpan: 2; text: "Radar Schedule"; color: "#92b8ad" }
 
-			Label { text: "Period [us]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "Period [ms]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			RowLayout {
 				spacing: 10
 				Slider {
 					id: periodSlider
-					property string configKey: "period_us"
+					property string configKey: "period_ms"
 					property string configProp: "value"
-					property var encode: function(v) { return Math.round(v) }
-					property var decode: function(v) { return Math.max(10000, Math.min(500000, parseInt(v || 80000))) }
+					property var encode: function(v) { return Math.round(v * 10) / 10 }
+					property var decode: function(v) { return Math.max(7, Math.min(100, Number(v === undefined || v === null || v === "" ? 12 : v))) }
 					Component.onCompleted: appDrawer.configManager.register(this)
 					onValueChanged: appDrawer.configManager.onControlChanged(this)
-					from: 10000
-					to: 500000
-					value: 80000
-					stepSize: 1000
+					from: 7
+					to: 100
+					value: 16
+					stepSize: 1
 					implicitWidth: 145
 					function isUserActive() { return pressed }
 				}
-				Label { text: Math.round(periodSlider.value); color: "#ffffff"; font.family: "monospace"; Layout.preferredWidth: 56; horizontalAlignment: Text.AlignRight }
+				Label { text: periodSlider.value.toFixed(0); color: "#ffffff"; font.family: "monospace"; Layout.preferredWidth: 56; horizontalAlignment: Text.AlignRight }
 			}
 
-			Label { text: "Start [us]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "Start [ms]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			RowLayout {
 				spacing: 10
 				Slider {
 					id: startSlider
-					property string configKey: "start_us"
+					property string configKey: "start_ms"
 					property string configProp: "value"
-					property var encode: function(v) { return Math.round(v) }
-					property var decode: function(v) { return Math.max(0, Math.min(200000, parseInt(v || 10000))) }
+					property var encode: function(v) { return Math.round(v * 10) / 10 }
+					property var decode: function(v) { return Math.max(0, Math.min(200, Number(v === undefined || v === null || v === "" ? 10 : v))) }
 					Component.onCompleted: appDrawer.configManager.register(this)
 					onValueChanged: appDrawer.configManager.onControlChanged(this)
 					from: 0
-					to: 200000
-					value: 10000
-					stepSize: 1000
+					to: 200
+					value: 10
+					stepSize: 0.1
 					implicitWidth: 145
 					function isUserActive() { return pressed }
 				}
-				Label { text: Math.round(startSlider.value); color: "#ffffff"; font.family: "monospace"; Layout.preferredWidth: 56; horizontalAlignment: Text.AlignRight }
+				Label { text: startSlider.value.toFixed(1); color: "#ffffff"; font.family: "monospace"; Layout.preferredWidth: 56; horizontalAlignment: Text.AlignRight }
 			}
 
-			Label { text: "Slot [us]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "Slot [ms]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			RowLayout {
 				spacing: 10
 				Slider {
 					id: slotSlider
-					property string configKey: "slot_us"
+					property string configKey: "slot_ms"
 					property string configProp: "value"
-					property var encode: function(v) { return Math.round(v) }
-					property var decode: function(v) { return Math.max(100, Math.min(100000, parseInt(v || 10000))) }
+					property var encode: function(v) { return Math.round(v * 10) / 10 }
+					property var decode: function(v) { return Math.max(0.1, Math.min(100, Number(v === undefined || v === null || v === "" ? 10 : v))) }
 					Component.onCompleted: appDrawer.configManager.register(this)
 					onValueChanged: appDrawer.configManager.onControlChanged(this)
-					from: 100
-					to: 100000
-					value: 10000
-					stepSize: 100
+					from: 0.1
+					to: 100
+					value: 10
+					stepSize: 0.1
 					implicitWidth: 145
 					function isUserActive() { return pressed }
 				}
-				Label { text: Math.round(slotSlider.value); color: "#ffffff"; font.family: "monospace"; Layout.preferredWidth: 56; horizontalAlignment: Text.AlignRight }
+				Label { text: slotSlider.value.toFixed(1); color: "#ffffff"; font.family: "monospace"; Layout.preferredWidth: 56; horizontalAlignment: Text.AlignRight }
 			}
 
-			Label { text: "TX Correction Sign"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			ComboBox {
-				property string configKey: "tx_correction_sign"
-				property string configProp: "currentValue"
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 210
-				model: [
-					{ value: 1, text: "+1" },
-					{ value: -1, text: "-1" }
-				]
-				textRole: "text"
-				valueRole: "value"
-				currentValue: 1
-			}
-
-			Label { text: "TX Timestamp Offset [ns]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "TX Offset [ns]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			RowLayout {
 				spacing: 10
 				Slider {
@@ -113,7 +97,7 @@ Common.ESPARGOSApplication {
 					property string configKey: "tx_timestamp_offset_ns"
 					property string configProp: "value"
 					property var encode: function(v) { return Math.round(v) }
-					property var decode: function(v) { return Math.max(-5000, Math.min(5000, parseInt(v || 1063))) }
+					property var decode: function(v) { return Math.max(-5000, Math.min(5000, parseInt(v === undefined || v === null || v === "" ? 1063 : v))) }
 					Component.onCompleted: appDrawer.configManager.register(this)
 					onValueChanged: appDrawer.configManager.onControlChanged(this)
 					from: -5000
@@ -126,46 +110,15 @@ Common.ESPARGOSApplication {
 				Label { text: Math.round(txOffsetSlider.value); color: "#ffffff"; font.family: "monospace"; Layout.preferredWidth: 56; horizontalAlignment: Text.AlignRight }
 			}
 
-			Button {
-				Layout.columnSpan: 2
-				text: "Apply Radar Schedule"
-				onClicked: backend.applyRadarSchedule()
-			}
-
-			Button {
-				Layout.columnSpan: 2
-				text: "Disable Radar TX"
-				onClicked: backend.disableRadarSchedule()
-			}
-
-			Label { Layout.columnSpan: 2; text: "FTM-style TX Offsets"; color: "#92b8ad" }
-
-			TextArea {
-				Layout.columnSpan: 2
-				Layout.fillWidth: true
-				Layout.preferredHeight: 54
-				text: backend.txOffsetTableText
-				readOnly: true
-				wrapMode: Text.NoWrap
-				color: "#dce8e4"
-				font.family: "monospace"
-				font.pixelSize: 11
-				background: Rectangle { color: "#0b1211"; radius: 4 }
-			}
-
-			RowLayout {
-				Layout.columnSpan: 2
-				Layout.fillWidth: true
-				spacing: 8
-				Button {
-					text: "Estimate"
-					Layout.fillWidth: true
-					onClicked: backend.estimatePerTxOffsets()
-				}
-				Button {
-					text: "Reset"
-					Layout.fillWidth: true
-					onClicked: backend.resetPerTxOffsets()
+			Label { text: "Enable Radar"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: enableRadarSwitch
+				checked: true
+				onToggled: {
+					if (checked)
+						backend.applyRadarSchedule()
+					else
+						backend.disableRadarSchedule()
 				}
 			}
 
@@ -182,18 +135,6 @@ Common.ESPARGOSApplication {
 				visible: false
 			}
 
-			Common.BacklogSettings {
-				id: backlogSettings
-				insertBefore: backlogSettingsAnchor
-			}
-
-			Item {
-				id: backlogSettingsAnchor
-				Layout.columnSpan: 2
-				width: 0
-				height: 0
-				visible: false
-			}
 		}
 	}
 
@@ -289,32 +230,13 @@ Common.ESPARGOSApplication {
 				}
 			}
 		}
-
-		ScrollView {
-			Layout.fillWidth: true
-			Layout.preferredHeight: 150
-			clip: true
-
-			TextArea {
-				text: backend.residualDelayTableText
-				readOnly: true
-				selectByMouse: true
-				wrapMode: Text.NoWrap
-				color: "#dce8e4"
-				font.family: "monospace"
-				font.pixelSize: 12
-				background: Rectangle { color: "#0b1211"; radius: 4 }
-			}
-		}
 	}
 
 	Timer {
 		id: updateTimer
-		interval: 100
-		running: true
+		interval: 50
+		running: !backend.initializing
 		repeat: true
-		onTriggered: {
-			backend.updateCSI(amplitudeSeries, phaseSeries, csiAmplitudeAxis)
-		}
+		onTriggered: backend.updateCSI(amplitudeSeries, phaseSeries, csiAmplitudeAxis)
 	}
 }

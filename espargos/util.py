@@ -238,9 +238,7 @@ def get_frequencies_ht40(primary_channel: int, secondary_channel: int):
     :return: The frequencies of the subcarriers, in Hz, NumPy array.
     """
     center_ht40 = get_center_frequency(primary_channel, secondary_channel)
-    ht40_subcarrier_count = csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL
-    assert ht40_subcarrier_count % 2 == 1
-    return center_ht40 + np.arange(-ht40_subcarrier_count // 2, ht40_subcarrier_count // 2) * constants.WIFI_SUBCARRIER_SPACING
+    return center_ht40 + csi.get_csi_format_subcarrier_indices("ht40") * constants.WIFI_SUBCARRIER_SPACING
 
 
 def get_center_frequency(primary_channel: int, secondary_channel: int | None = None):
@@ -272,8 +270,21 @@ def get_frequencies_ht20(channel: int):
     :return: The frequencies of the subcarriers, in Hz, NumPy array.
     """
     center_ht20 = get_center_frequency(channel)
-    ht20_subcarrier_count = csi.HT_COEFFICIENTS_PER_CHANNEL
-    return center_ht20 + np.arange(-ht20_subcarrier_count // 2, ht20_subcarrier_count // 2) * constants.WIFI_SUBCARRIER_SPACING
+    return center_ht20 + csi.get_csi_format_subcarrier_indices("ht20") * constants.WIFI_SUBCARRIER_SPACING
+
+
+def get_frequencies_he20(channel: int):
+    """
+    Returns the frequencies of the subcarriers in a 2.4 GHz 802.11ax HE20 channel.
+
+    The raw HE-LTF reported by the ESP32-C61 covers subcarrier indices ``-122..122``,
+    where ``-1, 0, 1`` are invalid / null tones.
+
+    :param channel: The primary channel number.
+    :return: The frequencies of the HE20 subcarriers, in Hz, NumPy array.
+    """
+    center_he20 = get_center_frequency(channel)
+    return center_he20 + csi.get_csi_format_subcarrier_indices("he20").astype(np.float64) * (constants.WIFI_SUBCARRIER_SPACING / 4.0)
 
 
 def get_frequencies_lltf(channel: int):
@@ -284,8 +295,7 @@ def get_frequencies_lltf(channel: int):
     :return: The frequencies of the subcarriers, in Hz, NumPy array.
     """
     center_lltf = get_center_frequency(channel)
-    lltf_subcarrier_count = csi.LEGACY_COEFFICIENTS_PER_CHANNEL
-    return center_lltf + np.arange(-lltf_subcarrier_count // 2, lltf_subcarrier_count // 2) * constants.WIFI_SUBCARRIER_SPACING
+    return center_lltf + csi.get_csi_format_subcarrier_indices("lltf") * constants.WIFI_SUBCARRIER_SPACING
 
 
 def get_cable_wavelength(frequencies: np.ndarray, velocity_factors: np.ndarray):
@@ -327,6 +337,120 @@ def interpolate_ht20ltf_gap(csi_ht20: np.ndarray):
     missing_index = csi_ht20.shape[-1] // 2
     csi_ht20[..., missing_index] = (csi_ht20[..., index_left] + csi_ht20[..., index_right]) / 2
 
+
+def interpolate_he20ltf_gaps(csi_he20: np.ndarray):
+    """
+    Fill the three invalid HE20 subcarriers ``-1, 0, 1`` by linear interpolation.
+
+    :param csi_he20: The CSI data for an HE20 channel. Complex-valued NumPy array
+        with arbitrary shape, but the last dimension must be 245 subcarriers in
+        ascending order ``-122..122``.
+    :return: The CSI data with the invalid tones filled in.
+    """
+    index_left = csi_he20.shape[-1] // 2 - 2
+    index_right = csi_he20.shape[-1] // 2 + 2
+    missing_indices = np.arange(index_left + 1, index_right)
+    left = csi_he20[..., index_left]
+    right = csi_he20[..., index_right]
+    interp = (missing_indices - index_left) / (index_right - index_left)
+    csi_he20[..., missing_indices] = interp * right[..., np.newaxis] + (1 - interp) * left[..., np.newaxis]
+
+
+def _wrap_period_symmetric(values: np.ndarray, period: float) -> np.ndarray:
+    """
+    Wrap values into the interval ``[-period / 2, period / 2)``.
+    """
+    return np.mod(values + period / 2.0, period) - period / 2.0
+
+
+def derive_he20_calibration_from_ht20(
+    complete_clusters_lltf: np.ndarray,
+    complete_cluster_timestamps: np.ndarray,
+    secondary_channel_relative: int,
+) -> np.ndarray:
+    """
+    Derive a phase calibration for HE20 CSI from calibration packets that only
+    provide LLTF / HT20-resolution information.
+
+    HE20 uses four times finer subcarrier spacing than LLTF / HT20. This means
+    that a delay which is only observed on the coarse 312.5 kHz LLTF / HT20
+    grid is ambiguous when projected onto the denser 78.125 kHz HE20 grid:
+    multiple HE20 phase slopes can agree on every fourth subcarrier while
+    disagreeing on the intermediate HE20 tones. We therefore cannot obtain a
+    reliable HE20 calibration by simply fitting a slope on the coarse grid and
+    reusing it unchanged.
+
+    This helper resolves the problem by going back to "first principles" of
+    calibration and estimating time and phase offset separately:
+
+    1. Estimate constant per-antenna phase offsets from the already
+       STO-corrected LLTF calibration clusters using a principal-eigenvector
+       estimate.
+    2. Undo the LLTF timestamp-based STO correction, recover the underlying
+       per-antenna baseband timing offsets from the raw LLTF slope together with
+       the calibration timestamps, and synthesize the corresponding HE20 phase
+       slope on the denser HE20 subcarrier grid.
+
+    The final HE20 calibration is the combination of those per-antenna constant
+    phase offsets and the timestamp-derived HE20 phase slope.
+
+    :param complete_clusters_lltf: Complete LLTF calibration CSI clusters as a
+        complex-valued NumPy array with shape
+        ``(clusters, boards, rows, columns, subcarriers)``. These values are
+        expected to come from :meth:`CSICluster.deserialize_csi_lltf` and are
+        therefore already STO-corrected using the forwarded hardware
+        timestamps.
+    :param complete_cluster_timestamps: Per-sensor timestamps corresponding to
+        ``complete_clusters_lltf``, in seconds, as a NumPy array with shape
+        ``(clusters, boards, rows, columns)``.
+    :param secondary_channel_relative: Relative position of the secondary
+        channel used for the calibration packets. Use ``-1`` for HT40 below,
+        ``+1`` for HT40 above, and ``0`` for a plain 20 MHz channel.
+    :return: Complex-valued HE20 calibration array with shape
+        ``(boards, rows, columns, csi.HE20_COEFFICIENTS_PER_CHANNEL)``.
+    """
+    # First estimate per-antenna constant phase offsets from the LLTF
+    # calibration clusters exactly as provided by deserialize_csi_lltf(), i.e.
+    # after its timestamp-based STO correction. Use a principal-eigenvector
+    # estimate so that we combine all clusters and subcarriers coherently.
+    csi_lltf_sto_corrected = np.asarray(complete_clusters_lltf, dtype=np.complex64)
+    csi_lltf_flat = np.moveaxis(csi_lltf_sto_corrected, -1, 1).reshape(csi_lltf_sto_corrected.shape[0] * csi_lltf_sto_corrected.shape[-1], -1)
+    covariance = np.einsum("na,nb->ab", csi_lltf_flat, np.conj(csi_lltf_flat)) / max(csi_lltf_flat.shape[0], 1)
+    eigvals, eigvecs = np.linalg.eig(covariance)
+    principal_eigenvector = eigvecs[:, np.argmax(np.real(eigvals))].reshape(csi_lltf_sto_corrected.shape[1:4])
+    principal_eigenvector /= principal_eigenvector[0, 0, 0] / np.abs(principal_eigenvector[0, 0, 0])
+    antenna_phase_offsets = principal_eigenvector / np.abs(principal_eigenvector)
+
+    # Undo STO calibration for this
+    subcarrier_range = np.arange(-complete_clusters_lltf.shape[-1] // 2, complete_clusters_lltf.shape[-1] // 2)[np.newaxis,np.newaxis, np.newaxis, np.newaxis, :]
+    subcarrier_range -= secondary_channel_relative * int(2 * constants.WIFI_CHANNEL_SPACING / constants.WIFI_SUBCARRIER_SPACING)
+    sto_delay_correction = np.exp(1.0j * 2 * np.pi * complete_cluster_timestamps[:, :, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
+
+    csi_lltf = np.einsum("cbras,cbras->cbras", csi_lltf_sto_corrected, sto_delay_correction)
+
+    # Now we have the "raw" CSI and timestamps from the hardware again.
+    # First, determine the STO from the csi_lltf slope
+    incr = csi_lltf[..., 1:] * np.conj(csi_lltf[..., :-1])
+    sto = np.angle(np.sum(incr, axis=-1)) / (2.0 * np.pi * constants.WIFI_SUBCARRIER_SPACING)  # in seconds
+
+    # Now we can compute absolute timing for each cluster
+    packet_times = complete_cluster_timestamps - sto
+
+    rx_baseband_sto = packet_times[:, :, :, :] - packet_times[:, 0:1, 0:1, 0:1]
+
+    mean_rx_baseband_sto = np.mean(rx_baseband_sto, axis=0)
+    he20_subcarrier_indices = csi.get_csi_format_subcarrier_indices("he20").astype(np.float64)
+    he20_frequencies_hz = he20_subcarrier_indices * (constants.WIFI_SUBCARRIER_SPACING / 4.0)
+    calibration_he20 = np.exp(
+        -1.0j
+        * 2.0
+        * np.pi
+        * mean_rx_baseband_sto[..., np.newaxis]
+        * he20_frequencies_hz[np.newaxis, np.newaxis, np.newaxis, :]
+    ).astype(np.complex64)
+    calibration_he20 *= antenna_phase_offsets[..., np.newaxis].astype(np.complex64)
+
+    return calibration_he20
 
 def interpolate_lltf_gap(csi_lltf: np.ndarray):
     """

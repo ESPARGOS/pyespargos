@@ -88,7 +88,8 @@ Item  {
 		model: [
 			{ value: "lltf", text: "L-LTF"},
 			{ value: "ht20", text: "HT20"},
-			{ value: "ht40", text: "HT40"}
+			{ value: "ht40", text: "HT40"},
+			{ value: "he20", text: "HE20"}
 		]
 		textRole: "text"
 		valueRole: "value"

@@ -71,6 +71,11 @@ class CSIBacklog(object):
             "per_antenna": True,
             "dtype": np.complex64,
         },
+        "he20": {
+            "shape": (csi.HE20_COEFFICIENTS_PER_CHANNEL,),
+            "per_antenna": True,
+            "dtype": np.complex64,
+        },
         "rssi": {"shape": (), "per_antenna": True, "dtype": np.float32},
         "cfo": {"shape": (), "per_antenna": True, "dtype": np.float32},
         "rfswitch_state": {"shape": (), "per_antenna": True, "dtype": np.uint8},
@@ -223,6 +228,20 @@ class CSIBacklog(object):
                 else:
                     self.storage["ht20"][self.head] = np.nan
                     self.logger.warning(f"Received non-HT20 frame even though HT20 is enabled")
+
+            # Store HE20 CSI if applicable
+            if "he20" in self.fields:
+                if clustered_csi.has_he20ltf():
+                    csi_he20 = clustered_csi.deserialize_csi_he20ltf()
+
+                    if self.calibrate:
+                        assert self.pool.get_calibration() is not None
+                        csi_he20 = self.pool.get_calibration().apply_he20(csi_he20)
+
+                    self.storage["he20"][self.head] = csi_he20
+                else:
+                    self.storage["he20"][self.head] = np.nan
+                    self.logger.warning(f"Received non-HE20 frame even though HE20 is enabled")
 
             # Store RSSI
             if "rssi" in self.fields:

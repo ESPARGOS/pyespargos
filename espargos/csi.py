@@ -21,6 +21,9 @@ HT_COEFFICIENTS_PER_CHANNEL = 57
 LEGACY_COEFFICIENTS_PER_CHANNEL = 53
 "Number of channel coefficients (active subcarriers) per Wi-Fi channel in legacy mode (L-LTF)"
 
+HE20_COEFFICIENTS_PER_CHANNEL = 245
+"Number of channel coefficients (active plus invalid subcarriers) for a 20 MHz HE-LTF"
+
 HT40_GAP_SUBCARRIERS = 3
 "Gap between primary and secondary channel in HT40 mode, in subcarriers"
 
@@ -69,6 +72,30 @@ SERIALIZED_CSI_TLV_ACQUIRE_FLAG_FORCE_LLTF = 1 << 0
 SERIALIZED_CSI_TLV_ACQUIRE_FLAG_LLTF_BIT_MODE = 1 << 1
 SERIALIZED_CSI_TLV_RX_CTRL_COMPRESSED_FLAG_IS_HT40 = 1 << 0
 SERIALIZED_CSI_TLV_RX_CTRL_COMPRESSED_FLAG_CHANNEL_ESTIMATE_INFO_VLD = 1 << 1
+
+
+def get_csi_format_subcarrier_count(preamble_format: str) -> int:
+    if preamble_format == "lltf":
+        return LEGACY_COEFFICIENTS_PER_CHANNEL
+    if preamble_format == "ht20":
+        return HT_COEFFICIENTS_PER_CHANNEL
+    if preamble_format == "ht40":
+        return 2 * HT_COEFFICIENTS_PER_CHANNEL + HT40_GAP_SUBCARRIERS
+    if preamble_format == "he20":
+        return HE20_COEFFICIENTS_PER_CHANNEL
+    raise ValueError(f"Unknown CSI preamble format: {preamble_format}")
+
+
+def get_csi_format_subcarrier_indices(preamble_format: str) -> np.ndarray:
+    if preamble_format == "lltf":
+        return np.arange(-26, 27, dtype=np.int32)
+    if preamble_format == "ht20":
+        return np.arange(-28, 29, dtype=np.int32)
+    if preamble_format == "ht40":
+        return np.arange(-58, 59, dtype=np.int32)
+    if preamble_format == "he20":
+        return np.arange(-122, 123, dtype=np.int32)
+    raise ValueError(f"Unknown CSI preamble format: {preamble_format}")
 
 
 #####################################################

@@ -114,12 +114,7 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=preambleFormatChanged)
     def subcarrierCount(self):
-        preamble = self.genericconfig.get("preamble_format")
-        if preamble == "lltf":
-            return espargos.csi.LEGACY_COEFFICIENTS_PER_CHANNEL
-        if preamble == "ht40":
-            return 2 * espargos.csi.HT_COEFFICIENTS_PER_CHANNEL + espargos.csi.HT40_GAP_SUBCARRIERS
-        return espargos.csi.HT_COEFFICIENTS_PER_CHANNEL
+        return espargos.csi.get_csi_format_subcarrier_count(self.genericconfig.get("preamble_format"))
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=binCountChanged)
     def binCount(self):
@@ -228,6 +223,8 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
             espargos.util.interpolate_ht40ltf_gap(csi_backlog)
         elif csi_key == "ht20":
             espargos.util.interpolate_ht20ltf_gap(csi_backlog)
+        elif csi_key == "he20":
+            espargos.util.interpolate_he20ltf_gaps(csi_backlog)
 
         if additional_keys:
             return tuple(results)

@@ -38,7 +38,8 @@ Common.ESPARGOSApplication {
 				model: [
 					{ value: "phase_slope", text: "Phase Slope" },
 					{ value: "music", text: "Root-MUSIC" },
-					{ value: "unwrap", text: "Phase Unwrap" }
+					{ value: "unwrap", text: "Phase Unwrap" },
+					{ value: "sensor_timestamp", text: "Sensor Timestamp" }
 				]
 				textRole: "text"
 				valueRole: "value"
@@ -130,6 +131,50 @@ Common.ESPARGOSApplication {
 				backgroundColor: "#11191e"
 
 				property var newDataBacklog: Array()
+				property real adaptiveYMargin: 0.15
+
+				function rescaleYAxis() {
+					let minY = Infinity
+					let maxY = -Infinity
+
+					for (let ant = 0; ant < tdoasOverTime.count; ++ant) {
+						let s = tdoasOverTime.series(ant)
+						for (let i = 0; i < s.count; ++i) {
+							let point = s.at(i)
+							if (isNaN(point.y))
+								continue
+							minY = Math.min(minY, point.y)
+							maxY = Math.max(maxY, point.y)
+						}
+					}
+
+					for (const elem of tdoasOverTime.newDataBacklog) {
+						for (const value of elem.tdoas) {
+							if (isNaN(value))
+								continue
+							minY = Math.min(minY, value)
+							maxY = Math.max(maxY, value)
+						}
+					}
+
+					if (!isFinite(minY) || !isFinite(maxY)) {
+						tdoasOverTimeYAxis.min = -40
+						tdoasOverTimeYAxis.max = 40
+						return
+					}
+
+					if (minY === maxY) {
+						let halfSpan = Math.max(5, Math.abs(minY) * 0.2)
+						tdoasOverTimeYAxis.min = minY - halfSpan
+						tdoasOverTimeYAxis.max = maxY + halfSpan
+						return
+					}
+
+					let span = maxY - minY
+					let margin = Math.max(2, span * tdoasOverTime.adaptiveYMargin)
+					tdoasOverTimeYAxis.min = minY - margin
+					tdoasOverTimeYAxis.max = maxY + margin
+				}
 
 				axes: [
 					ValueAxis {
@@ -152,8 +197,8 @@ Common.ESPARGOSApplication {
 						titleText: "<font color=\"#e0e0e0\">Time of Arrival Difference [ns]</font>"
 						titleFont.bold: false
 						gridLineColor: "#c0c0c0"
-						tickInterval: 10
-						tickType: ValueAxis.TicksDynamic
+						tickCount: 7
+						minorTickCount: 0
 						labelsColor: "#e0e0e0"
 					}
 				]
@@ -182,6 +227,7 @@ Common.ESPARGOSApplication {
 							tdoasOverTimeXAxis.min = elem.time - backend.maxCSIAge
 						}
 
+						tdoasOverTime.rescaleYAxis()
 						tdoasOverTime.newDataBacklog = []
 					}
 				}
@@ -204,6 +250,8 @@ Common.ESPARGOSApplication {
 								s.removePoints(0, toRemoveCount);
 							}
 						}
+
+						tdoasOverTime.rescaleYAxis()
 					}
 				}
 

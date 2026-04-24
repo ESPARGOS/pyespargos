@@ -95,13 +95,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=preambleFormatChanged)
     def subcarrierCount(self):
-        preamble = self.genericconfig.get("preamble_format")
-        if preamble == "lltf":
-            return espargos.csi.LEGACY_COEFFICIENTS_PER_CHANNEL
-        elif preamble == "ht40":
-            return 2 * espargos.csi.HT_COEFFICIENTS_PER_CHANNEL + espargos.csi.HT40_GAP_SUBCARRIERS
-        else:
-            return espargos.csi.HT_COEFFICIENTS_PER_CHANNEL
+        return espargos.csi.get_csi_format_subcarrier_count(self.genericconfig.get("preamble_format"))
 
     def exec(self):
         return super().exec()
@@ -207,7 +201,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             # csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, :])))
 
             subcarrier_count = csi_flat.shape[1]
-            subcarrier_range = np.arange(-subcarrier_count // 2, subcarrier_count // 2)
+            subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices(self.genericconfig.get("preamble_format"))
 
             for pwr_series, phase_series, ant_pwr, ant_phase in zip(powerSeries, phaseSeries, csi_power, csi_phase):
                 pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, ant_pwr)])

@@ -11,6 +11,7 @@ from . import csi
 _RAW_LLTF_BYTES = csi.LEGACY_COEFFICIENTS_PER_CHANNEL * 2
 _RAW_HT20_BYTES = csi.HT_COEFFICIENTS_PER_CHANNEL * 2
 _RAW_HT40_BYTES = (csi.HT_COEFFICIENTS_PER_CHANNEL * 2) + (csi.HT40_GAP_SUBCARRIERS * 2) + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2)
+_RAW_HE20_BYTES = csi.HE20_COEFFICIENTS_PER_CHANNEL * 2
 
 
 class CSICluster(object):
@@ -294,6 +295,33 @@ class CSICluster(object):
 
         return csi_ht40
 
+    def deserialize_csi_he20ltf(self):
+        """
+        Deserialize the HE20 HE-LTF part of the CSI data.
+
+        The internal HE20 ordering is ascending subcarrier index ``-122..122``.
+        """
+        assert self.has_he20ltf()
+        csi_he20 = np.zeros(self.shape + (csi.HE20_COEFFICIENTS_PER_CHANNEL,), dtype=np.complex64)
+
+        def deserialize_he20_packet(b, r, a, serialized_csi):
+            nonlocal csi_he20
+            csi_he20_sensor = csi_he20[b, r, a, :].view()
+
+            if serialized_csi.is_compressed:
+                raise NotImplementedError("Compressed HE20 CSI is not supported yet")
+
+            he20_raw = np.frombuffer(serialized_csi.buf[:_RAW_HE20_BYTES], dtype=np.int8).astype(np.float32).view(np.complex64)
+            csi_he20_sensor[:] = -1.0j * np.conj(he20_raw)
+
+        self._foreach_complete_sensor(deserialize_he20_packet)
+
+        delay = self.get_sensor_timestamps()
+        subcarrier_range = np.arange(-122, 123, dtype=np.float64)[np.newaxis, np.newaxis, np.newaxis, :]
+        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * (constants.WIFI_SUBCARRIER_SPACING / 4.0) * subcarrier_range)
+        csi_he20 = np.einsum("bras,bras->bras", csi_he20, sto_delay_correction)
+        return csi_he20
+
     def has_lltf(self) -> bool:
         """
         Check if L-LTF channel estimates are available for all complete sensors.
@@ -369,6 +397,35 @@ class CSICluster(object):
         self._foreach_complete_sensor(check_ht40)
 
         return have_ht40_all
+
+    def has_he20ltf(self) -> bool:
+        """
+        Check if HE20 HE-LTF channel estimates are available for all complete sensors.
+        """
+        have_he20_all = True
+
+        def check_he20(b, r, a, serialized_csi):
+            nonlocal have_he20_all
+            if serialized_csi.csi_len == 0:
+                have_he20_all = False
+                return
+            if serialized_csi.acquire_force_lltf:
+                have_he20_all = False
+                return
+
+            rx_ctrl = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl)
+            if not self._is_he_format(rx_ctrl.cur_bb_format):
+                have_he20_all = False
+                return
+            if rx_ctrl.second != 0:
+                have_he20_all = False
+                return
+            if serialized_csi.csi_len < _RAW_HE20_BYTES:
+                have_he20_all = False
+
+        self._foreach_complete_sensor(check_he20)
+
+        return have_he20_all
 
     def get_secondary_channel_relative(self):
         """
@@ -543,11 +600,7 @@ class CSICluster(object):
         # rxstart_time_cyc_dec = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).rxstart_time_cyc_dec
         # rxstart_time_cyc_dec = 2048 - rxstart_time_cyc_dec if rxstart_time_cyc_dec >= 1024 else rxstart_time_cyc_dec
 
-        # Backwards compatibility: Only use global timestamp if it is nonzero
-        us_timestamp = serialized_csi.timestamp
-        if serialized_csi.global_timestamp_us != 0:
-            us_timestamp = serialized_csi.global_timestamp_us
-        hw_latched_timestamp_ns = us_timestamp * 1000
+        hw_latched_timestamp_ns = serialized_csi.global_timestamp_us * 1000
 
         # "official" formula by Espressif:
         # timestamp_ns = np.float128(serialized_csi.timestamp * 1000 + ((rxstart_time_cyc * 12500) // 1000) + ((rxstart_time_cyc_dec * 1562) // 1000) - 20800)
@@ -556,3 +609,12 @@ class CSICluster(object):
         # CYC_DEC_PERIOD_NS = 1/640e6*1e9
         HW_TIMESTAMP_LAG_NS = 20800
         return hw_latched_timestamp_ns - HW_TIMESTAMP_LAG_NS + rxstart_time_cyc * CYC_PERIOD_NS  # + rxstart_time_cyc_dec * CYC_DEC_PERIOD_NS
+
+    @staticmethod
+    def _is_he_format(bb_format: int) -> bool:
+        return bb_format in (
+            csi.wifi_rx_bb_format_t.RX_BB_FORMAT_HE_SU,
+            csi.wifi_rx_bb_format_t.RX_BB_FORMAT_HE_MU,
+            csi.wifi_rx_bb_format_t.RX_BB_FORMAT_HE_ERSU,
+            csi.wifi_rx_bb_format_t.RX_BB_FORMAT_HE_TB,
+        )

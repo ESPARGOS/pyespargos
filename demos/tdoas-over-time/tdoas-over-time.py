@@ -23,7 +23,7 @@ class EspargosDemoTDOAOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppli
 
     DEFAULT_CONFIG = {
         "max_age": 10.0,
-        "algorithm": "phase_slope",  # "phase_slope", "music", "unwrap"
+        "algorithm": "phase_slope",  # "phase_slope", "music", "unwrap", "sensor_timestamp"
         "average": False,
     }
 
@@ -67,38 +67,51 @@ class EspargosDemoTDOAOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppli
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
-        if (result := self.get_backlog_csi("host_timestamp")) is None:
+        algorithm = self.appconfig.get("algorithm")
+        additional_keys = ("timestamp", "host_timestamp") if algorithm == "sensor_timestamp" else ("host_timestamp",)
+        if (result := self.get_backlog_csi(*additional_keys)) is None:
             return
 
-        csi_backlog, timestamp_backlog = result
-        mean_rx_timestamp = timestamp_backlog[-1] - self.startTimestamp
-
-        # Do interpolation "by_array" due to Doppler (destroys TDoA for moving targets otherwise)
-        csi_interp = espargos.util.csi_interp_iterative_by_array(csi_backlog, iterations=5)
-
-        algorithm = self.appconfig.get("algorithm")
         do_average = self.appconfig.get("average")
+        mean_rx_timestamp = result[-1][-1] - self.startTimestamp
 
-        if algorithm == "music":
-            tdoas_ns = espargos.util.estimate_toas_rootmusic(csi_backlog, per_board_average=do_average) * 1e9
-        elif algorithm == "unwrap":
-            phases = np.unwrap(np.angle(csi_interp), axis=-1)
-            tdoas_ns = (phases[..., -1] - phases[..., 0]) / (2 * np.pi * phases.shape[-1]) / espargos.constants.WIFI_SUBCARRIER_SPACING * 1e9
+        if algorithm == "sensor_timestamp":
+            _, sensor_timestamp_backlog, _ = result
+            latest_sensor_timestamps = sensor_timestamp_backlog[-1]
+            calibration = self.pool.get_calibration()
+            if calibration is None:
+                return
+            corrected_sensor_timestamps = latest_sensor_timestamps - calibration.sensor_clock_offsets
+            reference_timestamp = corrected_sensor_timestamps[0, 0, 0]
+            tdoas_ns = (corrected_sensor_timestamps - reference_timestamp) * 1e9
             if do_average:
                 tdoas_ns = np.mean(tdoas_ns, axis=(1, 2))
         else:
-            sum_axis = -1 if not do_average else (1, 2, 3)
-            tdoas_ns = (
-                np.angle(
-                    np.sum(
-                        csi_interp[..., 1:] * np.conj(csi_interp[..., :-1]),
-                        axis=sum_axis,
+            csi_backlog, _ = result
+
+            # Do interpolation "by_array" due to Doppler (destroys TDoA for moving targets otherwise)
+            csi_interp = espargos.util.csi_interp_iterative_by_array(csi_backlog, iterations=5)
+
+            if algorithm == "music":
+                tdoas_ns = espargos.util.estimate_toas_rootmusic(csi_backlog, per_board_average=do_average) * 1e9
+            elif algorithm == "unwrap":
+                phases = np.unwrap(np.angle(csi_interp), axis=-1)
+                tdoas_ns = (phases[..., -1] - phases[..., 0]) / (2 * np.pi * phases.shape[-1]) / espargos.constants.WIFI_SUBCARRIER_SPACING * 1e9
+                if do_average:
+                    tdoas_ns = np.mean(tdoas_ns, axis=(1, 2))
+            else:
+                sum_axis = -1 if not do_average else (1, 2, 3)
+                tdoas_ns = (
+                    np.angle(
+                        np.sum(
+                            csi_interp[..., 1:] * np.conj(csi_interp[..., :-1]),
+                            axis=sum_axis,
+                        )
                     )
+                    / (2 * np.pi)
+                    / espargos.constants.WIFI_SUBCARRIER_SPACING
+                    * 1e9
                 )
-                / (2 * np.pi)
-                / espargos.constants.WIFI_SUBCARRIER_SPACING
-                * 1e9
-            )
 
         self.updateTDOAs.emit(mean_rx_timestamp, tdoas_ns.astype(float).flatten().tolist())
 
