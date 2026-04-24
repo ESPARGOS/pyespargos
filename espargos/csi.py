@@ -30,13 +30,16 @@ HT40_GAP_SUBCARRIERS = 3
 COMPRESSED_LLTF_FFT_SIZE = 64
 COMPRESSED_HT20_FFT_SIZE = 64
 COMPRESSED_HT40_FFT_SIZE = 128
+COMPRESSED_HE20_FFT_SIZE = 256
 COMPRESSED_LLTF_FIX32_SHIFT = 17
 COMPRESSED_HT20_FIX32_SHIFT = 21
 COMPRESSED_HT40_FIX32_SHIFT = 21
+COMPRESSED_HE20_FIX32_SHIFT = 21
 COMPRESSED_TAP_COUNT = 16
 COMPRESSED_LLTF_TAP_START = 27
 COMPRESSED_HT20_TAP_START = 27
 COMPRESSED_HT40_TAP_START = 55
+COMPRESSED_HE20_TAP_START = 120
 HT20_SIMULATION_MODES = (
     "float",
     "float_corrected",
@@ -791,8 +794,22 @@ def _fix32_mpy(a: int, b: int, precise_rounding: bool = False) -> int:
 
 
 def _sensor_centered_spectrum_to_ht20_observed_taps_fix32(centered_spectrum: np.ndarray, precise_rounding: bool = False) -> np.ndarray:
-    fft_size = COMPRESSED_HT20_FFT_SIZE
-    shift = COMPRESSED_HT20_FIX32_SHIFT
+    return _sensor_centered_spectrum_to_direct_observed_taps_fix32(
+        centered_spectrum,
+        COMPRESSED_HT20_FFT_SIZE,
+        COMPRESSED_HT20_FIX32_SHIFT,
+        COMPRESSED_HT20_TAP_START,
+        precise_rounding=precise_rounding,
+    )
+
+
+def _sensor_centered_spectrum_to_direct_observed_taps_fix32(
+    centered_spectrum: np.ndarray,
+    fft_size: int,
+    shift: int,
+    tap_start: int,
+    precise_rounding: bool = False,
+) -> np.ndarray:
     scale_divisor = 8.0
     fr = np.zeros((fft_size,), dtype=np.int64)
     fi = np.zeros((fft_size,), dtype=np.int64)
@@ -852,7 +869,7 @@ def _sensor_centered_spectrum_to_ht20_observed_taps_fix32(centered_spectrum: np.
     centered_cir = np.fft.fftshift((fr + 1.0j * fi).astype(np.complex128) / float(1 << shift) / scale_divisor)
     observed = np.zeros((COMPRESSED_TAP_COUNT,), dtype=np.complex64)
     for i in range(COMPRESSED_TAP_COUNT):
-        centered_index = COMPRESSED_HT20_TAP_START + i
+        centered_index = tap_start + i
         observed[i] = np.complex64(centered_cir[centered_index])
 
     return observed
@@ -1103,6 +1120,28 @@ def _build_ht20_fix32_tap_correction() -> np.ndarray:
     return np.linalg.pinv(correction).astype(np.complex64)
 
 
+def _build_he20_fix32_tap_correction() -> np.ndarray:
+    correction = np.zeros((COMPRESSED_TAP_COUNT, COMPRESSED_TAP_COUNT), dtype=np.complex64)
+    active = _active_slice(COMPRESSED_HE20_FFT_SIZE, HE20_COEFFICIENTS_PER_CHANNEL)
+    gap_start = active.start + (HE20_COEFFICIENTS_PER_CHANNEL // 2) - 1
+
+    for col in range(COMPRESSED_TAP_COUNT):
+        centered_cir = np.zeros((COMPRESSED_HE20_FFT_SIZE,), dtype=np.complex64)
+        centered_cir[COMPRESSED_HE20_TAP_START + col] = 1.0
+        centered_spectrum = _centered_fft(centered_cir, COMPRESSED_HE20_FFT_SIZE)
+        masked_spectrum = np.zeros((COMPRESSED_HE20_FFT_SIZE,), dtype=np.complex64)
+        masked_spectrum[active] = centered_spectrum[active]
+        masked_spectrum[gap_start : gap_start + HT40_GAP_SUBCARRIERS] = 0.0
+        correction[:, col] = _sensor_centered_spectrum_to_direct_observed_taps_fix32(
+            masked_spectrum,
+            COMPRESSED_HE20_FFT_SIZE,
+            COMPRESSED_HE20_FIX32_SHIFT,
+            COMPRESSED_HE20_TAP_START,
+        )
+
+    return np.linalg.pinv(correction).astype(np.complex64)
+
+
 def _build_lltf_force_fix32_tap_correction() -> np.ndarray:
     correction = np.zeros((COMPRESSED_TAP_COUNT, COMPRESSED_TAP_COUNT), dtype=np.complex64)
 
@@ -1165,12 +1204,22 @@ _COMPRESSED_LLTF_FIX32_CORRECTION = _build_lltf_fix32_tap_correction()
 _COMPRESSED_HT20_CORRECTION = _build_ht20_sensor_tap_correction()
 _COMPRESSED_HT20_FIX32_CORRECTION = _build_ht20_fix32_tap_correction()
 _COMPRESSED_HT40_FIX32_CORRECTION = _build_ht40_fix32_tap_correction()
+_COMPRESSED_HE20_FIX32_CORRECTION = _build_he20_fix32_tap_correction()
 
 
 def _interpolate_ht20_dc(spectrum: np.ndarray) -> np.ndarray:
     spectrum = np.asarray(spectrum, dtype=np.complex64).copy()
     dc_index = HT_COEFFICIENTS_PER_CHANNEL // 2
     spectrum[dc_index] = 0.5 * (spectrum[dc_index - 1] + spectrum[dc_index + 1])
+    return spectrum
+
+
+def _interpolate_he20_gap(spectrum: np.ndarray) -> np.ndarray:
+    spectrum = np.asarray(spectrum, dtype=np.complex64).copy()
+    center_index = HE20_COEFFICIENTS_PER_CHANNEL // 2
+    left = spectrum[center_index - 2]
+    right = spectrum[center_index + 2]
+    spectrum[center_index - 1 : center_index + 2] = np.asarray((0.25, 0.5, 0.75), dtype=np.float32) * right + np.asarray((0.75, 0.5, 0.25), dtype=np.float32) * left
     return spectrum
 
 
@@ -1238,6 +1287,19 @@ def decode_compressed_ht40(buf) -> np.ndarray:
     gap_start = HT_COEFFICIENTS_PER_CHANNEL
     spectrum[gap_start : gap_start + HT40_GAP_SUBCARRIERS] = 0.0
     return spectrum
+
+
+def decode_compressed_he20(buf) -> np.ndarray:
+    spectrum = _decode_compressed_tap_window(
+        buf,
+        COMPRESSED_HE20_FFT_SIZE,
+        COMPRESSED_HE20_TAP_START,
+        COMPRESSED_TAP_COUNT,
+        HE20_COEFFICIENTS_PER_CHANNEL,
+        _COMPRESSED_HE20_FIX32_CORRECTION,
+        float((1 << COMPRESSED_HE20_FIX32_SHIFT) * 8.0),
+    )
+    return _interpolate_he20_gap(spectrum)
 
 
 def _extract_signed15(x: int) -> int:

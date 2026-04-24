@@ -311,7 +311,8 @@ class CSICluster(object):
             csi_he20_sensor = csi_he20[b, r, a, :].view()
 
             if serialized_csi.is_compressed:
-                raise NotImplementedError("Compressed HE20 CSI is not supported yet")
+                csi_he20_sensor[:] = csi.decode_compressed_he20(serialized_csi.buf)
+                return
 
             he20_raw = np.frombuffer(serialized_csi.buf[:_RAW_HE20_BYTES], dtype=np.int8).astype(np.float32).view(np.complex64)
             csi_he20_sensor[:] = -1.0j * np.conj(he20_raw)
@@ -423,7 +424,7 @@ class CSICluster(object):
             if rx_ctrl.second != 0:
                 have_he20_all = False
                 return
-            if serialized_csi.csi_len < _RAW_HE20_BYTES:
+            if csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).rx_channel_estimate_len < _RAW_HE20_BYTES:
                 have_he20_all = False
 
         self._foreach_complete_sensor(check_he20)
