@@ -194,7 +194,7 @@ class CSICluster(object):
 
         # Need to take timestamps into account to provide phase coherence across all sensors
         delay = self.get_sensor_timestamps()
-        subcarrier_range = np.arange(-csi_lltf.shape[-1] // 2, csi_lltf.shape[-1] // 2)[np.newaxis, np.newaxis, np.newaxis, :]
+        subcarrier_range = csi.get_csi_format_subcarrier_indices("lltf").astype(np.float64)[np.newaxis, np.newaxis, np.newaxis, :]
 
         # Need to adjust range if using 40MHz wide channel since LO is either above or below the primary channel that L-LTF is on
         subcarrier_range -= self.get_secondary_channel_relative() * int(2 * constants.WIFI_CHANNEL_SPACING / constants.WIFI_SUBCARRIER_SPACING)
@@ -237,7 +237,7 @@ class CSICluster(object):
 
         # Need to take timestamps into account to provide phase coherence across all sensors
         delay = self.get_sensor_timestamps()
-        subcarrier_range = np.arange(-csi_ht20.shape[-1] // 2, csi_ht20.shape[-1] // 2)[np.newaxis, np.newaxis, np.newaxis, :]
+        subcarrier_range = csi.get_csi_format_subcarrier_indices("ht20").astype(np.float64)[np.newaxis, np.newaxis, np.newaxis, :]
 
         # Need to adjust range if using 40MHz wide channel since LO is either above or below the primary channel that HT20 is on
         subcarrier_range -= self.get_secondary_channel_relative() * int(2 * constants.WIFI_CHANNEL_SPACING / constants.WIFI_SUBCARRIER_SPACING)
@@ -289,7 +289,7 @@ class CSICluster(object):
 
         # Need to take timestamps into account to provide phase coherence across all sensors
         delay = self.get_sensor_timestamps()
-        subcarrier_range = np.arange(-csi_ht40.shape[-1] // 2, csi_ht40.shape[-1] // 2)[np.newaxis, np.newaxis, np.newaxis, :]
+        subcarrier_range = csi.get_csi_format_subcarrier_indices("ht40").astype(np.float64)[np.newaxis, np.newaxis, np.newaxis, :]
         sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
         csi_ht40 = np.einsum("bras,bras->bras", csi_ht40, sto_delay_correction)
 
@@ -320,7 +320,7 @@ class CSICluster(object):
         self._foreach_complete_sensor(deserialize_he20_packet)
 
         delay = self.get_sensor_timestamps()
-        subcarrier_range = np.arange(-122, 123, dtype=np.float64)[np.newaxis, np.newaxis, np.newaxis, :]
+        subcarrier_range = csi.get_csi_format_subcarrier_indices("he20").astype(np.float64)[np.newaxis, np.newaxis, np.newaxis, :]
         sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * (constants.WIFI_SUBCARRIER_SPACING / 4.0) * subcarrier_range)
         csi_he20 = np.einsum("bras,bras->bras", csi_he20, sto_delay_correction)
         csi_he20[..., 121:124] = 0.0
