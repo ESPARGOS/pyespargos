@@ -414,12 +414,6 @@ def derive_he20_calibration_from_ht20(
     # after its timestamp-based STO correction. Use a principal-eigenvector
     # estimate so that we combine all clusters and subcarriers coherently.
     csi_lltf_sto_corrected = np.asarray(complete_clusters_lltf, dtype=np.complex64)
-    csi_lltf_flat = np.moveaxis(csi_lltf_sto_corrected, -1, 1).reshape(csi_lltf_sto_corrected.shape[0] * csi_lltf_sto_corrected.shape[-1], -1)
-    covariance = np.einsum("na,nb->ab", csi_lltf_flat, np.conj(csi_lltf_flat)) / max(csi_lltf_flat.shape[0], 1)
-    eigvals, eigvecs = np.linalg.eig(covariance)
-    principal_eigenvector = eigvecs[:, np.argmax(np.real(eigvals))].reshape(csi_lltf_sto_corrected.shape[1:4])
-    principal_eigenvector /= principal_eigenvector[0, 0, 0] / np.abs(principal_eigenvector[0, 0, 0])
-    antenna_phase_offsets = principal_eigenvector / np.abs(principal_eigenvector)
 
     # Undo STO calibration for this
     subcarrier_range = np.arange(-complete_clusters_lltf.shape[-1] // 2, complete_clusters_lltf.shape[-1] // 2)[np.newaxis,np.newaxis, np.newaxis, np.newaxis, :]
@@ -427,6 +421,12 @@ def derive_he20_calibration_from_ht20(
     sto_delay_correction = np.exp(1.0j * 2 * np.pi * complete_cluster_timestamps[:, :, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
 
     csi_lltf = np.einsum("cbras,cbras->cbras", csi_lltf_sto_corrected, sto_delay_correction)
+    csi_lltf_flat = np.moveaxis(csi_lltf, -1, 1).reshape(csi_lltf.shape[0] * csi_lltf.shape[-1], -1)
+    covariance = np.einsum("na,nb->ab", csi_lltf_flat, np.conj(csi_lltf_flat)) / max(csi_lltf_flat.shape[0], 1)
+    eigvals, eigvecs = np.linalg.eig(covariance)
+    principal_eigenvector = eigvecs[:, np.argmax(np.real(eigvals))].reshape(csi_lltf.shape[1:4])
+    principal_eigenvector /= principal_eigenvector[0, 0, 0] / np.abs(principal_eigenvector[0, 0, 0])
+    antenna_phase_offsets = principal_eigenvector / np.abs(principal_eigenvector)
 
     # Now we have the "raw" CSI and timestamps from the hardware again.
     # First, determine the STO from the csi_lltf slope
