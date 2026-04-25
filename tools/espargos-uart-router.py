@@ -10,7 +10,7 @@ from aiohttp import web
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 
-from espargos.uart import UARTClient
+from espargos.uart import UARTClient, UARTProtocolError, UARTTimeoutError
 
 
 class UARTRouter:
@@ -24,7 +24,6 @@ class UARTRouter:
         self._loop = asyncio.get_running_loop()
         self.uart.connect()
         self.uart.add_csi_callback(self._on_csi_frame)
-        self.uart.add_log_callback(self._on_log_message)
 
     async def close(self):
         self.uart.close()
@@ -32,12 +31,16 @@ class UARTRouter:
     async def handle_http(self, request: web.Request) -> web.StreamResponse:
         path = request.match_info.get("path", "")
         body = await request.read()
-        response = self.uart.request(request.method.upper(), path, body)
-        return web.Response(
-            status=response.status,
-            content_type=response.content_type or "text/plain",
-            body=response.body,
-        )
+        try:
+            response = self.uart.request(request.method.upper(), path, body)
+        except UARTTimeoutError:
+            return web.Response(status=504, text="")
+        except (UARTProtocolError, OSError):
+            return web.Response(status=502, text="")
+        headers = {}
+        if response.content_type:
+            headers["Content-Type"] = response.content_type
+        return web.Response(status=response.status, headers=headers, body=response.body)
 
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
@@ -70,10 +73,6 @@ class UARTRouter:
             return
         for q in list(self._ws_clients):
             self._loop.call_soon_threadsafe(q.put_nowait, payload)
-
-    def _on_log_message(self, message: str):
-        self.logger.info(f"[device] {message.rstrip()}")
-
 
 def build_app(router: UARTRouter) -> web.Application:
     app = web.Application()

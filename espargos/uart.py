@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import ctypes
 import errno
 import logging
 import os
@@ -37,13 +36,13 @@ DEFAULT_BOOT_BAUDRATE = 115200
 DEFAULT_TIMEOUT = 5.0
 DEFAULT_READ_TIMEOUT = 0.001
 DEFAULT_LATENCY_TIMER_MS = 1
-HARDWARE_FLOW_CONTROL_PIDS = {
-    0xEA64,  # SiLabs CP2102C USB to UART Bridge Controller
+DEFAULT_ACTIVATION_RETRY_INTERVAL = 0.05
+DEFAULT_MODEM_IDLE_DTR = False
+DEFAULT_MODEM_IDLE_RTS = False
+NO_RESET_MODEM_STATES = {
+    0x6015: (True, True),  # FTDI FT231X USB UART
+    0xEA64: (True, True),  # SiLabs CP2102C USB to UART Bridge Controller
 }
-DEFAULT_IDLE_DTR = False
-DEFAULT_IDLE_RTS = False
-FLOW_CONTROL_IDLE_DTR = True
-FLOW_CONTROL_IDLE_RTS = False
 
 
 class UARTProtocolError(Exception):
@@ -177,6 +176,7 @@ class UARTClient:
         self.baudrate = int(params.get("baud", DEFAULT_UART_BAUDRATE))
         self.read_timeout = float(params.get("read_timeout", DEFAULT_READ_TIMEOUT))
         self.latency_timer_ms = int(params.get("latency_ms", DEFAULT_LATENCY_TIMER_MS))
+        self.activation_retry_interval = float(params.get("activation_interval", DEFAULT_ACTIVATION_RETRY_INTERVAL))
 
         self._serial = None
         self._reader_thread = None
@@ -194,7 +194,7 @@ class UARTClient:
         self._reader_running = False
         self._latency_timer_restore_path = None
         self._latency_timer_restore_value = None
-        self._flow_control_workaround = self._device_needs_flow_control_workaround()
+        self._modem_idle_state = self._detect_modem_idle_state()
 
     def connect(self):
         if self._connected:
@@ -203,7 +203,7 @@ class UARTClient:
         self._serial = self._open_serial(self.baudrate)
 
         try:
-            self.hello()
+            self.hello(timeout=min(1.0, self.timeout))
         except (UARTProtocolError, UARTTimeoutError, serial.SerialException):
             self._activate_transport_mode()
 
@@ -214,13 +214,16 @@ class UARTClient:
         if self._serial is None:
             raise UARTProtocolError("UART is not connected")
 
-        self._serial.close()
-        self._serial = self._open_serial(self.boot_baudrate)
+        self._serial.baudrate = self.boot_baudrate
+        self._serial.reset_input_buffer()
+        self._serial.reset_output_buffer()
+
         self._serial.write(UART_ACTIVATION_TOKEN)
         self._serial.flush()
-        time.sleep(0.1)
+        time.sleep(max(self.activation_retry_interval, 0.1))
+
         self._serial.baudrate = self.baudrate
-        time.sleep(0.05)
+        time.sleep(0.1)
         self._serial.reset_input_buffer()
         self._serial.reset_output_buffer()
         self.hello()
@@ -265,8 +268,8 @@ class UARTClient:
         if callback in self._log_callbacks:
             self._log_callbacks.remove(callback)
 
-    def hello(self) -> dict:
-        payload = self._request_frame(FRAME_TYPE_HELLO_REQ, b"")
+    def hello(self, timeout: float | None = None) -> dict:
+        payload = self._request_frame(FRAME_TYPE_HELLO_REQ, b"", timeout=timeout)
         if len(payload) == 0:
             return {}
         if len(payload) < 8:
@@ -386,11 +389,9 @@ class UARTClient:
         self._reader_running = True
 
     def _open_serial(self, baudrate: int) -> serial.Serial:
-        # Some USB-UART bridges, such as CP2102C variants, keep hardware flow
-        # control active in a way that lets RTS transitions reset the ESP32 via
-        # the standard auto-reset circuitry. Mirror esptool's workaround by
-        # holding DTR in the safe state for those bridges from the moment the
-        # port opens.
+        # Known ESPARGOS USB-UART adapters need specific modem-control levels
+        # applied before opening the port, otherwise the standard ESP32 auto-
+        # reset circuitry reboots the board as soon as the port is opened.
         ser = serial.Serial(
             port=None,
             baudrate=baudrate,
@@ -430,20 +431,17 @@ class UARTClient:
             self.logger.debug(f"Could not update termios state for {self.device}: {exc}")
 
     def _apply_modem_idle_state(self, ser: serial.Serial):
-        if self._flow_control_workaround:
-            ser.dtr = FLOW_CONTROL_IDLE_DTR
-            ser.rts = FLOW_CONTROL_IDLE_RTS
-        else:
-            ser.dtr = DEFAULT_IDLE_DTR
-            ser.rts = DEFAULT_IDLE_RTS
+        ser.dtr, ser.rts = self._modem_idle_state
 
-    def _device_needs_flow_control_workaround(self) -> bool:
+    def _detect_modem_idle_state(self) -> tuple[bool, bool]:
         device_realpath = os.path.realpath(self.device)
         for portinfo in serial.tools.list_ports.comports():
             if os.path.realpath(portinfo.device) != device_realpath:
                 continue
-            return portinfo.pid in HARDWARE_FLOW_CONTROL_PIDS
-        return False
+            if portinfo.pid in NO_RESET_MODEM_STATES:
+                return NO_RESET_MODEM_STATES[portinfo.pid]
+            break
+        return DEFAULT_MODEM_IDLE_DTR, DEFAULT_MODEM_IDLE_RTS
 
     def _apply_low_latency_tuning(self):
         if os.name != "posix":
