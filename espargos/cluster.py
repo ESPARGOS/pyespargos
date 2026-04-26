@@ -324,6 +324,7 @@ class CSICluster(object):
         subcarrier_range = csi.get_csi_format_subcarrier_indices("he20").astype(np.float64)[np.newaxis, np.newaxis, np.newaxis, :]
         sto_delay_correction = np.exp(-1.0j * 2 * np.pi * (delay + he20_fractional_delay)[:, :, :, np.newaxis] * (constants.WIFI_SUBCARRIER_SPACING / 4.0) * subcarrier_range)
         csi_he20 = np.einsum("bras,bras->bras", csi_he20, sto_delay_correction)
+        csi_he20 *= self._get_he20_cfo_phase_correction()[..., np.newaxis]
         csi_he20[..., 121:124] = 0.0
         return csi_he20
 
@@ -622,6 +623,10 @@ class CSICluster(object):
 
         self._foreach_complete_sensor(append_fractional_offset)
         return fractional_offsets
+
+    def _get_he20_cfo_phase_correction(self):
+        HE20_CFO_PHASE_DELAY_S = 16e-6
+        return np.exp(-1.0j * 2.0 * np.pi * self.get_cfo() * HE20_CFO_PHASE_DELAY_S).astype(np.complex64)
 
     @staticmethod
     def _is_he_format(bb_format: int) -> bool:
