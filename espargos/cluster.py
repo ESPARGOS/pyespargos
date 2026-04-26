@@ -320,8 +320,9 @@ class CSICluster(object):
         self._foreach_complete_sensor(deserialize_he20_packet)
 
         delay = self.get_sensor_timestamps()
+        he20_fractional_delay = self._get_he20_fractional_timestamp_offsets()
         subcarrier_range = csi.get_csi_format_subcarrier_indices("he20").astype(np.float64)[np.newaxis, np.newaxis, np.newaxis, :]
-        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * (constants.WIFI_SUBCARRIER_SPACING / 4.0) * subcarrier_range)
+        sto_delay_correction = np.exp(-1.0j * 2 * np.pi * (delay + he20_fractional_delay)[:, :, :, np.newaxis] * (constants.WIFI_SUBCARRIER_SPACING / 4.0) * subcarrier_range)
         csi_he20 = np.einsum("bras,bras->bras", csi_he20, sto_delay_correction)
         csi_he20[..., 121:124] = 0.0
         return csi_he20
@@ -601,8 +602,6 @@ class CSICluster(object):
 
     def _nanosecond_timestamp(self, serialized_csi):
         rxstart_time_cyc = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).rxstart_time_cyc
-        # rxstart_time_cyc_dec = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).rxstart_time_cyc_dec
-        # rxstart_time_cyc_dec = 2048 - rxstart_time_cyc_dec if rxstart_time_cyc_dec >= 1024 else rxstart_time_cyc_dec
 
         hw_latched_timestamp_ns = serialized_csi.global_timestamp_us * 1000
 
@@ -610,9 +609,19 @@ class CSICluster(object):
         # timestamp_ns = np.float128(serialized_csi.timestamp * 1000 + ((rxstart_time_cyc * 12500) // 1000) + ((rxstart_time_cyc_dec * 1562) // 1000) - 20800)
         # Formula that is probably more accurate:
         CYC_PERIOD_NS = 1 / 80e6 * 1e9
-        # CYC_DEC_PERIOD_NS = 1/640e6*1e9
         HW_TIMESTAMP_LAG_NS = 20800
-        return hw_latched_timestamp_ns - HW_TIMESTAMP_LAG_NS + rxstart_time_cyc * CYC_PERIOD_NS  # + rxstart_time_cyc_dec * CYC_DEC_PERIOD_NS
+        return hw_latched_timestamp_ns - HW_TIMESTAMP_LAG_NS + rxstart_time_cyc * CYC_PERIOD_NS
+
+    def _get_he20_fractional_timestamp_offsets(self):
+        fractional_offsets = np.full(self.shape, np.nan, dtype=np.float64)
+
+        def append_fractional_offset(b, r, a, serialized_csi):
+            rxstart_time_cyc_dec = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).rxstart_time_cyc_dec
+            rxstart_time_cyc_dec = 2048 - rxstart_time_cyc_dec if rxstart_time_cyc_dec >= 1024 else rxstart_time_cyc_dec
+            fractional_offsets[b, r, a] = float(rxstart_time_cyc_dec) / 640e6
+
+        self._foreach_complete_sensor(append_fractional_offset)
+        return fractional_offsets
 
     @staticmethod
     def _is_he_format(bb_format: int) -> bool:

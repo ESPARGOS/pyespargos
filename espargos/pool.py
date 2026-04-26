@@ -339,7 +339,9 @@ class Pool(object):
 
         # Collection of complete clusters (= reference CSI data from all antennas available): L-LTF, HT20-LTF, and HT40-LTF
         complete_clusters_lltf = []
+        complete_cluster_timestamps_lltf = []
         complete_clusters_ht20 = []
+        complete_cluster_timestamps_ht20 = []
         complete_clusters_ht40 = []
         complete_cluster_timestamps = []
 
@@ -364,11 +366,14 @@ class Pool(object):
                 any_csi_count = any_csi_count + 1
 
             if np.all(completion):
-                complete_cluster_timestamps.append(cluster.get_sensor_timestamps()[board_num] if board_num is not None else cluster.get_sensor_timestamps())
+                cluster_timestamps = cluster.get_sensor_timestamps()[board_num] if board_num is not None else cluster.get_sensor_timestamps()
+                complete_cluster_timestamps.append(cluster_timestamps)
                 if cluster.has_lltf():
                     complete_clusters_lltf.append(cluster.deserialize_csi_lltf()[board_num] if board_num is not None else cluster.deserialize_csi_lltf())
+                    complete_cluster_timestamps_lltf.append(cluster_timestamps)
                 if cluster.has_ht20ltf():
                     complete_clusters_ht20.append(cluster.deserialize_csi_ht20ltf()[board_num] if board_num is not None else cluster.deserialize_csi_ht20ltf())
+                    complete_cluster_timestamps_ht20.append(cluster_timestamps)
                 if cluster.has_ht40ltf():
                     complete_clusters_ht40.append(cluster.deserialize_csi_ht40ltf()[board_num] if board_num is not None else cluster.deserialize_csi_ht40ltf())
 
@@ -385,6 +390,7 @@ class Pool(object):
             if len(complete_clusters_lltf) == 0:
                 self.logger.warning("No LLTF calibration clusters received, deriving LLTF calibration from HT20 calibration")
             complete_clusters_lltf.extend([util.extract_lltf_subcarriers_from_ht20(csi_ht20) for csi_ht20 in complete_clusters_ht20])
+            complete_cluster_timestamps_lltf.extend(complete_cluster_timestamps_ht20)
 
         if any_csi_count < 5:
             raise Exception("ESPARGOS calibration failed, did not receive enough calibration clusters.")
@@ -394,6 +400,7 @@ class Pool(object):
             np.asarray(complete_clusters_ht20),
             np.asarray(complete_clusters_ht40),
             np.asarray(complete_cluster_timestamps),
+            np.asarray(complete_cluster_timestamps_lltf),
             channel_primary,
             channel_secondary,
         )
@@ -466,11 +473,12 @@ class Pool(object):
             complete_clusters_ht20,
             complete_clusters_ht40,
             complete_cluster_timestamps,
+            complete_cluster_timestamps_lltf,
             channel_primary,
             channel_secondary,
         ) = self._clusters_to_calibration()
         sensor_clock_offsets = self._compute_sensor_clock_offsets(complete_cluster_timestamps)
-        phase_calibration_he20 = util.derive_he20_calibration_from_ht20(complete_clusters_lltf, complete_cluster_timestamps, channel_secondary)
+        phase_calibration_he20 = util.derive_he20_calibration_from_ht20(complete_clusters_lltf, complete_cluster_timestamps_lltf, channel_secondary)
 
         if per_board:
             phase_calibrations_lltf = []
@@ -483,6 +491,7 @@ class Pool(object):
                     complete_clusters_ht20,
                     complete_clusters_ht40,
                     _complete_cluster_timestamps,
+                    _complete_cluster_timestamps_lltf,
                     _channel_primary,
                     _channel_secondary,
                 ) = self._clusters_to_calibration(board_num)
