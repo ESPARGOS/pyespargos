@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import pathlib
 import sys
@@ -10,7 +11,7 @@ from aiohttp import web
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 
-from espargos.uart import UARTClient, UARTProtocolError, UARTTimeoutError
+from espargos.uart import UARTClient, UARTProtocolError, UARTTimeoutError, is_uart_host
 
 
 class UARTRouter:
@@ -19,6 +20,8 @@ class UARTRouter:
         self.uart = UARTClient(uart_host)
         self._ws_clients = set()
         self._loop = None
+        self._closing = False
+        self._closed = False
 
     async def start(self):
         self._loop = asyncio.get_running_loop()
@@ -26,7 +29,24 @@ class UARTRouter:
         self.uart.add_csi_callback(self._on_csi_frame)
 
     async def close(self):
-        self.uart.close()
+        if self._closed:
+            return
+        self._closed = True
+        self._closing = True
+
+        clients = list(self._ws_clients)
+        self._ws_clients.clear()
+        for queue, ws in clients:
+            with contextlib.suppress(Exception):
+                queue.put_nowait(None)
+            if not ws.closed:
+                with contextlib.suppress(Exception):
+                    await ws.close(code=1001, message=b"router shutting down")
+
+        with contextlib.suppress(Exception):
+            self.uart.remove_csi_callback(self._on_csi_frame)
+        with contextlib.suppress(Exception):
+            self.uart.close()
 
     async def handle_http(self, request: web.Request) -> web.StreamResponse:
         path = request.match_info.get("path", "")
@@ -63,32 +83,41 @@ class UARTRouter:
         await ws.prepare(request)
 
         queue = asyncio.Queue()
-        self._ws_clients.add(queue)
+        client = (queue, ws)
+        self._ws_clients.add(client)
         self.logger.info("Local CSI WebSocket client connected")
 
         try:
             self.uart.enable_csi_stream()
             while True:
                 payload = await queue.get()
+                if payload is None:
+                    break
                 await ws.send_bytes(payload)
         except asyncio.CancelledError:
             raise
         except Exception:
             pass
         finally:
-            self._ws_clients.discard(queue)
-            if not self._ws_clients:
-                self.uart.disable_csi_stream()
-            await ws.close()
+            self._ws_clients.discard(client)
+            if not self._closing and not self._ws_clients:
+                with contextlib.suppress(Exception):
+                    self.uart.disable_csi_stream()
+            if not ws.closed:
+                with contextlib.suppress(Exception):
+                    await ws.close()
             self.logger.info("Local CSI WebSocket client disconnected")
 
         return ws
 
     def _on_csi_frame(self, payload: bytes):
-        if self._loop is None:
+        if self._closing or self._loop is None:
             return
-        for q in list(self._ws_clients):
-            self._loop.call_soon_threadsafe(q.put_nowait, payload)
+        for q, _ws in list(self._ws_clients):
+            try:
+                self._loop.call_soon_threadsafe(q.put_nowait, payload)
+            except RuntimeError:
+                return
 
 def build_app(router: UARTRouter) -> web.Application:
     app = web.Application()
@@ -103,6 +132,7 @@ def build_app(router: UARTRouter) -> web.Application:
         await router.close()
 
     app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_cleanup)
     app.on_cleanup.append(on_cleanup)
     return app
 
@@ -113,6 +143,8 @@ def main(argv=None):
     parser.add_argument("--listen-host", default="127.0.0.1", help="Local listen address")
     parser.add_argument("--listen-port", type=int, default=8400, help="Local listen port")
     args = parser.parse_args(argv)
+    if not is_uart_host(args.uart_host):
+        parser.error('uart_host must be a UART host specifier such as "uart:/dev/ttyUSB0"')
 
     router = UARTRouter(args.uart_host)
     app = build_app(router)

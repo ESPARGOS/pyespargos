@@ -8,7 +8,6 @@ import struct
 import threading
 import time
 import termios
-import urllib.parse
 
 import serial
 import serial.tools.list_ports
@@ -27,18 +26,26 @@ FRAME_TYPE_LOG = 0x30
 UART_ACTIVATION_TOKEN = b"ESPARGOS-UART-MODE\n"
 
 STREAM_ID_CSI = 1
+STREAM_ID_TRANSPORT = 0
 
 RPC_METHOD_GET = 0
 RPC_METHOD_POST = 1
 
 DEFAULT_UART_BAUDRATE = 3000000
+FT231XQ_UART_BAUDRATE = 2000000
+CP2102C_UART_BAUDRATE = 3000000
 DEFAULT_BOOT_BAUDRATE = 115200
 DEFAULT_TIMEOUT = 5.0
 DEFAULT_READ_TIMEOUT = 0.001
 DEFAULT_LATENCY_TIMER_MS = 1
 DEFAULT_ACTIVATION_RETRY_INTERVAL = 0.05
+DEFAULT_KEEPALIVE_INTERVAL = 1.0
 DEFAULT_MODEM_IDLE_DTR = False
 DEFAULT_MODEM_IDLE_RTS = False
+USB_UART_BAUDRATES = {
+    0x6015: FT231XQ_UART_BAUDRATE,  # FTDI FT231XQ USB UART
+    0xEA64: CP2102C_UART_BAUDRATE,  # SiLabs CP2102C USB to UART Bridge Controller
+}
 NO_RESET_MODEM_STATES = {
     0x6015: (True, True),  # FTDI FT231X USB UART
     0xEA64: (True, True),  # SiLabs CP2102C USB to UART Bridge Controller
@@ -69,12 +76,14 @@ def parse_uart_host(host: str) -> tuple[str, dict]:
     if not spec:
         raise ValueError("UART host specifier is empty")
 
-    if "?" in spec:
-        device, query = spec.split("?", 1)
-        params = {k: v[-1] for k, v in urllib.parse.parse_qs(query, keep_blank_values=True).items()}
-    else:
-        device = spec
-        params = {}
+    device = spec
+    params = {}
+
+    if "@" in device:
+        device, baud = device.rsplit("@", 1)
+        if not baud or not baud.isdigit():
+            raise ValueError(f"Invalid UART baudrate in host specifier: {host!r}")
+        params["baud"] = baud
 
     if not device:
         raise ValueError("UART device path is empty")
@@ -162,24 +171,22 @@ class UARTControlResponse:
 
 
 class UARTClient:
-    def __init__(self, host_or_device: str, *, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(self, host: str, *, timeout: float = DEFAULT_TIMEOUT):
         self.logger = logging.getLogger("pyespargos.uart")
         self.timeout = timeout
 
-        if is_uart_host(host_or_device):
-            self.device, params = parse_uart_host(host_or_device)
-        else:
-            self.device = host_or_device
-            params = {}
+        self.device, params = parse_uart_host(host)
 
         self.boot_baudrate = int(params.get("boot_baud", DEFAULT_BOOT_BAUDRATE))
-        self.baudrate = int(params.get("baud", DEFAULT_UART_BAUDRATE))
+        self.baudrate = int(params.get("baud", self._detect_default_baudrate()))
         self.read_timeout = float(params.get("read_timeout", DEFAULT_READ_TIMEOUT))
         self.latency_timer_ms = int(params.get("latency_ms", DEFAULT_LATENCY_TIMER_MS))
         self.activation_retry_interval = float(params.get("activation_interval", DEFAULT_ACTIVATION_RETRY_INTERVAL))
+        self.keepalive_interval = float(params.get("keepalive_interval", DEFAULT_KEEPALIVE_INTERVAL))
 
         self._serial = None
         self._reader_thread = None
+        self._keepalive_thread = None
         self._stop_event = threading.Event()
         self._write_lock = threading.Lock()
         self._request_lock = threading.Lock()
@@ -200,6 +207,7 @@ class UARTClient:
         if self._connected:
             return
 
+        self._stop_event.clear()
         self._serial = self._open_serial(self.baudrate)
 
         try:
@@ -209,6 +217,7 @@ class UARTClient:
 
         self.logger.info(f"Connected to ESPARGOS UART on {self.device}")
         self._connected = True
+        self._start_keepalive_thread()
 
     def _activate_transport_mode(self) -> None:
         if self._serial is None:
@@ -218,7 +227,7 @@ class UARTClient:
         self._serial.reset_input_buffer()
         self._serial.reset_output_buffer()
 
-        self._serial.write(UART_ACTIVATION_TOKEN)
+        self._serial.write(f"ESPARGOS-UART-MODE:{self.baudrate}\n".encode("ascii"))
         self._serial.flush()
         time.sleep(max(self.activation_retry_interval, 0.1))
 
@@ -233,8 +242,15 @@ class UARTClient:
             return
 
         self._stop_event.set()
+        if self._keepalive_thread is not None:
+            self._keepalive_thread.join(timeout=1.0)
+            self._keepalive_thread = None
         try:
             self.disable_csi_stream()
+        except Exception:
+            pass
+        try:
+            self.disable_transport_mode()
         except Exception:
             pass
 
@@ -318,6 +334,15 @@ class UARTClient:
     def disable_csi_stream(self):
         self._send_frame(FRAME_TYPE_STREAM_CTRL, 0, struct.pack("<BB", STREAM_ID_CSI, 0))
 
+    def disable_transport_mode(self):
+        self._send_frame(FRAME_TYPE_STREAM_CTRL, 0, struct.pack("<BB", STREAM_ID_TRANSPORT, 0))
+        if self._serial is not None:
+            self._serial.flush()
+            time.sleep(0.05)
+
+    def _send_keepalive(self):
+        self._send_frame(FRAME_TYPE_STREAM_CTRL, 0, struct.pack("<BB", STREAM_ID_TRANSPORT, 1))
+
     def _request_frame(self, frame_type: int, payload: bytes, timeout: float | None = None) -> bytes:
         if self._reader_running:
             return self._request_frame_async(frame_type, payload, timeout)
@@ -388,6 +413,20 @@ class UARTClient:
         self._reader_thread.start()
         self._reader_running = True
 
+    def _start_keepalive_thread(self):
+        if self.keepalive_interval <= 0 or self._keepalive_thread is not None:
+            return
+        self._keepalive_thread = threading.Thread(target=self._keepalive_loop, name=f"uart-keepalive-{self.device}", daemon=True)
+        self._keepalive_thread.start()
+
+    def _keepalive_loop(self):
+        while not self._stop_event.wait(self.keepalive_interval):
+            try:
+                self._send_keepalive()
+            except Exception as exc:
+                self.logger.debug(f"Stopping UART keepalive for {self.device}: {exc}")
+                break
+
     def _open_serial(self, baudrate: int) -> serial.Serial:
         # Known ESPARGOS USB-UART adapters need specific modem-control levels
         # applied before opening the port, otherwise the standard ESP32 auto-
@@ -433,14 +472,27 @@ class UARTClient:
     def _apply_modem_idle_state(self, ser: serial.Serial):
         ser.dtr, ser.rts = self._modem_idle_state
 
-    def _detect_modem_idle_state(self) -> tuple[bool, bool]:
+    def _matching_port_info(self):
         device_realpath = os.path.realpath(self.device)
         for portinfo in serial.tools.list_ports.comports():
             if os.path.realpath(portinfo.device) != device_realpath:
                 continue
+            return portinfo
+        return None
+
+    def _detect_default_baudrate(self) -> int:
+        portinfo = self._matching_port_info()
+        if portinfo is not None and portinfo.pid in USB_UART_BAUDRATES:
+            baudrate = USB_UART_BAUDRATES[portinfo.pid]
+            self.logger.debug(f"Using {baudrate} baud for USB-UART adapter PID 0x{portinfo.pid:04x}")
+            return baudrate
+        return DEFAULT_UART_BAUDRATE
+
+    def _detect_modem_idle_state(self) -> tuple[bool, bool]:
+        portinfo = self._matching_port_info()
+        if portinfo is not None:
             if portinfo.pid in NO_RESET_MODEM_STATES:
                 return NO_RESET_MODEM_STATES[portinfo.pid]
-            break
         return DEFAULT_MODEM_IDLE_DTR, DEFAULT_MODEM_IDLE_RTS
 
     def _apply_low_latency_tuning(self):
