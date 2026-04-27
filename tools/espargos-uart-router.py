@@ -30,6 +30,22 @@ class UARTRouter:
 
     async def handle_http(self, request: web.Request) -> web.StreamResponse:
         path = request.match_info.get("path", "")
+        if request.method.upper() == "GET" and path == "get_transport":
+            return web.json_response({"transport": "uart"})
+
+        if request.method.upper() == "POST" and path in {
+            "update_firmware",
+            "update_sensor_application",
+            "upload_partition",
+            "trigger_webupdate",
+            "flash_sensor_firmware",
+        }:
+            return web.Response(
+                status=501,
+                content_type="text/plain",
+                text="updates are not supported over the UART router",
+            )
+
         body = await request.read()
         try:
             response = self.uart.request(request.method.upper(), path, body)
