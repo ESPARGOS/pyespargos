@@ -415,12 +415,13 @@ def derive_he20_calibration_from_lltf(
     # estimate so that we combine all clusters and subcarriers coherently.
     csi_lltf_sto_corrected = np.asarray(complete_clusters_lltf, dtype=np.complex64)
 
-    # Undo STO calibration for this
-    subcarrier_range = np.arange(-complete_clusters_lltf.shape[-1] // 2, complete_clusters_lltf.shape[-1] // 2)[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
+    # Undo the timestamp-based STO correction from deserialize_csi_lltf().
+    subcarrier_range = csi.get_csi_format_subcarrier_indices("lltf").astype(np.float64)[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
     subcarrier_range -= secondary_channel_relative * int(2 * constants.WIFI_CHANNEL_SPACING / constants.WIFI_SUBCARRIER_SPACING)
     sto_delay_correction = np.exp(1.0j * 2 * np.pi * complete_cluster_timestamps[:, :, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
 
     csi_lltf = np.einsum("cbras,cbras->cbras", csi_lltf_sto_corrected, sto_delay_correction)
+
     csi_lltf_flat = np.moveaxis(csi_lltf, -1, 1).reshape(csi_lltf.shape[0] * csi_lltf.shape[-1], -1)
     covariance = np.einsum("na,nb->ab", csi_lltf_flat, np.conj(csi_lltf_flat)) / max(csi_lltf_flat.shape[0], 1)
     eigvals, eigvecs = np.linalg.eig(covariance)
