@@ -45,13 +45,6 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         "scale": "scaleChanged",
         "compensate_rssi": "compensateRssiChanged",
     }
-    _SUBCARRIER_COUNTS = {
-        "lltf": espargos.csi.LEGACY_COEFFICIENTS_PER_CHANNEL,
-        "ht20": espargos.csi.HT_COEFFICIENTS_PER_CHANNEL,
-        "ht40": 2 * espargos.csi.HT_COEFFICIENTS_PER_CHANNEL + espargos.csi.HT40_GAP_SUBCARRIERS,
-        "he20": espargos.csi.HE20_COEFFICIENTS_PER_CHANNEL,
-    }
-
     def __init__(self, argv):
         parser = argparse.ArgumentParser(
             description="ESPARGOS Demo: Show received power over time",
@@ -71,6 +64,7 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         self.startTimestamp = time.time()
         self._stable_y_min = None
         self._stable_y_max = None
+        self.last_preamble_format = self._configured_preamble_format()
         self.preambleFormatChanged.connect(self._clamp_subcarrier_to_range)
 
         self.initialize_qml(pathlib.Path(__file__).resolve().parent / "power-over-time-ui.qml")
@@ -127,10 +121,6 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         return int(self.appconfig.get("selected_sensor"))
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=preambleFormatChanged)
-    def subcarrierCount(self):
-        return self._SUBCARRIER_COUNTS.get(self.genericconfig.get("preamble_format"), espargos.csi.HT_COEFFICIENTS_PER_CHANNEL)
-
-    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=preambleFormatChanged)
     def minSubcarrierIndex(self):
         return self._subcarrier_bounds[0]
 
@@ -144,7 +134,14 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     @property
     def _subcarrier_bounds(self):
-        subcarrier_indices = espargos.csi.get_csi_format_subcarrier_indices(self.genericconfig.get("preamble_format"))
+        preamble_format = self.genericconfig.get("preamble_format")
+        if preamble_format == "auto":
+            preamble_format = self.last_preamble_format
+        return self._subcarrier_bounds_for_format(preamble_format)
+
+    @staticmethod
+    def _subcarrier_bounds_for_format(preamble_format):
+        subcarrier_indices = espargos.csi.get_csi_format_subcarrier_indices(preamble_format)
         return int(subcarrier_indices[0]), int(subcarrier_indices[-1])
 
     @staticmethod
@@ -168,12 +165,12 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
     def clampSubcarrierToRange(self):
         self._clamp_subcarrier_to_range()
 
-    def _subcarrier_array_index(self):
-        selected = int(np.clip(self.subcarrier, *self._subcarrier_bounds))
-        subcarrier_indices = espargos.csi.get_csi_format_subcarrier_indices(self.genericconfig.get("preamble_format"))
+    def _subcarrier_array_index(self, preamble_format):
+        selected = int(np.clip(self.subcarrier, *self._subcarrier_bounds_for_format(preamble_format)))
+        subcarrier_indices = espargos.csi.get_csi_format_subcarrier_indices(preamble_format)
         return int(np.argmin(np.abs(subcarrier_indices - selected)))
 
-    def _compute_power_datapoints(self, csi_backlog, rssi_backlog):
+    def _compute_power_datapoints(self, preamble_format, csi_backlog, rssi_backlog):
         csi = np.array(csi_backlog, copy=True)
         if self.appconfig.get("compensate_rssi") and self.pooldrawer.cfgman.get("gain", "automatic"):
             csi *= 10 ** (np.asarray(rssi_backlog)[..., np.newaxis] / 20)
@@ -182,7 +179,7 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
             csi = espargos.util.build_combined_array_data(self.indexing_matrix, csi)
 
         if self.mode == "subcarrier":
-            power = np.abs(csi[..., self._subcarrier_array_index()]) ** 2
+            power = np.abs(csi[..., self._subcarrier_array_index(preamble_format)]) ** 2
         else:
             power = np.mean(np.abs(csi) ** 2, axis=-1)
 
@@ -213,11 +210,14 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
-        if (result := self.get_backlog_csi("rssi", "host_timestamp")) is None:
+        if (result := self.get_backlog_csi("rssi", "host_timestamp", return_format=True)) is None:
             return
 
-        csi_backlog, rssi_backlog, timestamp_backlog = result
-        power_by_datapoint = self._compute_power_datapoints(csi_backlog, rssi_backlog)
+        csi_key, csi_backlog, rssi_backlog, timestamp_backlog = result
+        if csi_key != self.last_preamble_format:
+            self.last_preamble_format = csi_key
+            self.preambleFormatChanged.emit()
+        power_by_datapoint = self._compute_power_datapoints(csi_key, csi_backlog, rssi_backlog)
         averaged_power, valid_sensor_mask = self._average_valid_power(power_by_datapoint)
         averaged_power = np.nan_to_num(averaged_power, nan=0.0, posinf=np.finfo(np.float64).max, neginf=0.0)
         curve_power, visible_mask = self._select_curves(averaged_power)

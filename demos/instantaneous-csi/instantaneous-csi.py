@@ -47,6 +47,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         # Value range handling
         self.stable_power_minimum = None
         self.stable_power_maximum = None
+        self.last_preamble_format = self._configured_preamble_format()
 
         self.sensor_count = len(self.get_initial_config("pool", "hosts")) * espargos.constants.ANTENNAS_PER_BOARD
 
@@ -89,13 +90,12 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         "iso": rfswitch_state_t.SENSOR_RFSWITCH_ISOLATION,
     }
 
-    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=preambleFormatChanged)
-    def preambleFormat(self):
-        return self.genericconfig.get("preamble_format")
-
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=preambleFormatChanged)
     def subcarrierCount(self):
-        return espargos.csi.get_csi_format_subcarrier_count(self.genericconfig.get("preamble_format"))
+        preamble_format = self.genericconfig.get("preamble_format")
+        if preamble_format == "auto":
+            preamble_format = self.last_preamble_format
+        return espargos.csi.get_csi_format_subcarrier_count(preamble_format)
 
     def exec(self):
         return super().exec()
@@ -109,10 +109,13 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     # list parameters contain PyQt6.QtCharts.QLineSeries
     @PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis, PyQt6.QtCharts.QValueAxis)
     def updateCSI(self, powerSeries, phaseSeries, subcarrierAxis, axis):
-        if (result := self.get_backlog_csi("rssi", "rfswitch_state", allow_incomplete=True)) is None:
+        if (result := self.get_backlog_csi("rssi", "rfswitch_state", allow_incomplete=True, return_format=True)) is None:
             return
 
-        csi_backlog, rssi_backlog, rfswitch_state = result
+        csi_key, csi_backlog, rssi_backlog, rfswitch_state = result
+        if csi_key != self.last_preamble_format:
+            self.last_preamble_format = csi_key
+            self.preambleFormatChanged.emit()
 
         # If RSSI contains NaN, skip this update
         if np.isnan(rssi_backlog).any():
@@ -200,8 +203,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, csi_flat.shape[1] // 2])))
             # csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, :])))
 
-            subcarrier_count = csi_flat.shape[1]
-            subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices(self.genericconfig.get("preamble_format"))
+            subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices(csi_key)
 
             for pwr_series, phase_series, ant_pwr, ant_phase in zip(powerSeries, phaseSeries, csi_power, csi_phase):
                 pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, ant_pwr)])

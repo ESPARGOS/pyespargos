@@ -199,7 +199,7 @@ class CSIBacklog(object):
                     self.storage["lltf"][self.head] = csi_lltf
                 else:
                     self.storage["lltf"][self.head] = np.nan
-                    self.logger.warning(f"Received non-LLTF frame even though LLTF is enabled")
+                    self.logger.debug("Received non-LLTF frame even though LLTF is enabled")
 
             # Store HT40 CSI if applicable
             if "ht40" in self.fields:
@@ -213,7 +213,7 @@ class CSIBacklog(object):
                     self.storage["ht40"][self.head] = csi_ht40
                 else:
                     self.storage["ht40"][self.head] = np.nan
-                    self.logger.warning(f"Received non-HT40 frame even though HT40 is enabled")
+                    self.logger.debug("Received non-HT40 frame even though HT40 is enabled")
 
             # Store HT20 CSI if applicable
             if "ht20" in self.fields:
@@ -227,7 +227,7 @@ class CSIBacklog(object):
                     self.storage["ht20"][self.head] = csi_ht20
                 else:
                     self.storage["ht20"][self.head] = np.nan
-                    self.logger.warning(f"Received non-HT20 frame even though HT20 is enabled")
+                    self.logger.debug("Received non-HT20 frame even though HT20 is enabled")
 
             # Store HE20 CSI if applicable
             if "he20" in self.fields:
@@ -241,7 +241,7 @@ class CSIBacklog(object):
                     self.storage["he20"][self.head] = csi_he20
                 else:
                     self.storage["he20"][self.head] = np.nan
-                    self.logger.warning(f"Received non-HE20 frame even though HE20 is enabled")
+                    self.logger.debug("Received non-HE20 frame even though HE20 is enabled")
 
             # Store RSSI
             if "rssi" in self.fields:
@@ -328,6 +328,32 @@ class CSIBacklog(object):
         self.storage_mutex.release()
 
         return tuple(retval)
+
+    def count_valid_datapoints(self, key: str, allow_incomplete: bool = False) -> int:
+        """
+        Count datapoints for which a particular stored field (key) is valid
+        (finite and nonzero).
+
+        The first axis of every backlog field is the datapoint axis. If
+        ``allow_incomplete`` is false, only datapoints with all finite values are
+        counted. If true, datapoints with at least one finite value are counted.
+        Non-floating fields are always finite, so each stored entry counts.
+
+        :param key: Key of the data to inspect.
+        :param allow_incomplete: Whether partially valid datapoints count.
+        """
+        if not key in self.fields:
+            raise ValueError(f"Requested key '{key}' not in backlog fields")
+
+        with self.storage_mutex:
+            data = self._read(key)
+
+        if data.size == 0:
+            return 0
+
+        finite = np.isfinite(data.reshape(data.shape[0], -1))
+        valid = np.any(finite, axis=1) if allow_incomplete else np.all(finite, axis=1)
+        return int(np.count_nonzero(valid))
 
     def get_latest(self, key):
         """

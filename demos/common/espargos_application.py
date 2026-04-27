@@ -10,6 +10,7 @@ import numpy as np
 import subprocess
 import threading
 import argparse
+import copy
 import yaml
 
 from .backlog_settings import BacklogSettings, ConfigManager
@@ -48,7 +49,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         },
         "generic": {
             # Generic application settings, handled by GenericAppSettings
-            "preamble_format": "lltf",
+            "preamble_format": "auto",
             "kiosk_mode": False,
         },
         "app": {
@@ -100,7 +101,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
         # Load initial configuration if provided
         self.config_path = None
-        self.initial_config = self.BASE_DEFAULT_CONFIG.copy()
+        self.initial_config = copy.deepcopy(self.BASE_DEFAULT_CONFIG)
         if hasattr(self, "DEFAULT_CONFIG"):
             self.initial_config["app"] = self.DEFAULT_CONFIG.copy()
         if self.args.config is not None:
@@ -222,6 +223,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         # Handle generic config changes - emit preambleFormatChanged when needed
         def _on_generic_config_changed(newcfg):
             if "preamble_format" in newcfg:
+                if self._uses_single_csi_format():
+                    self._ensure_backlog_fields_for_preamble_format()
                 self.preambleFormatChanged.emit()
             self.genericconfig.updateAppStateHandled.emit()
 
@@ -458,10 +461,48 @@ class SingleCSIFormatMixin:
 
     Provides:
     - Mutually exclusive command-line arguments (--lltf, --ht20, --ht40, --he20)
-    - Automatic backlog field configuration when combined with BacklogMixin
+    - Automatic backlog field configuration when combined with BacklogMixin.
+      Without a format command-line argument, all CSI formats are stored and
+      the backlog reader resolves the concrete format automatically. Passing a
+      format argument stores and reads only that CSI format.
     """
+    CSI_FORMATS = ("lltf", "ht20", "ht40", "he20")
 
-    def get_backlog_csi(self, *additional_keys: str, allow_incomplete: bool = False, remove_global_sto=True) -> np.ndarray | tuple[np.ndarray, ...] | None:
+    def _ensure_backlog_fields_for_preamble_format(self):
+        if not self._uses_backlog() or not hasattr(self, "backlog"):
+            return
+
+        preamble_format = self.genericconfig.get("preamble_format")
+        fields = set(self.backlog.get_fields())
+        if preamble_format == "auto":
+            fields.update(self.CSI_FORMATS)
+        elif preamble_format in self.CSI_FORMATS:
+            fields.add(preamble_format)
+        self.backlog.set_fields(fields)
+
+    def _configured_preamble_format(self, default: str = "lltf") -> str:
+        preamble_format = self.genericconfig.get("preamble_format")
+        return default if preamble_format == "auto" else preamble_format
+
+    def _resolve_backlog_preamble_format(self, allow_incomplete: bool = False, default: str = "lltf") -> str:
+        preamble_format = self.genericconfig.get("preamble_format")
+        if preamble_format != "auto":
+            return preamble_format
+        if not hasattr(self, "backlog"):
+            return default
+
+        counts = []
+        for fmt in self.CSI_FORMATS:
+            try:
+                count = self.backlog.count_valid_datapoints(fmt, allow_incomplete=allow_incomplete)
+            except ValueError:
+                count = 0
+            counts.append((fmt, count))
+
+        best_format, best_count = max(counts, key=lambda item: item[1])
+        return best_format if best_count > 0 else default
+
+    def get_backlog_csi(self, *additional_keys: str, allow_incomplete: bool = False, remove_global_sto=True, return_format: bool = False) -> np.ndarray | tuple[np.ndarray, ...] | None:
         """
         Retrieve latest CSI datapoints from backlog for the selected preamble format.
 
@@ -475,13 +516,15 @@ class SingleCSIFormatMixin:
             Useful when a CSI completion timeout is configured.
         :param remove_global_sto: If True, remove global STO from CSI data by re-centering the cluster on the mean STO.
             This should be true unless you want to do processing across multiple subsequent CSI datapoints where the global STO would be relevant.
-        :return: CSI array if no additional keys, tuple of (csi, *additional) if keys specified, or
-                 None if unavailable or no complete datapoints remain.
+        :param return_format: If true, include the concrete preamble format used
+            for this readback as the first returned tuple element.
+        :return: CSI array if no additional keys, tuple of (csi, *additional) if keys specified,
+                 tuple of (format, csi, *additional) if return_format is true, or None if unavailable.
         """
         if not hasattr(self, "backlog") or not self.backlog.nonempty():
             return None
 
-        csi_key = self.genericconfig.get("preamble_format")
+        csi_key = self._resolve_backlog_preamble_format(allow_incomplete=allow_incomplete)
 
         try:
             results = list(self.backlog.get_multiple([csi_key, *additional_keys]))
@@ -514,6 +557,8 @@ class SingleCSIFormatMixin:
             else:
                 return None
 
+        if return_format:
+            return (csi_key, *results)
         if additional_keys:
             return tuple(results)
         return csi_backlog
@@ -524,25 +569,25 @@ class SingleCSIFormatMixin:
         format_group.add_argument(
             "--lltf",
             default=False,
-            help="Use only CSI from L-LTF (set up backlog and application accordingly)",
+            help="Store and read only CSI from L-LTF",
             action="store_true",
         )
         format_group.add_argument(
             "--ht40",
             default=False,
-            help="Use only CSI from HT40 (set up backlog and application accordingly)",
+            help="Store and read only CSI from HT40",
             action="store_true",
         )
         format_group.add_argument(
             "--ht20",
             default=False,
-            help="Use only CSI from HT20 (set up backlog and application accordingly)",
+            help="Store and read only CSI from HT20",
             action="store_true",
         )
         format_group.add_argument(
             "--he20",
             default=False,
-            help="Use only CSI from HE20 (set up backlog and application accordingly)",
+            help="Store and read only CSI from HE20",
             action="store_true",
         )
 
@@ -562,11 +607,9 @@ class SingleCSIFormatMixin:
         if len(selected_formats) > 1:
             raise ValueError("At most one of --lltf, --ht40, --ht20 or --he20 can be selected!")
 
-        # Remember choice in generic app config
         if len(selected_formats) == 1:
+            # Format flags explicitly narrow both backlog storage and readback.
             self.initial_config["generic"]["preamble_format"] = selected_formats[0]
-
-            # *If* a command line flag about preamble format is provided, it also overrides backlog config
             if self._uses_backlog():
                 self.initial_config["backlog"]["fields"] = {
                     "lltf": self.args.lltf,
@@ -574,3 +617,8 @@ class SingleCSIFormatMixin:
                     "ht40": self.args.ht40,
                     "he20": self.args.he20,
                 }
+        elif self._uses_backlog():
+            # No format flag means Auto readback with all CSI formats available.
+            self.initial_config["generic"]["preamble_format"] = "auto"
+            for fmt in self.CSI_FORMATS:
+                self.initial_config["backlog"]["fields"][fmt] = True

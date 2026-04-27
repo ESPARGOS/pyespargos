@@ -73,9 +73,6 @@ class AzimuthDelayApp(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ES
         image_data_list = np_data.flatten().tolist()
         return image_data_list
 
-    def get_subcarrier_count(self):
-        return espargos.csi.get_csi_format_subcarrier_count(self.genericconfig.get("preamble_format"))
-
     @PyQt6.QtCore.pyqtSlot()
     def update_data(self):
         if (csi := self.get_backlog_csi()) is None:

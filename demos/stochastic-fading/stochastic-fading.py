@@ -11,7 +11,6 @@ import PyQt6.QtCore
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
 import espargos
-import espargos.csi
 from demos.common import BacklogMixin, CombinedArrayMixin, ESPARGOSApplication, SingleCSIFormatMixin
 
 
@@ -22,7 +21,6 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
     X_AXIS_PERCENTILE = 90.0
     X_AXIS_HEADROOM = 1.5
 
-    preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
     binCountChanged = PyQt6.QtCore.pyqtSignal()
     maxSamplesChanged = PyQt6.QtCore.pyqtSignal()
     compensateRssiChanged = PyQt6.QtCore.pyqtSignal()
@@ -68,8 +66,6 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
         self._normalization_scale = 1.0
         self._total_samples_seen = 0
         self._display_x_max = self.DEFAULT_X_MAX
-        self.preambleFormatChanged.connect(self.resetHistogram)
-
         self.initialize_qml(pathlib.Path(__file__).resolve().parent / "stochastic-fading-ui.qml")
 
     def _process_args(self):
@@ -107,14 +103,6 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
             self._update_fit_parameters()
 
         super()._on_update_app_state(newcfg)
-
-    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=preambleFormatChanged)
-    def preambleFormat(self):
-        return self.genericconfig.get("preamble_format")
-
-    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=preambleFormatChanged)
-    def subcarrierCount(self):
-        return espargos.csi.get_csi_format_subcarrier_count(self.genericconfig.get("preamble_format"))
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=binCountChanged)
     def binCount(self):
@@ -202,11 +190,11 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
             timeout_condition = np.sum(completion) >= 2 and cluster.get_age() > self.args.csi_completion_timeout
         return bool(np.all(completion) or timeout_condition)
 
-    def _get_partial_backlog_csi(self, *additional_keys: str, remove_global_sto=True):
+    def _get_partial_backlog_csi(self, *additional_keys: str, remove_global_sto=True, return_format=False):
         if not hasattr(self, "backlog") or not self.backlog.nonempty():
             return None
 
-        csi_key = self.genericconfig.get("preamble_format")
+        csi_key = self._resolve_backlog_preamble_format(allow_incomplete=True)
 
         try:
             results = list(self.backlog.get_multiple([csi_key, *additional_keys]))
@@ -227,8 +215,8 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
             espargos.util.interpolate_he20ltf_gaps(csi_backlog)
 
         if additional_keys:
-            return tuple(results)
-        return csi_backlog
+            return (csi_key, *results) if return_format else tuple(results)
+        return (csi_key, csi_backlog) if return_format else csi_backlog
 
     def _normalized_samples(self):
         return self._samples / max(self.normalizationScale, 1e-12)
@@ -295,10 +283,10 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
         return pdf
 
     def _append_new_samples(self):
-        if (result := self._get_partial_backlog_csi("rssi", "host_timestamp")) is None:
+        if (result := self._get_partial_backlog_csi("rssi", "host_timestamp", return_format=True)) is None:
             return
 
-        csi_backlog, rssi_backlog, timestamp_backlog = result
+        _csi_key, csi_backlog, rssi_backlog, timestamp_backlog = result
         timestamp_backlog = np.asarray(timestamp_backlog, dtype=np.float64)
 
         new_mask = timestamp_backlog > self._last_processed_timestamp

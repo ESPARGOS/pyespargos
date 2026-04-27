@@ -363,14 +363,14 @@ def _wrap_period_symmetric(values: np.ndarray, period: float) -> np.ndarray:
     return np.mod(values + period / 2.0, period) - period / 2.0
 
 
-def derive_he20_calibration_from_ht20(
+def derive_he20_calibration_from_lltf(
     complete_clusters_lltf: np.ndarray,
     complete_cluster_timestamps: np.ndarray,
     secondary_channel_relative: int,
 ) -> np.ndarray:
     """
     Derive a phase calibration for HE20 CSI from calibration packets that only
-    provide LLTF / HT20-resolution information.
+    provide LLTF.
 
     HE20 uses four times finer subcarrier spacing than LLTF / HT20. This means
     that a delay which is only observed on the coarse 312.5 kHz LLTF / HT20

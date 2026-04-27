@@ -162,10 +162,10 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
 
     @PyQt6.QtCore.pyqtSlot()
     def updateSpatialSpectrum(self):
-        result = self.get_backlog_csi("rssi", "host_timestamp", "mac", "rfswitch_state", allow_incomplete=True)
+        result = self.get_backlog_csi("rssi", "host_timestamp", "mac", "rfswitch_state", allow_incomplete=True, return_format=True)
         if result is None:
             return
-        csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog, rfswitch_state_backlog = result
+        csi_key, csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog, rfswitch_state_backlog = result
 
         max_age = self.appconfig.get("beamformer", "max_age")
         if max_age > 0.0:
@@ -221,7 +221,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         # Shift all CSI datapoints in time so that LoS component arrives at the same time
         csi_combined = espargos.util.shift_to_firstpeak_sync(
             csi_combined,
-            peak_threshold=(0.4 if self.genericconfig.get("preamble_format") == "lltf" else 0.1),
+            peak_threshold=(0.4 if csi_key == "lltf" else 0.1),
         )
 
         beamformer_type = self.appconfig.get("beamformer", "type")

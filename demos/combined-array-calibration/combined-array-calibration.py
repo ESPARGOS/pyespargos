@@ -110,9 +110,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
             self.calibration_values = None
 
         # Calculate subcarrier range based on preamble format
-        preamble_format = self.genericconfig.get("preamble_format")
-        self.subcarrier_count = espargos.csi.get_csi_format_subcarrier_count(preamble_format)
-
+        preamble_format = self._configured_preamble_format()
         self._subcarrier_range = list(espargos.csi.get_csi_format_subcarrier_indices(preamble_format))
         self.subcarrierRangeChanged.emit()
 
@@ -120,7 +118,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
         self.pool.run()
 
     def onCSI(self, clustered_csi):
-        preamble_format = self.genericconfig.get("preamble_format")
+        preamble_format = self._configured_preamble_format()
 
         assert self.pool.get_calibration() is not None
 

@@ -478,7 +478,7 @@ class Pool(object):
             channel_secondary,
         ) = self._clusters_to_calibration()
         sensor_clock_offsets = self._compute_sensor_clock_offsets(complete_cluster_timestamps)
-        phase_calibration_he20 = util.derive_he20_calibration_from_ht20(complete_clusters_lltf, complete_cluster_timestamps_lltf, channel_secondary)
+        phase_calibration_he20 = util.derive_he20_calibration_from_lltf(complete_clusters_lltf, complete_cluster_timestamps_lltf, channel_secondary)
 
         if per_board:
             phase_calibrations_lltf = []

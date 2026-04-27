@@ -6,7 +6,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, SingleCSIFormatMixin
+from demos.common import ESPARGOSApplication
 
 import espargos
 import espargos.constants
@@ -16,8 +16,7 @@ import PyQt6.QtCharts
 import PyQt6.QtCore
 
 
-class EspargosDemoRadarCSI(SingleCSIFormatMixin, ESPARGOSApplication):
-    preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
+class EspargosDemoRadarCSI(ESPARGOSApplication):
     sensorCountChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
@@ -39,8 +38,6 @@ class EspargosDemoRadarCSI(SingleCSIFormatMixin, ESPARGOSApplication):
         parser.add_argument("--no-calib", default=False, help="Do not calibrate", action="store_true")
         super().__init__(argv, argparse_parent=parser)
 
-        # Radar CSI is easiest to validate with forced L-LTF. Users can still change
-        # this in the pool drawer if they want to experiment with HT formats.
         self.initial_config["pool"]["acquire_lltf_force"] = True
 
         self.stable_power_minimum = None
@@ -49,7 +46,7 @@ class EspargosDemoRadarCSI(SingleCSIFormatMixin, ESPARGOSApplication):
         self._link_rx_indices = np.asarray([], dtype=np.int32)
         self._link_tx_indices = np.asarray([], dtype=np.int32)
         self._link_index_by_rx_tx = np.full((self.sensor_count, self.sensor_count), -1, dtype=np.int32)
-        self._subcarrier_range_cache = {}
+        self._subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices("lltf")
         self._latest_link_csi = {}
         self._dirty_link_indices = set()
         self._update_link_indices()
@@ -84,13 +81,9 @@ class EspargosDemoRadarCSI(SingleCSIFormatMixin, ESPARGOSApplication):
     def linkCount(self):
         return self.sensor_count * max(0, self.sensor_count - 1)
 
-    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=preambleFormatChanged)
-    def preambleFormat(self):
-        return self.genericconfig.get("preamble_format")
-
-    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=preambleFormatChanged)
+    @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def subcarrierCount(self):
-        return self._subcarrier_count_for_format(self.genericconfig.get("preamble_format"))
+        return espargos.csi.get_csi_format_subcarrier_count("lltf")
 
     @PyQt6.QtCore.pyqtSlot(int, result=str)
     def linkName(self, link_index: int):
@@ -130,33 +123,16 @@ class EspargosDemoRadarCSI(SingleCSIFormatMixin, ESPARGOSApplication):
         if hasattr(self, "pool"):
             self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
 
-    def _subcarrier_count_for_format(self, preamble_format: str) -> int:
-        return espargos.csi.get_csi_format_subcarrier_count(preamble_format)
-
-    def _subcarrier_frequencies_for_format(self, preamble_format: str) -> np.ndarray:
+    def _subcarrier_frequencies(self) -> np.ndarray:
         calibration = self.pool.get_calibration()
         if calibration is not None:
             channel_primary = calibration.channel_primary
-            channel_secondary = calibration.channel_secondary
         else:
             wificonf = self.pool.get_wificonf()
             channel_primary = int(wificonf.get("channel-primary", 1))
-            channel_secondary = int(wificonf.get("channel-secondary", 0))
-            channel_secondary = -1 if channel_secondary == 2 else channel_secondary
 
-        if preamble_format == "lltf":
-            frequencies = espargos.util.get_frequencies_lltf(channel_primary)
-            center = espargos.util.get_center_frequency(channel_primary)
-        elif preamble_format == "ht40":
-            frequencies = espargos.util.get_frequencies_ht40(channel_primary, channel_secondary)
-            center = espargos.util.get_center_frequency(channel_primary, channel_secondary)
-        elif preamble_format == "he20":
-            frequencies = espargos.util.get_frequencies_he20(channel_primary)
-            center = espargos.util.get_center_frequency(channel_primary)
-        else:
-            frequencies = espargos.util.get_frequencies_ht20(channel_primary)
-            center = espargos.util.get_center_frequency(channel_primary)
-
+        frequencies = espargos.util.get_frequencies_lltf(channel_primary)
+        center = espargos.util.get_center_frequency(channel_primary)
         return frequencies - center
 
     def _link_indices(self, link_index: int) -> tuple[int, int]:
@@ -193,41 +169,16 @@ class EspargosDemoRadarCSI(SingleCSIFormatMixin, ESPARGOSApplication):
             return new
         return previous * 0.92 + new * 0.08
 
-    def _subcarrier_range(self, preamble_format: str):
-        if preamble_format not in self._subcarrier_range_cache:
-            self._subcarrier_range_cache[preamble_format] = espargos.csi.get_csi_format_subcarrier_indices(preamble_format)
-        return self._subcarrier_range_cache[preamble_format]
-
     @PyQt6.QtCore.pyqtSlot()
     def pollCSI(self):
         if hasattr(self, "pool"):
             self.pool.run()
 
-    def _deserialize_cluster_csi(self, clustered_csi):
-        preamble_format = self.genericconfig.get("preamble_format")
+    def _deserialize_cluster_csi_lltf(self, clustered_csi):
         calibration = self.pool.get_calibration()
-        if calibration is None:
+        if calibration is None or not clustered_csi.has_lltf():
             return None
-        if preamble_format == "lltf":
-            if not clustered_csi.has_lltf():
-                return None
-            csi = calibration.apply_lltf(clustered_csi.deserialize_csi_lltf())
-        elif preamble_format == "ht40":
-            if not clustered_csi.has_ht40ltf():
-                return None
-            csi = calibration.apply_ht40(clustered_csi.deserialize_csi_ht40ltf())
-            espargos.util.interpolate_ht40ltf_gap(csi)
-        elif preamble_format == "he20":
-            if not clustered_csi.has_he20ltf():
-                return None
-            csi = calibration.apply_he20(clustered_csi.deserialize_csi_he20ltf())
-            espargos.util.interpolate_he20ltf_gaps(csi)
-        else:
-            if not clustered_csi.has_ht20ltf():
-                return None
-            csi = calibration.apply_ht20(clustered_csi.deserialize_csi_ht20ltf())
-            espargos.util.interpolate_ht20ltf_gap(csi)
-        return csi
+        return calibration.apply_lltf(clustered_csi.deserialize_csi_lltf())
 
     def onCSI(self, clustered_csi: espargos.CSICluster):
         calibration = self.pool.get_calibration()
@@ -237,7 +188,7 @@ class EspargosDemoRadarCSI(SingleCSIFormatMixin, ESPARGOSApplication):
         if tx_index < 0 or tx_index >= self.sensor_count:
             return
 
-        csi = self._deserialize_cluster_csi(clustered_csi)
+        csi = self._deserialize_cluster_csi_lltf(clustered_csi)
         if csi is None:
             return
 
@@ -245,7 +196,7 @@ class EspargosDemoRadarCSI(SingleCSIFormatMixin, ESPARGOSApplication):
         if tx_index < completion.size:
             completion[tx_index] = False
 
-        subcarrier_frequencies = self._subcarrier_frequencies_for_format(self.genericconfig.get("preamble_format"))
+        subcarrier_frequencies = self._subcarrier_frequencies()
         corrected = espargos.radar.correct_radar_csi_tx_timestamps(
             csi[np.newaxis, ...],
             np.asarray([clustered_csi.get_radar_tx_info().get_hardware_tx_timestamp_ns() / 1e9], dtype=np.float64),
@@ -292,11 +243,10 @@ class EspargosDemoRadarCSI(SingleCSIFormatMixin, ESPARGOSApplication):
             if link_csi is None or not np.all(np.isfinite(link_csi)):
                 continue
 
-            subcarrier_range = self._subcarrier_range(self.genericconfig.get("preamble_format"))
             link_power = 20.0 * np.log10(np.abs(link_csi) + 1e-5)
             link_phase = np.angle(link_csi)
-            powerSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, link_power)])
-            phaseSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, link_phase)])
+            powerSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(self._subcarrier_range, link_power)])
+            phaseSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(self._subcarrier_range, link_phase)])
 
         axis.setMin(self.stable_power_minimum)
         axis.setMax(self.stable_power_maximum)

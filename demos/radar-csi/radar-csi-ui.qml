@@ -123,19 +123,6 @@ Common.ESPARGOSApplication {
 				}
 			}
 
-			Common.GenericAppSettings {
-				id: genericAppSettings
-				insertBefore: genericAppSettingsAnchor
-			}
-
-			Item {
-				id: genericAppSettingsAnchor
-				Layout.columnSpan: 2
-				width: 0
-				height: 0
-				visible: false
-			}
-
 		}
 	}
 

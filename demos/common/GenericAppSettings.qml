@@ -86,6 +86,7 @@ Item  {
 
 		// Different internal representation than displayed strings
 		model: [
+			{ value: "auto", text: "Auto"},
 			{ value: "lltf", text: "L-LTF"},
 			{ value: "ht20", text: "HT20"},
 			{ value: "ht40", text: "HT40"},
@@ -93,6 +94,6 @@ Item  {
 		]
 		textRole: "text"
 		valueRole: "value"
-		currentValue: "lltf"
+		currentValue: "auto"
 	}
 }
