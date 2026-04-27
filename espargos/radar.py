@@ -144,6 +144,7 @@ def get_ftm_tx_timestamp_reciprocity_delay_s(
 
     return ftm_units * FTM_TIMESTAMP_UNIT_S
 
+
 @dataclass
 class RadarPoolConfig:
     """

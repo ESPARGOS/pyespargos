@@ -119,6 +119,7 @@ class UARTRouter:
             except RuntimeError:
                 return
 
+
 def build_app(router: UARTRouter) -> web.Application:
     app = web.Application()
     app["router"] = router
