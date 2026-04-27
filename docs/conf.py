@@ -34,9 +34,8 @@ html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
 html_show_sphinx = False
 html_css_files = ["custom.css"]
-html_theme_options = {"style_external_links": True}
 html_logo = "_static/logo-white.png"
 html_theme_options = {
+    "style_external_links": True,
     "logo_only": True,
-    "display_version": True,
 }

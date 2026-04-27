@@ -12,6 +12,10 @@ import espargos.csi
 from .config_manager import ConfigManager
 
 
+def _first_gain_value(value):
+    return value[0] if isinstance(value, list) else value
+
+
 class PoolDrawer(PyQt6.QtCore.QObject):
     DEFAULT_CONFIG = {
         "channel": 13,
@@ -96,15 +100,15 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         if isinstance(gain, dict):
             gain_cfg = {}
             # Make sure FFT gain and RX gain are consistent
-            rx_auto = not bool(gain["rx_gain_enable"])
-            fft_auto = not bool(gain["fft_scale_enable"])
+            rx_auto = not bool(_first_gain_value(gain["rx_gain_enable"]))
+            fft_auto = not bool(_first_gain_value(gain["fft_scale_enable"]))
             if rx_auto != fft_auto:
                 raise ValueError("Inconsistent gain settings: rx_gain_enable and fft_scale_enable should be the same")
             gain_cfg["automatic"] = rx_auto
             if "rx_gain_value" in gain:
-                gain_cfg["rx_gain_value"] = int(gain["rx_gain_value"])
+                gain_cfg["rx_gain_value"] = int(_first_gain_value(gain["rx_gain_value"]))
             if "fft_scale_value" in gain:
-                gain_cfg["fft_gain_value"] = int(gain["fft_scale_value"])
+                gain_cfg["fft_gain_value"] = int(_first_gain_value(gain["fft_scale_value"]))
             cfg_out["gain"] = gain_cfg
 
         # RF switch config -> UI fields

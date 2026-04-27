@@ -424,9 +424,10 @@ class Board(object):
 
             {
               "enable": true|false,
-              "mac": "00:11:22:33:44:55"
+              "mac": "00:11:22:33:44:55",
               "mac_mask": "ff:ff:ff:ff:ff:ff"
             }
+
         The "enable" field toggles MAC filtering. When enabled, only packets from transmitters
         whose MAC address matches the given "mac" (applying the "mac_mask") will be received.
         "mac_mask" is a bitmask applied to both the configured MAC and the sender MAC before comparison.

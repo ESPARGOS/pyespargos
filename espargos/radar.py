@@ -144,14 +144,6 @@ def get_ftm_tx_timestamp_reciprocity_delay_s(
 
     return ftm_units * FTM_TIMESTAMP_UNIT_S
 
-
-def ftm_get_phy_comp_s(**kwargs) -> float:
-    """
-    Backward-compatible wrapper returning the PHY compensation in seconds.
-    """
-    return get_ftm_tx_timestamp_reciprocity_delay_s(**kwargs)
-
-
 @dataclass
 class RadarPoolConfig:
     """
@@ -274,10 +266,7 @@ def correct_radar_csi_tx_timestamps(
     subcarrier_frequencies_hz,
     calibration: calibration.CSICalibration,
     *,
-    axis: int = -1,
     tx_timestamp_offset_s: float = 0.0,
-    tx_timestamp_offsets_s=None,
-    correction_sign: float = 1.0,
 ) -> np.ndarray:
     """
     Apply radar TX timestamp phase correction to frequency-domain CSI.
@@ -292,54 +281,39 @@ def correct_radar_csi_tx_timestamps(
     subcarrier offsets. For consistency with the existing CSI deserialization
     timestamp correction, callers usually want baseband offsets.
 
-    :param csi_data: Complex CSI array. The subcarrier axis is selected by ``axis``.
+    The subcarrier axis is expected to be the last axis of ``csi_data``.
+
+    :param csi_data: Complex CSI array with subcarriers on the last axis.
     :param tx_timestamps_s: TX timestamp(s), in seconds. Scalar or leading-shape array.
     :param tx_sensor_indices: Flattened TX sensor index/indices matching ``tx_timestamps_s``.
     :param subcarrier_frequencies_hz: Frequency for each subcarrier, in Hz.
     :param calibration: Calibration object that provides sensor clock offsets.
-    :param axis: Subcarrier axis in ``csi_data``.
     :param tx_timestamp_offset_s: Constant offset added to each TX timestamp
         before correction. This accounts for packet-boundary conventions in the
         hardware TX timestamp source.
-    :param tx_timestamp_offsets_s: Optional per-TX-sensor offsets added to the
-        corresponding TX timestamps, in seconds. This mirrors the FTM responder
-        model where a calibrated offset is added to T1.
-    :param correction_sign: Sign of the phase correction. The default matches the
-        expected transmit-time inverse of the receive timestamp correction.
     :return: Corrected CSI array with the same shape as ``csi_data``.
     """
     csi_array = np.asarray(csi_data)
     frequencies = np.asarray(subcarrier_frequencies_hz, dtype=np.float64)
     if frequencies.ndim != 1:
         raise ValueError("subcarrier_frequencies_hz must be one-dimensional")
-
-    csi_moved = np.moveaxis(csi_array, axis, -1)
-    if csi_moved.shape[-1] != frequencies.shape[0]:
-        raise ValueError("subcarrier_frequencies_hz length must match the CSI subcarrier axis")
+    if csi_array.shape[-1] != frequencies.shape[0]:
+        raise ValueError("subcarrier_frequencies_hz length must match the last CSI axis")
 
     tx_timestamps = np.asarray(tx_timestamps_s, dtype=np.float64)
     tx_indices = np.asarray(tx_sensor_indices, dtype=np.int64)
     tx_timestamps, tx_indices = np.broadcast_arrays(tx_timestamps, tx_indices)
+    if tx_timestamps.ndim > csi_array.ndim - 1:
+        raise ValueError("tx_timestamps_s has too many dimensions for csi_data")
 
     flat_offsets = np.asarray(calibration.sensor_clock_offsets, dtype=np.float64).reshape(-1)
-    per_tx_timestamp_offsets = np.zeros(flat_offsets.shape, dtype=np.float64)
-    if tx_timestamp_offsets_s is not None:
-        per_tx_timestamp_offsets = np.asarray(tx_timestamp_offsets_s, dtype=np.float64)
-        if per_tx_timestamp_offsets.ndim == 0:
-            per_tx_timestamp_offsets = np.full(flat_offsets.shape, float(per_tx_timestamp_offsets), dtype=np.float64)
-        if per_tx_timestamp_offsets.shape != flat_offsets.shape:
-            raise ValueError("tx_timestamp_offsets_s must be a scalar or match the flattened sensor count")
-
     tx_reference_timestamps = np.full(tx_timestamps.shape, np.nan, dtype=np.float64)
     valid = np.isfinite(tx_timestamps) & (tx_indices >= 0) & (tx_indices < flat_offsets.size)
     valid_tx_indices = tx_indices[valid]
-    tx_reference_timestamps[valid] = tx_timestamps[valid] + float(tx_timestamp_offset_s) + per_tx_timestamp_offsets[valid_tx_indices] - flat_offsets[valid_tx_indices]
+    tx_reference_timestamps[valid] = tx_timestamps[valid] + float(tx_timestamp_offset_s) - flat_offsets[valid_tx_indices]
 
-    if tx_reference_timestamps.ndim > csi_moved.ndim - 1:
-        raise ValueError("tx_timestamps_s has too many dimensions for csi_data")
-
-    correction_shape = tx_reference_timestamps.shape + (1,) * (csi_moved.ndim - 1 - tx_reference_timestamps.ndim) + (frequencies.shape[0],)
-    tx_reference_timestamps = tx_reference_timestamps.reshape(correction_shape[:-1])
-    phase = correction_sign * 2.0 * np.pi * tx_reference_timestamps[..., np.newaxis] * frequencies.reshape((1,) * (len(correction_shape) - 1) + (-1,))
-    corrected = csi_moved * np.exp(1.0j * phase).astype(csi_moved.dtype, copy=False)
-    return np.moveaxis(corrected, -1, axis)
+    leading_dims = csi_array.ndim - 1
+    correction_shape = tx_reference_timestamps.shape + (1,) * (leading_dims - tx_reference_timestamps.ndim)
+    tx_reference_timestamps = tx_reference_timestamps.reshape(correction_shape)
+    phase = 2.0 * np.pi * tx_reference_timestamps[..., np.newaxis] * frequencies
+    return csi_array * np.exp(1.0j * phase).astype(csi_array.dtype, copy=False)

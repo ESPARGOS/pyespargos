@@ -11,10 +11,11 @@ Common.ESPARGOSApplication {
 	minimumWidth: 1000
 	minimumHeight: 650
 
-	color: "#101817"
+	color: "#11191e"
 	title: "Radar CSI"
 
-	property var colorCycle: ["#2e7d32", "#80cbc4", "#ffb300", "#ef5350", "#42a5f5", "#c0ca33", "#ff7043", "#ab47bc", "#26a69a", "#d4e157", "#8d6e63", "#29b6f6"]
+	// Tab20 color cycle reordered: https://github.com/matplotlib/matplotlib/blob/main/lib/matplotlib/_cm.py#L1293
+	property var colorCycle: ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5", "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5"]
 	property var amplitudeSeries: []
 	property var phaseSeries: []
 
@@ -24,7 +25,7 @@ Common.ESPARGOSApplication {
 			title: "Radar CSI Settings"
 			endpoint: appconfig
 
-			Label { Layout.columnSpan: 2; text: "Radar Schedule"; color: "#92b8ad" }
+			Label { Layout.columnSpan: 2; text: "Radar Schedule"; color: "#9fb3c8" }
 
 			Label { text: "Period [ms]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			RowLayout {
@@ -100,10 +101,10 @@ Common.ESPARGOSApplication {
 					property var decode: function(v) { return Math.max(-5000, Math.min(5000, parseInt(v === undefined || v === null || v === "" ? 1063 : v))) }
 					Component.onCompleted: appDrawer.configManager.register(this)
 					onValueChanged: appDrawer.configManager.onControlChanged(this)
-					from: -5000
-					to: 5000
-					value: 1063
-					stepSize: 1
+					from: 1060
+					to: 1100
+					value: 1085
+					stepSize: 0.1
 					implicitWidth: 145
 					function isUserActive() { return pressed }
 				}
@@ -148,29 +149,31 @@ Common.ESPARGOSApplication {
 			legend.visible: false
 			antialiasing: true
 			animationOptions: ChartView.NoAnimation
-			backgroundColor: "#14211f"
+			backgroundColor: "#151f26"
 
 			axes: [
 				ValueAxis {
 					id: csiAmplitudeSubcarrierAxis
 					min: -Math.floor(backend.subcarrierCount / 2)
 					max: Math.floor(backend.subcarrierCount / 2) - 1
-					titleText: "<font color=\"#dce8e4\">Subcarrier Index</font>"
-					gridLineColor: "#41524d"
+					titleText: "<font color=\"#e0e0e0\">Subcarrier Index</font>"
+					titleFont.bold: false
+					gridLineColor: "#c0c0c0"
 					tickInterval: 20
 					tickType: ValueAxis.TicksDynamic
-					labelsColor: "#dce8e4"
+					labelsColor: "#e0e0e0"
 					labelFormat: "%d"
 				},
 				ValueAxis {
 					id: csiAmplitudeAxis
 					min: -70
 					max: 70
-					titleText: "<font color=\"#dce8e4\">Power [dB]</font>"
-					gridLineColor: "#41524d"
+					titleText: "<font color=\"#e0e0e0\">Power [dB]</font>"
+					titleFont.bold: false
+					gridLineColor: "#c0c0c0"
 					tickInterval: 10
 					tickType: ValueAxis.TicksDynamic
-					labelsColor: "#dce8e4"
+					labelsColor: "#e0e0e0"
 				}
 			]
 
@@ -193,29 +196,31 @@ Common.ESPARGOSApplication {
 			legend.visible: false
 			antialiasing: true
 			animationOptions: ChartView.NoAnimation
-			backgroundColor: "#14211f"
+			backgroundColor: "#151f26"
 
 			axes: [
 				ValueAxis {
 					id: csiPhaseSubcarrierAxis
 					min: -Math.floor(backend.subcarrierCount / 2)
 					max: Math.floor(backend.subcarrierCount / 2) - 1
-					titleText: "<font color=\"#dce8e4\">Subcarrier Index</font>"
-					gridLineColor: "#41524d"
+					titleText: "<font color=\"#e0e0e0\">Subcarrier Index</font>"
+					titleFont.bold: false
+					gridLineColor: "#c0c0c0"
 					tickInterval: 20
 					tickType: ValueAxis.TicksDynamic
-					labelsColor: "#dce8e4"
+					labelsColor: "#e0e0e0"
 					labelFormat: "%d"
 				},
 				ValueAxis {
 					id: csiPhaseAxis
 					min: -3.14
 					max: 3.14
-					titleText: "<font color=\"#dce8e4\">Phase [rad]</font>"
-					gridLineColor: "#41524d"
+					titleText: "<font color=\"#e0e0e0\">Phase [rad]</font>"
+					titleFont.bold: false
+					gridLineColor: "#c0c0c0"
 					tickInterval: 2
 					tickType: ValueAxis.TicksDynamic
-					labelsColor: "#dce8e4"
+					labelsColor: "#e0e0e0"
 				}
 			]
 

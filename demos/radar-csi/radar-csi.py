@@ -28,7 +28,7 @@ class EspargosDemoRadarCSI(SingleCSIFormatMixin, ESPARGOSApplication):
         "tx_phymode": 2,
         "tx_rate": 11,
         "rfswitch_state": 2,
-        "tx_timestamp_offset_ns": 1063,
+        "tx_timestamp_offset_ns": 1085,
     }
 
     def __init__(self, argv):
@@ -253,7 +253,6 @@ class EspargosDemoRadarCSI(SingleCSIFormatMixin, ESPARGOSApplication):
             subcarrier_frequencies,
             calibration,
             tx_timestamp_offset_s=float(self.appconfig.get("tx_timestamp_offset_ns")) * 1e-9,
-            correction_sign=1.0,
         )[0].reshape(self.sensor_count, -1)
 
         finite_links = completion & np.all(np.isfinite(corrected), axis=1)
