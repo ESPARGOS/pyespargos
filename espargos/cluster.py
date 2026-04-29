@@ -61,8 +61,10 @@ class CSICluster(object):
         self.csi_completion_state = np.full(self.shape, False)
         self.csi_completion_state_all = False
 
-        # Allocate memory for the RSSI, rf switch state and noise floor values
+        # Allocate memory for the RSSI, gain, rf switch state and noise floor values
         self.rssi_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
+        self.agc_gain_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
+        self.fft_gain_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
         self.rfswitch_state_all = np.full(self.shape, fill_value=csi.rfswitch_state_t.SENSOR_RFSWITCH_UNKNOWN, dtype=np.uint8)
         self.noise_floor_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
         self.cfo_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
@@ -100,9 +102,12 @@ class CSICluster(object):
         self.csi_completion_state_all = np.all(self.csi_completion_state)
 
         # Handle signed values for RSSI and noise floor (stored as uint32_t in rx_ctrl due to ctypes packing limitations)
-        rssi = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).rssi
-        noise_floor = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl).noise_floor
+        rx_ctrl = csi.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl)
+        rssi = rx_ctrl.rssi
+        noise_floor = rx_ctrl.noise_floor
         self.rssi_all[board_num, row, col] = (rssi - 0x100) if (rssi & 0x80) else rssi
+        self.agc_gain_all[board_num, row, col] = rx_ctrl.agc_gain
+        self.fft_gain_all[board_num, row, col] = rx_ctrl.fft_gain
         self.noise_floor_all[board_num, row, col] = (noise_floor - 0x100) if (noise_floor & 0x80) else noise_floor
         self.rfswitch_state_all[board_num, row, col] = serialized_csi.rfswitch_state
         self.cfo_all[board_num, row, col] = csi.get_cfo_from_rx_ctrl(serialized_csi.rx_ctrl)
@@ -533,6 +538,18 @@ class CSICluster(object):
         Get the RSSI values of the WiFi packet.
         """
         return self.rssi_all
+
+    def get_agc_gain(self):
+        """
+        Get the AGC gain values of the WiFi packet.
+        """
+        return self.agc_gain_all
+
+    def get_fft_gain(self):
+        """
+        Get the FFT gain values of the WiFi packet.
+        """
+        return self.fft_gain_all
 
     def get_rfswitch_state(self):
         """
