@@ -107,17 +107,6 @@ Common.ESPARGOSApplication {
 				currentValue: "log"
 			}
 
-			Label { text: "Comp. AGC"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Switch {
-				id: compensateSwitch
-				property string configKey: "compensate_rssi"
-				property string configProp: "checked"
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 80
-				checked: true
-			}
-
 			Label { text: "Max Age (s)"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			SpinBox {
 				id: maxAgeSpinBox

@@ -14,6 +14,12 @@ SPEED_OF_LIGHT = 299792458
 ANTENNAS_PER_BOARD = ANTENNAS_PER_ROW * ROWS_PER_BOARD
 "Number of antennas on one board"
 
+AGC_GAIN_DB_PER_UNIT = 1.0
+"Reported AGC gain step size in dB"
+
+FFT_GAIN_DB_PER_UNIT = 0.25
+"Reported FFT gain step size in dB"
+
 ANTENNA_SEPARATION = 0.06
 "Distance between the centers of two antennas [m]"
 

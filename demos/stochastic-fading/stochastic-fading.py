@@ -23,7 +23,6 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
 
     binCountChanged = PyQt6.QtCore.pyqtSignal()
     maxSamplesChanged = PyQt6.QtCore.pyqtSignal()
-    compensateRssiChanged = PyQt6.QtCore.pyqtSignal()
     fitModelChanged = PyQt6.QtCore.pyqtSignal()
     sampleCountChanged = PyQt6.QtCore.pyqtSignal()
     fitParameterChanged = PyQt6.QtCore.pyqtSignal()
@@ -32,7 +31,6 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
     DEFAULT_CONFIG = {
         "bin_count": 50,
         "max_samples": 300000,
-        "compensate_rssi": True,
         "fit_model": "rayleigh",
     }
 
@@ -70,6 +68,8 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
 
     def _process_args(self):
         super()._process_args()
+        self.initial_config["backlog"]["fields"]["agc_gain"] = True
+        self.initial_config["backlog"]["fields"]["fft_gain"] = True
         self._use_combined_array = bool(self.args.single_array) or self.get_initial_config("combined-array") not in (None, {})
 
         if not self._use_combined_array and self.args.hosts:
@@ -81,11 +81,9 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
         return ESPARGOSApplication._prepare_pool_init(self, additional_calibrate_args)
 
     def _on_update_app_state(self, newcfg):
-        reset_keys = {"compensate_rssi"}
         signal_map = {
             "bin_count": self.binCountChanged,
             "max_samples": self.maxSamplesChanged,
-            "compensate_rssi": self.compensateRssiChanged,
             "fit_model": self.fitModelChanged,
         }
         if "max_samples" in newcfg:
@@ -97,9 +95,7 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
             if key in newcfg:
                 signal.emit()
 
-        if reset_keys & set(newcfg):
-            self.resetHistogram()
-        elif "fit_model" in newcfg:
+        if "fit_model" in newcfg:
             self._update_fit_parameters()
 
         super()._on_update_app_state(newcfg)
@@ -111,10 +107,6 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=maxSamplesChanged)
     def maxSamples(self):
         return int(self.appconfig.get("max_samples"))
-
-    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=compensateRssiChanged)
-    def compensateRSSI(self):
-        return bool(self.appconfig.get("compensate_rssi"))
 
     @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=fitModelChanged)
     def fitModel(self):
@@ -283,10 +275,10 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
         return pdf
 
     def _append_new_samples(self):
-        if (result := self._get_partial_backlog_csi("rssi", "host_timestamp", return_format=True)) is None:
+        if (result := self._get_partial_backlog_csi("agc_gain", "fft_gain", "host_timestamp", return_format=True)) is None:
             return
 
-        _csi_key, csi_backlog, rssi_backlog, timestamp_backlog = result
+        _csi_key, csi_backlog, agc_gain_backlog, fft_gain_backlog, timestamp_backlog = result
         timestamp_backlog = np.asarray(timestamp_backlog, dtype=np.float64)
 
         new_mask = timestamp_backlog > self._last_processed_timestamp
@@ -296,10 +288,8 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
         self._last_processed_timestamp = float(np.max(timestamp_backlog[new_mask]))
 
         csi_new = np.array(csi_backlog[new_mask], copy=True)
-        rssi_new = np.asarray(rssi_backlog[new_mask])
 
-        if self.compensateRSSI and self.pooldrawer.cfgman.get("gain", "automatic"):
-            csi_new *= 10 ** (rssi_new[..., np.newaxis] / 20)
+        csi_new = espargos.util.scale_csi_by_reported_gain(csi_new, agc_gain_backlog[new_mask], fft_gain_backlog[new_mask])
 
         if getattr(self, "_use_combined_array", False):
             csi_new = espargos.util.build_combined_array_data(self.indexing_matrix, csi_new)

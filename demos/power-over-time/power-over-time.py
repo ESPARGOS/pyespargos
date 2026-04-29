@@ -23,7 +23,6 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
     selectedSensorChanged = PyQt6.QtCore.pyqtSignal()
     subcarrierChanged = PyQt6.QtCore.pyqtSignal()
     scaleChanged = PyQt6.QtCore.pyqtSignal()
-    compensateRssiChanged = PyQt6.QtCore.pyqtSignal()
     preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
@@ -33,9 +32,8 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         "selected_sensor": 0,
         "subcarrier": 0,
         "scale": "log",  # "log", "linear"
-        "compensate_rssi": True,
     }
-    _Y_AXIS_RESET_KEYS = {"mode", "sensor_mode", "selected_sensor", "subcarrier", "scale", "compensate_rssi"}
+    _Y_AXIS_RESET_KEYS = {"mode", "sensor_mode", "selected_sensor", "subcarrier", "scale"}
     _APP_STATE_SIGNALS = {
         "max_age": "maxAgeChanged",
         "mode": "modeChanged",
@@ -43,7 +41,6 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         "selected_sensor": "selectedSensorChanged",
         "subcarrier": "subcarrierChanged",
         "scale": "scaleChanged",
-        "compensate_rssi": "compensateRssiChanged",
     }
 
     def __init__(self, argv):
@@ -72,6 +69,8 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     def _process_args(self):
         super()._process_args()
+        self.initial_config["backlog"]["fields"]["agc_gain"] = True
+        self.initial_config["backlog"]["fields"]["fft_gain"] = True
         self._use_combined_array = bool(self.args.single_array) or self.get_initial_config("combined-array") not in (None, {})
 
         if not self._use_combined_array and self.args.hosts:
@@ -171,10 +170,9 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         subcarrier_indices = espargos.csi.get_csi_format_subcarrier_indices(preamble_format)
         return int(np.argmin(np.abs(subcarrier_indices - selected)))
 
-    def _compute_power_datapoints(self, preamble_format, csi_backlog, rssi_backlog):
+    def _compute_power_datapoints(self, preamble_format, csi_backlog, agc_gain_backlog, fft_gain_backlog):
         csi = np.array(csi_backlog, copy=True)
-        if self.appconfig.get("compensate_rssi") and self.pooldrawer.cfgman.get("gain", "automatic"):
-            csi *= 10 ** (np.asarray(rssi_backlog)[..., np.newaxis] / 20)
+        csi = espargos.util.scale_csi_by_reported_gain(csi, agc_gain_backlog, fft_gain_backlog)
 
         if getattr(self, "_use_combined_array", False):
             csi = espargos.util.build_combined_array_data(self.indexing_matrix, csi)
@@ -211,14 +209,14 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
-        if (result := self.get_backlog_csi("rssi", "host_timestamp", return_format=True)) is None:
+        if (result := self.get_backlog_csi("agc_gain", "fft_gain", "host_timestamp", return_format=True)) is None:
             return
 
-        csi_key, csi_backlog, rssi_backlog, timestamp_backlog = result
+        csi_key, csi_backlog, agc_gain_backlog, fft_gain_backlog, timestamp_backlog = result
         if csi_key != self.last_preamble_format:
             self.last_preamble_format = csi_key
             self.preambleFormatChanged.emit()
-        power_by_datapoint = self._compute_power_datapoints(csi_key, csi_backlog, rssi_backlog)
+        power_by_datapoint = self._compute_power_datapoints(csi_key, csi_backlog, agc_gain_backlog, fft_gain_backlog)
         averaged_power, valid_sensor_mask = self._average_valid_power(power_by_datapoint)
         averaged_power = np.nan_to_num(averaged_power, nan=0.0, posinf=np.finfo(np.float64).max, neginf=0.0)
         curve_power, visible_mask = self._select_curves(averaged_power)

@@ -3,7 +3,7 @@
 
 app:
   camera:
-    device: "/dev/video4"
+    device: "/dev/video2"
     format: null
     flip: False
   beamformer:
@@ -17,7 +17,7 @@ generic:
   kiosk_mode: False
 
 pool:
-  channel: 5
+  channel: 7
   rf_switch: 4
 
 backlog:
@@ -30,17 +30,17 @@ backlog:
 combined-array:
   boards:
     ba1:
-      host: 172.16.0.151
+      host: 192.168.0.101
       cable:
         length: 0.0
         velocity_factor: 0.76
     ba2:
-      host: 172.16.0.152
+      host: 192.168.0.102
       cable:
         length: 0.0
         velocity_factor: 0.76
     ba3:
-      host: 172.16.0.153
+      host: 192.168.0.103
       cable:
         length: 0.0
         velocity_factor: 0.76

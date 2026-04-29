@@ -193,15 +193,20 @@ class EspargosDemoRadiationPattern3D(BacklogMixin, CombinedArrayMixin, SingleCSI
         pol_mode = self.appconfig.get("polarization_mode")
 
         if pol_mode == "incorporate":
-            result = self.get_backlog_csi("rfswitch_state", allow_incomplete=True)
+            result = self.get_backlog_csi("agc_gain", "fft_gain", "rfswitch_state", allow_incomplete=True)
             if result is None:
                 return
-            csi_backlog, rfswitch_state_backlog = result
+            csi_backlog, agc_gain_backlog, fft_gain_backlog, rfswitch_state_backlog = result
         else:
-            if (csi_backlog := self.get_backlog_csi(allow_incomplete=True)) is None:
+            result = self.get_backlog_csi("agc_gain", "fft_gain", allow_incomplete=True)
+            if result is None:
                 return
+            csi_backlog, agc_gain_backlog, fft_gain_backlog = result
 
         csi_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)
+        agc_gain_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, agc_gain_backlog)
+        fft_gain_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, fft_gain_backlog)
+        csi_largearray = espargos.util.scale_csi_by_reported_gain(csi_largearray, agc_gain_largearray, fft_gain_largearray)
 
         if pol_mode == "incorporate":
             rfswitch_combined = espargos.util.build_combined_array_data(self.indexing_matrix, rfswitch_state_backlog)

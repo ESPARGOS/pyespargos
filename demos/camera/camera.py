@@ -162,10 +162,10 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
 
     @PyQt6.QtCore.pyqtSlot()
     def updateSpatialSpectrum(self):
-        result = self.get_backlog_csi("rssi", "host_timestamp", "mac", "rfswitch_state", allow_incomplete=True, return_format=True)
+        result = self.get_backlog_csi("rssi", "agc_gain", "fft_gain", "host_timestamp", "mac", "rfswitch_state", allow_incomplete=True, return_format=True)
         if result is None:
             return
-        csi_key, csi_backlog, rssi_backlog, timestamp_backlog, mac_backlog, rfswitch_state_backlog = result
+        csi_key, csi_backlog, rssi_backlog, agc_gain_backlog, fft_gain_backlog, timestamp_backlog, mac_backlog, rfswitch_state_backlog = result
 
         max_age = self.appconfig.get("beamformer", "max_age")
         if max_age > 0.0:
@@ -195,8 +195,6 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                 self.recent_macs = mac_strings_set
                 self.recentMacsChanged.emit(list(self.recent_macs))
 
-        rssi_backlog = np.nan_to_num(rssi_backlog, nan=-np.inf)
-
         espargos.util.remove_mean_sto(csi_backlog)
 
         # Apply additional calibration (only phase)
@@ -208,9 +206,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                 np.exp(-1.0j * np.angle(self.additional_calibration)),
             )
 
-        # Weight CSI data with RSSI (only meaningful when gain is automatic / AGC is enabled)
-        if self.pooldrawer.cfgman.get("gain", "automatic"):
-            csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
+        csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, agc_gain_backlog, fft_gain_backlog)
 
         # Build combined array CSI data and add fake array index dimension
         csi_combined = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)
@@ -424,12 +420,13 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
             if self.appconfig.get("visualization", "manual_exposure"):
                 match self.appconfig.get("beamformer", "type"):
                     case "MUSIC":
-                        value_range = 1e-4
+                        value_range = 1e1
                     case "MVDR":
-                        value_range = 1e-1 if self.pooldrawer.cfgman.get("gain", "automatic") else 1e15
+                        value_range = 1e4
                     case "FFT" | "Bartlett":
-                        value_range = 1e-1 if self.pooldrawer.cfgman.get("gain", "automatic") else 1e15
+                        value_range = 1e6
                 exposure = self.appconfig.get("visualization", "exposure")
+                print(np.mean(np.abs(power_visualization_beamspace)))
                 color_value = power_visualization_beamspace / value_range * (10 ** (exposure / 0.1) + 1e-15)
             else:
                 color_value = power_visualization_beamspace / (np.max(power_visualization_beamspace) + 1e-15)

@@ -57,14 +57,11 @@ class EspargosDemoPolarization(BacklogMixin, CombinedArrayMixin, SingleCSIFormat
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
-        if (result := self.get_backlog_csi("rssi", "rfswitch_state")) is None:
+        if (result := self.get_backlog_csi("agc_gain", "fft_gain", "rfswitch_state")) is None:
             return
 
-        csi_backlog, rssi_backlog, rfswitch_state = result
-
-        # Weight CSI data with RSSI (only meaningful when gain is automatic / AGC is enabled)
-        if self.pooldrawer.cfgman.get("gain", "automatic"):
-            csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
+        csi_backlog, agc_gain_backlog, fft_gain_backlog, rfswitch_state = result
+        csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, agc_gain_backlog, fft_gain_backlog)
 
         # Build combined array CSI data
         csi_combined = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)

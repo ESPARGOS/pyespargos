@@ -72,16 +72,6 @@ Common.ESPARGOSApplication {
 				currentValue: "rayleigh"
 			}
 
-			Label { text: "Comp. AGC"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Switch {
-				id: compensateSwitch
-				property string configKey: "compensate_rssi"
-				property string configProp: "checked"
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
-				checked: true
-			}
-
 			Item { Layout.columnSpan: 2; width: 1; height: 6; visible: true }
 
 			Button {

@@ -51,14 +51,11 @@ class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSAppl
 
     @PyQt6.QtCore.pyqtSlot(PyQt6.QtCharts.QLineSeries, PyQt6.QtCharts.QValueAxis)
     def updateSpatialSpectrum(self, series, axis):
-        if (result := self.get_backlog_csi("rssi")) is None:
+        if (result := self.get_backlog_csi("agc_gain", "fft_gain")) is None:
             return
 
-        csi_backlog, rssi_backlog = result
-
-        # Weight CSI data with RSSI (only meaningful when gain is automatic / AGC is enabled)
-        if self.pooldrawer.cfgman.get("gain", "automatic"):
-            csi_backlog = csi_backlog * 10 ** (rssi_backlog[..., np.newaxis] / 20)
+        csi_backlog, agc_gain_backlog, fft_gain_backlog = result
+        csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, agc_gain_backlog, fft_gain_backlog)
 
         # Compute array covariance matrix R over all backlog datapoints, all rows and all subcarriers
         csi_los = np.sum(csi_backlog, axis=-1)
