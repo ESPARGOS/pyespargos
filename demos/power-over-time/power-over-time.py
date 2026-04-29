@@ -45,6 +45,7 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         "scale": "scaleChanged",
         "compensate_rssi": "compensateRssiChanged",
     }
+
     def __init__(self, argv):
         parser = argparse.ArgumentParser(
             description="ESPARGOS Demo: Show received power over time",

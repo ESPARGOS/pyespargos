@@ -466,6 +466,7 @@ class SingleCSIFormatMixin:
       the backlog reader resolves the concrete format automatically. Passing a
       format argument stores and reads only that CSI format.
     """
+
     CSI_FORMATS = ("lltf", "ht20", "ht40", "he20")
 
     def _ensure_backlog_fields_for_preamble_format(self):
