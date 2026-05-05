@@ -20,7 +20,8 @@ class PoolDrawer(PyQt6.QtCore.QObject):
     DEFAULT_CONFIG = {
         "channel": 13,
         "secondary_channel": 2,
-        "calibration": {"per_board": False, "show_csi": False, "duration": 1.0},
+        "calibration": {"per_board": False, "duration": 1.0},
+        "show_reference": False,
         "rf_switch": 2,
         "acquire_lltf_force": False,
         "compress_csi": False,
@@ -115,6 +116,9 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         rf = self.pool.get_rfswitch()
         cfg_out["rf_switch"] = int(rf.value)
 
+        # Pool-local reference CSI stream option -> UI fields
+        cfg_out["show_reference"] = self.pool.get_emit_calibration_csi()
+
         # MAC filter -> UI fields
         mf = self.pool.get_mac_filter()
         if isinstance(mf, dict):
@@ -164,6 +168,10 @@ class PoolDrawer(PyQt6.QtCore.QObject):
                 # RF switch
                 if "rf_switch" in delta:
                     self.pool.set_rfswitch(espargos.csi.rfswitch_state_t(int(delta["rf_switch"])))
+
+                # Pool-local reference CSI stream option
+                if "show_reference" in delta:
+                    self.pool.set_emit_calibration_csi(bool(delta["show_reference"]))
 
                 # CSI acquire config
                 if "acquire_lltf_force" in delta or "compress_csi" in delta:

@@ -78,6 +78,7 @@ class Pool(object):
         self.refgen_boards = refgen_boards if refgen_boards is not None else []
 
         self.ota_cache_timeout = ota_cache_timeout
+        self.emit_calibration_csi = False
 
         # We have two caches: One for calibration packets, the other one for over-the-air packets
         self.cluster_cache_calib_lock = threading.Lock()
@@ -323,9 +324,32 @@ class Pool(object):
             clustered CSI is regarded as completed and thus provided to the callback.
             If :code:`cb_predicate` returns true, clustered CSI is regarded as completed.
             If no predicate is provided, the default behavior is to trigger the callback when CSI has been received
-            from all sensors on all boards. If :code:`calibrated` is true (default), callback is provided CSI that is already phase-calibrated.
+            from all sensors on all boards. By default, callbacks receive over-the-air/radar CSI only. Enable
+            :meth:`set_emit_calibration_csi` to also emit calibration CSI (from internal reference generators)
+            through this same callback path.
         """
         self.callbacks.append(_CSICallback(cb, cb_predicate))
+
+    def set_emit_calibration_csi(self, enabled: bool):
+        """
+        Control whether calibration CSI clusters are emitted through normal CSI callbacks.
+
+        Calibration clusters remain marked as calibration packets via
+        :meth:`espargos.cluster.CSICluster.is_calib`.
+        """
+        self.emit_calibration_csi = bool(enabled)
+
+    def get_emit_calibration_csi(self) -> bool:
+        """
+        Return whether calibration CSI clusters are emitted through normal CSI callbacks.
+        """
+        return self.emit_calibration_csi
+
+    def _try_callbacks(self, csi_cluster: cluster.CSICluster) -> bool:
+        all_callbacks_fired = True
+        for cb in self.callbacks:
+            all_callbacks_fired = all_callbacks_fired and cb.try_call(csi_cluster)
+        return all_callbacks_fired
 
     def _clusters_to_calibration(self, board_num=None):
         """
@@ -625,6 +649,7 @@ class Pool(object):
 
             # Prepare a cache entry for a new cluster with a different and add received data to the current cluster
             if serialized_csi.is_calib:
+                calib_cluster = None
                 with self.cluster_cache_calib_lock:
                     if cluster_id not in self.cluster_cache_calib:
                         self.cluster_cache_calib[cluster_id] = cluster.CSICluster(
@@ -635,6 +660,9 @@ class Pool(object):
                         )
 
                     self.cluster_cache_calib[cluster_id].add_csi(board_num, esp_num, serialized_csi)
+                    calib_cluster = self.cluster_cache_calib[cluster_id]
+                if self.emit_calibration_csi:
+                    self._try_callbacks(calib_cluster)
             else:
                 if cluster_id not in self.cluster_cache_ota:
                     self.cluster_cache_ota[cluster_id] = cluster.CSICluster(
@@ -650,9 +678,7 @@ class Pool(object):
         # Check OTA cluster cache for packets where callback is due and for stale packets
         stale = set()
         for id in self.cluster_cache_ota.keys():
-            all_callbacks_fired = True
-            for cb in self.callbacks:
-                all_callbacks_fired = all_callbacks_fired and cb.try_call(self.cluster_cache_ota[id])
+            all_callbacks_fired = self._try_callbacks(self.cluster_cache_ota[id])
 
             if all_callbacks_fired and np.any(self.cluster_cache_ota[id].get_completion()):
                 stale.add(id)

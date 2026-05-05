@@ -161,19 +161,6 @@ Drawer {
 				ToolTip.visible: hovered
 				ToolTip.text: "For multi-board setups: Calibrate each ESPARGOS board independently. Enable this when boards do not share one common clock and phase reference signal."
 			}
-			/*
-			Label { text: "Show Raw"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Switch {
-				id: showCalibSwitch
-				property string configKey: "calibration.show_csi"
-				property string configProp: "checked"
-				property var encode: function(v) { return v ? 1 : 0 }
-				property var decode: function(v) { return !!v }
-				Component.onCompleted: poolConfigManager.register(this)
-				onCheckedChanged: poolConfigManager.onControlChanged(this)
-				checked: false
-			}*/
-
 			// Section: Signal Path
 			Label { Layout.columnSpan: 2; text: "Signal Path / Format"; color: "#9fb3c8" }
 			Label { text: "RF Switch"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -189,6 +176,20 @@ Drawer {
 				model: [ "Isolated", "Reference", "45° Right", "45° Left", "Random" ]
 				currentIndex: 0
 				function isUserActive() { return pressed || popup.visible }
+			}
+
+			Label { text: "Show Reference"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: showReferenceSwitch
+				property string configKey: "show_reference"
+				property string configProp: "checked"
+				property var encode: function(v) { return v ? 1 : 0 }
+				property var decode: function(v) { return !!v }
+				Component.onCompleted: poolConfigManager.register(this)
+				onCheckedChanged: poolConfigManager.onControlChanged(this)
+				checked: false
+				ToolTip.visible: hovered
+				ToolTip.text: "Treat CSI received over the on-board reference channel as if it were over-the-air CSI and include it in the normal processing."
 			}
 
 			Label { text: "Force L-LTF"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
