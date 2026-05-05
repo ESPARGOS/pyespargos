@@ -56,6 +56,7 @@ SERIALIZED_CSI_TLV_TYPE_RX_CTRL_RAW = 5
 SERIALIZED_CSI_TLV_TYPE_CSI_RAW = 6
 SERIALIZED_CSI_TLV_TYPE_CSI_COMPRESSED = 7
 SERIALIZED_CSI_TLV_TYPE_RX_CTRL_COMPRESSED = 8
+SERIALIZED_CSI_TLV_TYPE_GAIN_TABLE_ENTRY = 9
 SERIALIZED_CSI_TLV_TYPE_CRC32 = 255
 
 RADAR_TX_REPORT_TLV_TYPE_FRAME_META = 1
@@ -396,6 +397,8 @@ class serialized_csi_tlv_t:
         self.acquire_flags = 0
         self.acquire_val_scale_cfg = 0
         self.rfswitch_state = rfswitch_state_t.SENSOR_RFSWITCH_UNKNOWN
+        self.gain_table_entry_raw = bytes(12)
+        self.gain_table_entry_valid = False
         self.antid = 0xFF
         self.rx_ctrl = bytes()
         self.buf = bytes()
@@ -438,6 +441,11 @@ class serialized_csi_tlv_t:
                 self.acquire_flags = int.from_bytes(value[0:2], byteorder="little")
                 self.acquire_val_scale_cfg = value[2]
                 self.rfswitch_state = value[3]
+            elif tlv_type == SERIALIZED_CSI_TLV_TYPE_GAIN_TABLE_ENTRY:
+                if tlv_len < 12:
+                    raise ValueError("Invalid gain table entry TLV")
+                self.gain_table_entry_raw = bytes(value[:12])
+                self.gain_table_entry_valid = True
             elif tlv_type == SERIALIZED_CSI_TLV_TYPE_RX_CTRL_RAW:
                 self.rx_ctrl = bytes(value)
                 if len(self.rx_ctrl) >= ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t):

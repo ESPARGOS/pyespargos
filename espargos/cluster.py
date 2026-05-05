@@ -68,6 +68,8 @@ class CSICluster(object):
         self.rfswitch_state_all = np.full(self.shape, fill_value=csi.rfswitch_state_t.SENSOR_RFSWITCH_UNKNOWN, dtype=np.uint8)
         self.noise_floor_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
         self.cfo_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
+        self.gain_table_entry_raw_all = np.zeros(self.shape + (12,), dtype=np.uint8)
+        self.gain_table_entry_valid_all = np.full(self.shape, fill_value=False)
 
     def add_csi(
         self,
@@ -111,6 +113,9 @@ class CSICluster(object):
         self.noise_floor_all[board_num, row, col] = (noise_floor - 0x100) if (noise_floor & 0x80) else noise_floor
         self.rfswitch_state_all[board_num, row, col] = serialized_csi.rfswitch_state
         self.cfo_all[board_num, row, col] = csi.get_cfo_from_rx_ctrl(serialized_csi.rx_ctrl)
+        self.gain_table_entry_valid_all[board_num, row, col] = bool(serialized_csi.gain_table_entry_valid)
+        if serialized_csi.gain_table_entry_valid:
+            self.gain_table_entry_raw_all[board_num, row, col, :] = np.frombuffer(serialized_csi.gain_table_entry_raw, dtype=np.uint8)
 
     def set_radar_tx_report(self, radar_tx_report: csi.radar_tx_report_tlv_t, board_num: int | None = None, esp_num: int | None = None):
         """
@@ -545,6 +550,12 @@ class CSICluster(object):
         """
         return self.agc_gain_all
 
+    def get_rx_gain(self):
+        """
+        Get the RX/AGC gain-table index reported by the sensor metadata.
+        """
+        return self.agc_gain_all
+
     def get_fft_gain(self):
         """
         Get the FFT gain values of the WiFi packet.
@@ -562,6 +573,18 @@ class CSICluster(object):
         Get the CFO values decoded from the sensor rx_ctrl metadata.
         """
         return self.cfo_all
+
+    def get_gain_table_entry_raw(self):
+        """
+        Get the raw 12-byte ESP32-C61 PHY gain-table entry used for each received packet.
+        """
+        return self.gain_table_entry_raw_all
+
+    def get_gain_table_entry_valid(self):
+        """
+        Return a mask indicating whether a raw gain-table entry was reported for each sensor.
+        """
+        return self.gain_table_entry_valid_all
 
     def get_source_mac(self):
         """
