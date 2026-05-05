@@ -186,7 +186,7 @@ class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
         ("cfo_high_rate", ctypes.c_uint32, 15),
         ("_reserved7", ctypes.c_uint32, 2),
         ("noise_floor", ctypes.c_uint32, 8),
-        ("rssi_alt", ctypes.c_uint32, 8),  # signed internal/alternate RSSI estimate, exposed as raw uint8
+        ("data_rssi", ctypes.c_uint32, 8),  # signed data-field RSSI estimate, exposed as raw uint8
         ("fft_gain", ctypes.c_uint32, 8),
         ("rx_gain", ctypes.c_uint32, 8),
         ("_reserved11", ctypes.c_uint32, 8),
