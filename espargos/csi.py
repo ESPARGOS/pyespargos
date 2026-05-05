@@ -117,6 +117,13 @@ class wifi_rx_bb_format_t(IntEnum):
     RX_BB_FORMAT_HE_TB = 7
 
 
+class wifi_sig_mode_t(IntEnum):
+    SIG_MODE_LEGACY = 0
+    SIG_MODE_HT = 1
+    SIG_MODE_HE = 2
+    SIG_MODE_VHT = 3
+
+
 class rfswitch_state_t(IntEnum):
     SENSOR_RFSWITCH_ISOLATION = 0
     SENSOR_RFSWITCH_REFERENCE = 1
@@ -162,14 +169,14 @@ class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
     _fields_ = [
         ("rssi", ctypes.c_uint32, 8),
         ("rate", ctypes.c_uint32, 5),
-        ("_reserved1", ctypes.c_uint32, 1),
-        ("rate_type", ctypes.c_uint32, 2),
-        ("_reserved3", ctypes.c_uint32, 12),
+        ("lsig_reserved", ctypes.c_uint32, 1),
+        ("sig_mode", ctypes.c_uint32, 2),
+        ("lsig_len", ctypes.c_uint32, 12),
         ("rxmatch0", ctypes.c_uint32, 1),
         ("rxmatch1", ctypes.c_uint32, 1),
         ("rxmatch2", ctypes.c_uint32, 1),
         ("rxmatch3", ctypes.c_uint32, 1),
-        ("he_siga1", ctypes.c_uint32, 32),
+        ("he_siga1", ctypes.c_uint32, 32),  # HE-SIGA1, HT-SIG, or VHT-SIG depending on cur_bb_format
         ("rxend_state", ctypes.c_uint32, 8),
         ("he_siga2", ctypes.c_uint32, 16),
         ("rxstart_time_cyc", ctypes.c_uint32, 7),
@@ -179,7 +186,7 @@ class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
         ("cfo_high_rate", ctypes.c_uint32, 15),
         ("_reserved7", ctypes.c_uint32, 2),
         ("noise_floor", ctypes.c_uint32, 8),
-        ("_reserved8", ctypes.c_uint32, 8),
+        ("rssi_alt", ctypes.c_uint32, 8),  # signed internal/alternate RSSI estimate, exposed as raw uint8
         ("fft_gain", ctypes.c_uint32, 8),
         ("rx_gain", ctypes.c_uint32, 8),
         ("_reserved11", ctypes.c_uint32, 8),
@@ -248,7 +255,7 @@ class compressed_rx_ctrl_t(ctypes.LittleEndianStructure):
         ("secondary_channel", ctypes.c_int8),
         ("cur_bb_format", ctypes.c_uint8),
         ("rate", ctypes.c_uint8),
-        ("rate_type", ctypes.c_uint8),
+        ("sig_mode", ctypes.c_uint8),
         ("rxstart_time_cyc", ctypes.c_uint8),
         ("rx_channel_estimate_len", ctypes.c_uint16),
         ("flags", ctypes.c_uint16),
@@ -274,7 +281,7 @@ def _build_rx_ctrl_v3_from_compressed(compact_raw: bytes) -> bytes:
     ctrl = wifi_pkt_rx_ctrl_v3_t(bytes(ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t)))
     ctrl.rssi = int(compact.rssi)
     ctrl.rate = int(compact.rate)
-    ctrl.rate_type = int(compact.rate_type)
+    ctrl.sig_mode = int(compact.sig_mode)
     ctrl.he_siga1 = int(compact.he_sig1_mcs)
     if compact.flags & SERIALIZED_CSI_TLV_RX_CTRL_COMPRESSED_FLAG_IS_HT40:
         ctrl.he_siga1 |= 0x80
@@ -1323,10 +1330,10 @@ def get_cfo_from_rx_ctrl(rx_ctrl) -> int:
     """
     ctrl = rx_ctrl if isinstance(rx_ctrl, wifi_pkt_rx_ctrl_v3_t) else wifi_pkt_rx_ctrl_v3_t(rx_ctrl)
 
-    if ctrl.rate_type == 0:
+    if ctrl.sig_mode == wifi_sig_mode_t.SIG_MODE_LEGACY:
         rate_index = ctrl.rate
     else:
-        rate_index = (ctrl.rate_type << 4) + (ctrl.he_siga1 & 0x7F)
+        rate_index = (ctrl.sig_mode << 4) + (ctrl.he_siga1 & 0x7F)
 
     if rate_index < 8:
         return float(_extract_signed15(ctrl.cfo_low_rate) / -48) * 25000 * 5 / 128
