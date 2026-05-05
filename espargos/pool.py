@@ -126,7 +126,20 @@ class Pool(object):
             return {k: v for k, v in d.items() if k not in ignore_keys}
 
         stripped = [strip_ignored(d) for d in dicts]
-        self._assert_same_across_boards(stripped, what)
+        reference = stripped[0]
+        for board_num, current in enumerate(stripped[1:], start=1):
+            if current == reference:
+                continue
+
+            mismatch_lines = []
+            for key in sorted(set(reference) | set(current)):
+                reference_value = reference.get(key, "<missing>")
+                current_value = current.get(key, "<missing>")
+                if current_value != reference_value:
+                    mismatch_lines.append(f"{key}: board 0={reference_value!r}, board {board_num}={current_value!r}")
+
+            details = "; ".join(mismatch_lines) if mismatch_lines else "no differing top-level keys found"
+            raise ValueError(f"{what}: mismatch between boards (board 0 != board {board_num}): {details}")
 
     def set_rfswitch(self, state: csi.rfswitch_state_t):
         """
