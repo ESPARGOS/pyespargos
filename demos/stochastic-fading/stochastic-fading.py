@@ -68,7 +68,7 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
 
     def _process_args(self):
         super()._process_args()
-        self.initial_config["backlog"]["fields"]["agc_gain"] = True
+        self.initial_config["backlog"]["fields"]["rx_gain"] = True
         self.initial_config["backlog"]["fields"]["fft_gain"] = True
         self._use_combined_array = bool(self.args.single_array) or self.get_initial_config("combined-array") not in (None, {})
 
@@ -275,10 +275,10 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
         return pdf
 
     def _append_new_samples(self):
-        if (result := self._get_partial_backlog_csi("agc_gain", "fft_gain", "host_timestamp", return_format=True)) is None:
+        if (result := self._get_partial_backlog_csi("rx_gain", "fft_gain", "host_timestamp", return_format=True)) is None:
             return
 
-        _csi_key, csi_backlog, agc_gain_backlog, fft_gain_backlog, timestamp_backlog = result
+        _csi_key, csi_backlog, rx_gain_backlog, fft_gain_backlog, timestamp_backlog = result
         timestamp_backlog = np.asarray(timestamp_backlog, dtype=np.float64)
 
         new_mask = timestamp_backlog > self._last_processed_timestamp
@@ -289,7 +289,7 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
 
         csi_new = np.array(csi_backlog[new_mask], copy=True)
 
-        csi_new = espargos.util.scale_csi_by_reported_gain(csi_new, agc_gain_backlog[new_mask], fft_gain_backlog[new_mask])
+        csi_new = espargos.util.scale_csi_by_reported_gain(csi_new, rx_gain_backlog[new_mask], fft_gain_backlog[new_mask])
 
         if getattr(self, "_use_combined_array", False):
             csi_new = espargos.util.build_combined_array_data(self.indexing_matrix, csi_new)

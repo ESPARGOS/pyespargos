@@ -48,7 +48,7 @@ class CSIBacklog(object):
     CSI backlog class. Stores CSI data in a ringbuffer for processing when needed.
 
     :param pool: CSI pool object to collect CSI data from
-    :param fields: List of fields to store (default: all), e.g., ["lltf", "ht40", "rssi", "agc_gain", "fft_gain", "cfo", "timestamp", "host_timestamp", "mac", "radar_tx_timestamp", "radar_tx_index"]
+    :param fields: List of fields to store (default: all), e.g., ["lltf", "ht40", "rssi", "rx_gain", "fft_gain", "cfo", "timestamp", "host_timestamp", "mac", "radar_tx_timestamp", "radar_tx_index"]
     :param calibrate: Apply calibration to CSI data (default: True)
     :param cb_predicate: A function that defines the conditions under which clustered CSI is regarded as completed and thus added to the backlog.
         See :meth:`espargos.pool.Pool.add_csi_callback` for more details.
@@ -77,7 +77,7 @@ class CSIBacklog(object):
             "dtype": np.complex64,
         },
         "rssi": {"shape": (), "per_antenna": True, "dtype": np.float32},
-        "agc_gain": {"shape": (), "per_antenna": True, "dtype": np.float32},
+        "rx_gain": {"shape": (), "per_antenna": True, "dtype": np.float32},
         "fft_gain": {"shape": (), "per_antenna": True, "dtype": np.float32},
         "cfo": {"shape": (), "per_antenna": True, "dtype": np.float32},
         "rfswitch_state": {"shape": (), "per_antenna": True, "dtype": np.uint8},
@@ -250,8 +250,8 @@ class CSIBacklog(object):
                 self.storage["rssi"][self.head] = clustered_csi.get_rssi()
 
             # Store gain metadata
-            if "agc_gain" in self.fields:
-                self.storage["agc_gain"][self.head] = clustered_csi.get_agc_gain()
+            if "rx_gain" in self.fields:
+                self.storage["rx_gain"][self.head] = clustered_csi.get_rx_gain()
 
             if "fft_gain" in self.fields:
                 self.storage["fft_gain"][self.head] = clustered_csi.get_fft_gain()

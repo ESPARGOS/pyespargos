@@ -63,7 +63,7 @@ class CSICluster(object):
 
         # Allocate memory for the RSSI, gain, rf switch state and noise floor values
         self.rssi_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
-        self.agc_gain_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
+        self.rx_gain_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
         self.fft_gain_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
         self.rfswitch_state_all = np.full(self.shape, fill_value=csi.rfswitch_state_t.SENSOR_RFSWITCH_UNKNOWN, dtype=np.uint8)
         self.noise_floor_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
@@ -108,7 +108,7 @@ class CSICluster(object):
         rssi = rx_ctrl.rssi
         noise_floor = rx_ctrl.noise_floor
         self.rssi_all[board_num, row, col] = (rssi - 0x100) if (rssi & 0x80) else rssi
-        self.agc_gain_all[board_num, row, col] = rx_ctrl.agc_gain
+        self.rx_gain_all[board_num, row, col] = rx_ctrl.rx_gain
         self.fft_gain_all[board_num, row, col] = rx_ctrl.fft_gain
         self.noise_floor_all[board_num, row, col] = (noise_floor - 0x100) if (noise_floor & 0x80) else noise_floor
         self.rfswitch_state_all[board_num, row, col] = serialized_csi.rfswitch_state
@@ -544,17 +544,11 @@ class CSICluster(object):
         """
         return self.rssi_all
 
-    def get_agc_gain(self):
-        """
-        Get the AGC gain values of the WiFi packet.
-        """
-        return self.agc_gain_all
-
     def get_rx_gain(self):
         """
-        Get the RX/AGC gain-table index reported by the sensor metadata.
+        Get the RX gain values of the WiFi packet.
         """
-        return self.agc_gain_all
+        return self.rx_gain_all
 
     def get_fft_gain(self):
         """

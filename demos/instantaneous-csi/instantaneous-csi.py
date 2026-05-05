@@ -109,16 +109,16 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     # list parameters contain PyQt6.QtCharts.QLineSeries
     @PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis, PyQt6.QtCharts.QValueAxis)
     def updateCSI(self, powerSeries, phaseSeries, subcarrierAxis, axis):
-        if (result := self.get_backlog_csi("agc_gain", "fft_gain", "rfswitch_state", allow_incomplete=True, return_format=True)) is None:
+        if (result := self.get_backlog_csi("rx_gain", "fft_gain", "rfswitch_state", allow_incomplete=True, return_format=True)) is None:
             return
 
-        csi_key, csi_backlog, agc_gain_backlog, fft_gain_backlog, rfswitch_state = result
+        csi_key, csi_backlog, rx_gain_backlog, fft_gain_backlog, rfswitch_state = result
         if csi_key != self.last_preamble_format:
             self.last_preamble_format = csi_key
             self.preambleFormatChanged.emit()
 
         # If gain metadata contains NaN, skip this update
-        if np.isnan(agc_gain_backlog).any() or np.isnan(fft_gain_backlog).any():
+        if np.isnan(rx_gain_backlog).any() or np.isnan(fft_gain_backlog).any():
             return
 
         # Apply feed filter if not "all"
@@ -136,7 +136,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
                 return
             csi_backlog *= csi_backlog.shape[0] / filtered_datapoint_count[..., np.newaxis]
 
-        csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, agc_gain_backlog, fft_gain_backlog)
+        csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, rx_gain_backlog, fft_gain_backlog)
 
         if self.pooldrawer.cfgman.get("calibration", "per_board"):
             csi_interp = espargos.util.csi_interp_iterative_by_array(csi_backlog, iterations=5)

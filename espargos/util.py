@@ -40,16 +40,16 @@ class AntennaOrientation(enum.Enum):
         )
 
 
-def scale_csi_by_reported_gain(csi_data: np.ndarray, agc_gain: np.ndarray, fft_gain: np.ndarray) -> np.ndarray:
+def scale_csi_by_reported_gain(csi_data: np.ndarray, rx_gain: np.ndarray, fft_gain: np.ndarray) -> np.ndarray:
     """
     Compensate CSI amplitudes for the receiver gain reported by the ESP32.
 
-    The ESP32 reports AGC gain in 1 dB units and FFT gain in 0.25 dB units.
+    The ESP32 reports RX gain in 1 dB units and FFT gain in 0.25 dB units.
     Since these are receiver-side gains, this helper divides raw CSI amplitudes
     by the reported gain factor. The scaling is valid for both automatic and
     manual gain mode, because the reported values are always meaningful.
     """
-    gain_db = constants.AGC_GAIN_DB_PER_UNIT * np.asarray(agc_gain, dtype=np.float32) + constants.FFT_GAIN_DB_PER_UNIT * np.asarray(fft_gain, dtype=np.float32)
+    gain_db = constants.RX_GAIN_DB_PER_UNIT * np.asarray(rx_gain, dtype=np.float32) + constants.FFT_GAIN_DB_PER_UNIT * np.asarray(fft_gain, dtype=np.float32)
     scale = (10.0 ** (-gain_db / 20.0)).astype(np.float32, copy=False)
     return csi_data * scale[..., np.newaxis]
 

@@ -219,7 +219,7 @@ Drawer {
 				ToolTip.text: "Compress CSI in firmware by converting it to a sparser time-domain representation before transport. This reduces bandwidth, but the received CSI is no longer the raw frequency-domain estimate."
 			}
 
-			// Section: Gain/AGC
+			// Section: Gain
 			Label { Layout.columnSpan: 2; text: "Gain"; color: "#9fb3c8" }
 			Label { text: "Automatic"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {

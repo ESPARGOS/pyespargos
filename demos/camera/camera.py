@@ -162,10 +162,10 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
 
     @PyQt6.QtCore.pyqtSlot()
     def updateSpatialSpectrum(self):
-        result = self.get_backlog_csi("rssi", "agc_gain", "fft_gain", "host_timestamp", "mac", "rfswitch_state", allow_incomplete=True, return_format=True)
+        result = self.get_backlog_csi("rssi", "rx_gain", "fft_gain", "host_timestamp", "mac", "rfswitch_state", allow_incomplete=True, return_format=True)
         if result is None:
             return
-        csi_key, csi_backlog, rssi_backlog, agc_gain_backlog, fft_gain_backlog, timestamp_backlog, mac_backlog, rfswitch_state_backlog = result
+        csi_key, csi_backlog, rssi_backlog, rx_gain_backlog, fft_gain_backlog, timestamp_backlog, mac_backlog, rfswitch_state_backlog = result
 
         max_age = self.appconfig.get("beamformer", "max_age")
         if max_age > 0.0:
@@ -206,7 +206,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
                 np.exp(-1.0j * np.angle(self.additional_calibration)),
             )
 
-        csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, agc_gain_backlog, fft_gain_backlog)
+        csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, rx_gain_backlog, fft_gain_backlog)
 
         # Build combined array CSI data and add fake array index dimension
         csi_combined = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)

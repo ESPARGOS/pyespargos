@@ -181,7 +181,7 @@ class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
         ("noise_floor", ctypes.c_uint32, 8),
         ("_reserved8", ctypes.c_uint32, 8),
         ("fft_gain", ctypes.c_uint32, 8),
-        ("agc_gain", ctypes.c_uint32, 8),
+        ("rx_gain", ctypes.c_uint32, 8),
         ("_reserved11", ctypes.c_uint32, 8),
         ("_reserved12", ctypes.c_uint32, 8),
         ("_reserved13", ctypes.c_uint32, 2),
