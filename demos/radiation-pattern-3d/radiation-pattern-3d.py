@@ -207,6 +207,7 @@ class EspargosDemoRadiationPattern3D(BacklogMixin, CombinedArrayMixin, SingleCSI
         rx_gain_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, rx_gain_backlog)
         fft_gain_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, fft_gain_backlog)
         csi_largearray = espargos.util.scale_csi_by_reported_gain(csi_largearray, rx_gain_largearray, fft_gain_largearray)
+        csi_largearray = np.nan_to_num(csi_largearray, nan=0.0)
 
         if pol_mode == "incorporate":
             rfswitch_combined = espargos.util.build_combined_array_data(self.indexing_matrix, rfswitch_state_backlog)

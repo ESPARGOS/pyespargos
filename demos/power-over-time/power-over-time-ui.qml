@@ -122,6 +122,21 @@ Common.ESPARGOSApplication {
 				value: 10
 			}
 
+			Label { text: "Required Antennas"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			SpinBox {
+				id: requiredAntennasSpinBox
+				property string configKey: "required_antennas"
+				property string configProp: "value"
+				property var encode: function(v) { return v }
+				property var decode: function(v) { return Number(v) }
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 180
+				from: 1
+				to: backend.sensorCount
+				value: backend.sensorCount
+			}
+
 			Common.GenericAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor

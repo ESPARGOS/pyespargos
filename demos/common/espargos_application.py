@@ -511,10 +511,10 @@ class SingleCSIFormatMixin:
         Automatically interpolates gaps for HT20/HT40 formats.
 
         :param additional_keys: Additional backlog keys to retrieve alongside the CSI data.
-        :param allow_incomplete: If True, keep only CSI datapoints that are fully finite and drop
-            datapoints containing NaN values (from incomplete CSI clusters), instead of rejecting
-            the whole backlog request. Additional returned backlog fields are filtered accordingly.
-            Useful when a CSI completion timeout is configured.
+        :param allow_incomplete: If True, keep CSI datapoints with at least one antenna with valid CSI and
+            leave missing antennas as NaN, instead of rejecting the whole backlog request.
+            Additional returned backlog fields are filtered to the same datapoints. Useful when
+            the CSI cluster predicate can create incomplete clusters (timeout or accepting non-full completion state).
         :param remove_global_sto: If True, remove global STO from CSI data by re-centering the cluster on the mean STO.
             This should be true unless you want to do processing across multiple subsequent CSI datapoints where the global STO would be relevant.
         :param return_format: If true, include the concrete preamble format used
@@ -550,7 +550,7 @@ class SingleCSIFormatMixin:
         # Handle data containing NaN values (from incomplete CSI clusters)
         if np.any(np.isnan(csi_backlog)):
             if allow_incomplete:
-                valid_datapoints = ~np.any(np.isnan(csi_backlog.reshape(csi_backlog.shape[0], -1)), axis=1)
+                valid_datapoints = np.any(np.isfinite(csi_backlog.reshape(csi_backlog.shape[0], -1)), axis=1)
                 if not np.any(valid_datapoints):
                     return None
                 results = [result[valid_datapoints] for result in results]

@@ -20,8 +20,10 @@ class EspargosDemoPhasesOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApp
     maxAgeChanged = PyQt6.QtCore.pyqtSignal()
     shiftPeakChanged = PyQt6.QtCore.pyqtSignal()
     referenceChanged = PyQt6.QtCore.pyqtSignal()
+    requiredAntennasChanged = PyQt6.QtCore.pyqtSignal()
+    colorModeChanged = PyQt6.QtCore.pyqtSignal()
 
-    DEFAULT_CONFIG = {"max_age": 10.0, "shift_peak": False, "reference": 0}
+    DEFAULT_CONFIG = {"max_age": 10.0, "shift_peak": False, "reference": 0, "required_antennas": None, "color_mode": "antenna"}
 
     def __init__(self, argv):
         # Parse command line arguments
@@ -36,7 +38,7 @@ class EspargosDemoPhasesOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApp
         )
 
         # Set up ESPARGOS pool and backlog
-        self.initialize_pool(calibrate=not self.args.no_calib)
+        self.initialize_pool(calibrate=not self.args.no_calib, backlog_cb_predicate=self._cluster_predicate)
 
         self.startTimestamp = time.time()
 
@@ -54,7 +56,18 @@ class EspargosDemoPhasesOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApp
         if "reference" in newcfg:
             self.referenceChanged.emit()
 
+        if "required_antennas" in newcfg:
+            self.requiredAntennasChanged.emit()
+
+        if "color_mode" in newcfg:
+            self.colorModeChanged.emit()
+
         super()._on_update_app_state(newcfg)
+
+    def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
+        if self.appconfig.get("required_antennas") is None:
+            self.appconfig.set({"required_antennas": int(np.prod(self.pool.get_shape()))})
+        super()._finalize_pool_init(backlog_cb_predicate, calibrate)
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=maxAgeChanged)
     def maxCSIAge(self):
@@ -72,15 +85,38 @@ class EspargosDemoPhasesOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApp
     def sensorCount(self):
         return np.prod(self.pool.get_shape())
 
+    @PyQt6.QtCore.pyqtProperty(int, constant=True)
+    def sensorCountPerBoard(self):
+        return int(np.prod(self.pool.get_shape()[1:]))
+
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=requiredAntennasChanged)
+    def requiredAntennas(self):
+        configured = self.appconfig.get("required_antennas")
+        return int(self.sensorCount if configured is None else configured)
+
+    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=colorModeChanged)
+    def colorMode(self):
+        return str(self.appconfig.get("color_mode"))
+
+    def _cluster_predicate(self, cluster):
+        completion = cluster.get_completion()
+        return bool(np.sum(completion) >= self.requiredAntennas)
+
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
-        if (result := self.get_backlog_csi("host_timestamp")) is None:
+        allow_partial = self.requiredAntennas < int(self.sensorCount)
+        result = self.get_backlog_csi("host_timestamp", allow_incomplete=allow_partial)
+        if result is None:
             return
 
         csi_backlog, timestamp_backlog = result
         timestamp = timestamp_backlog[-1] - self.startTimestamp
+        valid_antennas = np.any(np.isfinite(csi_backlog), axis=(0, -1)).reshape(-1)
+        if not np.any(valid_antennas):
+            return
 
-        csi_shifted = espargos.util.shift_to_firstpeak_sync(csi_backlog) if self.appconfig.get("shift_peak") else csi_backlog
+        csi_for_average = np.nan_to_num(csi_backlog, nan=0.0)
+        csi_shifted = espargos.util.shift_to_firstpeak_sync(csi_for_average) if self.appconfig.get("shift_peak") else csi_for_average
         csi_interp = espargos.util.csi_interp_iterative(csi_shifted)
         csi_flat = np.reshape(csi_interp, (-1, csi_interp.shape[-1]))
 
@@ -88,9 +124,12 @@ class EspargosDemoPhasesOverTime(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApp
         csi_by_antenna = espargos.util.csi_interp_iterative(np.transpose(csi_flat))
         reference_idx = self.appconfig.get("reference")
         reference_idx = min(reference_idx, len(csi_by_antenna) - 1)  # Clamp to valid range
-        offsets_current_angles = np.angle(csi_by_antenna * np.exp(-1.0j * np.angle(csi_by_antenna[reference_idx]))).tolist()
+        if not valid_antennas[reference_idx]:
+            reference_idx = int(np.flatnonzero(valid_antennas)[0])
+        offsets_current_angles = np.full(len(csi_by_antenna), np.nan, dtype=np.float32)
+        offsets_current_angles[valid_antennas] = np.angle(csi_by_antenna[valid_antennas] * np.exp(-1.0j * np.angle(csi_by_antenna[reference_idx])))
 
-        self.updatePhases.emit(timestamp, offsets_current_angles)
+        self.updatePhases.emit(timestamp, offsets_current_angles.tolist())
 
 
 app = EspargosDemoPhasesOverTime(sys.argv)

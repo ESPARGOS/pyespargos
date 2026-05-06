@@ -207,6 +207,7 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
             )
 
         csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, rx_gain_backlog, fft_gain_backlog)
+        csi_backlog = np.nan_to_num(csi_backlog, nan=0.0)
 
         # Build combined array CSI data and add fake array index dimension
         csi_combined = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)

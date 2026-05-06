@@ -67,6 +67,39 @@ Common.ESPARGOSApplication {
 				value: 0
 			}
 
+			Label { text: "Required Antennas"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			SpinBox {
+				id: requiredAntennasSpinBox
+				property string configKey: "required_antennas"
+				property string configProp: "value"
+				property var encode: function(v) { return v }
+				property var decode: function(v) { return Number(v) }
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 160
+				from: 1
+				to: backend.sensorCount
+				value: backend.sensorCount
+			}
+
+			Label { text: "Curve Colors"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			ComboBox {
+				id: colorModeCombo
+				property string configKey: "color_mode"
+				property string configProp: "currentValue"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 160
+
+				model: [
+					{ value: "antenna", text: "By Antenna" },
+					{ value: "board", text: "By Board" }
+				]
+				textRole: "text"
+				valueRole: "value"
+				currentValue: "antenna"
+			}
+
 			Common.GenericAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
@@ -128,6 +161,17 @@ Common.ESPARGOSApplication {
 
 				property var newDataBacklog: Array()
 
+				function colorIndexForAntenna(ant) {
+					if (backend.colorMode === "board")
+						return Math.floor(ant / backend.sensorCountPerBoard)
+					return ant
+				}
+
+				function refreshSeriesColors() {
+					for (let ant = 0; ant < calibrationPhasesOverTime.count; ++ant)
+						calibrationPhasesOverTime.series(ant).color = colorCycle[colorIndexForAntenna(ant) % colorCycle.length]
+				}
+
 				axes: [
 					ValueAxis {
 						id: calibrationPhasesOverTimeXAxis
@@ -159,7 +203,7 @@ Common.ESPARGOSApplication {
 					for (let ant = 0; ant < backend.sensorCount; ++ant) {
 						let phaseSeries = calibrationPhasesOverTime.createSeries(ChartView.SeriesTypeLine, "tx-" + ant, calibrationPhasesOverTimeXAxis, calibrationPhasesOverTimeYAxis)
 						phaseSeries.pointsVisible = false
-						phaseSeries.color = colorCycle[ant % colorCycle.length]
+						phaseSeries.color = colorCycle[calibrationPhasesOverTime.colorIndexForAntenna(ant) % colorCycle.length]
 						phaseSeries.useOpenGL = Qt.platform.os === "linux"
 					}
 				}
@@ -170,8 +214,12 @@ Common.ESPARGOSApplication {
 					repeat: true
 					onTriggered: {
 						for (const elem of calibrationPhasesOverTime.newDataBacklog) {
-							for (let ant = 0; ant < calibrationPhasesOverTime.count; ++ant)
-								calibrationPhasesOverTime.series(ant).append(elem.time, elem.phases[ant]);
+							for (let ant = 0; ant < calibrationPhasesOverTime.count; ++ant) {
+								const value = elem.phases[ant]
+								if (!Number.isFinite(elem.time) || !Number.isFinite(value))
+									continue
+								calibrationPhasesOverTime.series(ant).append(elem.time, value);
+							}
 
 							calibrationPhasesOverTimeXAxis.max = elem.time
 							calibrationPhasesOverTimeXAxis.min = elem.time - backend.maxCSIAge
@@ -213,6 +261,10 @@ Common.ESPARGOSApplication {
 
 				Connections {
 					target: backend
+
+					function onColorModeChanged() {
+						calibrationPhasesOverTime.refreshSeriesColors()
+					}
 
 					function onUpdatePhases(time, phases) {
 						calibrationPhasesOverTime.newDataBacklog.push({

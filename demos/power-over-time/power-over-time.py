@@ -24,6 +24,7 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
     subcarrierChanged = PyQt6.QtCore.pyqtSignal()
     scaleChanged = PyQt6.QtCore.pyqtSignal()
     preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
+    requiredAntennasChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
         "max_age": 10.0,
@@ -32,6 +33,7 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         "selected_sensor": 0,
         "subcarrier": 0,
         "scale": "log",  # "log", "linear"
+        "required_antennas": None,
     }
     _Y_AXIS_RESET_KEYS = {"mode", "sensor_mode", "selected_sensor", "subcarrier", "scale"}
     _APP_STATE_SIGNALS = {
@@ -58,7 +60,7 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         parser.add_argument("--no-calib", default=False, help="Do not calibrate", action="store_true")
         super().__init__(argv, argparse_parent=parser)
 
-        self.initialize_pool(calibrate=not self.args.no_calib)
+        self.initialize_pool(calibrate=not self.args.no_calib, backlog_cb_predicate=self._cluster_predicate)
         self.startTimestamp = time.time()
         self._stable_y_min = None
         self._stable_y_max = None
@@ -91,8 +93,15 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
             signal_name = self._APP_STATE_SIGNALS.get(key)
             if signal_name is not None:
                 getattr(self, signal_name).emit()
+        if "required_antennas" in changed_keys:
+            self.requiredAntennasChanged.emit()
 
         super()._on_update_app_state(newcfg)
+
+    def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
+        if self.appconfig.get("required_antennas") is None:
+            self.appconfig.set({"required_antennas": int(np.prod(self.pool.get_shape()))})
+        super()._finalize_pool_init(backlog_cb_predicate, calibrate)
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=maxAgeChanged)
     def maxCSIAge(self):
@@ -115,6 +124,15 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         if getattr(self, "_use_combined_array", False):
             return int(self.n_rows * self.n_cols)
         return int(np.prod(self.pool.get_shape()))
+
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=requiredAntennasChanged)
+    def requiredAntennas(self):
+        configured = self.appconfig.get("required_antennas")
+        return int(np.prod(self.pool.get_shape()) if configured is None else configured)
+
+    def _cluster_predicate(self, cluster):
+        completion = cluster.get_completion()
+        return bool(np.sum(completion) >= self.requiredAntennas)
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=selectedSensorChanged)
     def selectedSensor(self):
@@ -180,7 +198,11 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
         if self.mode == "subcarrier":
             power = np.abs(csi[..., self._subcarrier_array_index(preamble_format)]) ** 2
         else:
-            power = np.mean(np.abs(csi) ** 2, axis=-1)
+            power_by_subcarrier = np.abs(csi) ** 2
+            valid_subcarriers = np.isfinite(power_by_subcarrier)
+            safe_power = np.where(valid_subcarriers, power_by_subcarrier, 0.0)
+            power = np.sum(safe_power, axis=-1) / np.maximum(np.sum(valid_subcarriers, axis=-1), 1)
+            power = np.where(np.any(valid_subcarriers, axis=-1), power, np.nan)
 
         return power.reshape(power.shape[0], -1)
 
@@ -209,7 +231,10 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
-        if (result := self.get_backlog_csi("rx_gain", "fft_gain", "host_timestamp", return_format=True)) is None:
+        pool_sensor_count = int(np.prod(self.pool.get_shape()))
+        allow_partial = self.requiredAntennas < pool_sensor_count
+        result = self.get_backlog_csi("rx_gain", "fft_gain", "host_timestamp", allow_incomplete=allow_partial, return_format=True)
+        if result is None:
             return
 
         csi_key, csi_backlog, rx_gain_backlog, fft_gain_backlog, timestamp_backlog = result
