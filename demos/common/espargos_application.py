@@ -63,6 +63,39 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
     DEFAULT_CONFIG = {}  # Override in subclasses to provide app-specific defaults
 
+    def _default_config_template(self) -> dict:
+        config = copy.deepcopy(self.BASE_DEFAULT_CONFIG)
+        deep_update(config, {"backlog": BacklogSettings.DEFAULT_CONFIG})
+        deep_update(config, {"pool": PoolDrawer.DEFAULT_CONFIG})
+        deep_update(config, {"app": getattr(self, "DEFAULT_CONFIG", {})})
+        return config
+
+    @staticmethod
+    def _format_config_value(value):
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, str):
+            return repr(value)
+        return repr(value)
+
+    def _format_config_options(self, config: dict, prefix: str = "", indent: int = 2):
+        lines = []
+        for key, value in config.items():
+            path = f"{prefix}.{key}" if prefix else key
+            spacing = " " * indent
+            if isinstance(value, dict) and value:
+                lines.append(f"{spacing}{key}:")
+                lines.extend(self._format_config_options(value, path, indent + 2))
+            else:
+                default_text = self._format_config_value(value)
+                lines.append(f"{spacing}{path}: default: {default_text}")
+        return lines
+
+    def _argparse_epilog(self) -> str:
+        return "Configuration options for -o/--option (as CLI arguments) or -c/--config (as YAML file):\n" + "\n".join(self._format_config_options(self._default_config_template()))
+
     def __init__(
         self,
         argv: list[str],
@@ -77,7 +110,11 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         self._qml_ok = True
 
         # Parse command-line arguments
-        parser = argparse.ArgumentParser(parents=[argparse_parent] if argparse_parent else [])
+        parser = argparse.ArgumentParser(
+            parents=[argparse_parent] if argparse_parent else [],
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog=self._argparse_epilog(),
+        )
         parser.add_argument(
             "-c",
             "--config",
@@ -101,9 +138,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
         # Load initial configuration if provided
         self.config_path = None
-        self.initial_config = copy.deepcopy(self.BASE_DEFAULT_CONFIG)
-        if hasattr(self, "DEFAULT_CONFIG"):
-            self.initial_config["app"] = self.DEFAULT_CONFIG.copy()
+        self.initial_config = self._default_config_template()
         if self.args.config is not None:
             with open(self.args.config, "r") as config_file:
                 cfg_from_file = yaml.safe_load(config_file)
