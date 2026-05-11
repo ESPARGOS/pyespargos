@@ -67,7 +67,7 @@ class Board(object):
         "acquire_csi_dcm": True,
         "acquire_csi_beamformed": True,
         "acquire_csi_he_stbc_mode": 2,
-        "val_scale_cfg": 0,
+        "val_scale_cfg": 2,
         "dump_ack_en": True,
     }
 
@@ -557,7 +557,7 @@ class Board(object):
               "acquire_csi_dcm": true,
               "acquire_csi_beamformed": true,
               "acquire_csi_he_stbc_mode": 2,
-              "val_scale_cfg": 0,
+              "val_scale_cfg": 2,
               "dump_ack_en": true
             }
 
