@@ -171,12 +171,15 @@ class CSICluster(object):
             csi_lltf_sensor = csi_lltf[b, r, a, :].view()
 
             if serialized_csi.is_compressed:
-                csi_lltf_sensor[:] = csi.decode_compressed_lltf(serialized_csi.buf, serialized_csi.acquire_force_lltf)
+                csi_lltf_sensor[:] = csi.decode_compressed_lltf(serialized_csi.buf, serialized_csi.acquire_force_lltf, serialized_csi.acquire_lltf_8bit_mode)
                 return
 
             lltf_bytes = np.frombuffer(serialized_csi.buf[:_RAW_LLTF_BYTES], dtype=np.uint8)
 
-            if serialized_csi.acquire_force_lltf:
+            if serialized_csi.acquire_lltf_8bit_mode:
+                csi_lltf_sensor[:] = csi._decode_wire_complex_int8(serialized_csi.buf, csi.LEGACY_COEFFICIENTS_PER_CHANNEL)
+                csi.interpolate_lltf_gap(csi_lltf_sensor)
+            elif serialized_csi.acquire_force_lltf:
                 # In forced LLTF mode the ESP32-C61 reports 52 signed 12-bit values:
                 # 26 complex coefficients for every second subcarrier, including DC.
                 # The last active subcarrier is not measured and must be extrapolated.
@@ -191,14 +194,15 @@ class CSICluster(object):
                 csi_lltf_sensor[0:52:2] = even_coeffs
                 csi_lltf_sensor[-1] = lltf_all[52].astype(np.float32) + 1.0j * csi_lltf_sensor[-3].imag
 
-            # DC subcarrier
-            # Only provided if acquire_force_lltf is true, otherwise needs to be interpolated
-            if not serialized_csi.acquire_force_lltf:
+            # DC subcarrier. In sparse 12-bit LLTF this is only provided when
+            # force LLTF is true. 8-bit LLTF was handled above like HT20.
+            if not serialized_csi.acquire_force_lltf and not serialized_csi.acquire_lltf_8bit_mode:
                 dc_subcarrier_index = csi.LEGACY_COEFFICIENTS_PER_CHANNEL // 2
                 csi_lltf_sensor[dc_subcarrier_index] = (csi_lltf_sensor[dc_subcarrier_index - 2] + csi_lltf_sensor[dc_subcarrier_index + 2]) / 2.0
 
             # Interpolate to get full 53 subcarriers
-            csi_lltf_sensor[1::2] = 0.5 * (csi_lltf_sensor[0:-1:2] + csi_lltf_sensor[2::2])
+            if not serialized_csi.acquire_lltf_8bit_mode:
+                csi_lltf_sensor[1::2] = 0.5 * (csi_lltf_sensor[0:-1:2] + csi_lltf_sensor[2::2])
 
         self._foreach_complete_sensor(deserialize_lltf_packet)
 

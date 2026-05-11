@@ -24,6 +24,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         "show_reference": False,
         "rf_switch": 2,
         "acquire_lltf_force": False,
+        "lltf_8bit_mode": False,
         "compress_csi": False,
         "gain": {
             "automatic": True,
@@ -95,6 +96,10 @@ class PoolDrawer(PyQt6.QtCore.QObject):
             cfg_out["acquire_lltf_force"] = bool(csi_cfg["acquire_csi_force_lltf"])
         if isinstance(csi_cfg, dict) and "compress_csi" in csi_cfg:
             cfg_out["compress_csi"] = bool(csi_cfg["compress_csi"])
+        if isinstance(csi_cfg, dict):
+            lltf_8bit_mode = csi_cfg.get("lltf_8bit_mode", csi_cfg.get("lltf_bit_mode"))
+            if lltf_8bit_mode is not None:
+                cfg_out["lltf_8bit_mode"] = bool(lltf_8bit_mode)
 
         # Gain settings -> UI fields
         gain = self.pool.get_gain_settings()
@@ -174,12 +179,14 @@ class PoolDrawer(PyQt6.QtCore.QObject):
                     self.pool.set_emit_calibration_csi(bool(delta["show_reference"]))
 
                 # CSI acquire config
-                if "acquire_lltf_force" in delta or "compress_csi" in delta:
+                if "acquire_lltf_force" in delta or "compress_csi" in delta or "lltf_8bit_mode" in delta:
                     cfg = dict()
                     if "acquire_lltf_force" in delta:
                         cfg["acquire_csi_force_lltf"] = bool(int(delta["acquire_lltf_force"]))
                     if "compress_csi" in delta:
                         cfg["compress_csi"] = bool(int(delta["compress_csi"]))
+                    if "lltf_8bit_mode" in delta:
+                        cfg["lltf_8bit_mode"] = bool(int(delta["lltf_8bit_mode"]))
                     self.pool.set_csi_acquire_config(cfg)
 
                 # Gains (unified: "automatic" controls both rx_gain and fft_scale)

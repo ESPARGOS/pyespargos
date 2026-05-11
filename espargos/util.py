@@ -323,53 +323,6 @@ def get_cable_wavelength(frequencies: np.ndarray, velocity_factors: np.ndarray):
     return constants.SPEED_OF_LIGHT / frequencies[np.newaxis, :] * velocity_factors[:, np.newaxis]
 
 
-def interpolate_ht40ltf_gap(csi_ht40: np.ndarray):
-    """
-    Apply linear interpolation to determine realistic values for the subcarrier channel coefficients in the gap between the bonded channels in an HT40 channel.
-
-    :param csi_ht40: The CSI data for an HT40 channel. Complex-valued NumPy array with arbitrary shape, but the last dimension must be the subcarriers.
-    :return: The CSI data with the values in the gap filled in.
-    """
-    index_left = csi.HT_COEFFICIENTS_PER_CHANNEL - 1
-    index_right = csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS
-    missing_indices = np.arange(index_left + 1, index_right)
-    left = csi_ht40[..., index_left]
-    right = csi_ht40[..., index_right]
-    interp = (missing_indices - index_left) / (index_right - index_left)
-    csi_ht40[..., missing_indices] = interp * right[..., np.newaxis] + (1 - interp) * left[..., np.newaxis]
-
-
-def interpolate_ht20ltf_gap(csi_ht20: np.ndarray):
-    """
-    Apply linear interpolation to determine a realistic value for the DC subcarrier of the HT20-LTF.
-
-    :param csi_ht20: The CSI data for an HT20 channel. Complex-valued NumPy array with arbitrary shape, but the last dimension must be the subcarriers.
-    :return: The CSI data with the values in the gap filled in.
-    """
-    index_left = csi_ht20.shape[-1] // 2 - 1
-    index_right = csi_ht20.shape[-1] // 2 + 1
-    missing_index = csi_ht20.shape[-1] // 2
-    csi_ht20[..., missing_index] = (csi_ht20[..., index_left] + csi_ht20[..., index_right]) / 2
-
-
-def interpolate_he20ltf_gaps(csi_he20: np.ndarray):
-    """
-    Fill the three invalid HE20 subcarriers ``-1, 0, 1`` by linear interpolation.
-
-    :param csi_he20: The CSI data for an HE20 channel. Complex-valued NumPy array
-        with arbitrary shape, but the last dimension must be 245 subcarriers in
-        ascending order ``-122..122``.
-    :return: The CSI data with the invalid tones filled in.
-    """
-    index_left = csi_he20.shape[-1] // 2 - 2
-    index_right = csi_he20.shape[-1] // 2 + 2
-    missing_indices = np.arange(index_left + 1, index_right)
-    left = csi_he20[..., index_left]
-    right = csi_he20[..., index_right]
-    interp = (missing_indices - index_left) / (index_right - index_left)
-    csi_he20[..., missing_indices] = interp * right[..., np.newaxis] + (1 - interp) * left[..., np.newaxis]
-
-
 def _wrap_period_symmetric(values: np.ndarray, period: float) -> np.ndarray:
     """
     Wrap values into the interval ``[-period / 2, period / 2)``.
@@ -460,19 +413,6 @@ def derive_he20_calibration_from_lltf(
     calibration_he20 *= antenna_phase_offsets[..., np.newaxis].astype(np.complex64)
 
     return calibration_he20
-
-
-def interpolate_lltf_gap(csi_lltf: np.ndarray):
-    """
-    Apply linear interpolation to determine a realistic value for the DC subcarrier of the L-LTF.
-
-    :param csi_lltf: The CSI data for an LLTF channel. Complex-valued NumPy array with arbitrary shape, but the last dimension must be the subcarriers.
-    :return: The CSI data with the values in the gap filled in.
-    """
-    index_left = csi_lltf.shape[-1] // 2 - 1
-    index_right = csi_lltf.shape[-1] // 2 + 1
-    missing_index = csi_lltf.shape[-1] // 2
-    csi_lltf[..., missing_index] = (csi_lltf[..., index_left] + csi_lltf[..., index_right]) / 2
 
 
 def remove_mean_sto(csi_datapoints: np.ndarray):

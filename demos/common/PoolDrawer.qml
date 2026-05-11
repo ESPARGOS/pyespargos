@@ -206,6 +206,20 @@ Drawer {
 				ToolTip.text: "Always acquire the legacy L-LTF CSI (20 MHz bandwidth), regardless of packet format. Useful when you want a common CSI format across mixed traffic, but it will prevent access to format-specific training fields."
 			}
 
+			Label { text: "L-LTF 8-Bit Mode"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: lltf8BitModeSwitch
+				property string configKey: "lltf_8bit_mode"
+				property string configProp: "checked"
+				property var encode: function(v) { return v ? 1 : 0 }
+				property var decode: function(v) { return !!v }
+				Component.onCompleted: poolConfigManager.register(this)
+				onCheckedChanged: poolConfigManager.onControlChanged(this)
+				checked: false
+				ToolTip.visible: hovered
+				ToolTip.text: "Use 8-bit L-LTF CSI with every subcarrier instead of sparse 12-bit L-LTF CSI."
+			}
+
 			Label { text: "Compressed CSI"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {
 				id: compressCSISwitch

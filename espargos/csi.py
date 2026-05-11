@@ -6,8 +6,6 @@ import numpy as np
 from . import constants
 
 # Internal constants
-_ESPARGOS_SPI_BUFFER_SIZE_V3 = 384
-SPI_TYPE_HEADER_CSI = 0xE4CD0BAC
 SPI_TYPE_HEADER_RADAR_TX_REPORT = 0x52545852
 SPI_TYPE_HEADER_JUMBO_FRAME = 0xDECAFBAD
 JUMBO_FRAGMENT_TERMINATOR_UID = 0
@@ -32,6 +30,7 @@ COMPRESSED_HT20_FFT_SIZE = 64
 COMPRESSED_HT40_FFT_SIZE = 128
 COMPRESSED_HE20_FFT_SIZE = 256
 COMPRESSED_LLTF_FIX32_SHIFT = 17
+COMPRESSED_LLTF_8BIT_MODE_FIX32_SHIFT = 21
 COMPRESSED_HT20_FIX32_SHIFT = 21
 COMPRESSED_HT40_FIX32_SHIFT = 21
 COMPRESSED_HE20_FIX32_SHIFT = 21
@@ -40,14 +39,6 @@ COMPRESSED_LLTF_TAP_START = 27
 COMPRESSED_HT20_TAP_START = 27
 COMPRESSED_HT40_TAP_START = 55
 COMPRESSED_HE20_TAP_START = 120
-HT20_SIMULATION_MODES = (
-    "float",
-    "float_corrected",
-    "sc32",
-    "sc32_corrected",
-    "fix32",
-    "fix32_corrected",
-)
 
 SERIALIZED_CSI_TLV_TYPE_FRAME_META = 2
 SERIALIZED_CSI_TLV_TYPE_TIMING_META = 3
@@ -73,7 +64,7 @@ SERIALIZED_CSI_TLV_FRAME_FLAG_IS_RADAR = 1 << 1
 SERIALIZED_CSI_TLV_FRAME_FLAG_FIRST_WORD_INVALID = 1 << 2
 
 SERIALIZED_CSI_TLV_ACQUIRE_FLAG_FORCE_LLTF = 1 << 0
-SERIALIZED_CSI_TLV_ACQUIRE_FLAG_LLTF_BIT_MODE = 1 << 1
+SERIALIZED_CSI_TLV_ACQUIRE_FLAG_LLTF_8BIT_MODE = 1 << 1
 SERIALIZED_CSI_TLV_RX_CTRL_COMPRESSED_FLAG_IS_HT40 = 1 << 0
 SERIALIZED_CSI_TLV_RX_CTRL_COMPRESSED_FLAG_CHANNEL_ESTIMATE_INFO_VLD = 1 << 1
 
@@ -322,71 +313,6 @@ class csistream_fragment_header_t(ctypes.LittleEndianStructure):
 assert ctypes.sizeof(csistream_fragment_header_t) == 8
 
 
-# 0-56: htltf primary
-# 57-59: htltf gap
-# 60-116: htltf secondary
-# 117-192: zeros
-class csi_buf_v3_ht40_t(ctypes.LittleEndianStructure):
-    """
-    A ctypes structure representing the CSI buffer as produced by the ESP32 PHY V3 if an HT-LTF is recorded.
-    """
-
-    _pack_ = 1
-    _fields_ = [
-        ("htltf_lower", ctypes.c_int8 * (HT_COEFFICIENTS_PER_CHANNEL * 2)),
-        ("htltf_gap", ctypes.c_int8 * (HT40_GAP_SUBCARRIERS * 2)),  # all zeros
-        ("htltf_higher", ctypes.c_int8 * (HT_COEFFICIENTS_PER_CHANNEL * 2)),
-        ("reserved", ctypes.c_int8 * (11 * 2)),
-    ]
-
-    def __new__(self, buf=None):
-        return self.from_buffer_copy(buf)
-
-    def __init__(self, buf=None):
-        pass
-
-
-class csi_buf_v3_ht20_t(ctypes.LittleEndianStructure):
-    """
-    A ctypes structure representing the CSI buffer as produced by the ESP32 PHY V3 if an HT20-LTF is recorded.
-    """
-
-    _pack_ = 1
-    _fields_ = [
-        ("htltf", ctypes.c_int8 * (HT_COEFFICIENTS_PER_CHANNEL * 2)),
-        ("reserved", ctypes.c_int8 * (71 * 2)),
-    ]
-
-    def __new__(self, buf=None):
-        return self.from_buffer_copy(buf)
-
-    def __init__(self, buf=None):
-        pass
-
-
-# 0-53: lltf
-# 54-192: zeros
-class csi_buf_v3_lltf_t(ctypes.LittleEndianStructure):
-    """
-    A ctypes structure representing the CSI buffer as produced by the ESP32 PHY V3 if an L-LTF is recorded.
-    """
-
-    _pack_ = 1
-    _fields_ = [
-        ("lltf", ctypes.c_int8 * (LEGACY_COEFFICIENTS_PER_CHANNEL * 2)),
-        ("reserved", ctypes.c_int8 * (75 * 2)),
-    ]
-
-    def __new__(self, buf=None):
-        return self.from_buffer_copy(buf)
-
-    def __init__(self, buf=None):
-        pass
-
-
-assert ctypes.sizeof(csi_buf_v3_lltf_t) == ctypes.sizeof(csi_buf_v3_ht20_t) == ctypes.sizeof(csi_buf_v3_ht40_t) == 256
-
-
 class serialized_csi_tlv_t:
     def __init__(self, buf=None):
         raw = bytes(buf if buf is not None else b"")
@@ -516,8 +442,12 @@ class serialized_csi_tlv_t:
         return bool(self.acquire_flags & SERIALIZED_CSI_TLV_ACQUIRE_FLAG_FORCE_LLTF)
 
     @property
+    def acquire_lltf_8bit_mode(self):
+        return bool(self.acquire_flags & SERIALIZED_CSI_TLV_ACQUIRE_FLAG_LLTF_8BIT_MODE)
+
+    @property
     def acquire_lltf_bit_mode(self):
-        return bool(self.acquire_flags & SERIALIZED_CSI_TLV_ACQUIRE_FLAG_LLTF_BIT_MODE)
+        return self.acquire_lltf_8bit_mode
 
     @property
     def is_compressed(self):
@@ -660,11 +590,6 @@ def _decode_wire_complex_int8(buf, pair_count):
     return -1.0j * np.conj(values)
 
 
-def _decode_wire_complex_float32(buf, pair_count):
-    values = np.frombuffer(buf[: pair_count * 8], dtype="<f4")
-    return (values[0::2] + 1.0j * values[1::2]).astype(np.complex64)
-
-
 def _decode_wire_complex_i16_scaled(buf, pair_count, tap_scale: float):
     right_shift = int(np.frombuffer(buf[:1], dtype=np.uint8)[0])
     values = np.frombuffer(buf[1 : 1 + pair_count * 4], dtype="<i2").astype(np.float32)
@@ -688,10 +613,6 @@ def _fftshift_1d(values: np.ndarray) -> np.ndarray:
     return np.concatenate((values[..., -half:], values[..., :-half]), axis=-1)
 
 
-def _centered_ifft(values: np.ndarray) -> np.ndarray:
-    return _fftshift_1d(np.fft.ifft(_ifftshift_1d(values))).astype(np.complex64)
-
-
 def _centered_fft(values: np.ndarray, fft_size: int) -> np.ndarray:
     return _fftshift_1d(np.fft.fft(_ifftshift_1d(values), n=fft_size)).astype(np.complex64)
 
@@ -699,24 +620,6 @@ def _centered_fft(values: np.ndarray, fft_size: int) -> np.ndarray:
 def _active_slice(fft_size: int, active_count: int) -> slice:
     start = (fft_size - active_count) // 2
     return slice(start, start + active_count)
-
-
-def _build_masked_tap_correction(fft_size: int, active_count: int, tap_start: int, tap_count: int, missing_indices: list[int]) -> np.ndarray:
-    window = slice(tap_start, tap_start + tap_count)
-    active = _active_slice(fft_size, active_count)
-    mask = np.ones((active_count,), dtype=np.complex64)
-    mask[missing_indices] = 0.0
-    correction = np.zeros((tap_count, tap_count), dtype=np.complex64)
-
-    for col in range(tap_count):
-        centered_cir = np.zeros((fft_size,), dtype=np.complex64)
-        centered_cir[tap_start + col] = 1.0
-        centered_spectrum = _centered_fft(centered_cir, fft_size)
-        masked_spectrum = np.zeros((fft_size,), dtype=np.complex64)
-        masked_spectrum[active] = centered_spectrum[active] * mask
-        correction[:, col] = _centered_ifft(masked_spectrum)[window]
-
-    return np.linalg.pinv(correction).astype(np.complex64)
 
 
 def _clamp_s32(value: int) -> int:
@@ -730,73 +633,6 @@ def _reverse_bits16(x: int, order: int) -> int:
     b = (((b & 0xCCCC) >> 2) | ((b & 0x3333) << 2)) & 0xFFFF
     b = (((b & 0xAAAA) >> 1) | ((b & 0x5555) << 1)) & 0xFFFF
     return b >> (16 - order)
-
-
-def _build_sc32_twiddles(fft_size: int) -> np.ndarray:
-    twiddles = np.zeros((fft_size,), dtype=np.complex128)
-    for i in range(fft_size // 2):
-        twiddles[i] = np.rint(np.cos(2.0 * np.pi * i / fft_size) * np.iinfo(np.int32).max) + 1.0j * np.rint(np.sin(2.0 * np.pi * i / fft_size) * np.iinfo(np.int32).max)
-    return twiddles
-
-
-_SC32_TWIDDLES_64 = _build_sc32_twiddles(COMPRESSED_HT20_FFT_SIZE)
-
-
-def _sensor_centered_spectrum_to_ht20_observed_taps(centered_spectrum: np.ndarray) -> np.ndarray:
-    fft_size = COMPRESSED_HT20_FFT_SIZE
-    shift = COMPRESSED_HT20_FIX32_SHIFT
-    round_const = 1 << 31
-    max_s32 = np.iinfo(np.int32).max
-    fft_data = np.zeros((fft_size,), dtype=np.complex128)
-
-    for centered_index, coeff in enumerate(centered_spectrum):
-        fft_index = (centered_index + fft_size // 2) % fft_size
-        fft_data[fft_index] = np.rint(coeff.real * (1 << shift)) - 1.0j * np.rint(coeff.imag * (1 << shift))
-
-    ie = 1
-    n2 = fft_size // 2
-    while n2 > 0:
-        ia = 0
-        for j in range(ie):
-            cs = _SC32_TWIDDLES_64[j]
-            cs_re = int(np.real(cs))
-            cs_im = int(np.imag(cs))
-            for _ in range(n2):
-                m = ia + n2
-                a_re = int(np.real(fft_data[ia]))
-                a_im = int(np.imag(fft_data[ia]))
-                m_re = int(np.real(fft_data[m]))
-                m_im = int(np.imag(fft_data[m]))
-
-                mul_re = cs_re * m_re + cs_im * m_im
-                mul_im = cs_re * m_im - cs_im * m_re
-
-                diff_re = _clamp_s32((((a_re * max_s32) - mul_re + round_const) >> 32))
-                diff_im = _clamp_s32((((a_im * max_s32) - mul_im + round_const) >> 32))
-                sum_re = _clamp_s32((((a_re * max_s32) + mul_re + round_const) >> 32))
-                sum_im = _clamp_s32((((a_im * max_s32) + mul_im + round_const) >> 32))
-
-                fft_data[m] = diff_re + 1.0j * diff_im
-                fft_data[ia] = sum_re + 1.0j * sum_im
-                ia += 1
-            ia += n2
-        ie <<= 1
-        n2 >>= 1
-
-    order = int(np.log2(fft_size))
-    for i in range(1, fft_size - 1):
-        j = _reverse_bits16(i, order)
-        if i < j:
-            fft_data[i], fft_data[j] = fft_data[j], fft_data[i]
-
-    observed = np.zeros((COMPRESSED_TAP_COUNT,), dtype=np.complex64)
-    for i in range(COMPRESSED_TAP_COUNT):
-        centered_index = COMPRESSED_HT20_TAP_START + i
-        fft_index = (centered_index + fft_size // 2) % fft_size
-        value = fft_data[fft_index]
-        observed[i] = (float(np.real(value)) - 1.0j * float(np.imag(value))) / float(1 << shift)
-
-    return observed
 
 
 def _fix32_mpy(a: int, b: int, precise_rounding: bool = False) -> int:
@@ -1103,20 +939,17 @@ def _sensor_centered_spectrum_to_lltf_observed_taps_fix32(centered_spectrum: np.
     return observed
 
 
-def _build_ht20_sensor_tap_correction() -> np.ndarray:
-    correction = np.zeros((COMPRESSED_TAP_COUNT, COMPRESSED_TAP_COUNT), dtype=np.complex64)
-    active = _active_slice(COMPRESSED_HT20_FFT_SIZE, HT_COEFFICIENTS_PER_CHANNEL)
-
-    for col in range(COMPRESSED_TAP_COUNT):
-        centered_cir = np.zeros((COMPRESSED_HT20_FFT_SIZE,), dtype=np.complex64)
-        centered_cir[COMPRESSED_HT20_TAP_START + col] = 1.0
-        centered_spectrum = _centered_fft(centered_cir, COMPRESSED_HT20_FFT_SIZE)
-        masked_spectrum = np.zeros((COMPRESSED_HT20_FFT_SIZE,), dtype=np.complex64)
-        masked_spectrum[active] = centered_spectrum[active]
-        masked_spectrum[active][HT_COEFFICIENTS_PER_CHANNEL // 2] = 0.0
-        correction[:, col] = _sensor_centered_spectrum_to_ht20_observed_taps(masked_spectrum)
-
-    return np.linalg.pinv(correction).astype(np.complex64)
+def _sensor_centered_spectrum_to_lltf_8bit_mode_observed_taps_fix32(centered_spectrum: np.ndarray) -> np.ndarray:
+    active = _active_slice(COMPRESSED_LLTF_FFT_SIZE, LEGACY_COEFFICIENTS_PER_CHANNEL)
+    modeled = np.zeros((COMPRESSED_LLTF_FFT_SIZE,), dtype=np.complex64)
+    modeled[active] = np.asarray(centered_spectrum, dtype=np.complex64)
+    modeled[active.start + LEGACY_COEFFICIENTS_PER_CHANNEL // 2] = 0.0
+    return _sensor_centered_spectrum_to_direct_observed_taps_fix32(
+        modeled,
+        COMPRESSED_LLTF_FFT_SIZE,
+        COMPRESSED_LLTF_8BIT_MODE_FIX32_SHIFT,
+        COMPRESSED_LLTF_TAP_START,
+    )
 
 
 def _build_ht20_fix32_tap_correction() -> np.ndarray:
@@ -1183,6 +1016,19 @@ def _build_lltf_fix32_tap_correction() -> np.ndarray:
     return np.linalg.pinv(correction).astype(np.complex64)
 
 
+def _build_lltf_8bit_mode_fix32_tap_correction() -> np.ndarray:
+    correction = np.zeros((COMPRESSED_TAP_COUNT, COMPRESSED_TAP_COUNT), dtype=np.complex64)
+
+    for col in range(COMPRESSED_TAP_COUNT):
+        centered_cir = np.zeros((COMPRESSED_LLTF_FFT_SIZE,), dtype=np.complex64)
+        centered_cir[COMPRESSED_LLTF_TAP_START + col] = 1.0
+        centered_spectrum = _centered_fft(centered_cir, COMPRESSED_LLTF_FFT_SIZE)
+        active_spectrum = centered_spectrum[_active_slice(COMPRESSED_LLTF_FFT_SIZE, LEGACY_COEFFICIENTS_PER_CHANNEL)].copy()
+        correction[:, col] = _sensor_centered_spectrum_to_lltf_8bit_mode_observed_taps_fix32(active_spectrum)
+
+    return np.linalg.pinv(correction).astype(np.complex64)
+
+
 def _build_ht40_fix32_tap_correction() -> np.ndarray:
     correction = np.zeros((COMPRESSED_TAP_COUNT, COMPRESSED_TAP_COUNT), dtype=np.complex64)
     active = _active_slice(COMPRESSED_HT40_FFT_SIZE, HT_COEFFICIENTS_PER_CHANNEL * 2 + HT40_GAP_SUBCARRIERS)
@@ -1200,42 +1046,71 @@ def _build_ht40_fix32_tap_correction() -> np.ndarray:
     return np.linalg.pinv(correction).astype(np.complex64)
 
 
-_COMPRESSED_LLTF_CORRECTION = _build_masked_tap_correction(
-    COMPRESSED_LLTF_FFT_SIZE,
-    LEGACY_COEFFICIENTS_PER_CHANNEL,
-    COMPRESSED_LLTF_TAP_START,
-    COMPRESSED_TAP_COUNT,
-    [LEGACY_COEFFICIENTS_PER_CHANNEL // 2],
-)
-_COMPRESSED_LLTF_FORCE_CORRECTION = _build_masked_tap_correction(
-    COMPRESSED_LLTF_FFT_SIZE,
-    LEGACY_COEFFICIENTS_PER_CHANNEL,
-    COMPRESSED_LLTF_TAP_START,
-    COMPRESSED_TAP_COUNT,
-    [],
-)
 _COMPRESSED_LLTF_FORCE_FIX32_CORRECTION = _build_lltf_force_fix32_tap_correction()
 _COMPRESSED_LLTF_FIX32_CORRECTION = _build_lltf_fix32_tap_correction()
-_COMPRESSED_HT20_CORRECTION = _build_ht20_sensor_tap_correction()
+_COMPRESSED_LLTF_8BIT_MODE_FIX32_CORRECTION = _build_lltf_8bit_mode_fix32_tap_correction()
 _COMPRESSED_HT20_FIX32_CORRECTION = _build_ht20_fix32_tap_correction()
 _COMPRESSED_HT40_FIX32_CORRECTION = _build_ht40_fix32_tap_correction()
 _COMPRESSED_HE20_FIX32_CORRECTION = _build_he20_fix32_tap_correction()
 
 
-def _interpolate_ht20_dc(spectrum: np.ndarray) -> np.ndarray:
-    spectrum = np.asarray(spectrum, dtype=np.complex64).copy()
+def interpolate_lltf_gap(csi_lltf: np.ndarray) -> None:
+    """
+    Fill the L-LTF DC subcarrier by linear interpolation in place.
+
+    :param csi_lltf: Complex L-LTF CSI array. The last dimension must contain
+        :data:`LEGACY_COEFFICIENTS_PER_CHANNEL` subcarriers in ascending order
+        ``-26..26``. Any leading dimensions are preserved.
+    """
+    dc_index = LEGACY_COEFFICIENTS_PER_CHANNEL // 2
+    csi_lltf[..., dc_index] = 0.5 * (csi_lltf[..., dc_index - 1] + csi_lltf[..., dc_index + 1])
+
+
+def interpolate_ht20ltf_gap(csi_ht20: np.ndarray) -> None:
+    """
+    Fill the HT20-LTF DC subcarrier by linear interpolation in place.
+
+    :param csi_ht20: Complex HT20-LTF CSI array. The last dimension must contain
+        :data:`HT_COEFFICIENTS_PER_CHANNEL` subcarriers in ascending order
+        ``-28..28``. Any leading dimensions are preserved.
+    """
     dc_index = HT_COEFFICIENTS_PER_CHANNEL // 2
-    spectrum[dc_index] = 0.5 * (spectrum[dc_index - 1] + spectrum[dc_index + 1])
-    return spectrum
+    csi_ht20[..., dc_index] = 0.5 * (csi_ht20[..., dc_index - 1] + csi_ht20[..., dc_index + 1])
 
 
-def _interpolate_he20_gap(spectrum: np.ndarray) -> np.ndarray:
-    spectrum = np.asarray(spectrum, dtype=np.complex64).copy()
+def interpolate_ht40ltf_gap(csi_ht40: np.ndarray) -> None:
+    """
+    Fill the three HT40 gap subcarriers between primary and secondary channel in place.
+
+    :param csi_ht40: Complex HT40-LTF CSI array. The last dimension must contain
+        ``2 * HT_COEFFICIENTS_PER_CHANNEL + HT40_GAP_SUBCARRIERS`` subcarriers
+        in ascending order ``-58..58``. Any leading dimensions are preserved.
+    """
+    index_left = HT_COEFFICIENTS_PER_CHANNEL - 1
+    index_right = HT_COEFFICIENTS_PER_CHANNEL + HT40_GAP_SUBCARRIERS
+    missing_indices = np.arange(index_left + 1, index_right)
+    left = csi_ht40[..., index_left]
+    right = csi_ht40[..., index_right]
+    interp = (missing_indices - index_left) / (index_right - index_left)
+    csi_ht40[..., missing_indices] = interp * right[..., np.newaxis] + (1 - interp) * left[..., np.newaxis]
+
+
+def interpolate_he20ltf_gaps(csi_he20: np.ndarray) -> None:
+    """
+    Fill the HE20 invalid subcarriers ``-1, 0, 1`` by linear interpolation in place.
+
+    :param csi_he20: Complex HE20-LTF CSI array. The last dimension must contain
+        :data:`HE20_COEFFICIENTS_PER_CHANNEL` subcarriers in ascending order
+        ``-122..122``. Any leading dimensions are preserved.
+    """
     center_index = HE20_COEFFICIENTS_PER_CHANNEL // 2
-    left = spectrum[center_index - 2]
-    right = spectrum[center_index + 2]
-    spectrum[center_index - 1 : center_index + 2] = np.asarray((0.25, 0.5, 0.75), dtype=np.float32) * right + np.asarray((0.75, 0.5, 0.25), dtype=np.float32) * left
-    return spectrum
+    index_left = center_index - 2
+    index_right = center_index + 2
+    missing_indices = np.arange(index_left + 1, index_right)
+    left = csi_he20[..., index_left]
+    right = csi_he20[..., index_right]
+    interp = (missing_indices - index_left) / (index_right - index_left)
+    csi_he20[..., missing_indices] = interp * right[..., np.newaxis] + (1 - interp) * left[..., np.newaxis]
 
 
 def _decode_compressed_tap_window(
@@ -1255,8 +1130,17 @@ def _decode_compressed_tap_window(
     return centered_spectrum[_active_slice(fft_size, active_count)].copy()
 
 
-def decode_compressed_lltf(buf, acquire_force_lltf: bool = False) -> np.ndarray:
-    correction = _COMPRESSED_LLTF_FORCE_FIX32_CORRECTION if acquire_force_lltf else _COMPRESSED_LLTF_FIX32_CORRECTION
+def decode_compressed_lltf(buf, acquire_force_lltf: bool = False, lltf_8bit_mode: bool = False, **kwargs) -> np.ndarray:
+    if "lltf_bit_mode" in kwargs:
+        lltf_8bit_mode = bool(kwargs.pop("lltf_bit_mode"))
+    if kwargs:
+        raise TypeError(f"unexpected keyword argument: {next(iter(kwargs))}")
+    if lltf_8bit_mode:
+        correction = _COMPRESSED_LLTF_8BIT_MODE_FIX32_CORRECTION
+        shift = COMPRESSED_LLTF_8BIT_MODE_FIX32_SHIFT
+    else:
+        correction = _COMPRESSED_LLTF_FORCE_FIX32_CORRECTION if acquire_force_lltf else _COMPRESSED_LLTF_FIX32_CORRECTION
+        shift = COMPRESSED_LLTF_FIX32_SHIFT
     spectrum = _decode_compressed_tap_window(
         buf,
         COMPRESSED_LLTF_FFT_SIZE,
@@ -1264,8 +1148,11 @@ def decode_compressed_lltf(buf, acquire_force_lltf: bool = False) -> np.ndarray:
         COMPRESSED_TAP_COUNT,
         LEGACY_COEFFICIENTS_PER_CHANNEL,
         correction,
-        float((1 << COMPRESSED_LLTF_FIX32_SHIFT) * 8.0),
+        float((1 << shift) * 8.0),
     )
+    if lltf_8bit_mode:
+        interpolate_lltf_gap(spectrum)
+        return spectrum
     if acquire_force_lltf:
         spectrum[-1] = 2.0 * spectrum[-3] - spectrum[-5]
         spectrum[1::2] = 0.5 * (spectrum[0:-1:2] + spectrum[2::2])
@@ -1286,7 +1173,8 @@ def decode_compressed_ht20(buf) -> np.ndarray:
         _COMPRESSED_HT20_FIX32_CORRECTION,
         float((1 << COMPRESSED_HT20_FIX32_SHIFT) * 8.0),
     )
-    return _interpolate_ht20_dc(spectrum)
+    interpolate_ht20ltf_gap(spectrum)
+    return spectrum
 
 
 def decode_compressed_ht40(buf) -> np.ndarray:
@@ -1314,7 +1202,8 @@ def decode_compressed_he20(buf) -> np.ndarray:
         _COMPRESSED_HE20_FIX32_CORRECTION,
         float((1 << COMPRESSED_HE20_FIX32_SHIFT) * 8.0),
     )
-    return _interpolate_he20_gap(spectrum)
+    interpolate_he20ltf_gaps(spectrum)
+    return spectrum
 
 
 def _extract_signed15(x: int) -> int:

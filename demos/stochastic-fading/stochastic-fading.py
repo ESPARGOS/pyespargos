@@ -200,11 +200,11 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
             espargos.util.remove_mean_sto(csi_backlog)
 
         if csi_key == "ht40":
-            espargos.util.interpolate_ht40ltf_gap(csi_backlog)
+            espargos.csi.interpolate_ht40ltf_gap(csi_backlog)
         elif csi_key == "ht20":
-            espargos.util.interpolate_ht20ltf_gap(csi_backlog)
+            espargos.csi.interpolate_ht20ltf_gap(csi_backlog)
         elif csi_key == "he20":
-            espargos.util.interpolate_he20ltf_gaps(csi_backlog)
+            espargos.csi.interpolate_he20ltf_gaps(csi_backlog)
 
         if additional_keys:
             return (csi_key, *results) if return_format else tuple(results)

@@ -69,6 +69,7 @@ class Board(object):
         "acquire_csi_he_stbc_mode": 2,
         "val_scale_cfg": 2,
         "dump_ack_en": True,
+        "lltf_8bit_mode": False,
     }
 
     DEFAULT_GAIN_SETTINGS = {
@@ -534,13 +535,14 @@ class Board(object):
           - acquire_csi_dcm: Enable to acquire HE-LTF when receiving an HE20 DCM applied PPDU.
           - acquire_csi_beamformed: Enable to acquire HE-LTF when receiving an HE20 Beamformed applied PPDU.
           - dump_ack_en: Enable to dump 802.11 ACK frame, default disabled.
+          - lltf_8bit_mode: Report L-LTF CSI as 8-bit values for every subcarrier instead of sparse 12-bit values.
 
         Integer / enum fields:
           - acquire_csi_he_stbc_mode: When receiving an STBC applied HE PPDU:
                 0 = acquire the complete HE-LTF1
                 1 = acquire the complete HE-LTF2
                 2 = sample evenly among the HE-LTF1 and HE-LTF2.
-          - val_scale_cfg: Value 0-3.
+          - val_scale_cfg: Value 0-8.
 
         Example payload::
 
@@ -558,13 +560,17 @@ class Board(object):
               "acquire_csi_beamformed": true,
               "acquire_csi_he_stbc_mode": 2,
               "val_scale_cfg": 2,
-              "dump_ack_en": true
+              "dump_ack_en": true,
+              "lltf_8bit_mode": false
             }
 
         :param config: CSI acquisition configuration dict (will be JSON-encoded and POSTed to /set_csi_acquire_config)
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        self._post_json_ok("set_csi_acquire_config", config)
+        payload = dict(config)
+        if "lltf_8bit_mode" in payload and "lltf_bit_mode" not in payload:
+            payload["lltf_bit_mode"] = payload["lltf_8bit_mode"]
+        self._post_json_ok("set_csi_acquire_config", payload)
 
     def get_csi_acquire_config(self) -> dict:
         """
@@ -573,7 +579,10 @@ class Board(object):
         :return: CSI acquisition configuration dict
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        return self._get_json("get_csi_acquire_config")
+        config = self._get_json("get_csi_acquire_config")
+        if "lltf_8bit_mode" not in config and "lltf_bit_mode" in config:
+            config["lltf_8bit_mode"] = config["lltf_bit_mode"]
+        return config
 
     def set_gain_settings(self, settings: dict):
         """
