@@ -29,7 +29,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         "gain": {
             "automatic": True,
             "rx_gain_value": 32,
-            "fft_gain_value": 32,
+            "fft_gain_value": 0,
         },
         "mac_filter": {
             "enable": False,

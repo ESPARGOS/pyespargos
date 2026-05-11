@@ -19,6 +19,10 @@ from . import csi
 from . import radar
 
 
+class CalibrationError(RuntimeError):
+    """Raised when ESPARGOS calibration cannot collect usable calibration CSI."""
+
+
 class _CSICallback(object):
     def __init__(
         self,
@@ -429,8 +433,25 @@ class Pool(object):
             complete_clusters_lltf.extend([util.extract_lltf_subcarriers_from_ht20(csi_ht20) for csi_ht20 in complete_clusters_ht20])
             complete_cluster_timestamps_lltf.extend(complete_cluster_timestamps_ht20)
 
+        complete_cluster_count = len(complete_cluster_timestamps)
+        calibration_error = None
         if any_csi_count < 5:
-            raise Exception("ESPARGOS calibration failed, did not receive enough calibration clusters.")
+            calibration_error = "too few calibration packets were received"
+        elif complete_cluster_count == 0:
+            calibration_error = "no packet contained CSI from the complete calibrated array"
+        elif len(complete_clusters_lltf) == 0:
+            calibration_error = "no complete packet contained L-LTF or HT20-LTF CSI"
+
+        if calibration_error is not None:
+            raise CalibrationError(
+                f"ESPARGOS calibration failed: {calibration_error}. "
+                f"Received {any_csi_count} calibration packets with any CSI, "
+                f"{complete_cluster_count} complete packets, "
+                f"{len(complete_clusters_ht20)} complete HT20-LTF packets, "
+                f"and {len(complete_clusters_lltf)} complete L-LTF/HT20-derived packets. "
+                "Calibration needs several packets with CSI from the complete array and at least one complete L-LTF or HT20-LTF packet. "
+                "Check signal level, RX gain, packet filtering, and whether all sensors are receiving the calibration/reference signal."
+            )
 
         return (
             np.asarray(complete_clusters_lltf),
@@ -484,25 +505,27 @@ class Pool(object):
 
         # Back up and clear MAC filter
         previous_mac_filter = self.get_mac_filter()
-        self.clear_mac_filter()
-
-        # Enable calibration mode
-        self.logger.info("Starting calibration")
         previous_rfswitch_state = self.get_rfswitch()
-        self.set_rfswitch(csi.rfswitch_state_t.SENSOR_RFSWITCH_REFERENCE)
 
-        # Run calibration for specified duration
-        start = time.time()
-        while (time.time() - start < duration) and (exithandler is None or exithandler.running):
-            if run_in_thread:
-                self.run()
-            else:
-                time.sleep(0.01)
+        try:
+            self.clear_mac_filter()
 
-        # Disable calibration mode
-        self.logger.info("Finished calibration")
-        self.set_rfswitch(previous_rfswitch_state)
-        self.set_mac_filter(previous_mac_filter)
+            # Enable calibration mode
+            self.logger.info("Starting calibration")
+            self.set_rfswitch(csi.rfswitch_state_t.SENSOR_RFSWITCH_REFERENCE)
+
+            # Run calibration for specified duration
+            start = time.time()
+            while (time.time() - start < duration) and (exithandler is None or exithandler.running):
+                if run_in_thread:
+                    self.run()
+                else:
+                    time.sleep(0.01)
+        finally:
+            # Disable calibration mode
+            self.logger.info("Finished calibration")
+            self.set_rfswitch(previous_rfswitch_state)
+            self.set_mac_filter(previous_mac_filter)
 
         # Collect calibration packets and compute calibration phases
         (

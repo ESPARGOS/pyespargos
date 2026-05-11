@@ -37,6 +37,12 @@ ApplicationWindow {
 	color: "#11191e"
 	title: "ESPARGOS Demo"
 
+	function showError(title, message) {
+		errorDialog.title = title && title.length ? title : "Error"
+		errorDialog.messageText = message && message.length ? message : ""
+		errorDialog.open()
+	}
+
 	/** Header toolbar with title and buttons to open config drawers **/
 	header: ToolBar {
 		id: header
@@ -145,6 +151,50 @@ ApplicationWindow {
 			font.pixelSize: 18
 			color: "#ffffff"
 			visible: backend.initializing
+		}
+	}
+
+	Dialog {
+		id: errorDialog
+		modal: true
+		focus: true
+		closePolicy: Popup.CloseOnEscape
+		title: "Error"
+		parent: Overlay.overlay
+		property int maximumDialogHeight: Math.min(420, parent ? parent.height - 80 : 420)
+		property int minimumDialogHeight: 180
+		width: Math.min(760, parent ? parent.width - 60 : 760)
+		height: Math.min(maximumDialogHeight, Math.max(minimumDialogHeight, errorTextArea.implicitHeight + 150))
+		x: Math.round((parent.width - width) / 2)
+		y: Math.round((parent.height - height) / 2)
+		standardButtons: Dialog.Ok
+		padding: 16
+
+		property string messageText: ""
+
+		Material.theme: Material.Dark
+		Material.primary: "#227b3d"
+		Material.accent: "#ffffff"
+		Material.roundedScale: Material.notRounded
+
+		contentItem: ScrollView {
+			clip: true
+			ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+			TextArea {
+				id: errorTextArea
+				text: errorDialog.messageText
+				readOnly: true
+				wrapMode: TextArea.Wrap
+				selectByMouse: true
+				color: "#ffffff"
+				selectionColor: "#227b3d"
+				selectedTextColor: "#ffffff"
+				textFormat: TextEdit.PlainText
+				background: Rectangle {
+					color: "transparent"
+				}
+			}
 		}
 	}
 

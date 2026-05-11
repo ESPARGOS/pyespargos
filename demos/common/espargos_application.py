@@ -12,6 +12,7 @@ import threading
 import argparse
 import copy
 import yaml
+import logging
 
 from .backlog_settings import BacklogSettings, ConfigManager
 from .config_manager import deep_update
@@ -106,6 +107,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         # Basic app initialization
         self.ready = False
         self.engine = PyQt6.QtQml.QQmlApplicationEngine()
+        self.logger = logging.getLogger("demo.Application")
         self.aboutToQuit.connect(self.onAboutToQuit)
         self._qml_ok = True
 
@@ -321,7 +323,16 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             def _init_worker():
                 self.pool.start()
                 if calibrate:
-                    self.pool.calibrate(duration=2, per_board=False, **additional_calibrate_args)
+                    try:
+                        self.pool.calibrate(duration=2, per_board=False, **additional_calibrate_args)
+                    except espargos.CalibrationError as exc:
+                        error_message = str(exc)
+                        self.logger.error(error_message)
+                        self.pooldrawer.configManager().emitShowError("Initialization failed", error_message)
+                        self._finalize_pool_init(backlog_cb_predicate, calibrate=False)
+                        self.ready = True
+                        self.initComplete.emit()
+                        return
 
                 # Let mixins finalize pool initialization
                 self._finalize_pool_init(backlog_cb_predicate, calibrate)

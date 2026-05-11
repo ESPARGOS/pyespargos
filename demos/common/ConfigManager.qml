@@ -142,65 +142,13 @@ Item {
 		}
 	}
 
-	// Modal error dialog shown on request (e.g., from backend)
-	Dialog {
-		id: errorDialog
-		modal: true
-		focus: true
-		closePolicy: Popup.CloseOnEscape
-		title: "Error"
-
-		property string messageText: ""
-
-		// Match app-wide Material settings
-		Material.theme: Material.Dark
-		Material.primary: "#227b3d"
-		Material.accent: "#ffffff"
-		Material.roundedScale: Material.notRounded
-
-		parent: Overlay.overlay
-
-		// Size constraints
-		width: Math.min(640, parent ? parent.width - 60 : 640)
-		height: Math.min(240, parent ? parent.height - 60 : 240)
-
-		x: Math.round((parent.width - width) / 2)
-		y: Math.round((parent.height - height) / 2)
-
-		standardButtons: Dialog.Ok
-
-		contentItem: ColumnLayout {
-			spacing: 12
-			anchors.fill: parent
-			anchors.margins: 16
-
-			ScrollView {
-				Layout.fillWidth: true
-				clip: true
-				ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-				TextArea {
-					id: errorTextArea
-					text: errorDialog.messageText
-					readOnly: true
-					wrapMode: TextArea.Wrap
-					selectByMouse: true
-					color: "#ffffff"
-					selectionColor: "#227b3d"
-					selectedTextColor: "#ffffff"
-					anchors.fill: parent
-					background: Rectangle {
-						color: "transparent"
-					}
-				}
-			}
-		}
-	}
-
 	function showError(title, message) {
-		errorDialog.title = (title && title.length) ? title : "Error"
-		errorDialog.messageText = (message && message.length) ? message : ""
-		errorDialog.open()
+		let appWindow = ApplicationWindow.window
+		if (appWindow && typeof appWindow.showError === "function") {
+			appWindow.showError(title, message)
+		} else {
+			console.log("Config error:", title, message)
+		}
 	}
 
 	Connections {
