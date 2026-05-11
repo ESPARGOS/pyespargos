@@ -584,7 +584,7 @@ class Board(object):
           - fft_scale_enable (bool): Enable manual FFT scaling (false = automatic/firmware default).
           - fft_scale_value (int): FFT scale value (meaning/range depends on firmware; commonly 0 when disabled).
           - rx_gain_enable (bool): Enable manual RX gain (false = automatic/firmware default).
-          - rx_gain_value (int): RX gain value (meaning/range depends on firmware; commonly 0 when disabled).
+          - rx_gain_value (int): RX gain table index, 0..76 (commonly 0 when disabled).
 
         Example payload::
 

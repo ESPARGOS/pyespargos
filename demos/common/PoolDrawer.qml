@@ -242,10 +242,10 @@ Drawer {
 					property string configKey: "gain.rx_gain_value"
 					property string configProp: "value"
 					property var encode: function(v) { return Math.round(v) }
-					property var decode: function(v) { return Math.max(0, Math.min(64, parseInt(v||32))) }
+					property var decode: function(v) { return Math.max(0, Math.min(76, parseInt(v||32))) }
 					Component.onCompleted: poolConfigManager.register(this)
 					onValueChanged: poolConfigManager.onControlChanged(this)
-					from: 0; to: 64; value: 32; stepSize: 1
+					from: 0; to: 76; value: 32; stepSize: 1
 					implicitWidth: 120
 					enabled: !gainSwitch.checked
 					function isUserActive() { return pressed }
