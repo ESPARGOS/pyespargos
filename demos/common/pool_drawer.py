@@ -55,16 +55,16 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         self.cfgman.updateAppState.connect(self._write_config_to_pool)
 
         # Two initialization options:
-        # * If force_config is given, apply it to both UI and Pool (config is authoritative)
-        # * Otherwise, read current Pool config from devices and set UI accordingly (devices are authoritative)
+        # * If force_config is given, apply those explicit settings to both UI and Pool.
+        # * Otherwise, read current Pool config from devices and set UI accordingly (devices are authoritative).
         # Apply later
         def apply_initial_config():
             if force_config:
                 self.cfgman.forceConfigAppApplied.connect(self.initComplete)
                 self.cfgman.force(force_config)
             else:
-                self.initComplete.emit()
                 self.cfgman.set(self._read_config_from_pool())
+                self.initComplete.emit()
 
         PyQt6.QtCore.QTimer.singleShot(0, apply_initial_config)
 

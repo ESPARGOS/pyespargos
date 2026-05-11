@@ -139,6 +139,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         # Load initial configuration if provided
         self.config_path = None
         self.initial_config = self._default_config_template()
+        self.explicit_initial_config = {}
         if self.args.config is not None:
             with open(self.args.config, "r") as config_file:
                 cfg_from_file = yaml.safe_load(config_file)
@@ -147,6 +148,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
                     raise ValueError("Config file must contain a YAML object at the root")
 
                 deep_update(self.initial_config, cfg_from_file)
+                deep_update(self.explicit_initial_config, cfg_from_file)
 
         # Apply command-line option overrides (-o key=value)
         for opt in self.args.option:
@@ -163,6 +165,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             current[parts[-1]] = value
             print(f"Overriding config option '{key}' with value: {value}")
             deep_update(self.initial_config, nested)
+            deep_update(self.explicit_initial_config, nested)
 
         # Let mixins process their arguments and update config
         self._process_args()
@@ -246,6 +249,16 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
         return cfg
 
+    def get_explicit_initial_config(self, *path, default=None):
+        cfg = self.explicit_initial_config
+        for key in path if isinstance(path, tuple) else (path,):
+            if key in cfg:
+                cfg = cfg[key]
+            else:
+                return default
+
+        return cfg
+
     def initialize_qml(self, qml_file, context_props: dict | None = None):
         context = self.engine.rootContext()
 
@@ -300,8 +313,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         self.pool = espargos.Pool([espargos.Board(host) for host in self.get_initial_config("pool", "hosts")])
 
         # Pool configuration UI
-        pool_cfg = self.get_initial_config("pool")
-        self.pooldrawer = PoolDrawer(self.pool, pool_cfg, parent=self)
+        pool_cfg = self.get_explicit_initial_config("pool", default={})
+        self.pooldrawer = PoolDrawer(self.pool, pool_cfg or None, parent=self)
 
         # Wait for config to be applied before starting pool and calibration
         def config_applied():
