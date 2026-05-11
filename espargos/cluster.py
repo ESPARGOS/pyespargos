@@ -108,8 +108,8 @@ class CSICluster(object):
         rssi = rx_ctrl.rssi
         noise_floor = rx_ctrl.noise_floor
         self.rssi_all[board_num, row, col] = (rssi - 0x100) if (rssi & 0x80) else rssi
-        self.rx_gain_all[board_num, row, col] = rx_ctrl.rx_gain
-        self.fft_gain_all[board_num, row, col] = rx_ctrl.fft_gain
+        self.rx_gain_all[board_num, row, col] = csi.gain_byte_to_signed(rx_ctrl.rx_gain)
+        self.fft_gain_all[board_num, row, col] = csi.gain_byte_to_signed(rx_ctrl.fft_gain)
         self.noise_floor_all[board_num, row, col] = (noise_floor - 0x100) if (noise_floor & 0x80) else noise_floor
         self.rfswitch_state_all[board_num, row, col] = serialized_csi.rfswitch_state
         self.cfo_all[board_num, row, col] = csi.get_cfo_from_rx_ctrl(serialized_csi.rx_ctrl)
@@ -550,13 +550,13 @@ class CSICluster(object):
 
     def get_rx_gain(self):
         """
-        Get the RX gain values of the WiFi packet.
+        Get the signed RX gain values reported for the WiFi packet.
         """
         return self.rx_gain_all
 
     def get_fft_gain(self):
         """
-        Get the FFT gain values of the WiFi packet.
+        Get the signed FFT gain values reported for the WiFi packet.
         """
         return self.fft_gain_all
 

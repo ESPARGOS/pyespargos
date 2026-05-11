@@ -49,9 +49,16 @@ def scale_csi_by_reported_gain(csi_data: np.ndarray, rx_gain: np.ndarray, fft_ga
     by the reported gain factor. The scaling is valid for both automatic and
     manual gain mode, because the reported values are always meaningful.
     """
-    gain_db = constants.RX_GAIN_DB_PER_UNIT * np.asarray(rx_gain, dtype=np.float32) + constants.FFT_GAIN_DB_PER_UNIT * np.asarray(fft_gain, dtype=np.float32)
+    rx_gain = _reported_gain_to_signed(rx_gain)
+    fft_gain = _reported_gain_to_signed(fft_gain)
+    gain_db = constants.RX_GAIN_DB_PER_UNIT * rx_gain + constants.FFT_GAIN_DB_PER_UNIT * fft_gain
     scale = (10.0 ** (-gain_db / 20.0)).astype(np.float32, copy=False)
     return csi_data * scale[..., np.newaxis]
+
+
+def _reported_gain_to_signed(gain: np.ndarray) -> np.ndarray:
+    gain = np.asarray(gain, dtype=np.float32)
+    return np.where((gain >= 128.0) & (gain <= 255.0), gain - 256.0, gain)
 
 
 def build_jones_matrices(antenna_orientations: np.ndarray, base_jones_matrix: np.ndarray = None):

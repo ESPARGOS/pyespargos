@@ -255,6 +255,8 @@ class compressed_rx_ctrl_t(ctypes.LittleEndianStructure):
         ("cfo_high_rate", ctypes.c_uint16),
         ("he_sig1_mcs", ctypes.c_uint8),
         ("reserved", ctypes.c_uint8),
+        ("fft_gain", ctypes.c_uint8),
+        ("rx_gain", ctypes.c_uint8),
     ]
 
     def __new__(self, buf=None):
@@ -264,11 +266,15 @@ class compressed_rx_ctrl_t(ctypes.LittleEndianStructure):
         pass
 
 
-assert ctypes.sizeof(compressed_rx_ctrl_t) == 22
+assert ctypes.sizeof(compressed_rx_ctrl_t) == 24
+_COMPRESSED_RX_CTRL_MIN_SIZE = 22
 
 
 def _build_rx_ctrl_v3_from_compressed(compact_raw: bytes) -> bytes:
-    compact = compressed_rx_ctrl_t(compact_raw)
+    compact_buf = bytes(compact_raw)
+    if len(compact_buf) < ctypes.sizeof(compressed_rx_ctrl_t):
+        compact_buf += bytes(ctypes.sizeof(compressed_rx_ctrl_t) - len(compact_buf))
+    compact = compressed_rx_ctrl_t(compact_buf)
     ctrl = wifi_pkt_rx_ctrl_v3_t(bytes(ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t)))
     ctrl.rssi = int(compact.rssi)
     ctrl.rate = int(compact.rate)
@@ -289,9 +295,24 @@ def _build_rx_ctrl_v3_from_compressed(compact_raw: bytes) -> bytes:
     else:
         ctrl.second = 0
     ctrl.cur_bb_format = int(compact.cur_bb_format)
+    ctrl.fft_gain = int(compact.fft_gain)
+    ctrl.rx_gain = int(compact.rx_gain)
     ctrl.rx_channel_estimate_len = int(compact.rx_channel_estimate_len)
     ctrl.rx_channel_estimate_info_vld = 1 if (compact.flags & SERIALIZED_CSI_TLV_RX_CTRL_COMPRESSED_FLAG_CHANNEL_ESTIMATE_INFO_VLD) else 0
     return ctypes.string_at(ctypes.byref(ctrl), ctypes.sizeof(ctrl))
+
+
+def gain_byte_to_signed(value: int) -> int:
+    """
+    Interpret an 8-bit gain value reported in ``rx_ctrl`` as signed.
+
+    The hardware stores gain fields as bytes. RX gain normally lives in the
+    positive gain-table range, while FFT gain can be negative and is therefore
+    reported in two's-complement form.
+    """
+    value = int(value)
+    value &= 0xFF
+    return value - 0x100 if value & 0x80 else value
 
 
 class csistream_fragment_header_t(ctypes.LittleEndianStructure):
@@ -384,7 +405,7 @@ class serialized_csi_tlv_t:
                 if len(self.rx_ctrl) >= ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t):
                     self.timestamp = wifi_pkt_rx_ctrl_v3_t(self.rx_ctrl).timestamp
             elif tlv_type == SERIALIZED_CSI_TLV_TYPE_RX_CTRL_COMPRESSED:
-                if tlv_len < ctypes.sizeof(compressed_rx_ctrl_t):
+                if tlv_len < _COMPRESSED_RX_CTRL_MIN_SIZE:
                     raise ValueError("Invalid compressed RX CTRL TLV")
                 self.rx_ctrl = _build_rx_ctrl_v3_from_compressed(bytes(value[: ctypes.sizeof(compressed_rx_ctrl_t)]))
                 self.timestamp = wifi_pkt_rx_ctrl_v3_t(self.rx_ctrl).timestamp
