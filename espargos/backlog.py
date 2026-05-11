@@ -48,7 +48,7 @@ class CSIBacklog(object):
     CSI backlog class. Stores CSI data in a ringbuffer for processing when needed.
 
     :param pool: CSI pool object to collect CSI data from
-    :param fields: List of fields to store (default: all), e.g., ["lltf", "ht40", "rssi", "rx_gain", "fft_gain", "cfo", "timestamp", "host_timestamp", "mac", "radar_tx_timestamp", "radar_tx_index"]
+    :param fields: List of fields to store (default: all), e.g., ["lltf", "ht40", "rssi", "rx_gain", "fft_gain", "cfo", "timestamp", "host_timestamp", "mac", "radar_tx_timestamp", "radar_tx_index", "radar_tx_power"]
     :param calibrate: Apply calibration to CSI data (default: True)
     :param cb_predicate: A function that defines the conditions under which clustered CSI is regarded as completed and thus added to the backlog.
         See :meth:`espargos.pool.Pool.add_csi_callback` for more details.
@@ -86,6 +86,7 @@ class CSIBacklog(object):
         "mac": {"shape": (6,), "per_antenna": False, "dtype": np.uint8},
         "radar_tx_timestamp": {"shape": (), "per_antenna": False, "dtype": np.float64},
         "radar_tx_index": {"shape": (), "per_antenna": False, "dtype": np.int16},
+        "radar_tx_power": {"shape": (), "per_antenna": False, "dtype": np.int16},
     }
 
     def __init__(self, pool, fields=None, calibrate=True, cb_predicate=None, size=100):
@@ -277,6 +278,8 @@ class CSIBacklog(object):
                 self.storage["radar_tx_timestamp"][self.head] = np.nan
             if "radar_tx_index" in self.fields:
                 self.storage["radar_tx_index"][self.head] = -1
+            if "radar_tx_power" in self.fields:
+                self.storage["radar_tx_power"][self.head] = -1
 
             if clustered_csi.has_radar_tx_report():
                 radar_tx_report = clustered_csi.get_radar_tx_info()
@@ -284,6 +287,8 @@ class CSIBacklog(object):
                     self.storage["radar_tx_timestamp"][self.head] = radar_tx_report.get_hardware_tx_timestamp_ns() / 1e9
                 if "radar_tx_index" in self.fields:
                     self.storage["radar_tx_index"][self.head] = clustered_csi.get_radar_tx_index()
+                if "radar_tx_power" in self.fields:
+                    self.storage["radar_tx_power"][self.head] = radar_tx_report.tx_power
 
             # Advance ringbuffer head
             self.latest = self.head

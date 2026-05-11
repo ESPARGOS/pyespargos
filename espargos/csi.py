@@ -493,6 +493,7 @@ class radar_tx_report_tlv_t:
         self.software_enqueue_timestamp_us = 0
         self.tx_count = 0
         self.rfswitch_state = rfswitch_state_t.SENSOR_RFSWITCH_UNKNOWN
+        self.tx_power = -1
         self.flags = 0
         self.tx_status = 0
         self.ifidx = 0
@@ -539,6 +540,7 @@ class radar_tx_report_tlv_t:
                     raise ValueError("Invalid radar TX report radar meta TLV")
                 self.tx_count = int.from_bytes(value[0:4], byteorder="little")
                 self.rfswitch_state = value[4]
+                self.tx_power = value[5]
             elif tlv_type == RADAR_TX_REPORT_TLV_TYPE_TX_META:
                 if tlv_len < 8:
                     raise ValueError("Invalid radar TX report TX meta TLV")
