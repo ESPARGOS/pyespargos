@@ -12,7 +12,7 @@ Common.ESPARGOSApplication {
 	minimumHeight: 500
 
 	color: "#11191e"
-	title: "Instantaneous CSI: " + (backend.timeDomain ? "Time Domain" : (backend.superResolution ? "Superresolution Time Domain" : "Frequency Domain"))
+	title: "Instantaneous CSI: " + (backend.constellation ? "Constellation" : (backend.timeDomain ? "Time Domain" : (backend.superResolution ? "Superresolution Time Domain" : "Frequency Domain")))
 
 	// Tab20 color cycle reordered: https://github.com/matplotlib/matplotlib/blob/main/lib/matplotlib/_cm.py#L1293
 	property var colorCycle: ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5", "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5"]
@@ -37,6 +37,7 @@ Common.ESPARGOSApplication {
 
 				model: [
 					{ value: "frequency", text: "Frequency Domain" },
+					{ value: "constellation", text: "Constellation" },
 					{ value: "timedomain", text: "Time Domain" },
 					{ value: "music", text: "MUSIC" },
 					{ value: "mvdr", text: "MVDR" }
@@ -122,6 +123,57 @@ Common.ESPARGOSApplication {
 		width: parent.width
 
 		ChartView {
+			id: csiConstellation
+			Layout.alignment: Qt.AlignTop
+			legend.visible: false
+			legend.labelColor: "#e0e0e0"
+			Layout.fillWidth: true
+			Layout.fillHeight: true
+			antialiasing: true
+			backgroundColor: "#151f26"
+			visible: backend.constellation
+
+			axes: [
+				ValueAxis {
+					id: csiConstellationIAxis
+
+					min: -128
+					max: 127
+					titleText: "<font color=\"#e0e0e0\">I</font>"
+					titleFont.bold: false
+					gridLineColor: "#c0c0c0"
+					tickInterval: Math.max(32, Math.round((max - min + 1) / 8))
+					tickType: ValueAxis.TicksDynamic
+					labelsColor: "#e0e0e0"
+					labelFormat: "%d"
+				},
+				ValueAxis {
+					id: csiConstellationQAxis
+
+					min: -128
+					max: 127
+					titleText: "<font color=\"#e0e0e0\">Q</font>"
+					titleFont.bold: false
+					gridLineColor: "#c0c0c0"
+					tickInterval: Math.max(32, Math.round((max - min + 1) / 8))
+					tickType: ValueAxis.TicksDynamic
+					labelsColor: "#e0e0e0"
+					labelFormat: "%d"
+				}
+			]
+
+			Component.onCompleted : {
+				for (let ant = 0; ant < backend.sensorCount; ++ant) {
+					let series = csiConstellation.createSeries(ChartView.SeriesTypeScatter, "tx-" + ant, csiConstellationIAxis, csiConstellationQAxis)
+					series.markerSize = 7
+					series.color = colorCycle[ant % colorCycle.length]
+					series.borderColor = colorCycle[ant % colorCycle.length]
+					series.useOpenGL = Qt.platform.os === "linux"
+				}
+			}
+		}
+
+		ChartView {
 			id: csiAmplitude
 			Layout.alignment: Qt.AlignTop
 			legend.visible: false
@@ -130,6 +182,7 @@ Common.ESPARGOSApplication {
 			Layout.fillHeight: true
 			antialiasing: true
 			backgroundColor: "#151f26"
+			visible: !backend.constellation
 
 			axes: [
 				ValueAxis {
@@ -180,7 +233,7 @@ Common.ESPARGOSApplication {
 			Layout.fillHeight: true
 			antialiasing: true
 			backgroundColor: "#151f26"
-			visible: !backend.superResolution
+			visible: !backend.superResolution && !backend.constellation
 
 			axes: [
 				ValueAxis {
@@ -230,11 +283,16 @@ Common.ESPARGOSApplication {
 			let amplitudeSeries = [];
 			let phaseSeries = [];
 			for (let i = 0; i < backend.sensorCount; ++i) {
-				amplitudeSeries.push(csiAmplitude.series(i));
+				amplitudeSeries.push(backend.constellation ? csiConstellation.series(i) : csiAmplitude.series(i));
 				phaseSeries.push(csiPhase.series(i));
 			}
 
-			backend.updateCSI(amplitudeSeries, phaseSeries, csiAmplitudeSubcarrierAxis, csiAmplitudeAxis)
+			backend.updateCSI(
+				amplitudeSeries,
+				phaseSeries,
+				backend.constellation ? csiConstellationIAxis : csiAmplitudeSubcarrierAxis,
+				backend.constellation ? csiConstellationQAxis : csiAmplitudeAxis
+			)
 		}
 	}
 }

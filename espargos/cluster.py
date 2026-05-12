@@ -68,6 +68,7 @@ class CSICluster(object):
         self.rfswitch_state_all = np.full(self.shape, fill_value=csi.rfswitch_state_t.SENSOR_RFSWITCH_UNKNOWN, dtype=np.uint8)
         self.noise_floor_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
         self.cfo_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
+        self.lltf_8bit_mode_all = np.full(self.shape, fill_value=False, dtype=np.bool_)
         self.gain_table_entry_raw_all = np.zeros(self.shape + (12,), dtype=np.uint8)
         self.gain_table_entry_valid_all = np.full(self.shape, fill_value=False)
 
@@ -113,6 +114,7 @@ class CSICluster(object):
         self.noise_floor_all[board_num, row, col] = (noise_floor - 0x100) if (noise_floor & 0x80) else noise_floor
         self.rfswitch_state_all[board_num, row, col] = serialized_csi.rfswitch_state
         self.cfo_all[board_num, row, col] = csi.get_cfo_from_rx_ctrl(serialized_csi.rx_ctrl)
+        self.lltf_8bit_mode_all[board_num, row, col] = serialized_csi.acquire_lltf_8bit_mode
         self.gain_table_entry_valid_all[board_num, row, col] = bool(serialized_csi.gain_table_entry_valid)
         if serialized_csi.gain_table_entry_valid:
             self.gain_table_entry_raw_all[board_num, row, col, :] = np.frombuffer(serialized_csi.gain_table_entry_raw, dtype=np.uint8)
@@ -571,6 +573,12 @@ class CSICluster(object):
         Get the CFO values decoded from the sensor rx_ctrl metadata.
         """
         return self.cfo_all
+
+    def get_lltf_8bit_mode(self):
+        """
+        Get whether each sensor reported LLTF CSI in 8-bit mode for this packet.
+        """
+        return self.lltf_8bit_mode_all
 
     def get_gain_table_entry_raw(self):
         """

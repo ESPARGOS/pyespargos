@@ -48,7 +48,7 @@ class CSIBacklog(object):
     CSI backlog class. Stores CSI data in a ringbuffer for processing when needed.
 
     :param pool: CSI pool object to collect CSI data from
-    :param fields: List of fields to store (default: all), e.g., ["lltf", "ht40", "rssi", "rx_gain", "fft_gain", "cfo", "timestamp", "host_timestamp", "mac", "radar_tx_timestamp", "radar_tx_index", "radar_tx_power", "radar_tx_rfswitch_state"]
+    :param fields: List of fields to store (default: all), e.g., ["lltf", "ht40", "rssi", "rx_gain", "fft_gain", "cfo", "lltf_8bit_mode", "timestamp", "host_timestamp", "mac", "radar_tx_timestamp", "radar_tx_index", "radar_tx_power", "radar_tx_rfswitch_state"]
     :param calibrate: Apply calibration to CSI data (default: True)
     :param cb_predicate: A function that defines the conditions under which clustered CSI is regarded as completed and thus added to the backlog.
         See :meth:`espargos.pool.Pool.add_csi_callback` for more details.
@@ -80,6 +80,7 @@ class CSIBacklog(object):
         "rx_gain": {"shape": (), "per_antenna": True, "dtype": np.float32},
         "fft_gain": {"shape": (), "per_antenna": True, "dtype": np.float32},
         "cfo": {"shape": (), "per_antenna": True, "dtype": np.float32},
+        "lltf_8bit_mode": {"shape": (), "per_antenna": True, "dtype": np.bool_},
         "rfswitch_state": {"shape": (), "per_antenna": True, "dtype": np.uint8},
         "timestamp": {"shape": (), "per_antenna": True, "dtype": np.float64},
         "host_timestamp": {"shape": (), "per_antenna": False, "dtype": np.float64},
@@ -149,7 +150,9 @@ class CSIBacklog(object):
                 else:
                     full_shape = (self.size,) + shape
 
-                if np.issubdtype(dtype, np.unsignedinteger):
+                if np.issubdtype(dtype, np.bool_):
+                    self.storage[key] = np.zeros(full_shape, dtype=dtype)
+                elif np.issubdtype(dtype, np.unsignedinteger):
                     self.storage[key] = np.zeros(full_shape, dtype=dtype)
                 elif np.issubdtype(dtype, np.signedinteger):
                     self.storage[key] = np.full(full_shape, fill_value=-1, dtype=dtype)
@@ -261,6 +264,10 @@ class CSIBacklog(object):
             # Store CFO
             if "cfo" in self.fields:
                 self.storage["cfo"][self.head] = clustered_csi.get_cfo()
+
+            # Store LLTF bit depth metadata
+            if "lltf_8bit_mode" in self.fields:
+                self.storage["lltf_8bit_mode"][self.head] = clustered_csi.get_lltf_8bit_mode()
 
             # Store RF switch states
             if "rfswitch_state" in self.fields:

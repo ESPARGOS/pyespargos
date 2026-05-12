@@ -24,7 +24,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     oversamplingChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
-        "display_mode": "frequency",  # "frequency", "timedomain", "music", "mvdr"
+        "display_mode": "frequency",  # "frequency", "timedomain", "constellation", "music", "mvdr"
         "oversampling": 4,
         "feed_filter": "all",
     }
@@ -106,13 +106,25 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         else:
             return previous * 0.97 + new * 0.03
 
-    # list parameters contain PyQt6.QtCharts.QLineSeries
+    def _constellation_axis_limit(self, csi_key: str, csi_backlog: np.ndarray, lltf_8bit_mode_backlog: np.ndarray) -> int:
+        if csi_key != "lltf":
+            return 128
+
+        valid_lltf_sensors = np.any(np.isfinite(csi_backlog), axis=-1)
+        lltf_8bit_mode = lltf_8bit_mode_backlog[valid_lltf_sensors]
+        if lltf_8bit_mode.size == 0:
+            return 128
+        if np.count_nonzero(lltf_8bit_mode) < np.count_nonzero(~lltf_8bit_mode):
+            return 2048
+        return 128
+
+    # list parameters contain PyQt6.QtCharts.QLineSeries / QScatterSeries
     @PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis, PyQt6.QtCharts.QValueAxis)
     def updateCSI(self, powerSeries, phaseSeries, subcarrierAxis, axis):
-        if (result := self.get_backlog_csi("rx_gain", "fft_gain", "rfswitch_state", allow_incomplete=True, return_format=True)) is None:
+        if (result := self.get_backlog_csi("rx_gain", "fft_gain", "rfswitch_state", "lltf_8bit_mode", allow_incomplete=True, return_format=True)) is None:
             return
 
-        csi_key, csi_backlog, rx_gain_backlog, fft_gain_backlog, rfswitch_state = result
+        csi_key, csi_backlog, rx_gain_backlog, fft_gain_backlog, rfswitch_state, lltf_8bit_mode_backlog = result
         if csi_key != self.last_preamble_format:
             self.last_preamble_format = csi_key
             self.preambleFormatChanged.emit()
@@ -121,6 +133,8 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         if np.isnan(rx_gain_backlog).any() or np.isnan(fft_gain_backlog).any():
             return
 
+        display_mode = self.appconfig.get("display_mode")
+
         # Apply feed filter if not "all"
         feed_mask = np.full(rfswitch_state.shape, True, dtype=bool)
         feed_filter = self.appconfig.get("feed_filter")
@@ -128,13 +142,43 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             target_state = self.FEED_FILTER_MAP[feed_filter]
             # Create mask and expand to include subcarrier dimension
             feed_mask = rfswitch_state == target_state
-            # Zero out CSI values that don't match the filter
-            csi_backlog = csi_backlog * feed_mask[..., np.newaxis]
-            # Need to scale csi_backlog based on feed count to keep power levels consistent
-            filtered_datapoint_count = np.sum(feed_mask, axis=0)
-            if np.any(filtered_datapoint_count == 0):
-                return
-            csi_backlog *= csi_backlog.shape[0] / filtered_datapoint_count[..., np.newaxis]
+            if display_mode == "constellation":
+                csi_backlog = np.where(feed_mask[..., np.newaxis], csi_backlog, np.nan + 1.0j * np.nan)
+            else:
+                # Zero out CSI values that don't match the filter
+                csi_backlog = csi_backlog * feed_mask[..., np.newaxis]
+                # Need to scale csi_backlog based on feed count to keep power levels consistent
+                filtered_datapoint_count = np.sum(feed_mask, axis=0)
+                if np.any(filtered_datapoint_count == 0):
+                    return
+                csi_backlog *= csi_backlog.shape[0] / filtered_datapoint_count[..., np.newaxis]
+
+        if display_mode == "constellation":
+            axis_limit = self._constellation_axis_limit(csi_key, csi_backlog, lltf_8bit_mode_backlog)
+            subcarrierAxis.setMin(-axis_limit)
+            subcarrierAxis.setMax(axis_limit - 1)
+            axis.setMin(-axis_limit)
+            axis.setMax(axis_limit - 1)
+
+            csi_backlog_flat = np.reshape(csi_backlog, (csi_backlog.shape[0], -1, csi_backlog.shape[-1]))
+            reference_coefficients = csi_backlog_flat[:, 0, csi_backlog_flat.shape[-1] // 2]
+            valid_reference_coefficients = np.isfinite(reference_coefficients) & (np.abs(reference_coefficients) > 0)
+            phase_correction = np.ones(csi_backlog.shape[0], dtype=csi_backlog.dtype)
+            phase_correction[valid_reference_coefficients] = np.exp(-1.0j * np.angle(reference_coefficients[valid_reference_coefficients]))
+            csi_backlog = csi_backlog * phase_correction.reshape((-1,) + (1,) * (csi_backlog.ndim - 1))
+
+            finite_samples = np.isfinite(csi_backlog)
+            csi_sample_count = np.sum(finite_samples, axis=0)
+            csi_constellation = np.divide(
+                np.nansum(csi_backlog, axis=0),
+                csi_sample_count,
+                out=np.full(csi_backlog.shape[1:], np.nan + 1.0j * np.nan, dtype=csi_backlog.dtype),
+                where=csi_sample_count > 0,
+            )
+            csi_flat = np.reshape(csi_constellation, (-1, csi_constellation.shape[-1]))
+            for series, ant_csi in zip(powerSeries, csi_flat):
+                series.replace([PyQt6.QtCore.QPointF(float(np.real(v)), float(np.imag(v))) for v in ant_csi if np.isfinite(v)])
+            return
 
         csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, rx_gain_backlog, fft_gain_backlog)
 
@@ -144,7 +188,6 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             csi_interp = espargos.util.csi_interp_iterative(csi_backlog, iterations=5)
         csi_flat = np.reshape(csi_interp, (-1, csi_interp.shape[-1]))
 
-        display_mode = self.appconfig.get("display_mode")
         oversampling = self.appconfig.get("oversampling")
 
         if display_mode in ["mvdr", "music"]:
@@ -215,6 +258,10 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=displayModeChanged)
     def superResolution(self):
         return self.appconfig.get("display_mode") in ["mvdr", "music"]
+
+    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=displayModeChanged)
+    def constellation(self):
+        return self.appconfig.get("display_mode") == "constellation"
 
 
 app = EspargosDemoInstantaneousCSI(sys.argv)
