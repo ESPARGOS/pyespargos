@@ -11,6 +11,7 @@ Drawer {
 	property bool calibrationInProgress: false
 	property real calibrationStart: 0.0
 	property real calibrationProgress: 0.0
+	readonly property string gainTooltipText: "RX gain is configured in 1 dB units. FFT gain is configured in 0.25 dB units."
 
 	function updateCalibrationProgress() {
 		if (!calibrationInProgress) {
@@ -251,12 +252,15 @@ Drawer {
 			Label { text: "RX Gain"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			RowLayout {
 				spacing: 14
+				ToolTip.visible: rxGainHover.hovered
+				ToolTip.text: root.gainTooltipText
+				HoverHandler { id: rxGainHover }
 				Slider {
 					id: lnaGainSlider
 					property string configKey: "gain.rx_gain_value"
 					property string configProp: "value"
 					property var encode: function(v) { return Math.round(v) }
-					property var decode: function(v) { return Math.max(0, Math.min(76, parseInt(v||32))) }
+					property var decode: function(v) { return Math.max(0, Math.min(76, parseInt((v === undefined || v === null || v === "") ? 32 : v))) }
 					Component.onCompleted: poolConfigManager.register(this)
 					onValueChanged: poolConfigManager.onControlChanged(this)
 					from: 0; to: 76; value: 32; stepSize: 1
@@ -270,6 +274,9 @@ Drawer {
 			Label { text: "FFT Gain"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			RowLayout {
 				spacing: 14
+				ToolTip.visible: fftGainHover.hovered
+				ToolTip.text: root.gainTooltipText
+				HoverHandler { id: fftGainHover }
 				Slider {
 					id: fftGainSlider
 					property string configKey: "gain.fft_gain_value"

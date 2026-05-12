@@ -348,6 +348,19 @@ class CSIBacklog(object):
 
         return tuple(retval)
 
+    def clear(self):
+        """
+        Clear all stored CSI datapoints from the ringbuffer.
+
+        This is useful after changing calibration or other receiver settings:
+        entries already in the backlog were stored with the old interpretation
+        and must not be mixed with freshly received CSI.
+        """
+        with self.storage_mutex:
+            self.head = 0
+            self.latest = None
+            self.filllevel = 0
+
     def count_valid_datapoints(self, key: str, allow_incomplete: bool = False) -> int:
         """
         Count datapoints for which a particular stored field (key) is valid

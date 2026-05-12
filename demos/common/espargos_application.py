@@ -317,6 +317,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         # Pool configuration UI
         pool_cfg = self.get_explicit_initial_config("pool", default={})
         self.pooldrawer = PoolDrawer(self.pool, pool_cfg or None, parent=self)
+        self.pooldrawer.calibrationStarted.connect(self._on_pool_calibration_started)
+        self.pooldrawer.calibrationFinished.connect(self._on_pool_calibration_finished)
 
         # Wait for config to be applied before starting pool and calibration
         def config_applied():
@@ -358,6 +360,16 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         Override in mixins and call super()._finalize_pool_init(backlog_cb_predicate, calibrate).
         """
         pass
+
+    def _on_pool_calibration_started(self):
+        if hasattr(self, "backlog"):
+            self.backlog.calibrate = False
+            self.backlog.clear()
+
+    def _on_pool_calibration_finished(self, success: bool, _error_message: str):
+        if hasattr(self, "backlog"):
+            self.backlog.calibrate = bool(success and self.pool.get_calibration() is not None)
+            self.backlog.clear()
 
     def onAboutToQuit(self):
         self.pool.stop()
