@@ -11,6 +11,7 @@ Drawer {
 	property bool calibrationInProgress: false
 	property real calibrationStart: 0.0
 	property real calibrationProgress: 0.0
+	readonly property bool tooltipsEnabled: ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true
 	readonly property string gainTooltipText: "RX gain is configured in 1 dB units. FFT gain is configured in 0.25 dB units."
 
 	function updateCalibrationProgress() {
@@ -159,7 +160,7 @@ Drawer {
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false
-				ToolTip.visible: hovered
+				ToolTip.visible: root.tooltipsEnabled && hovered
 				ToolTip.text: "For multi-board setups: Calibrate each ESPARGOS board independently. Enable this when boards do not share one common clock and phase reference signal."
 			}
 			// Section: Signal Path
@@ -189,7 +190,7 @@ Drawer {
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false
-				ToolTip.visible: hovered
+				ToolTip.visible: root.tooltipsEnabled && hovered
 				ToolTip.text: "Treat CSI received over the on-board reference channel as if it were over-the-air CSI and include it in the normal processing."
 			}
 
@@ -203,7 +204,7 @@ Drawer {
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false
-				ToolTip.visible: hovered
+				ToolTip.visible: root.tooltipsEnabled && hovered
 				ToolTip.text: "Always acquire the legacy L-LTF CSI (20 MHz bandwidth), regardless of packet format. Useful when you want a common CSI format across mixed traffic, but it will prevent access to format-specific training fields."
 			}
 
@@ -217,7 +218,7 @@ Drawer {
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false
-				ToolTip.visible: hovered
+				ToolTip.visible: root.tooltipsEnabled && hovered
 				ToolTip.text: "Use 8-bit L-LTF CSI with every subcarrier instead of sparse 12-bit L-LTF CSI."
 			}
 
@@ -231,7 +232,7 @@ Drawer {
 				Component.onCompleted: poolConfigManager.register(this)
 				onCheckedChanged: poolConfigManager.onControlChanged(this)
 				checked: false
-				ToolTip.visible: hovered
+				ToolTip.visible: root.tooltipsEnabled && hovered
 				ToolTip.text: "Compress CSI in firmware by converting it to a sparser time-domain representation before transport. This reduces bandwidth, but the received CSI is no longer the raw frequency-domain estimate."
 			}
 
@@ -252,7 +253,7 @@ Drawer {
 			Label { text: "RX Gain"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			RowLayout {
 				spacing: 14
-				ToolTip.visible: rxGainHover.hovered
+				ToolTip.visible: root.tooltipsEnabled && rxGainHover.hovered
 				ToolTip.text: root.gainTooltipText
 				HoverHandler { id: rxGainHover }
 				Slider {
@@ -274,7 +275,7 @@ Drawer {
 			Label { text: "FFT Gain"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			RowLayout {
 				spacing: 14
-				ToolTip.visible: fftGainHover.hovered
+				ToolTip.visible: root.tooltipsEnabled && fftGainHover.hovered
 				ToolTip.text: root.gainTooltipText
 				HoverHandler { id: fftGainHover }
 				Slider {
@@ -361,6 +362,19 @@ Drawer {
 				onClicked: {
 					poolConfigManager.action("reset_config")
 					// Note: UI will be updated via updateUIState connection
+				}
+			}
+
+			CheckBox {
+				id: disableTooltipsCheckBox
+				Layout.columnSpan: 2
+				Layout.alignment: Qt.AlignCenter
+				text: "Disable tooltips"
+				checked: ApplicationWindow.window ? !ApplicationWindow.window.tooltipsEnabled : false
+				onToggled: {
+					if (ApplicationWindow.window) {
+						ApplicationWindow.window.tooltipsEnabled = !checked
+					}
 				}
 			}
 

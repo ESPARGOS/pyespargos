@@ -36,6 +36,7 @@ ApplicationWindow {
 
 	color: "#11191e"
 	title: "ESPARGOS Demo"
+	property bool tooltipsEnabled: true
 
 	function showError(title, message) {
 		errorDialog.title = title && title.length ? title : "Error"
