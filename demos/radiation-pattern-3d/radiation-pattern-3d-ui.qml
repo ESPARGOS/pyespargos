@@ -56,7 +56,7 @@ Common.ESPARGOSApplication {
                     from: 0.01; to: 0.8; value: 0.2; stepSize: 0.01
                     implicitWidth: 120
                     function isUserActive() { return pressed }
-                    ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+                    ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
                     ToolTip.text: "In samples. Color hue indicates relative delay up to this maximum. Current value: " + value.toFixed(2)
                 }
                 Label { text: maxDelaySlider.value.toFixed(2); color: "#ffffff"; Layout.preferredWidth: 40 }

@@ -51,7 +51,7 @@ Common.ESPARGOSApplication {
 					width: cameraDevice.width
 					text: modelData
 
-					ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+					ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 					ToolTip.text: modelData
 				}
 			}
@@ -126,7 +126,7 @@ Common.ESPARGOSApplication {
 				Component.onCompleted: appDrawer.configManager.register(this)
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 72
-				ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "" + Math.round(value) + "°"
 				visible: advancedSettings.checked
 			}
@@ -145,7 +145,7 @@ Common.ESPARGOSApplication {
 				Component.onCompleted: appDrawer.configManager.register(this)
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 41
-				ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "" + Math.round(value) + "°"
 				visible: advancedSettings.checked
 			}
@@ -164,7 +164,7 @@ Common.ESPARGOSApplication {
 				Component.onCompleted: appDrawer.configManager.register(this)
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 0.0
-				ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "Angle: " + value.toFixed(1) + "°"
 				visible: advancedSettings.checked
 			}
@@ -183,7 +183,7 @@ Common.ESPARGOSApplication {
 				Component.onCompleted: appDrawer.configManager.register(this)
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 0.0
-				ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "Angle: " + value.toFixed(1) + "°"
 				visible: advancedSettings.checked
 			}
@@ -230,7 +230,7 @@ Common.ESPARGOSApplication {
 				Component.onCompleted: appDrawer.configManager.register(this)
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 64
-				ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "" + Math.round(value)
 				visible: advancedSettings.checked
 			}
@@ -249,7 +249,7 @@ Common.ESPARGOSApplication {
 				Component.onCompleted: appDrawer.configManager.register(this)
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 32
-				ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "" + Math.round(value)
 				visible: advancedSettings.checked
 			}
@@ -300,7 +300,7 @@ Common.ESPARGOSApplication {
 				implicitWidth: 80
 				checked: true
 				visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show"
-				ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "When enabled, all polarization dots oscillate with the same amplitude. When disabled, amplitude scales with received power."
 			}
 
@@ -319,7 +319,7 @@ Common.ESPARGOSApplication {
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 24
 				visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show"
-				ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "Grid spacing for polarization dots in pixels. Current value: " + value.toFixed(0)
 			}
 
@@ -336,7 +336,7 @@ Common.ESPARGOSApplication {
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 0.2
 				visible: beamformerType.currentIndex === 0 && colorizeDelay.currentIndex === 1
-				ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "In samples. Color hue indicates relative delay up to this maximum. Current value: " + value.toFixed(2)
 			}
 
@@ -354,7 +354,7 @@ Common.ESPARGOSApplication {
 				Component.onCompleted: appDrawer.configManager.register(this)
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 0.0
-				ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: value === 0.0 ? "Disabled (use all data)" : "Use only CSI newer than " + value.toFixed(1) + " s"
 			}
 
@@ -427,7 +427,7 @@ Common.ESPARGOSApplication {
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
 				value: 0.5
 				visible: overlayMode.currentIndex === 0 && manualExposure.checked
-				ToolTip.visible: ApplicationWindow.window.tooltipsEnabled && hovered
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "Exposure: " + (value * 100).toFixed(0) + "%"
 			}
 
