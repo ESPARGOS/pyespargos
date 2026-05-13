@@ -122,53 +122,60 @@ Common.ESPARGOSApplication {
 		height: parent.height
 		width: parent.width
 
-		ChartView {
-			id: csiConstellation
+		Item {
+			id: csiConstellationPane
 			Layout.alignment: Qt.AlignTop
-			legend.visible: false
-			legend.labelColor: "#e0e0e0"
 			Layout.fillWidth: true
 			Layout.fillHeight: true
-			antialiasing: true
-			backgroundColor: "#151f26"
 			visible: backend.constellation
 
-			axes: [
-				ValueAxis {
-					id: csiConstellationIAxis
+			ChartView {
+				id: csiConstellation
+				anchors.centerIn: parent
+				width: Math.min(parent.width, parent.height)
+				height: width
+				legend.visible: false
+				legend.labelColor: "#e0e0e0"
+				antialiasing: true
+				backgroundColor: "#151f26"
 
-					min: -128
-					max: 127
-					titleText: "<font color=\"#e0e0e0\">I</font>"
-					titleFont.bold: false
-					gridLineColor: "#c0c0c0"
-					tickInterval: Math.max(32, Math.round((max - min + 1) / 8))
-					tickType: ValueAxis.TicksDynamic
-					labelsColor: "#e0e0e0"
-					labelFormat: "%d"
-				},
-				ValueAxis {
-					id: csiConstellationQAxis
+				axes: [
+					ValueAxis {
+						id: csiConstellationIAxis
 
-					min: -128
-					max: 127
-					titleText: "<font color=\"#e0e0e0\">Q</font>"
-					titleFont.bold: false
-					gridLineColor: "#c0c0c0"
-					tickInterval: Math.max(32, Math.round((max - min + 1) / 8))
-					tickType: ValueAxis.TicksDynamic
-					labelsColor: "#e0e0e0"
-					labelFormat: "%d"
-				}
-			]
+						min: -128
+						max: 127
+						titleText: "<font color=\"#e0e0e0\">I</font>"
+						titleFont.bold: false
+						gridLineColor: "#c0c0c0"
+						tickInterval: Math.max(32, Math.round((max - min + 1) / 8))
+						tickType: ValueAxis.TicksDynamic
+						labelsColor: "#e0e0e0"
+						labelFormat: "%d"
+					},
+					ValueAxis {
+						id: csiConstellationQAxis
 
-			Component.onCompleted : {
-				for (let ant = 0; ant < backend.sensorCount; ++ant) {
-					let series = csiConstellation.createSeries(ChartView.SeriesTypeScatter, "tx-" + ant, csiConstellationIAxis, csiConstellationQAxis)
-					series.markerSize = 7
-					series.color = colorCycle[ant % colorCycle.length]
-					series.borderColor = colorCycle[ant % colorCycle.length]
-					series.useOpenGL = Qt.platform.os === "linux"
+						min: -128
+						max: 127
+						titleText: "<font color=\"#e0e0e0\">Q</font>"
+						titleFont.bold: false
+						gridLineColor: "#c0c0c0"
+						tickInterval: Math.max(32, Math.round((max - min + 1) / 8))
+						tickType: ValueAxis.TicksDynamic
+						labelsColor: "#e0e0e0"
+						labelFormat: "%d"
+					}
+				]
+
+				Component.onCompleted : {
+					for (let ant = 0; ant < backend.sensorCount; ++ant) {
+						let series = csiConstellation.createSeries(ChartView.SeriesTypeScatter, "tx-" + ant, csiConstellationIAxis, csiConstellationQAxis)
+						series.markerSize = 7
+						series.color = colorCycle[ant % colorCycle.length]
+						series.borderColor = colorCycle[ant % colorCycle.length]
+						series.useOpenGL = Qt.platform.os === "linux"
+					}
 				}
 			}
 		}
