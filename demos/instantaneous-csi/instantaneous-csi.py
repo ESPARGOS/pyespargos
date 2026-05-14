@@ -22,11 +22,13 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
 
     displayModeChanged = PyQt6.QtCore.pyqtSignal()
     oversamplingChanged = PyQt6.QtCore.pyqtSignal()
+    requiredAntennasChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
         "display_mode": "frequency",  # "frequency", "timedomain", "constellation", "music", "mvdr"
         "oversampling": 4,
         "feed_filter": "all",
+        "required_antennas": None,
     }
 
     def __init__(self, argv):
@@ -42,7 +44,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         )
 
         # Set up ESPARGOS pool and backlog
-        self.initialize_pool(calibrate=not self.args.no_calib)
+        self.initialize_pool(calibrate=not self.args.no_calib, backlog_cb_predicate=self._cluster_predicate)
 
         # Value range handling
         self.stable_power_minimum = None
@@ -68,11 +70,28 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             self.stable_power_maximum = None
             self.oversamplingChanged.emit()
 
+        if "required_antennas" in newcfg:
+            self.requiredAntennasChanged.emit()
+
         super()._on_update_app_state(newcfg)
+
+    def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
+        if self.appconfig.get("required_antennas") is None:
+            self.appconfig.set({"required_antennas": int(np.prod(self.pool.get_shape()))})
+        super()._finalize_pool_init(backlog_cb_predicate, calibrate)
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def sensorCount(self):
         return np.prod(self.pool.get_shape())
+
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=requiredAntennasChanged)
+    def requiredAntennas(self):
+        configured = self.appconfig.get("required_antennas")
+        return int(self.sensorCount if configured is None else configured)
+
+    def _cluster_predicate(self, cluster):
+        completion = cluster.get_completion()
+        return bool(np.sum(completion) >= self.requiredAntennas)
 
     @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=displayModeChanged)
     def displayMode(self):
@@ -129,29 +148,28 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             self.last_preamble_format = csi_key
             self.preambleFormatChanged.emit()
 
-        # If gain metadata contains NaN, skip this update
-        if np.isnan(rx_gain_backlog).any() or np.isnan(fft_gain_backlog).any():
+        valid_samples = np.any(np.isfinite(csi_backlog), axis=-1) & np.isfinite(rx_gain_backlog) & np.isfinite(fft_gain_backlog)
+        if not np.any(valid_samples):
             return
 
         display_mode = self.appconfig.get("display_mode")
 
         # Apply feed filter if not "all"
-        feed_mask = np.full(rfswitch_state.shape, True, dtype=bool)
         feed_filter = self.appconfig.get("feed_filter")
         if feed_filter != "all" and feed_filter in self.FEED_FILTER_MAP:
             target_state = self.FEED_FILTER_MAP[feed_filter]
-            # Create mask and expand to include subcarrier dimension
-            feed_mask = rfswitch_state == target_state
-            if display_mode == "constellation":
-                csi_backlog = np.where(feed_mask[..., np.newaxis], csi_backlog, np.nan + 1.0j * np.nan)
-            else:
-                # Zero out CSI values that don't match the filter
-                csi_backlog = csi_backlog * feed_mask[..., np.newaxis]
-                # Need to scale csi_backlog based on feed count to keep power levels consistent
-                filtered_datapoint_count = np.sum(feed_mask, axis=0)
-                if np.any(filtered_datapoint_count == 0):
-                    return
-                csi_backlog *= csi_backlog.shape[0] / filtered_datapoint_count[..., np.newaxis]
+            valid_samples &= rfswitch_state == target_state
+
+        valid_antennas = np.any(valid_samples, axis=0).reshape(-1)
+        if not np.any(valid_antennas):
+            for pwr_series, phase_series in zip(powerSeries, phaseSeries):
+                pwr_series.replace([])
+                phase_series.replace([])
+            return
+
+        # Keep missing antennas/samples out of the coherent average while preserving
+        # the original antenna layout so existing chart series keep their identity.
+        csi_backlog = np.where(valid_samples[..., np.newaxis], csi_backlog, np.nan + 1.0j * np.nan)
 
         if display_mode == "constellation":
             axis_limit = self._constellation_axis_limit(csi_key, csi_backlog, lltf_8bit_mode_backlog)
@@ -180,6 +198,18 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
                 series.replace([PyQt6.QtCore.QPointF(float(np.real(v)), float(np.imag(v))) for v in ant_csi if np.isfinite(v)])
             return
 
+        filtered_datapoint_count = np.sum(valid_samples, axis=0)
+        scaling = np.divide(
+            csi_backlog.shape[0],
+            filtered_datapoint_count,
+            out=np.zeros_like(filtered_datapoint_count, dtype=np.float32),
+            where=filtered_datapoint_count > 0,
+        )
+        csi_backlog *= scaling[..., np.newaxis]
+
+        csi_backlog = np.nan_to_num(csi_backlog, nan=0.0)
+        rx_gain_backlog = np.nan_to_num(rx_gain_backlog, nan=0.0)
+        fft_gain_backlog = np.nan_to_num(fft_gain_backlog, nan=0.0)
         csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, rx_gain_backlog, fft_gain_backlog)
 
         if self.pooldrawer.cfgman.get("calibration", "per_board"):
@@ -197,13 +227,21 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
                 superres_delays, superres_pdps = espargos.util.fdomain_to_tdomain_pdp_mvdr(csi_backlog)
 
             superres_pdps_flat = np.reshape(superres_pdps, (-1, superres_pdps.shape[-1]))
+            superres_pdps_flat_active = superres_pdps_flat[valid_antennas]
 
-            superres_pdps_flat = superres_pdps_flat / np.max(superres_pdps_flat)
+            power_max = np.max(superres_pdps_flat_active)
+            if power_max <= 0:
+                return
+            superres_pdps_flat = superres_pdps_flat / power_max
             self.stable_power_minimum = 0
             self.stable_power_maximum = 1.1
 
-            for pwr_series, mvdr_pdp in zip(powerSeries, superres_pdps_flat):
-                pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(superres_delays, mvdr_pdp)])
+            for is_valid, pwr_series, phase_series, mvdr_pdp in zip(valid_antennas, powerSeries, phaseSeries, superres_pdps_flat):
+                if is_valid:
+                    pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(superres_delays, mvdr_pdp)])
+                else:
+                    pwr_series.replace([])
+                phase_series.replace([])
         elif display_mode == "timedomain":
             csi_flat_zeropadded = np.zeros(
                 (csi_flat.shape[0], csi_flat.shape[1] * oversampling),
@@ -227,26 +265,39 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
                 / oversampling
             )
             csi_power = csi_flat_zeropadded.shape[1] * np.abs(csi_flat_zeropadded) ** 2
+            csi_power_active = csi_power[valid_antennas]
             self.stable_power_minimum = 0
-            self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, np.max(csi_power) * 1.1)
+            self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, np.max(csi_power_active) * 1.1)
 
-            csi_phase = np.angle(csi_flat_zeropadded * np.exp(-1.0j * np.angle(csi_flat_zeropadded[0, len(csi_flat_zeropadded[0]) // 2])))
+            reference_idx = int(np.flatnonzero(valid_antennas)[0])
+            csi_phase_reference = csi_flat_zeropadded[reference_idx, len(csi_flat_zeropadded[reference_idx]) // 2]
+            csi_phase = np.angle(csi_flat_zeropadded * np.exp(-1.0j * np.angle(csi_phase_reference)))
 
-            for pwr_series, phase_series, ant_pwr, ant_phase in zip(powerSeries, phaseSeries, csi_power, csi_phase):
-                pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range_zeropadded, ant_pwr)])
-                phase_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range_zeropadded, ant_phase)])
+            for is_valid, pwr_series, phase_series, ant_pwr, ant_phase in zip(valid_antennas, powerSeries, phaseSeries, csi_power, csi_phase):
+                if is_valid:
+                    pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range_zeropadded, ant_pwr)])
+                    phase_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range_zeropadded, ant_phase)])
+                else:
+                    pwr_series.replace([])
+                    phase_series.replace([])
         else:
             csi_power = 20 * np.log10(np.abs(csi_flat) + 0.00001)
-            self.stable_power_minimum = self._interpolate_axis_range(self.stable_power_minimum, np.min(csi_power) - 3)
-            self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, np.max(csi_power) + 3)
-            csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, csi_flat.shape[1] // 2])))
+            csi_power_active = csi_power[valid_antennas]
+            self.stable_power_minimum = self._interpolate_axis_range(self.stable_power_minimum, np.min(csi_power_active) - 3)
+            self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, np.max(csi_power_active) + 3)
+            reference_idx = int(np.flatnonzero(valid_antennas)[0])
+            csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[reference_idx, csi_flat.shape[1] // 2])))
             # csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, :])))
 
             subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices(csi_key)
 
-            for pwr_series, phase_series, ant_pwr, ant_phase in zip(powerSeries, phaseSeries, csi_power, csi_phase):
-                pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, ant_pwr)])
-                phase_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, ant_phase)])
+            for is_valid, pwr_series, phase_series, ant_pwr, ant_phase in zip(valid_antennas, powerSeries, phaseSeries, csi_power, csi_phase):
+                if is_valid:
+                    pwr_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, ant_pwr)])
+                    phase_series.replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, ant_phase)])
+                else:
+                    pwr_series.replace([])
+                    phase_series.replace([])
 
         axis.setMin(self.stable_power_minimum)
         axis.setMax(self.stable_power_maximum)
