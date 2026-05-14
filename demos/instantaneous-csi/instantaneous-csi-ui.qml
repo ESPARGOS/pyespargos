@@ -82,6 +82,17 @@ Common.ESPARGOSApplication {
 				currentValue: "all"
 			}
 
+			Label { text: "Relative Phase"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: relativePhaseSwitch
+				property string configKey: "relative_phase"
+				property string configProp: "checked"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+				checked: true
+			}
+
 			Label { text: "Min. Antennas"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			SpinBox {
 				id: requiredAntennasSpinBox

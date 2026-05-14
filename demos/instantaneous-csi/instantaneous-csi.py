@@ -23,12 +23,14 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     displayModeChanged = PyQt6.QtCore.pyqtSignal()
     oversamplingChanged = PyQt6.QtCore.pyqtSignal()
     requiredAntennasChanged = PyQt6.QtCore.pyqtSignal()
+    relativePhaseChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
         "display_mode": "frequency",  # "frequency", "timedomain", "constellation", "music", "mvdr"
         "oversampling": 4,
         "feed_filter": "all",
         "required_antennas": None,
+        "relative_phase": True,
     }
 
     def __init__(self, argv):
@@ -73,6 +75,9 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         if "required_antennas" in newcfg:
             self.requiredAntennasChanged.emit()
 
+        if "relative_phase" in newcfg:
+            self.relativePhaseChanged.emit()
+
         super()._on_update_app_state(newcfg)
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
@@ -100,6 +105,10 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=oversamplingChanged)
     def oversampling(self):
         return self.appconfig.get("oversampling")
+
+    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=relativePhaseChanged)
+    def relativePhase(self):
+        return bool(self.appconfig.get("relative_phase"))
 
     # Mapping from config string to rfswitch_state_t
     FEED_FILTER_MAP = {
@@ -153,6 +162,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             return
 
         display_mode = self.appconfig.get("display_mode")
+        relative_phase = self.appconfig.get("relative_phase")
 
         # Apply feed filter if not "all"
         feed_filter = self.appconfig.get("feed_filter")
@@ -178,12 +188,13 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             axis.setMin(-axis_limit)
             axis.setMax(axis_limit - 1)
 
-            csi_backlog_flat = np.reshape(csi_backlog, (csi_backlog.shape[0], -1, csi_backlog.shape[-1]))
-            reference_coefficients = csi_backlog_flat[:, 0, csi_backlog_flat.shape[-1] // 2]
-            valid_reference_coefficients = np.isfinite(reference_coefficients) & (np.abs(reference_coefficients) > 0)
-            phase_correction = np.ones(csi_backlog.shape[0], dtype=csi_backlog.dtype)
-            phase_correction[valid_reference_coefficients] = np.exp(-1.0j * np.angle(reference_coefficients[valid_reference_coefficients]))
-            csi_backlog = csi_backlog * phase_correction.reshape((-1,) + (1,) * (csi_backlog.ndim - 1))
+            if relative_phase:
+                csi_backlog_flat = np.reshape(csi_backlog, (csi_backlog.shape[0], -1, csi_backlog.shape[-1]))
+                reference_coefficients = csi_backlog_flat[:, 0, csi_backlog_flat.shape[-1] // 2]
+                valid_reference_coefficients = np.isfinite(reference_coefficients) & (np.abs(reference_coefficients) > 0)
+                phase_correction = np.ones(csi_backlog.shape[0], dtype=csi_backlog.dtype)
+                phase_correction[valid_reference_coefficients] = np.exp(-1.0j * np.angle(reference_coefficients[valid_reference_coefficients]))
+                csi_backlog = csi_backlog * phase_correction.reshape((-1,) + (1,) * (csi_backlog.ndim - 1))
 
             finite_samples = np.isfinite(csi_backlog)
             csi_sample_count = np.sum(finite_samples, axis=0)
@@ -269,9 +280,12 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             self.stable_power_minimum = 0
             self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, np.max(csi_power_active) * 1.1)
 
-            reference_idx = int(np.flatnonzero(valid_antennas)[0])
-            csi_phase_reference = csi_flat_zeropadded[reference_idx, len(csi_flat_zeropadded[reference_idx]) // 2]
-            csi_phase = np.angle(csi_flat_zeropadded * np.exp(-1.0j * np.angle(csi_phase_reference)))
+            if relative_phase:
+                reference_idx = int(np.flatnonzero(valid_antennas)[0])
+                csi_phase_reference = csi_flat_zeropadded[reference_idx, len(csi_flat_zeropadded[reference_idx]) // 2]
+                csi_phase = np.angle(csi_flat_zeropadded * np.exp(-1.0j * np.angle(csi_phase_reference)))
+            else:
+                csi_phase = np.angle(csi_flat_zeropadded)
 
             for is_valid, pwr_series, phase_series, ant_pwr, ant_phase in zip(valid_antennas, powerSeries, phaseSeries, csi_power, csi_phase):
                 if is_valid:
@@ -285,9 +299,11 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             csi_power_active = csi_power[valid_antennas]
             self.stable_power_minimum = self._interpolate_axis_range(self.stable_power_minimum, np.min(csi_power_active) - 3)
             self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, np.max(csi_power_active) + 3)
-            reference_idx = int(np.flatnonzero(valid_antennas)[0])
-            csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[reference_idx, csi_flat.shape[1] // 2])))
-            # csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, :])))
+            if relative_phase:
+                reference_idx = int(np.flatnonzero(valid_antennas)[0])
+                csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[reference_idx, csi_flat.shape[1] // 2])))
+            else:
+                csi_phase = np.angle(csi_flat)
 
             subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices(csi_key)
 
