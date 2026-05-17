@@ -179,7 +179,7 @@ class CSICluster(object):
             lltf_bytes = np.frombuffer(serialized_csi.buf[:_RAW_LLTF_BYTES], dtype=np.uint8)
 
             if serialized_csi.acquire_lltf_8bit_mode:
-                csi_lltf_sensor[:] = csi._decode_wire_complex_int8(serialized_csi.buf, csi.LEGACY_COEFFICIENTS_PER_CHANNEL)
+                csi_lltf_sensor[:] = csi.unpack_lltf8_values(serialized_csi.buf, csi.LEGACY_COEFFICIENTS_PER_CHANNEL)
                 csi.interpolate_lltf_gap(csi_lltf_sensor)
             elif serialized_csi.acquire_force_lltf:
                 # In forced LLTF mode the ESP32-C61 reports 52 signed 12-bit values:

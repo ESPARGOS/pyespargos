@@ -134,17 +134,12 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
     def _normalize_mac(mac: str) -> str:
         return str(mac).replace(":", "").lower()
 
-    @staticmethod
-    def _antid_to_row_col(board_revision, antid: int) -> tuple[int, int]:
-        esp_num = board_revision.antid_to_esp_num[antid]
-        return board_revision.esp_num_to_row_col(esp_num)
-
     def _build_schedule_lookup(self, pool_radar_config: espargos.radar.RadarPoolConfig):
         schedule_by_source_mac = {}
         calibration = self.pool.get_calibration()
         for board_index, (board_obj, board_config) in enumerate(zip(self.pool.boards, pool_radar_config.board_configs)):
             for antid, mac in enumerate(board_config["mac_by_antid"]):
-                row, col = self._antid_to_row_col(board_obj.revision, antid)
+                row, col = board_obj.revision.antid_to_row_col(antid)
                 reference_start_s = board_config["start_by_antid"][antid] / espargos.radar.RADAR_TIME_SCALE - calibration.sensor_clock_offsets[board_index, row, col]
                 schedule_by_source_mac[self._normalize_mac(mac)] = {
                     "board_index": board_index,
@@ -202,7 +197,6 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
             self.statusTextChanged.emit()
             return
 
-        active_by_antid = [True] * espargos.constants.ANTENNAS_PER_BOARD
         requested_start_s = float(self.appconfig.get("start_us")) / 1e6
         min_safe_start_s = max(0.0, -float(np.nanmin(calibration.sensor_clock_offsets))) + 1e-6
         effective_start_s = max(requested_start_s, min_safe_start_s)
@@ -210,21 +204,20 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
             self.appconfig.set({"start_us": int(np.ceil(effective_start_s * 1e6))})
 
         slot_s = float(self.appconfig.get("slot_us")) / 1e6
-        t0_by_antid = effective_start_s + np.arange(espargos.constants.ANTENNAS_PER_BOARD, dtype=np.float64) * slot_s
-        period_by_antid = np.full(espargos.constants.ANTENNAS_PER_BOARD, float(self.appconfig.get("period_us")) / 1e6, dtype=np.float64)
-        current_radar_config = self.pool.get_radar_config()
+        sensor_shape = (espargos.constants.ROWS_PER_BOARD, espargos.constants.ANTENNAS_PER_ROW)
+        t0_by_sensor = effective_start_s + np.arange(espargos.constants.ANTENNAS_PER_BOARD, dtype=np.float64).reshape(sensor_shape) * slot_s
+        period_by_sensor = np.full(sensor_shape, float(self.appconfig.get("period_us")) / 1e6, dtype=np.float64)
 
         try:
             pool_radar_config = espargos.radar.build_pool_config(
                 calibration=calibration,
-                active_by_antid=active_by_antid,
-                t0_by_antid=t0_by_antid,
-                period_by_antid=period_by_antid,
-                tx_power=int(self.appconfig.get("tx_power")),
-                tx_phymode=int(self.appconfig.get("tx_phymode")),
-                tx_rate=int(self.appconfig.get("tx_rate")),
-                rfswitch_state=int(self.appconfig.get("rfswitch_state")),
-                mac_by_antid=current_radar_config.get("mac_by_antid"),
+                active_by_sensor=True,
+                t0_by_sensor=t0_by_sensor,
+                period_by_sensor=period_by_sensor,
+                tx_power=espargos.csi.wifi_tx_power_t(int(self.appconfig.get("tx_power"))),
+                tx_phymode=espargos.csi.wifi_phy_mode_t(int(self.appconfig.get("tx_phymode"))),
+                tx_rate=espargos.csi.wifi_phy_rate_t(int(self.appconfig.get("tx_rate"))),
+                rfswitch_state=espargos.csi.rfswitch_state_t(int(self.appconfig.get("rfswitch_state"))),
             )
             self.pool.set_radar_config(pool_radar_config)
         except Exception as exc:
@@ -317,7 +310,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
         return board_index * espargos.constants.ANTENNAS_PER_BOARD + row * espargos.constants.ANTENNAS_PER_ROW + col
 
     def _tx_flat_index_from_schedule(self, schedule: dict) -> int:
-        row, col = self._antid_to_row_col(self.pool.boards[schedule["board_index"]].revision, schedule["antid"])
+        row, col = self.pool.boards[schedule["board_index"]].revision.antid_to_row_col(schedule["antid"])
         return self._sensor_flat_index(schedule["board_index"], row, col)
 
     def _update_tx_rx_timestamp_table(self, schedule: dict, tx_report, rx_timestamps_s: np.ndarray):

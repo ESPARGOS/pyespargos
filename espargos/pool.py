@@ -227,18 +227,50 @@ class Pool(object):
 
     def set_gain_settings(self, settings: dict):
         """
-        Set gain settings on all boards in this pool and sanity-check that all boards end up with the same settings.
+        Set gain settings on all boards in this pool.
 
         This is forwarded to :meth:`pyespargos.board.Board.set_gain_settings` for each board.
-        For the expected JSON/dict format, refer to that method's documentation.
+        Values may be scalars, board-local ``(row, column)`` arrays applied to every
+        board, or pool-wide ``(board, row, column)`` arrays.
 
         :param settings: Gain settings dict to apply to all boards.
+        :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
+        """
+        per_board_settings = [dict() for _ in self.boards]
+        for key, value in settings.items():
+            array = np.asarray(value)
+            if array.shape == self.get_shape():
+                for board_index in range(len(self.boards)):
+                    per_board_settings[board_index][key] = array[board_index]
+            else:
+                for board_settings in per_board_settings:
+                    board_settings[key] = value
+
+        for board_obj, board_settings in zip(self.boards, per_board_settings):
+            board_obj.set_gain_settings(board_settings)
+
+    def get_wifi_channel_overrides(self) -> dict:
+        """
+        Return per-sensor WiFi channel overrides; sanity-check all boards report the same value.
+        """
+        settings = [b.get_wifi_channel_overrides() for b in self.boards]
+        self._assert_same_across_boards(settings, "WiFi channel overrides")
+        return settings[0]
+
+    def set_wifi_channel_overrides(self, settings: dict):
+        """
+        Set per-sensor WiFi channel overrides on all boards in this pool and sanity-check that all boards end up with the same settings.
+
+        This is forwarded to :meth:`pyespargos.board.Board.set_wifi_channel_overrides` for each board.
+        For the expected JSON/dict format, refer to that method's documentation.
+
+        :param settings: Per-sensor WiFi channel override settings dict to apply to all boards.
         :raises ValueError: If boards in the pool disagree on the resulting settings after applying.
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
         for b in self.boards:
-            b.set_gain_settings(settings)
-        _ = self.get_gain_settings()
+            b.set_wifi_channel_overrides(settings)
+        _ = self.get_wifi_channel_overrides()
 
     def get_radar_configs(self) -> list[dict]:
         """
@@ -344,8 +376,24 @@ class Pool(object):
             from all sensors on all boards. By default, callbacks receive over-the-air/radar CSI only. Enable
             :meth:`set_emit_calibration_csi` to also emit calibration CSI (from internal reference generators)
             through this same callback path.
+        :return: A callback handle that can be passed to :meth:`remove_csi_callback`
         """
-        self.callbacks.append(_CSICallback(cb, cb_predicate))
+        callback = _CSICallback(cb, cb_predicate)
+        self.callbacks.append(callback)
+        return callback
+
+    def remove_csi_callback(self, callback: _CSICallback) -> bool:
+        """
+        Remove a CSI callback previously returned by :meth:`add_csi_callback`.
+
+        :param callback: Callback handle returned by :meth:`add_csi_callback`
+        :return: True if the callback was registered and removed, False otherwise
+        """
+        try:
+            self.callbacks.remove(callback)
+            return True
+        except ValueError:
+            return False
 
     def set_emit_calibration_csi(self, enabled: bool):
         """

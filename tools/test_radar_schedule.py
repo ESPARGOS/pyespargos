@@ -17,17 +17,12 @@ def normalize_mac(mac: str) -> str:
     return str(mac).replace(":", "").lower()
 
 
-def antid_to_row_col(board_revision, antid: int) -> tuple[int, int]:
-    esp_num = board_revision.antid_to_esp_num[antid]
-    return board_revision.esp_num_to_row_col(esp_num)
-
-
 def build_schedule_lookup(pool: espargos.Pool, pool_radar_config: espargos.radar.RadarPoolConfig):
     calibration = pool.get_calibration()
     schedule_by_source_mac = {}
     for board_index, (board_obj, board_config) in enumerate(zip(pool.boards, pool_radar_config.board_configs)):
         for antid, mac in enumerate(board_config["mac_by_antid"]):
-            row, col = antid_to_row_col(board_obj.revision, antid)
+            row, col = board_obj.revision.antid_to_row_col(antid)
             reference_start_s = board_config["start_by_antid"][antid] / espargos.radar.RADAR_TIME_SCALE - calibration.sensor_clock_offsets[board_index, row, col]
             schedule_by_source_mac[normalize_mac(mac)] = {
                 "board_index": board_index,
@@ -68,20 +63,20 @@ def main():
         min_safe_start_s = max(0.0, -float(np.nanmin(calibration.sensor_clock_offsets))) + 1e-6
         effective_start_s = max(requested_start_s, min_safe_start_s)
 
-        t0_by_antid = effective_start_s + np.arange(espargos.constants.ANTENNAS_PER_BOARD, dtype=np.float64) * (args.slot_us / 1e6)
-        period_by_antid = np.full(espargos.constants.ANTENNAS_PER_BOARD, args.period_us / 1e6, dtype=np.float64)
+        sensor_shape = (espargos.constants.ROWS_PER_BOARD, espargos.constants.ANTENNAS_PER_ROW)
+        t0_by_sensor = effective_start_s + np.arange(espargos.constants.ANTENNAS_PER_BOARD, dtype=np.float64).reshape(sensor_shape) * (args.slot_us / 1e6)
+        period_by_sensor = np.full(sensor_shape, args.period_us / 1e6, dtype=np.float64)
         current_radar_config = pool.get_radar_config()
 
         pool_radar_config = espargos.radar.build_pool_config(
             calibration=calibration,
-            active_by_antid=[True] * espargos.constants.ANTENNAS_PER_BOARD,
-            t0_by_antid=t0_by_antid,
-            period_by_antid=period_by_antid,
-            tx_power=int(current_radar_config["tx_power"]),
-            tx_phymode=int(current_radar_config["tx_phymode"]),
-            tx_rate=int(current_radar_config["tx_rate"]),
-            rfswitch_state=int(current_radar_config["rfswitch_state"]),
-            mac_by_antid=current_radar_config["mac_by_antid"],
+            active_by_sensor=True,
+            t0_by_sensor=t0_by_sensor,
+            period_by_sensor=period_by_sensor,
+            tx_power=espargos.csi.wifi_tx_power_t(int(current_radar_config["tx_power"])),
+            tx_phymode=espargos.csi.wifi_phy_mode_t(int(current_radar_config["tx_phymode"])),
+            tx_rate=espargos.csi.wifi_phy_rate_t(int(current_radar_config["tx_rate"])),
+            rfswitch_state=espargos.csi.rfswitch_state_t(int(current_radar_config["rfswitch_state"])),
         )
         schedule_by_source_mac = build_schedule_lookup(pool, pool_radar_config)
         pool.set_radar_config(pool_radar_config)

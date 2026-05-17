@@ -10,6 +10,7 @@ import json
 import binascii
 
 import time
+import numpy as np
 
 from . import revisions
 from . import csi
@@ -22,7 +23,19 @@ CSISTREAM_CONTROLLER_SRC_PORT = 53330
 class EspargosHTTPStatusError(Exception):
     "Raised when the ESPARGOS HTTP API returns an invalid status code"
 
-    pass
+    def __init__(self, status=None, path=None, body=None):
+        self.status = status
+        self.path = path
+        self.body = body
+
+        message = "ESPARGOS HTTP API returned an invalid status code"
+        if status is not None:
+            message += f" {status}"
+        if path is not None:
+            message += f" for /{path}"
+        if body:
+            message += f": {body}"
+        super().__init__(message)
 
 
 class EspargosUnexpectedResponseError(Exception):
@@ -78,6 +91,22 @@ class Board(object):
         "rx_gain_enable": False,
         "rx_gain_value": 0,
     }
+
+    DEFAULT_WIFI_CHANNEL_OVERRIDES = {
+        "override_active": False,
+        "channel-primary": [1] * 8,
+        "channel-secondary": [0] * 8,
+    }
+
+    def _gain_value_for_controller(self, key: str, values):
+        if isinstance(values, (str, bytes)):
+            return values
+        if np.asarray(values).ndim == 0:
+            return values
+        return self.revision.sensor_values_to_antid_list(values, name=key)
+
+    def _gain_settings_for_controller(self, settings: dict) -> dict:
+        return {key: self._gain_value_for_controller(key, value) for key, value in settings.items()}
 
     def __init__(self, host: str):
         """
@@ -588,12 +617,16 @@ class Board(object):
         """
         Sets the gain settings on the ESPARGOS controller.
 
-        The gain settings are provided as a JSON object (here as a Python dict) with fixed field names:
+        The gain settings are provided as a JSON object (here as a Python dict) with fixed field names.
+        Values may be scalars, or arrays/lists with shape ``(2, 4)`` to configure
+        each sensor individually in board ``(row, column)`` order.
 
           - fft_scale_enable (bool): Enable manual FFT scaling (false = automatic/firmware default).
           - fft_scale_value (int): FFT scale value (meaning/range depends on firmware; commonly 0 when disabled).
           - rx_gain_enable (bool): Enable manual RX gain (false = automatic/firmware default).
           - rx_gain_value (int): RX gain table index, 0..76 (commonly 0 when disabled).
+          - expert_mode_enable (bool): Enable raw expert gain-table entry override.
+          - expert_mode_raw (str): Raw gain-table entry as hexadecimal string.
 
         Example payload::
 
@@ -607,7 +640,7 @@ class Board(object):
         :param settings: Gain settings dict (will be JSON-encoded and POSTed to /set_gain_settings)
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        self._post_json_ok("set_gain_settings", settings)
+        self._post_json_ok("set_gain_settings", self._gain_settings_for_controller(settings))
 
     def get_gain_settings(self) -> dict:
         """
@@ -617,6 +650,33 @@ class Board(object):
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
         return self._get_json("get_gain_settings")
+
+    def set_wifi_channel_overrides(self, settings: dict):
+        """
+        Sets per-sensor WiFi channel overrides on the ESPARGOS controller.
+
+        The payload mirrors the controller's ``/set_wifi_channel_overrides`` API:
+
+          - ``override_active`` (bool): Enable per-sensor channel overrides.
+          - ``channel-primary`` (list[int], length 8): Primary WiFi channel for each sensor.
+          - ``channel-secondary`` (list[int], length 8): Secondary channel selector for each sensor
+            (0 = none, 1 = above, 2 = below).
+
+        Passing ``{"override_active": False}`` disables the overrides.
+
+        :param settings: Per-sensor WiFi channel override settings dict
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        self._post_json_ok("set_wifi_channel_overrides", settings)
+
+    def get_wifi_channel_overrides(self) -> dict:
+        """
+        Fetches the current per-sensor WiFi channel overrides from the ESPARGOS controller.
+
+        :return: Per-sensor WiFi channel override settings dict
+        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
+        """
+        return self._get_json("get_wifi_channel_overrides")
 
     def set_radar_config(self, config: dict):
         """
@@ -811,7 +871,7 @@ class Board(object):
         if self._uart_client is not None:
             response = self._uart_client.request(method, path, data, timeout=5)
             if response.status != 200:
-                raise EspargosHTTPStatusError
+                raise EspargosHTTPStatusError(response.status, path, response.body_text())
             return response.body_text()
 
         conn = http.client.HTTPConnection(self.host, timeout=5)
@@ -824,7 +884,8 @@ class Board(object):
             raise TimeoutError
 
         if res.status != 200:
-            raise EspargosHTTPStatusError
+            body = res.read().decode("utf-8", errors="replace")
+            raise EspargosHTTPStatusError(res.status, path, body)
 
         return res.read().decode("utf-8")
 

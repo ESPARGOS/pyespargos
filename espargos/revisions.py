@@ -31,6 +31,24 @@ class BoardRevision:
         """Convert ESP number to (row, column) on the board"""
         raise NotImplementedError
 
+    def antid_to_row_col(self, antid: int) -> tuple:
+        """Convert firmware antenna id to (row, column) on this board revision."""
+        return self.esp_num_to_row_col(self.antid_to_esp_num[antid])
+
+    def sensor_values_to_antid_list(self, values, name: str = "values") -> list:
+        """Convert a board-local (row, column) array to firmware antenna-id order."""
+        array = np.asarray(values)
+        expected_shape = (constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
+        if array.shape != expected_shape:
+            raise ValueError(f"{name} must use (row, column) shape {expected_shape}, got {array.shape}")
+
+        values_by_antid = []
+        for antid in range(constants.ANTENNAS_PER_BOARD):
+            row, col = self.antid_to_row_col(antid)
+            value = array[row, col]
+            values_by_antid.append(value.item() if hasattr(value, "item") else value)
+        return values_by_antid
+
     # Private, (potentially) revision-specific properties
     @property
     def _calib_trace_dielectric_constant(self) -> float:

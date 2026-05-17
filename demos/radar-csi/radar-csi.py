@@ -96,25 +96,23 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
             return
 
         calibration = self.pool.get_calibration()
-        active_by_antid = [True] * espargos.constants.ANTENNAS_PER_BOARD
         requested_start_s = self._get_schedule_ms("start") / 1e3
         min_safe_start_s = max(0.0, -float(np.nanmin(calibration.sensor_clock_offsets))) + 1e-6
         effective_start_s = max(requested_start_s, min_safe_start_s)
         slot_s = self._get_schedule_ms("slot") / 1e3
-        t0_by_antid = effective_start_s + np.arange(espargos.constants.ANTENNAS_PER_BOARD, dtype=np.float64) * slot_s
-        period_by_antid = np.full(espargos.constants.ANTENNAS_PER_BOARD, self._get_schedule_ms("period") / 1e3, dtype=np.float64)
-        radar_configs = self.pool.get_radar_configs()
+        sensor_shape = (espargos.constants.ROWS_PER_BOARD, espargos.constants.ANTENNAS_PER_ROW)
+        t0_by_sensor = effective_start_s + np.arange(espargos.constants.ANTENNAS_PER_BOARD, dtype=np.float64).reshape(sensor_shape) * slot_s
+        period_by_sensor = np.full(sensor_shape, self._get_schedule_ms("period") / 1e3, dtype=np.float64)
 
         pool_radar_config = espargos.radar.build_pool_config(
             calibration=calibration,
-            active_by_antid=active_by_antid,
-            t0_by_antid=t0_by_antid,
-            period_by_antid=period_by_antid,
-            tx_power=int(self.appconfig.get("tx_power")),
-            tx_phymode=int(self.appconfig.get("tx_phymode")),
-            tx_rate=int(self.appconfig.get("tx_rate")),
-            rfswitch_state=int(self.appconfig.get("rfswitch_state")),
-            mac_by_antid=[config.get("mac_by_antid") for config in radar_configs],
+            active_by_sensor=True,
+            t0_by_sensor=t0_by_sensor,
+            period_by_sensor=period_by_sensor,
+            tx_power=espargos.csi.wifi_tx_power_t(int(self.appconfig.get("tx_power"))),
+            tx_phymode=espargos.csi.wifi_phy_mode_t(int(self.appconfig.get("tx_phymode"))),
+            tx_rate=espargos.csi.wifi_phy_rate_t(int(self.appconfig.get("tx_rate"))),
+            rfswitch_state=espargos.csi.rfswitch_state_t(int(self.appconfig.get("rfswitch_state"))),
         )
         self.pool.set_radar_config(pool_radar_config)
 
@@ -202,7 +200,7 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
             np.asarray([clustered_csi.get_radar_tx_info().get_hardware_tx_timestamp_ns() / 1e9], dtype=np.float64),
             np.asarray([tx_index], dtype=np.int32),
             subcarrier_frequencies,
-            calibration,
+            calibration.sensor_clock_offsets,
             tx_timestamp_offset_s=float(self.appconfig.get("tx_timestamp_offset_ns")) * 1e-9,
         )[0].reshape(self.sensor_count, -1)
 
