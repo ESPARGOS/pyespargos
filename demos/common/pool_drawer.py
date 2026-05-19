@@ -5,6 +5,7 @@ import PyQt6.QtCore
 import threading
 import copy
 import re
+import numpy as np
 
 import espargos.pool
 import espargos.csi
@@ -12,8 +13,17 @@ import espargos.csi
 from .config_manager import ConfigManager
 
 
-def _first_gain_value(value):
-    return value[0] if isinstance(value, list) else value
+def _uniform_gain_value(value):
+    array = np.asarray(value)
+    if array.size == 0:
+        raise ValueError("Gain settings are empty")
+
+    flat = array.reshape(-1)
+    first = flat[0]
+    if not np.all(flat == first):
+        raise ValueError("Gain settings are not uniform across sensors. Per-sensor gain settings are not yet supported and will not be displayed correctly.")
+
+    return first.item() if hasattr(first, "item") else first
 
 
 class PoolDrawer(PyQt6.QtCore.QObject):
@@ -64,7 +74,10 @@ class PoolDrawer(PyQt6.QtCore.QObject):
                 self.cfgman.forceConfigAppApplied.connect(self.initComplete)
                 self.cfgman.force(force_config)
             else:
-                self.cfgman.set(self._read_config_from_pool())
+                try:
+                    self.cfgman.set(self._read_config_from_pool())
+                except Exception as e:
+                    self.cfgman.emitShowError("Failed to read initial configuration", str(e))
                 self.initComplete.emit()
 
         PyQt6.QtCore.QTimer.singleShot(0, apply_initial_config)
@@ -105,16 +118,16 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         gain = self.pool.get_gain_settings()
         if isinstance(gain, dict):
             gain_cfg = {}
-            rx_mode = int(_first_gain_value(gain.get("rx_gain_mode", 0)))
+            rx_mode = int(_uniform_gain_value(gain.get("rx_gain_mode", 0)))
             rx_auto = rx_mode == espargos.csi.rx_gain_mode_t.RX_GAIN_MODE_AUTO
-            fft_auto = not bool(_first_gain_value(gain["fft_scale_enable"]))
+            fft_auto = not bool(_uniform_gain_value(gain["fft_scale_enable"]))
             if rx_auto != fft_auto:
                 raise ValueError("Inconsistent gain settings: rx_gain_mode and fft_scale_enable should be the same")
             gain_cfg["automatic"] = rx_auto
             if "rx_gain_value" in gain:
-                gain_cfg["rx_gain_value"] = int(_first_gain_value(gain["rx_gain_value"]))
+                gain_cfg["rx_gain_value"] = int(_uniform_gain_value(gain["rx_gain_value"]))
             if "fft_scale_value" in gain:
-                gain_cfg["fft_gain_value"] = int(_first_gain_value(gain["fft_scale_value"]))
+                gain_cfg["fft_gain_value"] = int(_uniform_gain_value(gain["fft_scale_value"]))
             cfg_out["gain"] = gain_cfg
 
         # RF switch config -> UI fields
@@ -239,7 +252,10 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         self._write_config_to_pool(reset_cfg)
 
     def _action_reload_config(self):
-        self.cfgman.set(self._read_config_from_pool())
+        try:
+            self.cfgman.set(self._read_config_from_pool())
+        except Exception as e:
+            self.cfgman.emitShowError("Failed to read back configuration", str(e))
 
     def _action_calibrate(self):
         if self.calibration_running:

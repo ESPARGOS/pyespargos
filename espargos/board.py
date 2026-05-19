@@ -14,6 +14,7 @@ import numpy as np
 
 from . import revisions
 from . import csi
+from . import constants
 from . import uart
 
 # Port used by the controller as source port for UDP CSI packets
@@ -94,22 +95,58 @@ class Board(object):
 
     DEFAULT_WIFI_CHANNEL_OVERRIDES = {
         "override_active": False,
-        "channel-primary": [1] * 8,
-        "channel-secondary": [0] * 8,
+        "channel-primary": 1,
+        "channel-secondary": 0,
     }
 
-    def _gain_value_for_controller(self, key: str, values):
+    def _scalar_or_geometry_to_by_antid(self, key: str, values, *, enum_to_int: bool = False):
+        """
+        Convert a Python-facing scalar or board-geometry ``(row, column)`` value
+        into the controller-facing scalar or antenna-id ordered list.
+
+        Scalars are left scalar so the controller can apply them to all sensors.
+        Non-scalar values must use board geometry ``(2, 4)``; flat antenna-id
+        lists are intentionally rejected at the pyespargos API boundary.
+        """
         if isinstance(values, (str, bytes)):
             return values
-        array = np.asarray(values, dtype=int) if key == "rx_gain_mode" else np.asarray(values)
-        if array.ndim == 0:
-            return int(values) if key == "rx_gain_mode" else values
-        if array.shape == (8,):
-            return array.tolist()
-        return self.revision.sensor_values_to_antid_list(array if key == "rx_gain_mode" else values, name=key)
 
-    def _gain_settings_for_controller(self, settings: dict) -> dict:
-        return {key: self._gain_value_for_controller(key, value) for key, value in settings.items()}
+        array = np.asarray(values)
+        if array.ndim == 0:
+            value = array.item() if hasattr(array, "item") else values
+            return int(value) if enum_to_int else value
+
+        expected_shape = (constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
+        if array.shape != expected_shape:
+            raise ValueError(f"{key} must be a scalar or use (row, column) shape {expected_shape}, got {array.shape}")
+
+        if enum_to_int:
+            array = array.astype(int)
+        return self.revision.sensor_values_to_antid_list(array, name=key)
+
+    def _scalar_or_by_antid_to_geometry(self, key: str, values):
+        """
+        Convert controller readback into Python-facing board geometry.
+
+        Controller readback may collapse uniform values to scalars. Non-scalar
+        values use firmware antenna-id order and are converted to ``(row, column)``
+        arrays. The returned array always has shape ``(rows, columns)``.
+        """
+        board_shape = (constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
+        if isinstance(values, (str, bytes)):
+            return np.full(board_shape, values, dtype=object)
+
+        array = np.asarray(values)
+        if array.ndim == 0:
+            return np.full(board_shape, array.item())
+        if array.shape != (constants.ANTENNAS_PER_BOARD,):
+            raise ValueError(f"{key} from controller must have length {constants.ANTENNAS_PER_BOARD}, got shape {array.shape}")
+
+        board_values = np.empty(board_shape, dtype=array.dtype)
+        for antid, value in enumerate(array):
+            row, col = self.revision.antid_to_row_col(antid)
+            board_values[row, col] = value
+        return board_values
 
     def __init__(self, host: str):
         """
@@ -622,7 +659,8 @@ class Board(object):
 
         The gain settings are provided as a JSON object (here as a Python dict) with fixed field names.
         Values may be scalars, or arrays/lists with shape ``(2, 4)`` to configure
-        each sensor individually in board ``(row, column)`` order.
+        each sensor individually in board ``(row, column)`` order. Flat antenna-id
+        lists are intentionally not accepted by this API.
 
           - fft_scale_enable (bool): Enable manual FFT scaling (false = automatic/firmware default).
           - fft_scale_value (int): FFT scale value (meaning/range depends on firmware; commonly 0 when disabled).
@@ -642,7 +680,8 @@ class Board(object):
         :param settings: Gain settings dict (will be JSON-encoded and POSTed to /set_gain_settings)
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        self._post_json_ok("set_gain_settings", self._gain_settings_for_controller(settings))
+        payload = {key: self._scalar_or_geometry_to_by_antid(key, value, enum_to_int=(key == "rx_gain_mode")) for key, value in settings.items()}
+        self._post_json_ok("set_gain_settings", payload)
 
     def get_gain_settings(self) -> dict:
         """
@@ -651,7 +690,8 @@ class Board(object):
         :return: Gain settings dict
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        return self._get_json("get_gain_settings")
+        settings = self._get_json("get_gain_settings")
+        return {key: self._scalar_or_by_antid_to_geometry(key, value) for key, value in settings.items()}
 
     def set_wifi_channel_overrides(self, settings: dict):
         """
@@ -660,8 +700,8 @@ class Board(object):
         The payload mirrors the controller's ``/set_wifi_channel_overrides`` API:
 
           - ``override_active`` (bool): Enable per-sensor channel overrides.
-          - ``channel-primary`` (list[int], length 8): Primary WiFi channel for each sensor.
-          - ``channel-secondary`` (list[int], length 8): Secondary channel selector for each sensor
+          - ``channel-primary`` (int or ``(2, 4)`` array): Primary WiFi channel.
+          - ``channel-secondary`` (int or ``(2, 4)`` array): Secondary channel selector
             (0 = none, 1 = above, 2 = below).
 
         Passing ``{"override_active": False}`` disables the overrides.
@@ -669,7 +709,11 @@ class Board(object):
         :param settings: Per-sensor WiFi channel override settings dict
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        self._post_json_ok("set_wifi_channel_overrides", settings)
+        payload = {"override_active": bool(settings["override_active"])}
+        if payload["override_active"]:
+            payload["channel-primary"] = self._scalar_or_geometry_to_by_antid("channel-primary", settings["channel-primary"])
+            payload["channel-secondary"] = self._scalar_or_geometry_to_by_antid("channel-secondary", settings["channel-secondary"])
+        self._post_json_ok("set_wifi_channel_overrides", payload)
 
     def get_wifi_channel_overrides(self) -> dict:
         """
@@ -678,7 +722,12 @@ class Board(object):
         :return: Per-sensor WiFi channel override settings dict
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        return self._get_json("get_wifi_channel_overrides")
+        settings = self._get_json("get_wifi_channel_overrides")
+        return {
+            "override_active": bool(settings["override_active"]),
+            "channel-primary": self._scalar_or_by_antid_to_geometry("channel-primary", settings["channel-primary"]),
+            "channel-secondary": self._scalar_or_by_antid_to_geometry("channel-secondary", settings["channel-secondary"]),
+        }
 
     def set_radar_config(self, config: dict):
         """

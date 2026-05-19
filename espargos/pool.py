@@ -145,6 +145,58 @@ class Pool(object):
             details = "; ".join(mismatch_lines) if mismatch_lines else "no differing top-level keys found"
             raise ValueError(f"{what}: mismatch between boards (board 0 != board {board_num}): {details}")
 
+    def _pool_settings_to_board_settings(self, settings: dict, *, pool_wide_keys: set[str] | None = None) -> list[dict]:
+        """
+        Split pool-facing settings into one board-facing settings dict per board.
+
+        Scalars are copied to every board. Pool-wide ``(board, row, column)``
+        arrays are split along the board axis, optionally only for the named keys
+        in ``pool_wide_keys``.
+        """
+        per_board_settings = [dict() for _ in self.boards]
+        for key, value in settings.items():
+            array = np.asarray(value)
+            if (pool_wide_keys is None or key in pool_wide_keys) and array.shape == self.get_shape():
+                for board_index in range(len(self.boards)):
+                    per_board_settings[board_index][key] = array[board_index]
+            elif array.ndim > 0:
+                raise ValueError(f"{key} must be a scalar or use pool shape {self.get_shape()}, got {array.shape}")
+            else:
+                for board_settings in per_board_settings:
+                    board_settings[key] = value
+        return per_board_settings
+
+    def _board_settings_to_pool_settings(self, settings_by_board: list[dict]) -> dict:
+        """
+        Combine board-facing settings into pool-facing settings.
+
+        Board readbacks contain board-geometry ``(row, column)`` arrays. Every
+        returned per-sensor field has shape ``(boards, rows, columns)``.
+        """
+        if len(settings_by_board) != len(self.boards):
+            raise ValueError(f"Expected settings for {len(self.boards)} boards, got {len(settings_by_board)}")
+
+        def validate_geometry(key: str, value):
+            board_shape = (constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
+            array = np.asarray(value)
+            if array.shape == board_shape:
+                return array
+            raise ValueError(f"{key} readback must have board shape {board_shape}, got {array.shape}")
+
+        keys = set()
+        for settings in settings_by_board:
+            keys.update(settings)
+
+        pool_settings = {}
+        for key in sorted(keys):
+            values = []
+            for settings in settings_by_board:
+                if key not in settings:
+                    raise ValueError(f"{key} missing from board settings readback")
+                values.append(validate_geometry(key, settings[key]))
+            pool_settings[key] = np.stack(values, axis=0)
+        return pool_settings
+
     def set_rfswitch(self, state: csi.rfswitch_state_t):
         """
         Set RF switch state for all boards in the pool.
@@ -219,58 +271,52 @@ class Pool(object):
 
     def get_gain_settings(self) -> dict:
         """
-        Return gain settings; sanity-check all boards report the same value.
+        Return gain settings.
+
+        Per-sensor fields are returned as arrays with shape
+        ``(boards, rows, columns)``. Gain settings do not need to be consistent
+        across boards.
         """
         settings = [b.get_gain_settings() for b in self.boards]
-        self._assert_same_across_boards(settings, "Gain settings")
-        return settings[0]
+        return self._board_settings_to_pool_settings(settings)
 
     def set_gain_settings(self, settings: dict):
         """
         Set gain settings on all boards in this pool.
 
         This is forwarded to :meth:`pyespargos.board.Board.set_gain_settings` for each board.
-        Values may be scalars, board-local ``(row, column)`` arrays applied to every
-        board, or pool-wide ``(board, row, column)`` arrays.
+        Values may be scalars or pool-wide ``(board, row, column)`` arrays.
 
         :param settings: Gain settings dict to apply to all boards.
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
-        per_board_settings = [dict() for _ in self.boards]
-        for key, value in settings.items():
-            array = np.asarray(value)
-            if array.shape == self.get_shape():
-                for board_index in range(len(self.boards)):
-                    per_board_settings[board_index][key] = array[board_index]
-            else:
-                for board_settings in per_board_settings:
-                    board_settings[key] = value
-
-        for board_obj, board_settings in zip(self.boards, per_board_settings):
+        for board_obj, board_settings in zip(self.boards, self._pool_settings_to_board_settings(settings)):
             board_obj.set_gain_settings(board_settings)
 
     def get_wifi_channel_overrides(self) -> dict:
         """
-        Return per-sensor WiFi channel overrides; sanity-check all boards report the same value.
+        Return per-sensor WiFi channel overrides.
+
+        Per-sensor fields are returned as arrays with shape
+        ``(boards, rows, columns)``. Channel overrides do not need to be
+        consistent across boards.
         """
         settings = [b.get_wifi_channel_overrides() for b in self.boards]
-        self._assert_same_across_boards(settings, "WiFi channel overrides")
-        return settings[0]
+        return self._board_settings_to_pool_settings(settings)
 
     def set_wifi_channel_overrides(self, settings: dict):
         """
-        Set per-sensor WiFi channel overrides on all boards in this pool and sanity-check that all boards end up with the same settings.
+        Set per-sensor WiFi channel overrides on all boards in this pool.
 
         This is forwarded to :meth:`pyespargos.board.Board.set_wifi_channel_overrides` for each board.
-        For the expected JSON/dict format, refer to that method's documentation.
+        Values may be scalars or pool-wide ``(board, row, column)`` arrays.
 
         :param settings: Per-sensor WiFi channel override settings dict to apply to all boards.
-        :raises ValueError: If boards in the pool disagree on the resulting settings after applying.
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
-        for b in self.boards:
-            b.set_wifi_channel_overrides(settings)
-        _ = self.get_wifi_channel_overrides()
+        per_board_settings = self._pool_settings_to_board_settings(settings, pool_wide_keys={"channel-primary", "channel-secondary"})
+        for board_obj, board_settings in zip(self.boards, per_board_settings):
+            board_obj.set_wifi_channel_overrides(board_settings)
 
     def get_radar_configs(self) -> list[dict]:
         """
