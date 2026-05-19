@@ -105,11 +105,11 @@ class PoolDrawer(PyQt6.QtCore.QObject):
         gain = self.pool.get_gain_settings()
         if isinstance(gain, dict):
             gain_cfg = {}
-            # Make sure FFT gain and RX gain are consistent
-            rx_auto = not bool(_first_gain_value(gain["rx_gain_enable"]))
+            rx_mode = int(_first_gain_value(gain.get("rx_gain_mode", 0)))
+            rx_auto = rx_mode == espargos.csi.rx_gain_mode_t.RX_GAIN_MODE_AUTO
             fft_auto = not bool(_first_gain_value(gain["fft_scale_enable"]))
             if rx_auto != fft_auto:
-                raise ValueError("Inconsistent gain settings: rx_gain_enable and fft_scale_enable should be the same")
+                raise ValueError("Inconsistent gain settings: rx_gain_mode and fft_scale_enable should be the same")
             gain_cfg["automatic"] = rx_auto
             if "rx_gain_value" in gain:
                 gain_cfg["rx_gain_value"] = int(_first_gain_value(gain["rx_gain_value"]))
@@ -196,7 +196,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
 
                     if "automatic" in gain_delta:
                         manual = not bool(gain_delta["automatic"])
-                        gain_settings["rx_gain_enable"] = manual
+                        gain_settings["rx_gain_mode"] = espargos.csi.rx_gain_mode_t.RX_GAIN_MODE_MANUAL if manual else espargos.csi.rx_gain_mode_t.RX_GAIN_MODE_AUTO
                         gain_settings["fft_scale_enable"] = manual
                     if "rx_gain_value" in gain_delta:
                         gain_settings["rx_gain_value"] = int(gain_delta["rx_gain_value"])

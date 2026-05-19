@@ -190,6 +190,12 @@ class rfswitch_state_t(IntEnum):
     SENSOR_RFSWITCH_UNKNOWN = 255
 
 
+class rx_gain_mode_t(IntEnum):
+    RX_GAIN_MODE_AUTO = 0
+    RX_GAIN_MODE_MANUAL = 1
+    RX_GAIN_MODE_EXPERT = 2
+
+
 #####################################################
 # Common C Structures used by multiple PHY versions #
 #####################################################

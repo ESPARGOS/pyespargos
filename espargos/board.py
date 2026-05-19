@@ -88,7 +88,7 @@ class Board(object):
     DEFAULT_GAIN_SETTINGS = {
         "fft_scale_enable": False,
         "fft_scale_value": 0,
-        "rx_gain_enable": False,
+        "rx_gain_mode": csi.rx_gain_mode_t.RX_GAIN_MODE_AUTO,
         "rx_gain_value": 0,
     }
 
@@ -101,9 +101,12 @@ class Board(object):
     def _gain_value_for_controller(self, key: str, values):
         if isinstance(values, (str, bytes)):
             return values
-        if np.asarray(values).ndim == 0:
-            return values
-        return self.revision.sensor_values_to_antid_list(values, name=key)
+        array = np.asarray(values, dtype=int) if key == "rx_gain_mode" else np.asarray(values)
+        if array.ndim == 0:
+            return int(values) if key == "rx_gain_mode" else values
+        if array.shape == (8,):
+            return array.tolist()
+        return self.revision.sensor_values_to_antid_list(array if key == "rx_gain_mode" else values, name=key)
 
     def _gain_settings_for_controller(self, settings: dict) -> dict:
         return {key: self._gain_value_for_controller(key, value) for key, value in settings.items()}
@@ -623,9 +626,8 @@ class Board(object):
 
           - fft_scale_enable (bool): Enable manual FFT scaling (false = automatic/firmware default).
           - fft_scale_value (int): FFT scale value (meaning/range depends on firmware; commonly 0 when disabled).
-          - rx_gain_enable (bool): Enable manual RX gain (false = automatic/firmware default).
+          - rx_gain_mode (int or :class:`espargos.csi.rx_gain_mode_t`): 0 auto, 1 manual, 2 expert.
           - rx_gain_value (int): RX gain table index, 0..76 (commonly 0 when disabled).
-          - expert_mode_enable (bool): Enable raw expert gain-table entry override.
           - expert_mode_raw (str): Raw gain-table entry as hexadecimal string.
 
         Example payload::
@@ -633,7 +635,7 @@ class Board(object):
             {
               "fft_scale_enable": false,
               "fft_scale_value": 0,
-              "rx_gain_enable": false,
+              "rx_gain_mode": espargos.csi.rx_gain_mode_t.RX_GAIN_MODE_AUTO,
               "rx_gain_value": 0
             }
 
@@ -684,7 +686,7 @@ class Board(object):
 
         The payload mirrors the controller's ``/set_tx_control`` API. Supported fields are:
 
-          - ``rfswitch_state`` (int)
+          - ``rfswitch_state_by_antid`` (int or list[int], length 8)
           - ``active_by_antid`` (list[bool], length 8)
           - ``start_by_antid`` (list[int], length 8)
           - ``period_by_antid`` (list[int], length 8)
@@ -705,7 +707,7 @@ class Board(object):
         Fetches the current low-level radar TX configuration from the ESPARGOS controller.
 
         The returned dict mirrors the controller's ``/get_tx_control`` response and contains fields such as
-        ``rfswitch_state``, ``active_by_antid``, ``start_by_antid``, ``period_by_antid``, ``mac_by_antid``,
+        ``rfswitch_state_by_antid``, ``active_by_antid``, ``start_by_antid``, ``period_by_antid``, ``mac_by_antid``,
         ``tx_power``, ``tx_phymode``, and ``tx_rate``.
 
         :return: Radar TX configuration dict

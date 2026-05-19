@@ -174,9 +174,7 @@ def _broadcast_to_pool_shape(values, name: str, boards, dtype=None):
     if array.shape == (len(boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW):
         return array
 
-    raise ValueError(
-        f"{name} must be a scalar, a (row, column) array, or a (board, row, column) array"
-    )
+    raise ValueError(f"{name} must be a scalar, a (row, column) array, or a (board, row, column) array")
 
 
 def _default_mac_by_controller_antid(board_index: int) -> list[str]:
@@ -240,7 +238,7 @@ def build_pool_config(
                 "start_by_antid": start_by_antid,
                 "period_by_antid": board.revision.sensor_values_to_antid_list(np.rint(period_by_sensor[board_index] * RADAR_TIME_SCALE).astype(int), name="period_by_sensor"),
                 "mac_by_antid": mac_by_board[board_index],
-                "rfswitch_state": int(rfswitch_state),
+                "rfswitch_state_by_antid": [int(rfswitch_state)] * constants.ANTENNAS_PER_BOARD,
                 "tx_power": int(tx_power),
                 "tx_phymode": int(tx_phymode),
                 "tx_rate": int(tx_rate),

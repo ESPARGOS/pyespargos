@@ -67,6 +67,7 @@ def main():
         t0_by_sensor = effective_start_s + np.arange(espargos.constants.ANTENNAS_PER_BOARD, dtype=np.float64).reshape(sensor_shape) * (args.slot_us / 1e6)
         period_by_sensor = np.full(sensor_shape, args.period_us / 1e6, dtype=np.float64)
         current_radar_config = pool.get_radar_config()
+        rfswitch_state_by_antid = current_radar_config.get("rfswitch_state_by_antid", [0])
 
         pool_radar_config = espargos.radar.build_pool_config(
             calibration=calibration,
@@ -76,7 +77,7 @@ def main():
             tx_power=espargos.csi.wifi_tx_power_t(int(current_radar_config["tx_power"])),
             tx_phymode=espargos.csi.wifi_phy_mode_t(int(current_radar_config["tx_phymode"])),
             tx_rate=espargos.csi.wifi_phy_rate_t(int(current_radar_config["tx_rate"])),
-            rfswitch_state=espargos.csi.rfswitch_state_t(int(current_radar_config["rfswitch_state"])),
+            rfswitch_state=espargos.csi.rfswitch_state_t(int(rfswitch_state_by_antid[0])),
         )
         schedule_by_source_mac = build_schedule_lookup(pool, pool_radar_config)
         pool.set_radar_config(pool_radar_config)
