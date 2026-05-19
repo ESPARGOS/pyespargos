@@ -66,6 +66,8 @@ SUPPORTED_API_MAJOR = 3
 
 class Board(object):
     _csistream_timeout = 5
+    _http_max_fetch_attempts = 3
+    _http_fetch_retry_delay = 0.2
 
     # Defaults for controller configuration
     DEFAULT_CSI_ACQUIRE_CONFIG = {
@@ -925,20 +927,32 @@ class Board(object):
                 raise EspargosHTTPStatusError(response.status, path, response.body_text())
             return response.body_text()
 
-        conn = http.client.HTTPConnection(self.host, timeout=5)
-        conn.request(method, "/" + path, data)
+        attempts = self._http_max_fetch_attempts if data is None else 1
+        last_error = None
+        for attempt in range(1, attempts + 1):
+            conn = http.client.HTTPConnection(self.host, timeout=5)
+            try:
+                conn.request(method, "/" + path, data)
+                res = conn.getresponse()
 
-        try:
-            res = conn.getresponse()
-        except TimeoutError:
-            self.logger.error(f"Timeout in HTTP request for {self.host}/{path}")
-            raise TimeoutError
+                if res.status != 200:
+                    body = res.read().decode("utf-8", errors="replace")
+                    raise EspargosHTTPStatusError(res.status, path, body)
 
-        if res.status != 200:
-            body = res.read().decode("utf-8", errors="replace")
-            raise EspargosHTTPStatusError(res.status, path, body)
+                return res.read().decode("utf-8")
+            except EspargosHTTPStatusError:
+                raise
+            except (TimeoutError, OSError, http.client.HTTPException) as e:
+                last_error = e
+                if attempt == attempts:
+                    self.logger.error(f"HTTP request failed for {self.host}/{path}: {e}")
+                    raise TimeoutError from e
+                self.logger.warning(f"HTTP request failed for {self.host}/{path}, retrying ({attempt}/{attempts}): {e}")
+                time.sleep(self._http_fetch_retry_delay)
+            finally:
+                conn.close()
 
-        return res.read().decode("utf-8")
+        raise TimeoutError from last_error
 
     def _post_json_ok(self, path: str, payload: dict):
         """
