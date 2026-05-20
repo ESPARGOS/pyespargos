@@ -329,7 +329,7 @@ Common.ESPARGOSApplication {
 				property string configKey: "beamformer.max_delay"
 				property string configProp: "value"
 				from: 0.01
-				to: 0.8
+				to: 2.8
 				stepSize: 0.01
 				implicitWidth: 210
 				Component.onCompleted: appDrawer.configManager.register(this)
