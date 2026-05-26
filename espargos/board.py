@@ -56,6 +56,68 @@ class EspargosAPIVersionError(Exception):
     pass
 
 
+class FragmentReassembler:
+    def __init__(self, timeout_s: float = 5.0, logger=None):
+        self.timeout_s = timeout_s
+        self.logger = logger
+        self._entries = {}
+
+    def clear(self):
+        self._entries.clear()
+
+    def _drop_stale(self, now: float):
+        stale_keys = [key for key, entry in self._entries.items() if now - entry["timestamp"] > self.timeout_s]
+        for key in stale_keys:
+            self._entries.pop(key, None)
+
+    def push(self, fragments, now: float | None = None):
+        if now is None:
+            now = time.monotonic()
+
+        self._drop_stale(now)
+        completed_packets = []
+        for header, payload in fragments:
+            uid = int(header.uid)
+            total_fragments = int(header.total_fragments)
+            fragment_index = int(header.fragment_index)
+
+            if total_fragments <= 0 or fragment_index >= total_fragments:
+                if self.logger is not None:
+                    self.logger.debug(f"Ignoring invalid jumbo fragment index {fragment_index}/{total_fragments} for uid {uid}")
+                self._entries.pop(uid, None)
+                continue
+
+            packet_antid = csi.csistream_uid_to_antid(uid)
+            entry = self._entries.get(uid)
+            if entry is None or entry["total_fragments"] != total_fragments:
+                entry = {
+                    "timestamp": now,
+                    "antid": packet_antid,
+                    "total_fragments": total_fragments,
+                    "parts": {},
+                }
+                self._entries[uid] = entry
+            elif entry["antid"] != packet_antid:
+                if self.logger is not None:
+                    self.logger.warning(f"Received jumbo fragments with inconsistent UID-derived antid for uid {uid}")
+                self._entries.pop(uid, None)
+                continue
+
+            entry["timestamp"] = now
+            entry["parts"][fragment_index] = bytes(payload)
+
+            if len(entry["parts"]) != entry["total_fragments"]:
+                continue
+
+            if any(index not in entry["parts"] for index in range(entry["total_fragments"])):
+                continue
+
+            completed_packets.append((entry["antid"], b"".join(entry["parts"][index] for index in range(entry["total_fragments"]))))
+            self._entries.pop(uid, None)
+
+        return completed_packets
+
+
 # Magic bytes sent by the controller as the first WebSocket frame to confirm a valid CSI stream connection
 CSISTREAM_MAGIC = bytes([0xE5, 0xA7, 0x60, 0x00])
 
@@ -183,7 +245,7 @@ class Board(object):
 
         self.csistream_connected = False
         self.consumers = []
-        self._fragment_reassembly = {}
+        self._fragment_reassembler = FragmentReassembler(logger=self.logger)
 
     def get_name(self):
         """
@@ -749,44 +811,7 @@ class Board(object):
             self.logger.debug(f"Ignoring malformed CSI stream message: {exc}")
             return
 
-        now = time.monotonic()
-        stale_keys = [key for key, entry in self._fragment_reassembly.items() if now - entry["timestamp"] > 5.0]
-        for key in stale_keys:
-            self._fragment_reassembly.pop(key, None)
-
-        completed_packets = []
-        for header, payload in fragments:
-            packet_antid = csi.csistream_uid_to_antid(int(header.uid))
-            key = int(header.uid)
-            entry = self._fragment_reassembly.get(key)
-            if entry is None or entry["total_fragments"] != int(header.total_fragments):
-                entry = {
-                    "timestamp": now,
-                    "antid": packet_antid,
-                    "total_fragments": int(header.total_fragments),
-                    "parts": {},
-                }
-                self._fragment_reassembly[key] = entry
-            elif entry["antid"] != packet_antid:
-                self.logger.warning(f"Received jumbo fragments with inconsistent UID-derived antid for uid {int(header.uid)}")
-                self._fragment_reassembly.pop(key, None)
-                continue
-
-            entry["timestamp"] = now
-            entry["parts"][int(header.fragment_index)] = bytes(payload)
-
-            if entry["total_fragments"] <= 0:
-                self._fragment_reassembly.pop(key, None)
-                continue
-
-            if len(entry["parts"]) != entry["total_fragments"]:
-                continue
-
-            if any(index not in entry["parts"] for index in range(entry["total_fragments"])):
-                continue
-
-            completed_packets.append((entry["antid"], b"".join(entry["parts"][index] for index in range(entry["total_fragments"]))))
-            self._fragment_reassembly.pop(key, None)
+        completed_packets = self._fragment_reassembler.push(fragments)
 
         for packet_antid, packet_payload in completed_packets:
             try:
