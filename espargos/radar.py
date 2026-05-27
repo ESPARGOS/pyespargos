@@ -174,9 +174,7 @@ def _broadcast_to_pool_shape(values, name: str, boards, dtype=None):
     if array.shape == (len(boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW):
         return array
 
-    raise ValueError(
-        f"{name} must be a scalar, a (row, column) array, or a (board, row, column) array"
-    )
+    raise ValueError(f"{name} must be a scalar, a (row, column) array, or a (board, row, column) array")
 
 
 def _default_mac_by_controller_antid(board_index: int) -> list[str]:
