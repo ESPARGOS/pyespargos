@@ -147,6 +147,11 @@ class Board(object):
         "lltf_8bit_mode": False,
     }
 
+    DEFAULT_CFO_CORRECTION_CONFIG = {
+        "auto": True,
+        "value": 0,
+    }
+
     DEFAULT_GAIN_SETTINGS = {
         "fft_scale_enable": False,
         "fft_scale_value": 0,
@@ -674,6 +679,23 @@ class Board(object):
         if "lltf_8bit_mode" not in config and "lltf_bit_mode" in config:
             config["lltf_8bit_mode"] = config["lltf_bit_mode"]
         return config
+
+    def set_cfo_correction(self, auto: bool, value: int = 0):
+        """
+        Configures receiver CFO correction on the ESPARGOS controller.
+
+        When ``auto`` is false, the receiver frequency-offset estimate is forced to
+        ``value`` (signed 13-bit NRXFOE reg_foe_force field, -4096..4095). A value
+        of zero can reduce packet-to-packet phase noise in radar mode when TX and
+        RX share the same reference clock.
+        """
+        self._post_json_ok("set_cfo_correction", {"auto": bool(auto), "value": int(value)})
+
+    def get_cfo_correction(self) -> dict:
+        """
+        Fetches receiver CFO correction configuration from the ESPARGOS controller.
+        """
+        return self._get_json("get_cfo_correction")
 
     def set_gain_settings(self, settings: dict):
         """

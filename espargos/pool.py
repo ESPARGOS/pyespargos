@@ -217,6 +217,22 @@ class Pool(object):
             b.set_csi_acquire_config(config)
         _ = self.get_csi_acquire_config()
 
+    def get_cfo_correction(self) -> dict:
+        """
+        Return CFO correction config; sanity-check all boards report the same value.
+        """
+        configs = [b.get_cfo_correction() for b in self.boards]
+        self._assert_same_across_boards(configs, "CFO correction")
+        return configs[0]
+
+    def set_cfo_correction(self, auto: bool, value: int = 0):
+        """
+        Configure CFO correction on all boards in this pool.
+        """
+        for b in self.boards:
+            b.set_cfo_correction(auto, value)
+        _ = self.get_cfo_correction()
+
     def get_gain_settings(self) -> dict:
         """
         Return gain settings; sanity-check all boards report the same value.
