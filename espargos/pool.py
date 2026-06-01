@@ -590,6 +590,7 @@ class Pool(object):
             self.logger.info("Finished calibration")
             self.set_rfswitch(previous_rfswitch_state)
             self.set_mac_filter(previous_mac_filter)
+            self.cluster_cache_ota.clear()
 
         # Collect calibration packets and compute calibration phases
         (

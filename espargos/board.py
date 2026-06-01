@@ -357,6 +357,7 @@ class Board(object):
                 udp_sock.bind(("::", 0, 0, 0))
             else:
                 udp_sock.bind(("", 0))
+            udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)
             local_port = udp_sock.getsockname()[1]
         except OSError as e:
             return f"Could not create UDP socket: {e}"
