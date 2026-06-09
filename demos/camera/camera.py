@@ -315,33 +315,36 @@ class EspargosDemoCamera(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
 
                     if self.appconfig.get("beamformer", "polarization_mode") == "show":
                         # Combine polarization information of all subcarriers into a single polarization estimate per beam
-                        # while preserving absolute phase (and thus sign) of the beamformed signal.
+                        # while preserving the relative phase (and thus sign) of the beamformed signal between beams.
                         # beam_frequency_space: (azimuth, elevation, subcarriers, 2)
                         #
-                        # Unlike an eigenvector approach (which loses sign in the outer product),
-                        # we directly average the per-subcarrier polarization vectors after removing
-                        # the subcarrier-dependent delay phase. This preserves the absolute sign
-                        # from the beamformer, so two sources with opposite polarization signs
-                        # (e.g., flipped antenna) are displayed correctly.
+                        # A local coherency/eigenvector estimate would remove the scalar phase independently
+                        # for every beam and therefore hide global sign/phase differences between source
+                        # directions. Instead, estimate the local Jones vector using a fixed polarization
+                        # component as phase gauge, then reattach the phase of the same component at one
+                        # reference subcarrier. This removes arbitrary scalar frequency dependence without
+                        # assuming a linear phase/delay model, while still making relative phases between
+                        # beams visible.
 
                         # Find globally dominant polarization component (H=0, V=1) for phase reference
                         total_power_per_component = np.sum(np.abs(beam_frequency_space) ** 2, axis=(0, 1, 2))
                         ref_comp = np.argmax(total_power_per_component)
 
-                        # Remove per-subcarrier delay phase using the globally dominant component.
-                        # Both H and V share the same propagation delay, so dividing by one component's
-                        # delay aligns all subcarriers while preserving the H/V ratio and absolute sign.
-                        # IMPORTANT: Only remove the subcarrier-varying part of the phase (the delay),
-                        # NOT the per-pixel absolute phase — that carries the sign/polarity information
-                        # between different source directions.
-                        ref_phase = np.angle(beam_frequency_space[..., ref_comp])  # (az, el, subcarriers)
-                        center_sc = ref_phase.shape[-1] // 2
-                        delay_phase = ref_phase - ref_phase[..., center_sc : center_sc + 1]  # subcarrier delay relative to center
-                        aligned = beam_frequency_space * np.exp(-1j * delay_phase)[..., np.newaxis]  # (az, el, subcarriers, 2)
-                        polarization_estimate = np.mean(aligned, axis=2)  # (az, el, 2)
+                        # Estimate the local Jones vector with a reference-aware rank-one fit:
+                        #   eta_ref ~ sum_k b_k b_{k,ref}^*
+                        # This fixes the local polarization gauge through the chosen reference component.
+                        ref = beam_frequency_space[..., ref_comp]  # (az, el, subcarriers)
+                        polarization_estimate = np.sum(beam_frequency_space * np.conj(ref)[..., np.newaxis], axis=2)  # (az, el, 2)
 
                         # Normalize so that total power is 1
                         polarization_estimate = polarization_estimate / (np.linalg.norm(polarization_estimate, axis=-1, keepdims=True) + 1e-12)
+
+                        # Reattach the globally meaningful phase of the reference component at the center
+                        # subcarrier. This displays exp(j arg(alpha_k0)) * eta rather than eta alone, so
+                        # opposite signs and other relative beam phases remain visible.
+                        center_sc = beam_frequency_space.shape[-2] // 2
+                        beam_phase_reference = np.angle(beam_frequency_space[..., center_sc, ref_comp])  # (az, el)
+                        polarization_estimate = polarization_estimate * np.exp(1j * beam_phase_reference)[..., np.newaxis]
 
                         # Apply a single global phase rotation to make V predominantly real.
                         # Use power-weighted aggregate to determine the global V phase.
