@@ -87,6 +87,7 @@ class Pool(object):
         # We have two caches: One for calibration packets, the other one for over-the-air packets
         self.cluster_cache_calib_lock = threading.Lock()
         self.cluster_cache_calib = OrderedDict[str, cluster.CSICluster]()
+        self.cluster_cache_ota_lock = threading.Lock()
         self.cluster_cache_ota = OrderedDict[str, cluster.CSICluster]()
 
         self.input_list = list()
@@ -590,7 +591,8 @@ class Pool(object):
             self.logger.info("Finished calibration")
             self.set_rfswitch(previous_rfswitch_state)
             self.set_mac_filter(previous_mac_filter)
-            self.cluster_cache_ota.clear()
+            with self.cluster_cache_ota_lock:
+                self.cluster_cache_ota.clear()
 
         # Collect calibration packets and compute calibration phases
         (
@@ -735,15 +737,16 @@ class Pool(object):
             cluster_id = f"{source_mac_str}-{dest_mac_str}-{stream_packet.seq_ctrl.seg:03x}-{stream_packet.seq_ctrl.frag:01x}"
 
             if isinstance(stream_packet, csi.radar_tx_report_tlv_t):
-                if cluster_id not in self.cluster_cache_ota:
-                    self.cluster_cache_ota[cluster_id] = cluster.CSICluster(
-                        source_mac_str,
-                        dest_mac_str,
-                        stream_packet.seq_ctrl,
-                        [b.revision for b in self.boards],
-                    )
+                with self.cluster_cache_ota_lock:
+                    if cluster_id not in self.cluster_cache_ota:
+                        self.cluster_cache_ota[cluster_id] = cluster.CSICluster(
+                            source_mac_str,
+                            dest_mac_str,
+                            stream_packet.seq_ctrl,
+                            [b.revision for b in self.boards],
+                        )
 
-                self.cluster_cache_ota[cluster_id].set_radar_tx_report(stream_packet, board_num=board_num, esp_num=esp_num)
+                    self.cluster_cache_ota[cluster_id].set_radar_tx_report(stream_packet, board_num=board_num, esp_num=esp_num)
                 continue
 
             serialized_csi = stream_packet
@@ -765,28 +768,35 @@ class Pool(object):
                 if self.emit_calibration_csi:
                     self._try_callbacks(calib_cluster)
             else:
-                if cluster_id not in self.cluster_cache_ota:
-                    self.cluster_cache_ota[cluster_id] = cluster.CSICluster(
-                        source_mac_str,
-                        dest_mac_str,
-                        serialized_csi.seq_ctrl,
-                        [b.revision for b in self.boards],
-                    )
+                with self.cluster_cache_ota_lock:
+                    if cluster_id not in self.cluster_cache_ota:
+                        self.cluster_cache_ota[cluster_id] = cluster.CSICluster(
+                            source_mac_str,
+                            dest_mac_str,
+                            serialized_csi.seq_ctrl,
+                            [b.revision for b in self.boards],
+                        )
 
-                # Add received data for the antenna to the current cluster
-                self.cluster_cache_ota[cluster_id].add_csi(board_num, esp_num, serialized_csi)
+                    # Add received data for the antenna to the current cluster
+                    self.cluster_cache_ota[cluster_id].add_csi(board_num, esp_num, serialized_csi)
 
-        # Check OTA cluster cache for packets where callback is due and for stale packets
+        # Check OTA cluster cache for packets where callback is due and for stale packets.
+        # Snapshot under the lock so concurrent mutation (e.g. cache clear at the end of
+        # calibration) cannot invalidate the iteration, then fire callbacks without holding
+        # the lock to avoid blocking packet ingestion or deadlocking on re-entrant calls.
+        with self.cluster_cache_ota_lock:
+            ota_clusters = list(self.cluster_cache_ota.items())
+
         stale = set()
-        for id in self.cluster_cache_ota.keys():
-            all_callbacks_fired = self._try_callbacks(self.cluster_cache_ota[id])
+        for id, csi_cluster in ota_clusters:
+            all_callbacks_fired = self._try_callbacks(csi_cluster)
 
-            if all_callbacks_fired and np.any(self.cluster_cache_ota[id].get_completion()):
+            if all_callbacks_fired and np.any(csi_cluster.get_completion()):
                 stale.add(id)
 
-        for id in self.cluster_cache_ota.keys():
-            if self.cluster_cache_ota[id].get_age() > self.ota_cache_timeout:
+            if csi_cluster.get_age() > self.ota_cache_timeout:
                 stale.add(id)
 
-        for id in stale:
-            del self.cluster_cache_ota[id]
+        with self.cluster_cache_ota_lock:
+            for id in stale:
+                self.cluster_cache_ota.pop(id, None)
