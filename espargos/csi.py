@@ -1304,7 +1304,11 @@ def get_cfo_from_rx_ctrl(rx_ctrl) -> int:
     """
     Compute the CFO value (in Hz) from a `wifi_pkt_rx_ctrl_v3_t` byte buffer.
 
-    This was reverse engineered from librftest.a (bb_common.o) and libphy.a (phy_feature.o)
+    This was reverse engineered from librftest.a (bb_common.o) and libphy.a (phy_feature.o).
+
+    Espressif's RX metadata exposes two CFO fields. The low-rate field is used
+    when the derived ``rate_index`` is below 8 (802.11b); otherwise the high-rate
+    field is used (802.11g/n/ax).
     """
     ctrl = rx_ctrl if isinstance(rx_ctrl, wifi_pkt_rx_ctrl_v3_t) else wifi_pkt_rx_ctrl_v3_t(rx_ctrl)
 
