@@ -14,6 +14,7 @@ ESPARGOS configuration is persistent across reboots, so you only need to do this
 Make sure that the following options are configured correctly before using *pyespargos*:
 
 * Set *Generate Phase Reference* to *During calibration*
+* Leave *Reference Signal Source* at *Internal* (the default for a standalone array). Only change this for phase-coherent multi-board setups, see :doc:`combined-arrays`.
 * Select the correct WiFi country code and make sure that you are allowed to use the desired WiFi channel in your country.
 * Select a suitable WiFi primary and secondary channel for your device. Make sure your settings are correct by checking if you can receive CSI from your device (i.e., while "Antenna" is selected as a source) in the *Live CSI* tab.
 * You can choose a small calibration signal interval, e.g. 10 milliseconds, then calibration takes less time.
