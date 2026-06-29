@@ -107,10 +107,9 @@ class DopplerDelayApp(ESPARGOSApplication):
             pass
         super().onAboutToQuit()
 
-
-    def _csi_predicate(self,cluster):
+    def _csi_predicate(self, cluster):
         return cluster.is_radar() and cluster.has_radar_tx_report() and np.sum(cluster.get_completion()) == 7
-    
+
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         self.pool.set_gain_settings(self.gain_settings)
         self.pool.add_csi_callback(
@@ -128,7 +127,7 @@ class DopplerDelayApp(ESPARGOSApplication):
         while True:
             self.pool.run()
 
-    @QtCore.pyqtSlot()        
+    @QtCore.pyqtSlot()
     def start_tx(self):
         calibration = self.pool.get_calibration()
         if calibration is None:
@@ -140,15 +139,15 @@ class DopplerDelayApp(ESPARGOSApplication):
         active_by_sensor = [False] * espargos.constants.ANTENNAS_PER_BOARD
         active_by_sensor[tx_antenna] = True
 
-        min_safe_start = max(0.0, - float(np.nanmin(calibration.sensor_clock_offsets))) + 1e-6
-        t0_by_sensor = [min_safe_start ]* espargos.constants.ANTENNAS_PER_BOARD
+        min_safe_start = max(0.0, -float(np.nanmin(calibration.sensor_clock_offsets))) + 1e-6
+        t0_by_sensor = [min_safe_start] * espargos.constants.ANTENNAS_PER_BOARD
         period_by_sensor = [packet_period_s] * espargos.constants.ANTENNAS_PER_BOARD
 
         pool_config = espargos.radar.build_pool_config(
             calibration=calibration,
-            active_by_sensor=np.array(active_by_sensor).reshape(2,4).tolist(),
-            t0_by_sensor=np.array(t0_by_sensor).reshape(2,4).tolist(),
-            period_by_sensor=np.array(period_by_sensor).reshape(2,4).tolist(),
+            active_by_sensor=np.array(active_by_sensor).reshape(2, 4).tolist(),
+            t0_by_sensor=np.array(t0_by_sensor).reshape(2, 4).tolist(),
+            period_by_sensor=np.array(period_by_sensor).reshape(2, 4).tolist(),
             tx_power=int(self.appconfig.get("tx_power")),
             tx_phymode=2,
             tx_rate=11,
@@ -222,13 +221,13 @@ class DopplerDelayApp(ESPARGOSApplication):
         with self.mutex:
             if self.packet_count == 0:
                 return
-            
+
             self.mean = np.sum(self.raw_csi_buffer, axis=0) / min(self.raw_csi_buffer.shape[0], self.packet_count)
 
-            data = self.raw_csi_buffer[0:np.min([self.raw_csi_buffer.shape[0], self.packet_count]), ...].reshape(-1, 8, 53)
+            data = self.raw_csi_buffer[0 : np.min([self.raw_csi_buffer.shape[0], self.packet_count]), ...].reshape(-1, 8, 53)
             data = np.delete(data, self.appconfig.get("tx_antenna"), axis=1)
 
-            correlation = np.mean(np.einsum('tai,taj->taij', data, data.conj()), axis=(0, 1))
+            correlation = np.mean(np.einsum("tai,taj->taij", data, data.conj()), axis=(0, 1))
 
             w, v = np.linalg.eigh(correlation)
             v_sorted = v[:, np.argsort(np.abs(w))[::-1]]
@@ -282,10 +281,7 @@ class DopplerDelayApp(ESPARGOSApplication):
             csi_lltf = (calibration.apply_lltf(csi.deserialize_csi_lltf()))[0, ...]
 
             channel_primary = calibration.channel_primary
-            subcarrier_freqs = (
-                espargos.util.get_frequencies_lltf(channel_primary)
-                - espargos.util.get_center_frequency(channel_primary)
-            )
+            subcarrier_freqs = espargos.util.get_frequencies_lltf(channel_primary) - espargos.util.get_center_frequency(channel_primary)
 
             csi_lltf = espargos.radar.correct_radar_csi_tx_timestamps(
                 csi_lltf[np.newaxis, ...],
@@ -342,14 +338,15 @@ class DopplerDelayApp(ESPARGOSApplication):
         scale = (np.partition(doppler_delay.ravel(), k)[k] + 1) * 10
 
         doppler_delay = np.roll(np.roll(doppler_delay, -delay_min * delay_os, axis=1), doppler_delay.shape[0] // 2, axis=0)
-        doppler_delay = doppler_delay[:, 0:((delay_max - delay_min) * delay_os + 1)]
+        doppler_delay = doppler_delay[:, 0 : ((delay_max - delay_min) * delay_os + 1)]
         doppler_delay = doppler_delay / (scale if np.max(doppler_delay) < scale else np.max(doppler_delay))
 
         doppler_range = self.appconfig.get("doppler_range")
         index_range = doppler_range * doppler_os
-        doppler_delay = doppler_delay[doppler_delay.shape[0] // 2 - index_range: doppler_delay.shape[0] // 2 + index_range + 1, ...]
+        doppler_delay = doppler_delay[doppler_delay.shape[0] // 2 - index_range : doppler_delay.shape[0] // 2 + index_range + 1, ...]
 
         self.data = self.colormap(doppler_delay.T)
+
         self.dataChanged.emit()
 
 
