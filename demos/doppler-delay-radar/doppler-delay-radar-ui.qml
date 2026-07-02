@@ -21,6 +21,30 @@ Common.ESPARGOSApplication {
             title: "Settings"
             endpoint: appconfig
 
+            // Shared radar TX settings and RX data-format selector (used across radar demos).
+            // These reparent their controls into this grid; the leftover component roots + anchor
+            // must each span both columns so they occupy empty full-width rows and don't shift the
+            // 2-column parity of the controls that follow (RX Array, Oversampling).
+            Common.RadarSettings { insertBefore: radarAnchor; Layout.columnSpan: 2 }
+            Common.GenericAppSettings { insertBefore: radarAnchor; controlWidth: 150; Layout.columnSpan: 2 }
+            Item { id: radarAnchor; width: 0; height: 0; Layout.columnSpan: 2 }
+
+            // Receiver array selection (bistatic: process only the CSI of the chosen RX array)
+            Label { text: "RX Array"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+            ComboBox {
+                id: rxArrayCombo
+                property string configKey: "rx_array"
+                property string configProp: "currentValue"
+                Component.onCompleted: appDrawer.configManager.register(this)
+                onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
+                implicitWidth: 150
+                model: backend.rxArrays
+                textRole: "text"
+                valueRole: "value"
+                currentValue: 0
+            }
+
+            // Doppler/delay processing settings (specific to this demo)
             Label { Layout.columnSpan: 2; text: "Oversampling"; color: '#ffffff' }
             Label { text: "Doppler"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true}
             SpinBox{
@@ -29,7 +53,7 @@ Common.ESPARGOSApplication {
                 property string configProp: "value"
                 Component.onCompleted: appDrawer.configManager.register(this)
                 onValueChanged: appDrawer.configManager.onControlChanged(this)
-                implicitWidth: 210
+                implicitWidth: 150
                 from: 1
                 to: 21
                 value: 3
@@ -43,32 +67,16 @@ Common.ESPARGOSApplication {
                 property string configProp: "value"
                 Component.onCompleted: appDrawer.configManager.register(this)
                 onValueChanged: appDrawer.configManager.onControlChanged(this)
-                implicitWidth: 210
+                implicitWidth: 150
                 from: 1
                 to: 20
                 value: 10
             }
 
             Button {
-                id: startRadar
-                text: "Start Radar"
-				Layout.columnSpan: 2;
-                Layout.alignment: Qt.AlignCenter
-                onClicked: backend.start_tx()
-            }
-
-            Button {
-                id:stopTransmissionButton
-                text: "Stop Radar"
-                Layout.columnSpan: 2;
-                Layout.alignment: Qt.AlignCenter
-                onClicked: backend.stop_radar()
-            }
-
-            Button {
                 id: clearDataButton
                 text: "Clear Data"
-				Layout.columnSpan: 2;
+                Layout.columnSpan: 2;
                 Layout.alignment: Qt.AlignCenter
                 onClicked: backend.clear_data()
             }
@@ -257,6 +265,12 @@ Rectangle{
 
         Label{  id: numpackets
                 text: `Packets/s: ${backend.packets_per_second} (expected: ${backend.num_tx_packets})`
+                color: "#ffffff"
+                font.pixelSize: 14
+            }
+
+        Label{  id: radarStatus
+                text: `Status: ${backend.radar_status}`
                 color: "#ffffff"
                 font.pixelSize: 14
             }

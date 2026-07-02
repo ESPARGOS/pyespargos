@@ -15,10 +15,10 @@ ApplicationWindow {
 	Shortcut {
 		sequence: "F11"
 		onActivated: {
-			if (window.visibility == ApplicationWindow.Windowed) {
-				window.visibility = ApplicationWindow.FullScreen
+			if (root.visibility == ApplicationWindow.Windowed) {
+				root.visibility = ApplicationWindow.FullScreen
 			} else {
-				window.visibility = ApplicationWindow.Windowed
+				root.visibility = ApplicationWindow.Windowed
 			}
 		}
 	}
@@ -26,7 +26,7 @@ ApplicationWindow {
 	Shortcut {
 		sequence: "Esc"
 		enabled: !backend.kioskMode
-		onActivated: window.close()
+		onActivated: root.close()
 	}
 
 	Material.theme: Material.Dark

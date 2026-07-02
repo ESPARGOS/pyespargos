@@ -25,109 +25,32 @@ Common.ESPARGOSApplication {
 			title: "Radar CSI Settings"
 			endpoint: appconfig
 
-			Label { Layout.columnSpan: 2; text: "Radar Schedule"; color: "#9fb3c8" }
-
-			Label { text: "Period [ms]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			RowLayout {
-				spacing: 10
-				Slider {
-					id: periodSlider
-					property string configKey: "period_ms"
-					property string configProp: "value"
-					property var encode: function(v) { return Math.round(v * 10) / 10 }
-					property var decode: function(v) { return Math.max(7, Math.min(100, Number(v === undefined || v === null || v === "" ? 12 : v))) }
-					Component.onCompleted: appDrawer.configManager.register(this)
-					onValueChanged: appDrawer.configManager.onControlChanged(this)
-					from: 7
-					to: 100
-					value: 16
-					stepSize: 1
-					implicitWidth: 145
-					function isUserActive() { return pressed }
-				}
-				Label { text: periodSlider.value.toFixed(0); color: "#ffffff"; font.family: "monospace"; Layout.preferredWidth: 56; horizontalAlignment: Text.AlignRight }
-			}
-
-			Label { text: "Start [ms]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			RowLayout {
-				spacing: 10
-				Slider {
-					id: startSlider
-					property string configKey: "start_ms"
-					property string configProp: "value"
-					property var encode: function(v) { return Math.round(v * 10) / 10 }
-					property var decode: function(v) { return Math.max(0, Math.min(200, Number(v === undefined || v === null || v === "" ? 10 : v))) }
-					Component.onCompleted: appDrawer.configManager.register(this)
-					onValueChanged: appDrawer.configManager.onControlChanged(this)
-					from: 0
-					to: 200
-					value: 10
-					stepSize: 0.1
-					implicitWidth: 145
-					function isUserActive() { return pressed }
-				}
-				Label { text: startSlider.value.toFixed(1); color: "#ffffff"; font.family: "monospace"; Layout.preferredWidth: 56; horizontalAlignment: Text.AlignRight }
-			}
-
-			Label { text: "Slot [ms]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			RowLayout {
-				spacing: 10
-				Slider {
-					id: slotSlider
-					property string configKey: "slot_ms"
-					property string configProp: "value"
-					property var encode: function(v) { return Math.round(v * 10) / 10 }
-					property var decode: function(v) { return Math.max(0.1, Math.min(100, Number(v === undefined || v === null || v === "" ? 10 : v))) }
-					Component.onCompleted: appDrawer.configManager.register(this)
-					onValueChanged: appDrawer.configManager.onControlChanged(this)
-					from: 0.1
-					to: 100
-					value: 10
-					stepSize: 0.1
-					implicitWidth: 145
-					function isUserActive() { return pressed }
-				}
-				Label { text: slotSlider.value.toFixed(1); color: "#ffffff"; font.family: "monospace"; Layout.preferredWidth: 56; horizontalAlignment: Text.AlignRight }
-			}
-
-			Label { text: "TX Offset [ns]"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			RowLayout {
-				spacing: 10
-				Slider {
-					id: txOffsetSlider
-					property string configKey: "tx_timestamp_offset_ns"
-					property string configProp: "value"
-					property var encode: function(v) { return Math.round(v) }
-					property var decode: function(v) { return Math.max(-5000, Math.min(5000, parseInt(v === undefined || v === null || v === "" ? 1063 : v))) }
-					Component.onCompleted: appDrawer.configManager.register(this)
-					onValueChanged: appDrawer.configManager.onControlChanged(this)
-					from: 1060
-					to: 1100
-					value: 1085
-					stepSize: 0.1
-					implicitWidth: 145
-					function isUserActive() { return pressed }
-				}
-				Label { text: Math.round(txOffsetSlider.value); color: "#ffffff"; font.family: "monospace"; Layout.preferredWidth: 56; horizontalAlignment: Text.AlignRight }
-			}
-
-			Label { text: "Enable Radar"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Switch {
-				id: enableRadarSwitch
-				checked: true
-				onToggled: {
-					if (checked)
-						backend.applyRadarSchedule()
-					else
-						backend.disableRadarSchedule()
-				}
-			}
-
+			// Shared radar TX settings and RX data-format selector (used across radar demos).
+			// The leftover component roots + anchor span both columns so they don't break the
+			// grid's 2-column parity (matches the doppler demo).
+			Common.RadarSettings { insertBefore: radarAnchor; Layout.columnSpan: 2 }
+			Common.GenericAppSettings { insertBefore: radarAnchor; controlWidth: 150; Layout.columnSpan: 2 }
+			Item { id: radarAnchor; width: 0; height: 0; Layout.columnSpan: 2 }
 		}
 	}
 
 	ColumnLayout {
 		anchors.fill: parent
+
+		// Sits in its own row above the charts (which shift down), so it never overlaps the curves.
+		Button {
+			id: clearCurvesButton
+			Layout.alignment: Qt.AlignHCenter
+			Layout.topMargin: 20
+			text: "Clear CSI Curves"
+			onClicked: {
+				backend.clearCSICurves()
+				for (let i = 0; i < amplitudeSeries.length; ++i)
+					amplitudeSeries[i].clear()
+				for (let i = 0; i < phaseSeries.length; ++i)
+					phaseSeries[i].clear()
+			}
+		}
 
 		ChartView {
 			id: csiAmplitude

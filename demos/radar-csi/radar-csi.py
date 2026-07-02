@@ -3,31 +3,32 @@
 import argparse
 import pathlib
 import sys
+import threading
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication
+from demos.common import ESPARGOSApplication, RadarControlMixin, RADAR_CONFIG_DEFAULTS
 
 import espargos
 import espargos.constants
-import espargos.util
 import numpy as np
 import PyQt6.QtCharts
 import PyQt6.QtCore
 
 
-class EspargosDemoRadarCSI(ESPARGOSApplication):
+class EspargosDemoRadarCSI(RadarControlMixin, ESPARGOSApplication):
     sensorCountChanged = PyQt6.QtCore.pyqtSignal()
+    subcarrierCountChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
+        **RADAR_CONFIG_DEFAULTS,
+        # Multi-antenna TDM: every sensor transmits in turn. With more than one active TX
+        # antenna the mixin keeps AGC enabled (no single-TX gain freezing), matching the
+        # behavior radar-csi always had.
+        "tx_antenna": "all",
+        # radar-csi transmits from all antennas, so its per-antenna interval can be a bit
+        # longer than the shared default.
         "period_ms": 16.0,
-        "start_ms": 10.0,
-        "slot_ms": 10.0,
-        "tx_power": 34,
-        "tx_phymode": 2,
-        "tx_rate": 11,
-        "rfswitch_state": 2,
-        "tx_timestamp_offset_ns": 1085,
     }
 
     def __init__(self, argv):
@@ -38,21 +39,23 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         parser.add_argument("--no-calib", default=False, help="Do not calibrate", action="store_true")
         super().__init__(argv, argparse_parent=parser)
 
-        self.initial_config["pool"]["acquire_lltf_force"] = True
-
         self.stable_power_minimum = None
         self.stable_power_maximum = None
         self.sensor_count = len(self.get_initial_config("pool", "hosts", default=[])) * espargos.constants.ANTENNAS_PER_BOARD or espargos.constants.ANTENNAS_PER_BOARD
         self._link_rx_indices = np.asarray([], dtype=np.int32)
         self._link_tx_indices = np.asarray([], dtype=np.int32)
         self._link_index_by_rx_tx = np.full((self.sensor_count, self.sensor_count), -1, dtype=np.int32)
-        self._subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices("lltf")
+        # Current RX data format and matching subcarrier index axis (updated adaptively as CSI arrives)
+        self.rx_format = "lltf"
+        self._subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices(self.rx_format)
         self._latest_link_csi = {}
         self._dirty_link_indices = set()
+        # Guards the CSI state shared between the pool worker thread (onCSI) and the GUI thread (updateCSI)
+        self._csi_lock = threading.Lock()
         self._update_link_indices()
 
-        self.initComplete.connect(self.applyRadarSchedule)
-        self.initComplete.connect(self.onInitComplete)
+        self.init_radar_control()
+
         self.initialize_pool(
             calibrate=not self.args.no_calib,
         )
@@ -63,15 +66,23 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         self.sensor_count = int(np.prod(self.pool.get_shape()))
         self._update_link_indices()
         self.sensorCountChanged.emit()
+        # Apply the RX acquire config for the current preamble-format selection (default "auto"
+        # accepts every LTF format, so any radar TX format is received and auto-detected).
+        self.apply_rx_acquire_config()
         self.pool.add_csi_callback(
             self.onCSI,
-            cb_predicate=lambda cluster: cluster.is_radar() and cluster.has_radar_tx_report() and np.any(cluster.get_completion()),
+            cb_predicate=espargos.radar.radar_completion_predicate("any"),
         )
+        # Drive the pool on a background thread. pool.run() blocks up to 0.5 s when no CSI is
+        # available, so running it on the GUI thread (as a QTimer) would freeze the UI whenever
+        # no packets arrive. onCSI only mutates plain Python state (guarded by _csi_lock); the QML
+        # chart series are updated separately on the GUI thread by updateCSI.
+        self._pool_thread = threading.Thread(target=self._run_pool_loop, daemon=True)
+        self._pool_thread.start()
 
-    def onInitComplete(self):
-        self.poll_timer = PyQt6.QtCore.QTimer(self)
-        self.poll_timer.timeout.connect(self.pollCSI)
-        self.poll_timer.start(10)
+    def _run_pool_loop(self):
+        while True:
+            self.pool.run()
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=sensorCountChanged)
     def sensorCount(self):
@@ -81,57 +92,24 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
     def linkCount(self):
         return self.sensor_count * max(0, self.sensor_count - 1)
 
-    @PyQt6.QtCore.pyqtProperty(int, constant=True)
+    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=subcarrierCountChanged)
     def subcarrierCount(self):
-        return espargos.csi.get_csi_format_subcarrier_count("lltf")
+        return espargos.csi.get_csi_format_subcarrier_count(self.rx_format)
 
     @PyQt6.QtCore.pyqtSlot(int, result=str)
     def linkName(self, link_index: int):
         rx_index, tx_index = self._link_indices(link_index)
         return f"TX{tx_index:02d} -> RX{rx_index:02d}"
 
-    @PyQt6.QtCore.pyqtSlot()
-    def applyRadarSchedule(self):
-        if not hasattr(self, "pool") or self.pool.get_calibration() is None:
-            return
-
-        calibration = self.pool.get_calibration()
-        requested_start_s = self._get_schedule_ms("start") / 1e3
-        min_safe_start_s = max(0.0, -float(np.nanmin(calibration.sensor_clock_offsets))) + 1e-6
-        effective_start_s = max(requested_start_s, min_safe_start_s)
-        slot_s = self._get_schedule_ms("slot") / 1e3
-        sensor_shape = (espargos.constants.ROWS_PER_BOARD, espargos.constants.ANTENNAS_PER_ROW)
-        t0_by_sensor = effective_start_s + np.arange(espargos.constants.ANTENNAS_PER_BOARD, dtype=np.float64).reshape(sensor_shape) * slot_s
-        period_by_sensor = np.full(sensor_shape, self._get_schedule_ms("period") / 1e3, dtype=np.float64)
-
-        pool_radar_config = espargos.radar.build_pool_config(
-            calibration=calibration,
-            active_by_sensor=True,
-            t0_by_sensor=t0_by_sensor,
-            period_by_sensor=period_by_sensor,
-            tx_power=espargos.csi.wifi_tx_power_t(int(self.appconfig.get("tx_power"))),
-            tx_phymode=espargos.csi.wifi_phy_mode_t(int(self.appconfig.get("tx_phymode"))),
-            tx_rate=espargos.csi.wifi_phy_rate_t(int(self.appconfig.get("tx_rate"))),
-            rfswitch_state=espargos.csi.rfswitch_state_t(int(self.appconfig.get("rfswitch_state"))),
-        )
-        self.pool.set_radar_config(pool_radar_config)
-
-    @PyQt6.QtCore.pyqtSlot()
-    def disableRadarSchedule(self):
-        if hasattr(self, "pool"):
-            self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
-
-    def _subcarrier_frequencies(self) -> np.ndarray:
-        calibration = self.pool.get_calibration()
-        if calibration is not None:
-            channel_primary = calibration.channel_primary
-        else:
-            wificonf = self.pool.get_wificonf()
-            channel_primary = int(wificonf.get("channel-primary", 1))
-
-        frequencies = espargos.util.get_frequencies_lltf(channel_primary)
-        center = espargos.util.get_center_frequency(channel_primary)
-        return frequencies - center
+    def _set_rx_format(self, resolved_format: str):
+        """Adapt the display to a changed RX format: new subcarrier axis, drop stale link CSI."""
+        self.rx_format = resolved_format
+        self._subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices(resolved_format)
+        self._latest_link_csi = {}
+        self._dirty_link_indices = set()
+        self.stable_power_minimum = None
+        self.stable_power_maximum = None
+        self.subcarrierCountChanged.emit()
 
     def _link_indices(self, link_index: int) -> tuple[int, int]:
         return int(self._link_rx_indices[link_index]), int(self._link_tx_indices[link_index])
@@ -151,32 +129,19 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         for link_index, (rx_index, tx_index) in enumerate(zip(self._link_rx_indices, self._link_tx_indices)):
             self._link_index_by_rx_tx[rx_index, tx_index] = link_index
 
-    def _get_schedule_ms(self, name: str) -> float:
-        value_ms = self.appconfig.get(f"{name}_ms")
-        if value_ms is not None:
-            return float(value_ms)
-
-        legacy_value_us = self.appconfig.get(f"{name}_us")
-        if legacy_value_us is not None:
-            return float(legacy_value_us) / 1000.0
-
-        return float(self.DEFAULT_CONFIG[f"{name}_ms"])
-
     def _interpolate_axis_range(self, previous, new):
         if previous is None or not np.isfinite(previous):
             return new
         return previous * 0.92 + new * 0.08
 
     @PyQt6.QtCore.pyqtSlot()
-    def pollCSI(self):
-        if hasattr(self, "pool"):
-            self.pool.run()
-
-    def _deserialize_cluster_csi_lltf(self, clustered_csi):
-        calibration = self.pool.get_calibration()
-        if calibration is None or not clustered_csi.has_lltf():
-            return None
-        return calibration.apply_lltf(clustered_csi.deserialize_csi_lltf())
+    def clearCSICurves(self):
+        """Drop all stored CSI so the curves reset (they repopulate as new CSI arrives)."""
+        with self._csi_lock:
+            self._latest_link_csi = {}
+            self._dirty_link_indices = set()
+            self.stable_power_minimum = None
+            self.stable_power_maximum = None
 
     def onCSI(self, clustered_csi: espargos.CSICluster):
         calibration = self.pool.get_calibration()
@@ -186,15 +151,18 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         if tx_index < 0 or tx_index >= self.sensor_count:
             return
 
-        csi = self._deserialize_cluster_csi_lltf(clustered_csi)
+        resolved_format, csi = espargos.radar.deserialize_rx_csi(clustered_csi, calibration, self.genericconfig.get("preamble_format"))
         if csi is None:
             return
+        if resolved_format != self.rx_format:
+            with self._csi_lock:
+                self._set_rx_format(resolved_format)
 
         completion = np.array(clustered_csi.get_completion().reshape(-1), copy=True)
         if tx_index < completion.size:
             completion[tx_index] = False
 
-        subcarrier_frequencies = self._subcarrier_frequencies()
+        subcarrier_frequencies = espargos.radar.rx_subcarrier_frequencies(calibration, resolved_format)
         corrected = espargos.radar.correct_radar_csi_tx_timestamps(
             csi[np.newaxis, ...],
             np.asarray([clustered_csi.get_radar_tx_info().get_hardware_tx_timestamp_ns() / 1e9], dtype=np.float64),
@@ -213,45 +181,48 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         if finite_power.size == 0:
             return
 
-        self.stable_power_minimum = self._interpolate_axis_range(self.stable_power_minimum, float(np.min(finite_power) - 3.0))
-        self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, float(np.max(finite_power) + 3.0))
-        for rx_index in np.flatnonzero(finite_links):
-            link_index = int(self._link_index_by_rx_tx[rx_index, tx_index])
-            if link_index < 0:
-                continue
+        with self._csi_lock:
+            self.stable_power_minimum = self._interpolate_axis_range(self.stable_power_minimum, float(np.min(finite_power) - 3.0))
+            self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, float(np.max(finite_power) + 3.0))
+            for rx_index in np.flatnonzero(finite_links):
+                link_index = int(self._link_index_by_rx_tx[rx_index, tx_index])
+                if link_index < 0:
+                    continue
 
-            self._latest_link_csi[link_index] = np.array(corrected[rx_index], copy=True)
-            self._dirty_link_indices.add(link_index)
+                self._latest_link_csi[link_index] = np.array(corrected[rx_index], copy=True)
+                self._dirty_link_indices.add(link_index)
 
     @PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis)
     def updateCSI(self, powerSeries, phaseSeries, axis):
-        if not self._dirty_link_indices:
-            if self.stable_power_minimum is not None and self.stable_power_maximum is not None:
-                axis.setMin(self.stable_power_minimum)
-                axis.setMax(self.stable_power_maximum)
-            return
-
-        dirty_link_indices = sorted(self._dirty_link_indices)
-        self._dirty_link_indices.clear()
+        # Snapshot the shared state under the lock (written by the pool thread in onCSI), then do the
+        # QML series updates outside the lock so the worker thread is not blocked while we render.
+        with self._csi_lock:
+            power_minimum = self.stable_power_minimum
+            power_maximum = self.stable_power_maximum
+            subcarrier_range = self._subcarrier_range
+            dirty_link_indices = sorted(self._dirty_link_indices)
+            self._dirty_link_indices.clear()
+            snapshot = {link_index: self._latest_link_csi.get(link_index) for link_index in dirty_link_indices}
 
         for link_index in dirty_link_indices:
             if link_index >= len(powerSeries) or link_index >= len(phaseSeries):
                 continue
-            link_csi = self._latest_link_csi.get(link_index)
+            link_csi = snapshot.get(link_index)
             if link_csi is None or not np.all(np.isfinite(link_csi)):
                 continue
 
             link_power = 20.0 * np.log10(np.abs(link_csi) + 1e-5)
             link_phase = np.angle(link_csi)
-            powerSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(self._subcarrier_range, link_power)])
-            phaseSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(self._subcarrier_range, link_phase)])
+            powerSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, link_power)])
+            phaseSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, link_phase)])
 
-        axis.setMin(self.stable_power_minimum)
-        axis.setMax(self.stable_power_maximum)
+        if power_minimum is not None and power_maximum is not None:
+            axis.setMin(power_minimum)
+            axis.setMax(power_maximum)
 
     def onAboutToQuit(self):
         try:
-            self.disableRadarSchedule()
+            self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
         except Exception:
             pass
         super().onAboutToQuit()

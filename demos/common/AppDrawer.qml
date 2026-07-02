@@ -16,7 +16,7 @@ Drawer {
 
 	implicitHeight: parent ? parent.height - headerHeight : 0
 	y: headerHeight
-	implicitWidth: 350
+	implicitWidth: 360
 	edge: Qt.RightEdge
 	dragMargin: 50
 	modal: false
