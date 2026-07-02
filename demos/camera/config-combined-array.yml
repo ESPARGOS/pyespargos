@@ -30,17 +30,17 @@ backlog:
 combined-array:
   boards:
     ba1:
-      host: 192.168.0.101
+      host: 192.168.1.101
       cable:
         length: 0.0
         velocity_factor: 0.76
     ba2:
-      host: 192.168.0.102
+      host: 192.168.1.102
       cable:
         length: 0.0
         velocity_factor: 0.76
     ba3:
-      host: 192.168.0.103
+      host: 192.168.1.103
       cable:
         length: 0.0
         velocity_factor: 0.76

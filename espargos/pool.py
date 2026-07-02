@@ -58,6 +58,13 @@ class _CSICallback(object):
         return False
 
 
+# WiFi config keys that may legitimately differ per board: reference-signal source ("calib-source"),
+# phase-reference / calib-packet mode ("calib-mode"), and the reference-TX calibration signal's power
+# ("calib-txpower") and interval ("calib-interval"). These are never propagated or reconciled across
+# the pool; set them per board via board.set_wificonf() if needed.
+WIFICONF_PER_BOARD_KEYS = {"calib-source", "calib-mode", "calib-txpower", "calib-interval"}
+
+
 class Pool(object):
     """
     A Pool is a collection of ESPARGOS boards.
@@ -172,10 +179,16 @@ class Pool(object):
             return values[0]
 
         chosen = values[0] if reset_value is None else reset_value
+        # Never write the ignored keys back: they are excluded from the comparison because they may
+        # legitimately differ per board, so the reset must not overwrite them either (set_wificonf is a
+        # partial update, so omitting them leaves each board's own values untouched).
+        apply_value = chosen
+        if ignore_keys and isinstance(apply_value, dict):
+            apply_value = {k: v for k, v in apply_value.items() if k not in ignore_keys}
         target = "board 0's value" if reset_value is None else "a safe default"
         self.logger.warning(f"{what}: boards disagree (board 0 != board(s) {mismatched}); resetting all boards to {target}.")
         try:
-            apply(chosen)
+            apply(apply_value)
         except Exception as exc:
             self.logger.warning(f"{what}: could not reset boards to a consistent value ({exc}); using board 0's value.")
             return values[0]
@@ -357,16 +370,17 @@ class Pool(object):
 
     def get_wificonf(self) -> dict:
         """
-        Return WiFi config; sanity-check boards report the same value.
+        Return WiFi config; on cross-board disagreement, reset all boards to board 0's value (warn).
 
-        Consistency check ignores "calib-source" and "calib-mode" (they may legitimately differ).
+        The per-board keys (:data:`WIFICONF_PER_BOARD_KEYS`) are excluded from both the comparison and
+        the reset, so each board keeps its own reference-signal / calib-packet settings.
         """
         wificonfs = [b.get_wificonf() for b in self.boards]
         return self._reconcile_across_boards(
             wificonfs,
             "WiFi config",
             lambda v: [b.set_wificonf(v) for b in self.boards],
-            ignore_keys={"calib-source", "calib-mode"},
+            ignore_keys=WIFICONF_PER_BOARD_KEYS,
         )
 
     def set_wificonf(self, wificonf: dict):
@@ -376,17 +390,17 @@ class Pool(object):
         This is forwarded to :meth:`pyespargos.board.Board.set_wificonf` for each board.
         For the expected JSON/dict format, refer to that method's documentation.
 
-        The values of "calib-source" and "calib-mode" are ignored and not propagated to the pool.
-        If you need to set those, call :meth:`pyespargos.board.Board.set_wificonf` on each board individually.
-        Consistency check also ignores "calib-source" and "calib-mode" (they may legitimately differ).
+        The per-board keys (:data:`WIFICONF_PER_BOARD_KEYS`: "calib-source", "calib-mode",
+        "calib-txpower", "calib-interval") are ignored and not propagated to the pool — they may
+        legitimately differ per board. If you need to set those, call
+        :meth:`pyespargos.board.Board.set_wificonf` on each board individually. The consistency
+        check ignores the same keys.
 
         :param wificonf: WiFi configuration dict to apply to all boards.
         :raises ValueError: If boards in the pool disagree on the resulting config after applying (excluding ignored keys).
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
-        wificonf = dict(wificonf)  # Make a copy
-        wificonf.pop("calib-source", None)
-        wificonf.pop("calib-mode", None)
+        wificonf = {k: v for k, v in wificonf.items() if k not in WIFICONF_PER_BOARD_KEYS}
         for b in self.boards:
             b.set_wificonf(wificonf)
         _ = self.get_wificonf()
