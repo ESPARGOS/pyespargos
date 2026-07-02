@@ -50,6 +50,8 @@ class EspargosDemoRadarCSI(RadarControlMixin, ESPARGOSApplication):
         self._subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices(self.rx_format)
         self._latest_link_csi = {}
         self._dirty_link_indices = set()
+        # Per-subcarrier STO (residual delay) correction, set by "Calibrate STO"; identity until then.
+        self._sto_correction = np.ones(len(self._subcarrier_range), dtype=np.complex64)
         # Guards the CSI state shared between the pool worker thread (onCSI) and the GUI thread (updateCSI)
         self._csi_lock = threading.Lock()
         self._update_link_indices()
@@ -63,9 +65,14 @@ class EspargosDemoRadarCSI(RadarControlMixin, ESPARGOSApplication):
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
+        # Reset all gains and enable AGC by default; also clears any leftover per-sensor gains from a
+        # previous run that would trip the pool drawer's gain-consistency readback.
+        self.reset_radar_gains()
         self.sensor_count = int(np.prod(self.pool.get_shape()))
         self._update_link_indices()
         self.sensorCountChanged.emit()
+        # Populate the TX-antenna / RX-array combo models now that the pool (board count) is known.
+        self.refresh_radar_options()
         # Apply the RX acquire config for the current preamble-format selection (default "auto"
         # accepts every LTF format, so any radar TX format is received and auto-detected).
         self.apply_rx_acquire_config()
@@ -107,6 +114,8 @@ class EspargosDemoRadarCSI(RadarControlMixin, ESPARGOSApplication):
         self._subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices(resolved_format)
         self._latest_link_csi = {}
         self._dirty_link_indices = set()
+        # STO correction is format-specific (subcarrier count changes), so reset it.
+        self._sto_correction = np.ones(len(self._subcarrier_range), dtype=np.complex64)
         self.stable_power_minimum = None
         self.stable_power_maximum = None
         self.subcarrierCountChanged.emit()
@@ -142,6 +151,33 @@ class EspargosDemoRadarCSI(RadarControlMixin, ESPARGOSApplication):
             self._dirty_link_indices = set()
             self.stable_power_minimum = None
             self.stable_power_maximum = None
+            self._sto_correction = np.ones(len(self._subcarrier_range), dtype=np.complex64)
+
+    @PyQt6.QtCore.pyqtSlot()
+    def calibrateSTO(self):
+        """
+        Estimate the shared residual per-subcarrier phase slope (STO / delay) across all links and
+        store a correction that flattens it, so the phase curves are readable and the DC-gap
+        interpolation (done in updateCSI) works. Identity until pressed; reset on format change / Clear.
+        """
+        with self._csi_lock:
+            csis = [c for c in self._latest_link_csi.values() if c is not None and np.all(np.isfinite(c))]
+            subcarrier_range = self._subcarrier_range
+        if not csis:
+            return
+        # Single-lag autocorrelation over subcarriers, summed over links: its angle is the mean
+        # per-subcarrier phase step. Magnitude-weighted, so zero/notched gap tones barely contribute.
+        acc = np.complex128(0)
+        for csi_link in csis:
+            acc += np.sum(csi_link[1:] * np.conj(csi_link[:-1]))
+        if acc == 0:
+            return
+        slope = float(np.angle(acc))
+        correction = np.exp(-1.0j * slope * subcarrier_range).astype(np.complex64)
+        with self._csi_lock:
+            self._sto_correction = correction
+            # Re-render every stored link with the new correction.
+            self._dirty_link_indices.update(self._latest_link_csi.keys())
 
     def onCSI(self, clustered_csi: espargos.CSICluster):
         calibration = self.pool.get_calibration()
@@ -151,7 +187,9 @@ class EspargosDemoRadarCSI(RadarControlMixin, ESPARGOSApplication):
         if tx_index < 0 or tx_index >= self.sensor_count:
             return
 
-        resolved_format, csi = espargos.radar.deserialize_rx_csi(clustered_csi, calibration, self.genericconfig.get("preamble_format"))
+        # interpolate=False: fill the gap only after STO flattening (in updateCSI); with the residual
+        # delay slope still present the complex gap average collapses into a magnitude notch.
+        resolved_format, csi = espargos.radar.deserialize_rx_csi(clustered_csi, calibration, self.genericconfig.get("preamble_format"), interpolate=False)
         if csi is None:
             return
         if resolved_format != self.rx_format:
@@ -176,15 +214,15 @@ class EspargosDemoRadarCSI(RadarControlMixin, ESPARGOSApplication):
         if not np.any(finite_links):
             return
 
-        power_values = 20.0 * np.log10(np.abs(corrected[finite_links]) + 1e-5)
-        finite_power = power_values[np.isfinite(power_values)]
-        if finite_power.size == 0:
-            return
-
+        # Only display links received by the selected receiver array (bistatic: any TX -> selected RX
+        # array). Store the raw (STO not removed, gap not interpolated) per-link CSI; STO correction,
+        # gap interpolation and the power-axis range are applied on the GUI thread in updateCSI.
+        board_start = self.rx_boards() * espargos.constants.ANTENNAS_PER_BOARD
+        board_end = board_start + espargos.constants.ANTENNAS_PER_BOARD
         with self._csi_lock:
-            self.stable_power_minimum = self._interpolate_axis_range(self.stable_power_minimum, float(np.min(finite_power) - 3.0))
-            self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, float(np.max(finite_power) + 3.0))
             for rx_index in np.flatnonzero(finite_links):
+                if not (board_start <= rx_index < board_end):
+                    continue
                 link_index = int(self._link_index_by_rx_tx[rx_index, tx_index])
                 if link_index < 0:
                     continue
@@ -200,25 +238,64 @@ class EspargosDemoRadarCSI(RadarControlMixin, ESPARGOSApplication):
             power_minimum = self.stable_power_minimum
             power_maximum = self.stable_power_maximum
             subcarrier_range = self._subcarrier_range
+            sto_correction = self._sto_correction
+            rx_format = self.rx_format
             dirty_link_indices = sorted(self._dirty_link_indices)
             self._dirty_link_indices.clear()
             snapshot = {link_index: self._latest_link_csi.get(link_index) for link_index in dirty_link_indices}
 
+        batch_min = None
+        batch_max = None
         for link_index in dirty_link_indices:
             if link_index >= len(powerSeries) or link_index >= len(phaseSeries):
                 continue
             link_csi = snapshot.get(link_index)
-            if link_csi is None or not np.all(np.isfinite(link_csi)):
+            if link_csi is None:
+                # Link no longer populated (e.g. after switching RX array): clear its curves.
+                powerSeries[link_index].clear()
+                phaseSeries[link_index].clear()
                 continue
+            if link_csi.shape != sto_correction.shape or not np.all(np.isfinite(link_csi)):
+                continue
+
+            # Flatten the residual delay slope, then interpolate the (now phase-aligned) DC gap.
+            link_csi = link_csi * sto_correction
+            espargos.radar.interpolate_rx_gap(link_csi, rx_format)
 
             link_power = 20.0 * np.log10(np.abs(link_csi) + 1e-5)
             link_phase = np.angle(link_csi)
             powerSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, link_power)])
             phaseSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(subcarrier_range, link_phase)])
 
+            finite_power = link_power[np.isfinite(link_power)]
+            if finite_power.size:
+                lo = float(np.min(finite_power))
+                hi = float(np.max(finite_power))
+                batch_min = lo if batch_min is None else min(batch_min, lo)
+                batch_max = hi if batch_max is None else max(batch_max, hi)
+
+        if batch_min is not None:
+            power_minimum = self._interpolate_axis_range(power_minimum, batch_min - 3.0)
+            power_maximum = self._interpolate_axis_range(power_maximum, batch_max + 3.0)
+            with self._csi_lock:
+                self.stable_power_minimum = power_minimum
+                self.stable_power_maximum = power_maximum
+
         if power_minimum is not None and power_maximum is not None:
             axis.setMin(power_minimum)
             axis.setMax(power_maximum)
+
+    def _on_update_app_state(self, newcfg):
+        # Switching the receiver array changes which links are shown: drop the previous array's
+        # data and mark every series dirty so updateCSI clears the ones that are now empty.
+        if "rx_array" in newcfg:
+            with self._csi_lock:
+                self._latest_link_csi = {}
+                self.stable_power_minimum = None
+                self.stable_power_maximum = None
+                self._sto_correction = np.ones(len(self._subcarrier_range), dtype=np.complex64)
+                self._dirty_link_indices = set(range(self.linkCount))
+        super()._on_update_app_state(newcfg)
 
     def onAboutToQuit(self):
         try:

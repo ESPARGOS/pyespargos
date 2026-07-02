@@ -114,7 +114,6 @@ class DopplerDelayApp(RadarControlMixin, ESPARGOSApplication):
         super().onAboutToQuit()
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
-        self.pool.set_gain_settings(self.gain_settings)
         # Apply the RX acquire config for the current preamble-format selection (default "auto"
         # accepts every LTF format, so any TX format is received and auto-detected).
         self.apply_rx_acquire_config()
@@ -127,6 +126,8 @@ class DopplerDelayApp(RadarControlMixin, ESPARGOSApplication):
         )
         self.start()
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
+        # Calibration may leave the gains locked; reset to AGC so startup is AGC by default.
+        self.reset_radar_gains()
 
     def start(self):
         self.thread = threading.Thread(target=self.__run, daemon=True)
@@ -229,8 +230,13 @@ class DopplerDelayApp(RadarControlMixin, ESPARGOSApplication):
 
             data = self.raw_csi_buffer[0 : np.min([self.raw_csi_buffer.shape[0], self.packet_count]), ...].reshape(-1, 8, n)
             tx_antenna = self.appconfig.get("tx_antenna")
-            if isinstance(tx_antenna, int):
-                data = np.delete(data, tx_antenna, axis=1)
+            per_board = espargos.constants.ANTENNAS_PER_BOARD
+            # data holds the selected RX array's 8 sensors. Remove the transmitting sensor only when
+            # it is on that same array (monostatic self-TX); in a bistatic setup the TX sensor is on a
+            # different array and is not present here (tx_antenna is a pool-wide index, so it must be
+            # mapped to a local 0..7 index and skipped entirely when it belongs to another array).
+            if isinstance(tx_antenna, int) and tx_antenna // per_board == self.rx_boards():
+                data = np.delete(data, tx_antenna % per_board, axis=1)
 
             correlation = np.mean(np.einsum("tai,taj->taij", data, data.conj()), axis=(0, 1))
 
@@ -254,7 +260,12 @@ class DopplerDelayApp(RadarControlMixin, ESPARGOSApplication):
             roots = roots[np.abs(roots) < 1.0]
             roots = roots[np.argsort(np.abs(np.abs(roots) - 1.0))]
             offset = np.angle(roots[:n_signal])
-            self.sto_correction = np.exp(1j * offset * np.arange(-(n // 2), n // 2 + 1))
+            # A degenerate correlation (can happen bistatically) may leave no in-unit-circle root:
+            # skip STO estimation rather than crash / produce a mismatched-shape correction.
+            if offset.size < n_signal or not np.all(np.isfinite(offset)):
+                self.sto_correction = np.ones(n, dtype=np.complex64)
+            else:
+                self.sto_correction = np.exp(1j * offset * np.arange(-(n // 2), n // 2 + 1))
 
             self.mean = self.mean * self.sto_correction[None, None, :]
 
@@ -312,6 +323,13 @@ class DopplerDelayApp(RadarControlMixin, ESPARGOSApplication):
                 calibration.sensor_clock_offsets,
                 tx_timestamp_offset_s=self.appconfig.get("tx_timestamp_offset_ns") * 1e-9,
             )[0]
+
+            # In monostatic mode the transmitting sensor is on the RX array and never receives its own
+            # packet, so its incomplete CSI is NaN — that is expected and must NOT drop the packet (the
+            # DSP uses the other row). Sanitize NaN/inf to zero instead: this also neutralizes a
+            # genuinely corrupted packet (e.g. a NaN TX reference in a bistatic setup) so it can't
+            # poison the clutter mean / delay-Doppler FFT.
+            csi_rx = np.nan_to_num(csi_rx, nan=0.0, posinf=0.0, neginf=0.0)
 
             self.raw_csi_buffer[self.raw_csi_buffer_head] = csi_rx
             self.raw_csi_buffer_head = (self.raw_csi_buffer_head + 1) % BUFFER_LENGTH

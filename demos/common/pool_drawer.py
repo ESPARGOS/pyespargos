@@ -101,16 +101,21 @@ class PoolDrawer(PyQt6.QtCore.QObject):
             if lltf_8bit_mode is not None:
                 cfg_out["lltf_8bit_mode"] = bool(lltf_8bit_mode)
 
-        # Gain settings -> UI fields
-        gain = self.pool.get_gain_settings()
-        if isinstance(gain, dict):
-            gain_cfg = {}
-            # Make sure FFT gain and RX gain are consistent
+        # Gain settings -> UI fields. get_gain_settings() is strict — every board must report the same
+        # settings, and the two enable flags must agree. Boards left inconsistent from a previous run
+        # (common with multiple arrays) would otherwise hard-crash startup here, so on any such
+        # mismatch reset to a uniform AGC state and fall back to the default gain UI instead.
+        try:
+            gain = self.pool.get_gain_settings()
             rx_auto = not bool(_first_gain_value(gain["rx_gain_enable"]))
             fft_auto = not bool(_first_gain_value(gain["fft_scale_enable"]))
             if rx_auto != fft_auto:
-                raise ValueError("Inconsistent gain settings: rx_gain_enable and fft_scale_enable should be the same")
-            gain_cfg["automatic"] = rx_auto
+                raise ValueError("rx_gain_enable and fft_scale_enable differ")
+        except ValueError:
+            self.pool.set_gain_settings({"rx_gain_enable": False, "fft_scale_enable": False, "rx_gain_value": 32, "fft_scale_value": 0})
+            gain = None
+        if isinstance(gain, dict):
+            gain_cfg = {"automatic": rx_auto}
             if "rx_gain_value" in gain:
                 gain_cfg["rx_gain_value"] = int(_first_gain_value(gain["rx_gain_value"]))
             if "fft_scale_value" in gain:

@@ -31,6 +31,21 @@ Common.ESPARGOSApplication {
 			Common.RadarSettings { insertBefore: radarAnchor; Layout.columnSpan: 2 }
 			Common.GenericAppSettings { insertBefore: radarAnchor; controlWidth: 150; Layout.columnSpan: 2 }
 			Item { id: radarAnchor; width: 0; height: 0; Layout.columnSpan: 2 }
+
+			// Receiver array selection (bistatic: show only the CSI received by the chosen RX array)
+			Label { text: "RX Array"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			ComboBox {
+				id: rxArrayCombo
+				property string configKey: "rx_array"
+				property string configProp: "currentValue"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 150
+				model: backend.rxArrays
+				textRole: "text"
+				valueRole: "value"
+				currentValue: 0
+			}
 		}
 	}
 
@@ -38,17 +53,27 @@ Common.ESPARGOSApplication {
 		anchors.fill: parent
 
 		// Sits in its own row above the charts (which shift down), so it never overlaps the curves.
-		Button {
-			id: clearCurvesButton
+		RowLayout {
 			Layout.alignment: Qt.AlignHCenter
 			Layout.topMargin: 20
-			text: "Clear CSI Curves"
-			onClicked: {
-				backend.clearCSICurves()
-				for (let i = 0; i < amplitudeSeries.length; ++i)
-					amplitudeSeries[i].clear()
-				for (let i = 0; i < phaseSeries.length; ++i)
-					phaseSeries[i].clear()
+			spacing: 10
+
+			Button {
+				id: calibrateStoButton
+				text: "Calibrate STO"
+				onClicked: backend.calibrateSTO()
+			}
+
+			Button {
+				id: clearCurvesButton
+				text: "Clear CSI Curves"
+				onClicked: {
+					backend.clearCSICurves()
+					for (let i = 0; i < amplitudeSeries.length; ++i)
+						amplitudeSeries[i].clear()
+					for (let i = 0; i < phaseSeries.length; ++i)
+						phaseSeries[i].clear()
+				}
 			}
 		}
 

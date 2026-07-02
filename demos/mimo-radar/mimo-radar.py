@@ -1,16 +1,23 @@
+#!/usr/bin/env python3
+
 # Front view (left to right): board1 | board0 | board2
+
+import pathlib
+import sys
+
+sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
+
 import espargos
+import espargos.radar
+import espargos.util
 import numpy as np
-import scipy
+import scipy.fft
+import scipy.optimize
 from PyQt6 import QtCore, QtQml, QtWidgets
 from PyQt6.QtGui import QImage, QPainter
 from PyQt6.QtQuick import QQuickPaintedItem
 from matplotlib import colormaps
-import pathlib
-import sys
 import threading
-
-sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
 from demos.common import ESPARGOSApplication
 
@@ -198,17 +205,34 @@ class MIMOApplication(ESPARGOSApplication):
         self.mutex = threading.Lock()
 
         self.engine.rootContext().setContextProperty("backend", self)
-        self.initialize_qml("mimo-radar-ui.qml")
+        self.initialize_qml(pathlib.Path(__file__).resolve().parent / "mimo-radar-ui.qml")
         self.colormap = colormaps.get_cmap("viridis")
-
-    def _csi_predicate(self, cluster):
-        return cluster.is_radar() and cluster.has_radar_tx_report() and np.sum(cluster.get_completion()) == N_antennas - 1
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
-        self.pool.add_csi_callback(self.onCSI, cb_predicate=self._csi_predicate)
+
+        # Pool-wide radar setup. Transmit from sensors 0 and 4 (first column of each row) on
+        # every board and receive L-LTF CSI. With stagger=True the transmitting antennas are
+        # spread as a TDM schedule across `interval`, so the per-slot spacing (interval divided
+        # by the number of active antennas) is TX_TIME_SPACING = 2500 us, reproducing the
+        # original TDM_TIMESLOTS layout. CFO compensation stays disabled (RadarConfig default)
+        # so that, with TX and RX sharing a reference clock, packet-to-packet phase noise stays
+        # low. tx_timestamp_offset_ns=1075 matches the offset the DSP previously hardcoded.
+        self.session = espargos.radar.RadarSession(
+            self.pool,
+            espargos.radar.RadarConfig(
+                tx_antennas=np.asarray(SENSORS_ACTIVE, dtype=bool).reshape(3, 2, 4),
+                interval=TX_TIME_SPACING * 1e-6 * int(np.count_nonzero(SENSORS_ACTIVE)),
+                format="lltf",
+                tx_power=TX_POWER,
+                rfswitch_state=RF_SWITCH,
+                tx_timestamp_offset_ns=1075,
+            ),
+        )
+
+        self.pool.add_csi_callback(self.onCSI, cb_predicate=self.session.predicate("all"))
         self.start()
-        self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
+        self.session.stop()
         self.pool.set_gain_settings(RX_config)
         self.pool.set_rfswitch(RF_SWITCH)
         self.pool.set_csi_acquire_config(config={"acquire_csi_force_lltf": True})
@@ -233,7 +257,7 @@ class MIMOApplication(ESPARGOSApplication):
             csi.get_radar_tx_index(),
             self._subcarrier_frequencies(csi.get_primary_channel()),
             np.zeros((N_antennas,), dtype=np.float64),
-            tx_timestamp_offset_s=1075e-9,
+            tx_timestamp_offset_s=self.session.tx_timestamp_offset_s,
         )
         tx_index = csi.get_radar_tx_index()
 
@@ -308,19 +332,6 @@ class MIMOApplication(ESPARGOSApplication):
     def start_radar(self):
         if self.pool.get_calibration() is None:
             raise RuntimeError("Calibration data not available")
-        calibration = self.pool.get_calibration()
-        active_by_sensor = np.array(SENSORS_ACTIVE, dtype=bool).reshape(3, 2, 4).tolist()
-        t0_by_sensor = (np.array(TDM_TIMESLOTS) * TX_TIME_SPACING * 1e-6 + 1e-3 - float(np.nanmin(self.pool.get_calibration().sensor_clock_offsets))).reshape(3, 2, 4).tolist()
-        period_by_sensor = np.full((3, 2, 4), TX_TIME_SPACING * 1e-6 * 6).tolist()
-
-        tx_power = TX_POWER
-        tx_rate = 11
-        rf_switch_state = RF_SWITCH
-        tx_phymode = 2
-
-        radarConfig = espargos.radar.build_pool_config(
-            calibration=calibration, active_by_sensor=active_by_sensor, t0_by_sensor=t0_by_sensor, period_by_sensor=period_by_sensor, tx_power=tx_power, tx_rate=tx_rate, rfswitch_state=rf_switch_state, tx_phymode=tx_phymode
-        )
 
         self.csi_buffer[...] = np.nan
         self.csi_buffer_nc[...] = np.nan
@@ -328,10 +339,11 @@ class MIMOApplication(ESPARGOSApplication):
         self.m_r_timestamp = -1
         self.last_index_tx = np.zeros((N_antennas), dtype=np.int64)
 
-        self.pool.set_radar_config(radarConfig)
+        # Apply the RX L-LTF format, disable CFO correction and program the TDM TX schedule.
+        self.session.configure()
 
     def stop_radar(self):
-        self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
+        self.session.stop()
 
     def clear_data(self):
         with self.mutex:
@@ -385,8 +397,8 @@ class MIMOApplication(ESPARGOSApplication):
         self.data = self.colormap(bd_csi.T)
 
     def onAboutToQuit(self):
-        if hasattr(self, "pool"):
-            self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
+        if hasattr(self, "session"):
+            self.session.stop()
         return super().onAboutToQuit()
 
     @QtCore.pyqtSlot()

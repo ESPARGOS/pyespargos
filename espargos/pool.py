@@ -146,6 +146,41 @@ class Pool(object):
             details = "; ".join(mismatch_lines) if mismatch_lines else "no differing top-level keys found"
             raise ValueError(f"{what}: mismatch between boards (board 0 != board {board_num}): {details}")
 
+    def _reconcile_across_boards(self, values: list, what: str, apply, reset_value=None, ignore_keys: set[str] | None = None):
+        """
+        Return the boards' agreed value for a read-back setting.
+
+        If the boards disagree (which happens routinely with multiple arrays left in different states
+        by a previous run), warn and reset every board to a single consistent value instead of raising:
+        ``reset_value`` when given (e.g. AGC for gains), otherwise board 0's value. ``apply(value)``
+        must write ``value`` directly to the boards — not via a pool setter that re-reads for
+        verification, which would recurse back into this method.
+        """
+        if not values:
+            raise ValueError(f"{what}: no boards in pool")
+
+        def canon(v):
+            if ignore_keys and isinstance(v, dict):
+                v = {k: x for k, x in v.items() if k not in ignore_keys}
+            if isinstance(v, (dict, list)):
+                return json.dumps(v, sort_keys=True, separators=(",", ":"))
+            return v
+
+        c0 = canon(values[0])
+        mismatched = [i for i, v in enumerate(values[1:], start=1) if canon(v) != c0]
+        if not mismatched:
+            return values[0]
+
+        chosen = values[0] if reset_value is None else reset_value
+        target = "board 0's value" if reset_value is None else "a safe default"
+        self.logger.warning(f"{what}: boards disagree (board 0 != board(s) {mismatched}); resetting all boards to {target}.")
+        try:
+            apply(chosen)
+        except Exception as exc:
+            self.logger.warning(f"{what}: could not reset boards to a consistent value ({exc}); using board 0's value.")
+            return values[0]
+        return chosen
+
     def set_rfswitch(self, state: csi.rfswitch_state_t):
         """
         Set RF switch state for all boards in the pool.
@@ -165,8 +200,7 @@ class Pool(object):
             raise ValueError("No boards in pool to get RF switch state from")
 
         states = [b.get_rfswitch() for b in self.boards]
-        self._assert_same_across_boards(states, "RF switch state")
-        return states[0]
+        return self._reconcile_across_boards(states, "RF switch state", lambda v: [b.set_rfswitch(v) for b in self.boards])
 
     def set_mac_filter(self, mac_filter: dict):
         """
@@ -191,16 +225,14 @@ class Pool(object):
         This is forwarded to :meth:`pyespargos.board.Board.get_mac_filter` for each board.
         """
         filters = [b.get_mac_filter() for b in self.boards]
-        self._assert_same_across_boards(filters, "MAC filter")
-        return filters[0]
+        return self._reconcile_across_boards(filters, "MAC filter", lambda v: [b.set_mac_filter(v) for b in self.boards])
 
     def get_csi_acquire_config(self) -> dict:
         """
         Return CSI acquire config; sanity-check all boards report the same value.
         """
         cfgs = [b.get_csi_acquire_config() for b in self.boards]
-        self._assert_same_across_boards(cfgs, "CSI acquire config")
-        return cfgs[0]
+        return self._reconcile_across_boards(cfgs, "CSI acquire config", lambda v: [b.set_csi_acquire_config(v) for b in self.boards])
 
     def set_csi_acquire_config(self, config: dict):
         """
@@ -223,8 +255,7 @@ class Pool(object):
         Return CFO correction config; sanity-check all boards report the same value.
         """
         configs = [b.get_cfo_correction() for b in self.boards]
-        self._assert_same_across_boards(configs, "CFO correction")
-        return configs[0]
+        return self._reconcile_across_boards(configs, "CFO correction", lambda v: [b.set_cfo_correction(v["auto"], v.get("value", 0)) for b in self.boards])
 
     def set_cfo_correction(self, auto: bool, value: int = 0):
         """
@@ -239,8 +270,13 @@ class Pool(object):
         Return gain settings; sanity-check all boards report the same value.
         """
         settings = [b.get_gain_settings() for b in self.boards]
-        self._assert_same_across_boards(settings, "Gain settings")
-        return settings[0]
+        # On mismatch, reset to AGC (a safe default) rather than an arbitrary board's frozen gains.
+        return self._reconcile_across_boards(
+            settings,
+            "Gain settings",
+            lambda v: self.set_gain_settings(v),
+            reset_value={"rx_gain_enable": False, "fft_scale_enable": False, "rx_gain_value": 32, "fft_scale_value": 0},
+        )
 
     def set_gain_settings(self, settings: dict):
         """
@@ -271,8 +307,7 @@ class Pool(object):
         Return per-sensor WiFi channel overrides; sanity-check all boards report the same value.
         """
         settings = [b.get_wifi_channel_overrides() for b in self.boards]
-        self._assert_same_across_boards(settings, "WiFi channel overrides")
-        return settings[0]
+        return self._reconcile_across_boards(settings, "WiFi channel overrides", lambda v: [b.set_wifi_channel_overrides(v) for b in self.boards])
 
     def set_wifi_channel_overrides(self, settings: dict):
         """
@@ -327,12 +362,12 @@ class Pool(object):
         Consistency check ignores "calib-source" and "calib-mode" (they may legitimately differ).
         """
         wificonfs = [b.get_wificonf() for b in self.boards]
-        self._assert_same_dict_across_boards(
+        return self._reconcile_across_boards(
             wificonfs,
             "WiFi config",
+            lambda v: [b.set_wificonf(v) for b in self.boards],
             ignore_keys={"calib-source", "calib-mode"},
         )
-        return wificonfs[0]
 
     def set_wificonf(self, wificonf: dict):
         """

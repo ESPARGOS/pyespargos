@@ -365,15 +365,38 @@ _RX_DISPATCH = {
 }
 
 
-def deserialize_rx_csi(cluster, calibration, fmt="auto"):
+def interpolate_rx_gap(values: np.ndarray, fmt: str) -> None:
+    """
+    Fill an RX format's null / DC gap subcarriers in place (no-op for lltf).
+
+    Interpolation is only meaningful once the per-subcarrier phase slope (STO /
+    residual delay) has been removed — otherwise the complex average across the
+    gap sits between two rotated phasors and collapses into a magnitude notch.
+    Callers that still carry a large delay slope (e.g. before the transmit-side
+    timestamp correction) should interpolate afterwards, not here.
+    """
+    if fmt == "ht40":
+        csi.interpolate_ht40ltf_gap(values)
+    elif fmt == "ht20":
+        csi.interpolate_ht20ltf_gap(values)
+    elif fmt == "he20":
+        csi.interpolate_he20ltf_gaps(values)
+
+
+def deserialize_rx_csi(cluster, calibration, fmt="auto", interpolate=True):
     """
     Deserialize and calibrate a radar cluster's CSI in a format-agnostic way.
 
     ``fmt`` is one of :data:`RX_FORMATS` or ``"auto"`` (detect the LTF format
     actually present in this cluster). Returns ``(resolved_format, csi)`` where
-    ``csi`` is the calibrated CSI array (gap subcarriers interpolated for
-    ht20/ht40), or ``(None, None)`` if the requested/any known LTF is not present.
-    This does not change the pool's acquire config — TX and RX are decoupled.
+    ``csi`` is the calibrated CSI array, or ``(None, None)`` if the requested/any
+    known LTF is not present. This does not change the pool's acquire config — TX
+    and RX are decoupled.
+
+    When ``interpolate`` is true the null / DC gap subcarriers are filled via
+    :func:`interpolate_rx_gap` (ht20/ht40/he20). Pass ``interpolate=False`` if you
+    apply a delay/STO correction downstream and want to interpolate the gap only
+    after the phase has been flattened.
     """
     if fmt == "auto":
         fmt = next((f for f in RX_FORMATS if getattr(cluster, _RX_DISPATCH[f][0])()), None)
@@ -383,10 +406,8 @@ def deserialize_rx_csi(cluster, calibration, fmt="auto"):
     if not getattr(cluster, has_method)():
         return None, None
     values = getattr(calibration, apply_method)(getattr(cluster, deserialize_method)())
-    if fmt == "ht40":
-        csi.interpolate_ht40ltf_gap(values)
-    elif fmt == "ht20":
-        csi.interpolate_ht20ltf_gap(values)
+    if interpolate:
+        interpolate_rx_gap(values, fmt)
     return fmt, values
 
 
@@ -735,10 +756,15 @@ class RadarSession:
             warnings.filterwarnings("ignore", message="Mean of empty slice", category=RuntimeWarning)
             rx_gain = np.rint(np.nanmean(np.asarray(rx_records, dtype=np.float32), axis=0))
             fft_gain = np.rint(np.nanmean(np.asarray(fft_records, dtype=np.float32), axis=0))
+        # Freeze a sensor only if BOTH its RX and FFT gains are known; otherwise keep it on AGC.
+        # Tie the two enable masks together so rx_gain_enable == fft_scale_enable for every sensor
+        # (the hardware / pool drawer require the two to be consistent — e.g. a sensor on a different
+        # array than the transmitter may have a known RX gain but no FFT gain, or vice versa).
+        finite = np.isfinite(rx_gain) & np.isfinite(fft_gain)
         gains = {
-            "rx_gain_enable": np.isfinite(rx_gain),
+            "rx_gain_enable": finite,
             "rx_gain_value": np.nan_to_num(rx_gain, nan=0.0).astype(int),
-            "fft_scale_enable": np.isfinite(fft_gain),
+            "fft_scale_enable": finite,
             "fft_scale_value": np.nan_to_num(fft_gain, nan=0.0).astype(int),
         }
         self.pool.set_gain_settings(gains)
