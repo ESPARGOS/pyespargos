@@ -1,0 +1,21 @@
+# Use this configuration if you only have a single ESPARGOS One board,
+# (e.g., as supplied in the ESPARGOS One Core Kit) with default IP settings,
+# mounted in its regular orientation (= 4 antennas horizontal, 2 antennas vertical)
+
+combined-array:
+  boards:
+    espargosone:
+      host: 192.168.1.2
+      cable:
+        length: 0.0
+        velocity_factor: 0.76
+
+  array:
+    - - "espargosone.0.0"
+      - "espargosone.0.1"
+      - "espargosone.0.2"
+      - "espargosone.0.3"
+    - - "espargosone.1.0"
+      - "espargosone.1.1"
+      - "espargosone.1.2"
+      - "espargosone.1.3"

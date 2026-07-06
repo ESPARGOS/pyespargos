@@ -1,50 +1,20 @@
-# Use this configuration if you have multiple (here: 3) ESPARGOS boards
-# which are all connected to the same master sync output.
-
-app:
-  camera:
-    device: "/dev/video2"
-    format: null
-    flip: False
-  beamformer:
-    type: "FFT"
-    polarization_mode: "show"
-  visualization:
-    space: "camera"
-
-generic:
-  preamble_format: "lltf"
-  kiosk_mode: False
-
-pool:
-  channel: 7
-  rf_switch: 4
-
-backlog:
-  size: 20
-  fields:
-    lltf: True
-    ht20: False
-    ht40: False
-
 combined-array:
   boards:
     ba1:
-      host: 192.168.0.101
+      host: 192.168.1.3
       cable:
         length: 0.0
         velocity_factor: 0.76
     ba2:
-      host: 192.168.0.102
+      host: 192.168.1.4
       cable:
         length: 0.0
         velocity_factor: 0.76
     ba3:
-      host: 192.168.0.103
+      host: 192.168.1.5
       cable:
         length: 0.0
         velocity_factor: 0.76
-
   array:
     - - "ba1.1.0"
       - "ba1.0.0"

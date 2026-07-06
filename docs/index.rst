@@ -12,4 +12,5 @@ Table of contents
    ESPARGOS Website <https://www.espargos.net>
    get-started
    combined-arrays
+   application-framework
    source/modules
