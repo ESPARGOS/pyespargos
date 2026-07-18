@@ -264,17 +264,11 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
                 :,
                 subcarriers_zp // 2 - subcarriers // 2 : subcarriers_zp // 2 + subcarriers // 2 + 1,
             ] = csi_flat
-            csi_flat_zeropadded = np.fft.ifftshift(
-                np.fft.ifft(np.fft.fftshift(csi_flat_zeropadded, axes=-1), axis=-1),
+            csi_flat_zeropadded = np.fft.fftshift(
+                np.fft.ifft(np.fft.ifftshift(csi_flat_zeropadded, axes=-1), axis=-1),
                 axes=-1,
             )
-            subcarrier_range_zeropadded = (
-                np.arange(
-                    -csi_flat_zeropadded.shape[-1] // 2,
-                    csi_flat_zeropadded.shape[-1] // 2,
-                )
-                / oversampling
-            )
+            subcarrier_range_zeropadded = (np.arange(csi_flat_zeropadded.shape[-1]) - csi_flat_zeropadded.shape[-1] // 2) / oversampling
             csi_power = csi_flat_zeropadded.shape[1] * np.abs(csi_flat_zeropadded) ** 2
             csi_power_active = csi_power[valid_antennas]
             self.stable_power_minimum = 0
