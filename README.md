@@ -67,12 +67,12 @@ The following demos are provided in the `demos` folder of this repository:
 | `instantaneous-csi` | Plot the current frequency-domain or time-domain transfer function of the measured channel. |
 | `phases-over-time` | Plot the average received phase for every antenna over time. |
 | `tdoas-over-time` | Visualize time difference of arrival (TDOA) measurements over time. |
-| `azimuth-delay` | Display a 2D azimuth-delay diagram using beamspace processing. Requires shaders to be compiled first (see ``demos/azimuth-delay/README.md`). |
+| `azimuth-delay` | Display a 2D azimuth-delay diagram using beamspace processing. Ships with pre-compiled shaders; see [`demos/azimuth-delay/README.md`](demos/azimuth-delay/README.md) in case of shader issues. |
 | `polarization` | Visualize WiFi signal polarization using constellation diagrams and polarization ellipses. |
 | `speedtest` | Measure CSI packet throughput from ESPARGOS. |
 | `combined-array` | Combine multiple ESPARGOS arrays into one large antenna array and visualize the average received phase for each antenna. Requires multiple ESPARGOS arrays. |
 | `combined-array-calibration` | Tool for calibrating combined multi-board antenna arrays. Visualizes and exports calibration data. |
-| `camera` | Overlay WiFi spatial spectrum on a live camera feed. Requires shaders to be compiled first (see `demos/camera/README.md`). |
+| `camera` | Overlay WiFi spatial spectrum on a live camera feed. Ships with pre-compiled shaders; see [`demos/camera/README.md`](demos/camera/README.md) in case of shader issues. |
 | `radiation-pattern-3d` | Interactive 3D radiation pattern visualization. Requires additional packages (see [`demos/radiation-pattern-3d/README.md`](demos/radiation-pattern-3d/README.md)). |
 
 Most demos support both single ESPARGOS arrays and combined multi-board setups via command-line arguments or YAML configuration files.
@@ -139,7 +139,7 @@ If you want to run the demo applications:
 pip install pyqt6 pyqt6-charts pyyaml matplotlib
 ```
 
-If you want to run demos such as `camera` and `azimuth-delay`, you will also need Qt Shader Baker (`qsb`):
+Demos such as `camera` and `azimuth-delay` use shaders, which are shipped in pre-compiled form (`.qsb` files) in this repository, so normally no additional steps are required. Only if these demos do not work should you re-compile the shaders yourself using the `compile_shader.sh` scripts, which requires the Qt Shader Baker (`qsb`):
 
 ```bash
 # Debian / Ubuntu / Raspberry Pi OS (Raspbian)
@@ -210,7 +210,7 @@ If you want to run the demo applications:
 pip install pyqt6 pyqt6-charts pyyaml matplotlib
 ```
 
-If you want to run demos such as `camera` and `azimuth-delay`, you will also need Qt 6 so that `qsb.exe` (Qt Shader Baker) is available. The simplest option is to use the Qt Online Installer and install a desktop Qt 6 kit.
+Demos such as `camera` and `azimuth-delay` use shaders, which are shipped in pre-compiled form (`.qsb` files) in this repository, so normally no additional steps are required. Only if these demos do not work should you re-compile the shaders yourself using the `.bat` scripts, which requires Qt 6 so that `qsb.exe` (Qt Shader Baker) is available. The simplest option is to use the Qt Online Installer and install a desktop Qt 6 kit.
 
 > **Note:** The shader batch scripts currently default to `C:\Qt\6.10.2\mingw_64\bin\qsb.exe`. If your Qt installation is in a different location, either update the `QSB` path in the `.bat` scripts or add the Qt `bin` directory to `PATH`.
 
@@ -276,7 +276,7 @@ If you want to run the demo applications:
 pip install pyqt6 pyqt6-charts pyyaml matplotlib
 ```
 
-If you want to run demos such as `camera` and `azimuth-delay`, you will also need Qt Shader Baker (`qsb`). One option is:
+Demos such as `camera` and `azimuth-delay` use shaders, which are shipped in pre-compiled form (`.qsb` files) in this repository, so normally no additional steps are required. Only if these demos do not work should you re-compile the shaders yourself using the `compile_shader.sh` scripts, which requires the Qt Shader Baker (`qsb`). One option is:
 
 ```bash
 brew install qt

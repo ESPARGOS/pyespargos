@@ -17,9 +17,6 @@ wheels/
 .scratch/
 *.egg-info/
 
-# compiled shaders
-*.qsb
-
 # images for camera demo
 demos/camera/img/*
 !demos/camera/img/*.tex
