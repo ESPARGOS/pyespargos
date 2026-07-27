@@ -125,6 +125,37 @@ ApplicationWindow {
 
 	/** Optional application-provided receiver configuration drawer. **/
 	property Component receiverDrawerComponent: null
+	readonly property int rfSwitchMode: receiverDrawerLoader.item
+		&& receiverDrawerLoader.item.rfSwitchMode !== undefined
+		? receiverDrawerLoader.item.rfSwitchMode
+		: -1
+
+	Rectangle {
+		id: rfSwitchWarning
+
+		anchors.top: parent.top
+		anchors.left: parent.left
+		anchors.leftMargin: 20
+		anchors.topMargin: 20
+		width: rfSwitchWarningText.implicitWidth + 20
+		height: 30
+		color: "#b91c1c"
+		opacity: 0.9
+		radius: 6
+		z: 10
+		visible: root.rfSwitchMode === 0 || root.rfSwitchMode === 1
+
+		Text {
+			id: rfSwitchWarningText
+			anchors.centerIn: parent
+			text: root.rfSwitchMode === 0
+				? "Warning: RF switch is isolated"
+				: "Warning: RF switch uses reference input"
+			color: "white"
+			font.bold: true
+			font.pixelSize: 14
+		}
+	}
 
 	// Logo
 	Image {

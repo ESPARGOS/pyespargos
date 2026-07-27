@@ -11,6 +11,7 @@ Drawer {
 	property bool calibrationInProgress: false
 	property real calibrationStart: 0.0
 	property real calibrationProgress: 0.0
+	readonly property int rfSwitchMode: rfSwitchInput.currentIndex
 	readonly property bool tooltipsEnabled: ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true
 	readonly property string gainTooltipText: "RX gain is configured in 1 dB units. FFT gain is configured in 0.25 dB units."
 
