@@ -58,6 +58,16 @@ class _CSICallback(object):
         return False
 
 
+# WiFi configuration fields that legitimately differ between boards. Pool-wide
+# reads and writes must leave these board-local calibration settings untouched.
+WIFICONF_PER_BOARD_KEYS = {
+    "calib-source",
+    "calib-mode",
+    "calib-txpower",
+    "calib-interval",
+}
+
+
 class Pool(object):
     """
     A Pool is a collection of ESPARGOS boards.
@@ -119,32 +129,50 @@ class Pool(object):
             if canon(v) != c0:
                 raise ValueError(f"{what}: mismatch between boards (board 0 != board {i})")
 
-    def _assert_same_dict_across_boards(self, dicts: list[dict], what: str, ignore_keys: set[str] | None = None):
+    def _reconcile_across_boards(
+        self,
+        values: list,
+        what: str,
+        apply,
+        reset_value=None,
+        ignore_keys: set[str] | None = None,
+    ):
+        """Return a consistent pool-wide setting, reconciling mismatched boards.
+
+        Matching values are returned without writing anything. On mismatch,
+        every board is reset to board 0's value, or to ``reset_value`` when a
+        safer explicit default is supplied. ``apply`` must write directly to
+        boards rather than call a validating pool setter, to avoid recursive
+        reconciliation.
         """
-        Ensure all dicts are identical, optionally ignoring specific keys.
-        """
-        if not dicts:
+        if not values:
             raise ValueError(f"{what}: no boards in pool")
-        ignore_keys = ignore_keys or set()
 
-        def strip_ignored(d: dict):
-            return {k: v for k, v in d.items() if k not in ignore_keys}
+        def canonical(value):
+            if ignore_keys and isinstance(value, dict):
+                value = {key: item for key, item in value.items() if key not in ignore_keys}
+            if isinstance(value, (dict, list)):
+                return json.dumps(value, sort_keys=True, separators=(",", ":"))
+            return value
 
-        stripped = [strip_ignored(d) for d in dicts]
-        reference = stripped[0]
-        for board_num, current in enumerate(stripped[1:], start=1):
-            if current == reference:
-                continue
+        reference = canonical(values[0])
+        mismatched = [index for index, value in enumerate(values[1:], start=1) if canonical(value) != reference]
+        if not mismatched:
+            return values[0]
 
-            mismatch_lines = []
-            for key in sorted(set(reference) | set(current)):
-                reference_value = reference.get(key, "<missing>")
-                current_value = current.get(key, "<missing>")
-                if current_value != reference_value:
-                    mismatch_lines.append(f"{key}: board 0={reference_value!r}, board {board_num}={current_value!r}")
+        chosen = values[0] if reset_value is None else reset_value
+        apply_value = chosen
+        if ignore_keys and isinstance(apply_value, dict):
+            apply_value = {key: value for key, value in apply_value.items() if key not in ignore_keys}
 
-            details = "; ".join(mismatch_lines) if mismatch_lines else "no differing top-level keys found"
-            raise ValueError(f"{what}: mismatch between boards (board 0 != board {board_num}): {details}")
+        target = "board 0's value" if reset_value is None else "a safe default"
+        self.logger.warning(f"{what}: boards disagree (board 0 != board(s) {mismatched}); resetting all boards to {target}.")
+        try:
+            apply(apply_value)
+        except Exception as exc:
+            self.logger.warning(f"{what}: could not reset boards to a consistent value ({exc}); using board 0's value.")
+            return values[0]
+        return chosen
 
     def set_rfswitch(self, state: csi.rfswitch_state_t):
         """
@@ -165,8 +193,11 @@ class Pool(object):
             raise ValueError("No boards in pool to get RF switch state from")
 
         states = [b.get_rfswitch() for b in self.boards]
-        self._assert_same_across_boards(states, "RF switch state")
-        return states[0]
+        return self._reconcile_across_boards(
+            states,
+            "RF switch state",
+            lambda value: [board.set_rfswitch(value) for board in self.boards],
+        )
 
     def set_mac_filter(self, mac_filter: dict):
         """
@@ -186,21 +217,27 @@ class Pool(object):
 
     def get_mac_filter(self) -> dict:
         """
-        Return MAC filter configuration; sanity-check all boards report the same value.
+        Return MAC filter configuration, reconciling boards when needed.
 
         This is forwarded to :meth:`pyespargos.board.Board.get_mac_filter` for each board.
         """
         filters = [b.get_mac_filter() for b in self.boards]
-        self._assert_same_across_boards(filters, "MAC filter")
-        return filters[0]
+        return self._reconcile_across_boards(
+            filters,
+            "MAC filter",
+            lambda value: [board.set_mac_filter(value) for board in self.boards],
+        )
 
     def get_csi_acquire_config(self) -> dict:
         """
-        Return CSI acquire config; sanity-check all boards report the same value.
+        Return CSI acquire config, reconciling boards when needed.
         """
         cfgs = [b.get_csi_acquire_config() for b in self.boards]
-        self._assert_same_across_boards(cfgs, "CSI acquire config")
-        return cfgs[0]
+        return self._reconcile_across_boards(
+            cfgs,
+            "CSI acquire config",
+            lambda value: [board.set_csi_acquire_config(value) for board in self.boards],
+        )
 
     def set_csi_acquire_config(self, config: dict):
         """
@@ -211,7 +248,6 @@ class Pool(object):
         For the expected JSON/dict format, refer to that method's documentation.
 
         :param config: CSI acquisition configuration dict to apply to all boards.
-        :raises ValueError: If boards in the pool disagree on the resulting config after applying.
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
         for b in self.boards:
@@ -220,11 +256,14 @@ class Pool(object):
 
     def get_cfo_correction(self) -> dict:
         """
-        Return CFO correction config; sanity-check all boards report the same value.
+        Return CFO correction config, reconciling boards when needed.
         """
         configs = [b.get_cfo_correction() for b in self.boards]
-        self._assert_same_across_boards(configs, "CFO correction")
-        return configs[0]
+        return self._reconcile_across_boards(
+            configs,
+            "CFO correction",
+            lambda value: [board.set_cfo_correction(value["auto"], value.get("value", 0)) for board in self.boards],
+        )
 
     def set_cfo_correction(self, auto: bool, value: int = 0):
         """
@@ -236,11 +275,20 @@ class Pool(object):
 
     def get_gain_settings(self) -> dict:
         """
-        Return gain settings; sanity-check all boards report the same value.
+        Return gain settings, resetting mismatched boards to automatic gain.
         """
         settings = [b.get_gain_settings() for b in self.boards]
-        self._assert_same_across_boards(settings, "Gain settings")
-        return settings[0]
+        return self._reconcile_across_boards(
+            settings,
+            "Gain settings",
+            lambda value: self.set_gain_settings(value),
+            reset_value={
+                "rx_gain_enable": False,
+                "fft_scale_enable": False,
+                "rx_gain_value": 32,
+                "fft_scale_value": 0,
+            },
+        )
 
     def set_gain_settings(self, settings: dict):
         """
@@ -268,11 +316,14 @@ class Pool(object):
 
     def get_wifi_channel_overrides(self) -> dict:
         """
-        Return per-sensor WiFi channel overrides; sanity-check all boards report the same value.
+        Return per-sensor WiFi channel overrides, reconciling boards when needed.
         """
         settings = [b.get_wifi_channel_overrides() for b in self.boards]
-        self._assert_same_across_boards(settings, "WiFi channel overrides")
-        return settings[0]
+        return self._reconcile_across_boards(
+            settings,
+            "WiFi channel overrides",
+            lambda value: [board.set_wifi_channel_overrides(value) for board in self.boards],
+        )
 
     def set_wifi_channel_overrides(self, settings: dict):
         """
@@ -282,7 +333,6 @@ class Pool(object):
         For the expected JSON/dict format, refer to that method's documentation.
 
         :param settings: Per-sensor WiFi channel override settings dict to apply to all boards.
-        :raises ValueError: If boards in the pool disagree on the resulting settings after applying.
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
         for b in self.boards:
@@ -322,17 +372,18 @@ class Pool(object):
 
     def get_wificonf(self) -> dict:
         """
-        Return WiFi config; sanity-check boards report the same value.
+        Return WiFi config, reconciling pool-wide settings when boards disagree.
 
-        Consistency check ignores "calib-source" and "calib-mode" (they may legitimately differ).
+        Board-local calibration fields are excluded from both comparison and
+        reconciliation, so each board retains its own values.
         """
         wificonfs = [b.get_wificonf() for b in self.boards]
-        self._assert_same_dict_across_boards(
+        return self._reconcile_across_boards(
             wificonfs,
             "WiFi config",
-            ignore_keys={"calib-source", "calib-mode"},
+            lambda value: [board.set_wificonf(value) for board in self.boards],
+            ignore_keys=WIFICONF_PER_BOARD_KEYS,
         )
-        return wificonfs[0]
 
     def set_wificonf(self, wificonf: dict):
         """
@@ -341,17 +392,14 @@ class Pool(object):
         This is forwarded to :meth:`pyespargos.board.Board.set_wificonf` for each board.
         For the expected JSON/dict format, refer to that method's documentation.
 
-        The values of "calib-source" and "calib-mode" are ignored and not propagated to the pool.
-        If you need to set those, call :meth:`pyespargos.board.Board.set_wificonf` on each board individually.
-        Consistency check also ignores "calib-source" and "calib-mode" (they may legitimately differ).
+        Fields listed in :data:`WIFICONF_PER_BOARD_KEYS` are ignored and not
+        propagated because they may legitimately differ between boards. Set
+        those directly through :meth:`pyespargos.board.Board.set_wificonf`.
 
         :param wificonf: WiFi configuration dict to apply to all boards.
-        :raises ValueError: If boards in the pool disagree on the resulting config after applying (excluding ignored keys).
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
-        wificonf = dict(wificonf)  # Make a copy
-        wificonf.pop("calib-source", None)
-        wificonf.pop("calib-mode", None)
+        wificonf = {key: value for key, value in wificonf.items() if key not in WIFICONF_PER_BOARD_KEYS}
         for b in self.boards:
             b.set_wificonf(wificonf)
         _ = self.get_wificonf()
