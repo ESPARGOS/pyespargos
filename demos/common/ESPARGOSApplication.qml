@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
-import "." as Common
 
 ApplicationWindow {
 	id: root
@@ -53,14 +52,18 @@ ApplicationWindow {
 			ToolButton {
 				text: "⚙ RX"
 				font.pixelSize: Math.max(20, root.width / 80)
+				visible: receiverDrawerComponent !== null
 				MouseArea {
 					anchors.fill: parent
 					cursorShape: Qt.PointingHandCursor
 					onClicked: {
-						if (poolDrawer.visible) {
-							poolDrawer.close()
+						var drawer = receiverDrawerLoader.item
+						if (drawer === null)
+							return
+						if (drawer.visible) {
+							drawer.close()
 						} else {
-							poolDrawer.open()
+							drawer.open()
 						}
 					}
 				}
@@ -97,10 +100,15 @@ ApplicationWindow {
 		}
 	}
 
-	/** RX pool configuration drawer **/
-	Common.PoolDrawer {
-		id: poolDrawer
-		headerHeight: header.height
+	/** Optional receiver configuration drawer, explicitly selected by the application. **/
+	Loader {
+		id: receiverDrawerLoader
+		active: root.receiverDrawerComponent !== null
+		sourceComponent: root.receiverDrawerComponent
+		onLoaded: {
+			if (item !== null)
+				item.headerHeight = header.height
+		}
 	}
 
 	/** Demo-specific configuration drawer **/
@@ -114,6 +122,9 @@ ApplicationWindow {
 			appDrawer.headerHeight = header.height
 		})
 	}
+
+	/** Optional application-provided receiver configuration drawer. **/
+	property Component receiverDrawerComponent: null
 
 	// Logo
 	Image {

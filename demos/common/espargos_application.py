@@ -372,7 +372,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             self.backlog.clear()
 
     def onAboutToQuit(self):
-        self.pool.stop()
+        if hasattr(self, "pool"):
+            self.pool.stop()
         if hasattr(self, "backlog"):
             self.backlog.stop()
         if hasattr(self, "engine"):

@@ -26,7 +26,8 @@ A typical demo therefore starts like this:
   class EspargosDemoPhasesOverSpace(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
       ...
 
-Beyond configuration, the framework also provides a graphical *pool drawer* for connecting to and calibrating ESPARGOS devices at runtime, so many settings can additionally be changed interactively from the user interface while a demo is running.
+The framework also provides an optional :code:`CSIReceiverDrawer` for connecting to and calibrating ESPARGOS devices at runtime.
+A QML application opts into it explicitly by assigning :code:`receiverDrawerComponent: Component { Common.CSIReceiverDrawer {} }`; applications that omit this property have no receiver drawer or receiver button.
 The remainder of this page focuses on how a demo is configured *before* it starts, from configuration files and the command line.
 
 Configuration Overview

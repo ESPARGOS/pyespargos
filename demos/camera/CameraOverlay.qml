@@ -8,7 +8,7 @@ Rectangle {
 
 	CaptureSession {
 		id: captureSession
-		camera: backend.cameraEnabled ? WebCam : null
+		camera: CameraView.enabled ? WebCam : null
 		videoOutput: videoOutput
 	}
 
@@ -27,8 +27,8 @@ Rectangle {
 		// This is the source for the beamspace canvas (power + delay colorization).
 		property Canvas spatialSpectrumCanvas: Canvas {
 			id: spatialSpectrumCanvas
-			width: backend.resolutionAzimuth
-			height: backend.resolutionElevation
+			width: overlayModel.resolutionAzimuth
+			height: overlayModel.resolutionElevation
 
 			property var imageData: undefined
 			function createImageData() {
@@ -51,8 +51,8 @@ Rectangle {
 		// This is the source for the polarization canvas (polarization information)
 		property Canvas polarizationCanvas: Canvas {
 			id: polarizationCanvas
-			width: backend.resolutionAzimuth
-			height: backend.resolutionElevation
+			width: overlayModel.resolutionAzimuth
+			height: overlayModel.resolutionElevation
 
 			property var polarizationImageData: undefined
 			function createPolarizationImageData() {
@@ -90,9 +90,9 @@ Rectangle {
 
 		vertexShader: "spatialspectrum_vert.qsb"
 
-		property bool rawBeamspace: backend.visualizationSpace === "beamspace"
-		property bool flip: backend.cameraFlip
-		property vector2d fov: Qt.vector2d(backend.fovAzimuth, backend.fovElevation)
+		property bool rawBeamspace: overlayModel.visualizationSpace === "beamspace"
+		property bool flip: CameraView.flip
+		property vector2d fov: Qt.vector2d(CameraView.fovAzimuth, CameraView.fovElevation)
 		property real time: 0
 		NumberAnimation on time {
 			from: 0
@@ -101,10 +101,10 @@ Rectangle {
 			loops: Animation.Infinite
 			running: true
 		}
-		property bool polarizationVisible: backend.polarizationVisible
-		property real gridSpacing: backend.gridSpacing
-		property real azimuthCorrection: backend.azimuth_correction
-		property real elevationCorrection: backend.elevation_correction
+		property bool polarizationVisible: overlayModel.polarizationVisible
+		property real gridSpacing: overlayModel.gridSpacing
+		property real azimuthCorrection: overlayModel.azimuth_correction
+		property real elevationCorrection: overlayModel.elevation_correction
 
 		fragmentShader: "spatialspectrum.qsb"
 
@@ -121,7 +121,7 @@ Rectangle {
 		source: "img/beamspace_transform.png"
     	anchors.fill: spatialSpectrumShader
 	    fillMode: Image.Stretch
-		visible: backend.visualizationSpace === "beamspace"
+		visible: overlayModel.visualizationSpace === "beamspace"
     }
 
 	/* Statistics display in bottom right corner */
@@ -140,7 +140,7 @@ Rectangle {
 
 		Text {
 			id: statsText
-			text: "<b>Statistics</b><br/>RSSI: " + (isFinite(backend.rssi) ? backend.rssi.toFixed(2) + " dB" : "No Data") + "<br/>Antennas: " + backend.activeAntennas.toFixed(1)
+			text: "<b>Statistics</b><br/>Power: " + (isFinite(overlayModel.receiverPower) ? overlayModel.receiverPower.toFixed(2) + " " + overlayModel.receiverPowerUnit : "No Data") + "<br/>Antennas: " + overlayModel.activeAntennas.toFixed(1)
 			color: "white"
 			font.family: "Monospace"
 			font.pixelSize: 16
@@ -164,7 +164,7 @@ Rectangle {
 		color: "black"
 		opacity: 0.8
 		radius: 10
-		visible: backend.macListEnabled
+		visible: overlayModel.macListEnabled
 
 		ListModel {
 			id: transmitterListModel
@@ -228,7 +228,7 @@ Rectangle {
 			if (transmitterListModel.get(i).visibilityChecked) {
 				macFilterEnabled = true
 			}
-			if (!backend.macList.includes(mac)) {
+			if (!overlayModel.macList.includes(mac)) {
 				marked_for_removal.push(i)
 			} else {
 				existing_macs.push(mac)
@@ -253,8 +253,8 @@ Rectangle {
 
 		// Add transmitters that have appeared unless MAC filter is enabled
 		if (!macFilterEnabled) {
-			for (let i = 0; i < backend.macList.length; ++i) {
-				let mac = backend.macList[i]
+			for (let i = 0; i < overlayModel.macList.length; ++i) {
+				let mac = overlayModel.macList[i]
 				if (!existing_macs.includes(mac))
 					transmitterListModel.append({"mac" : mac, "visibilityChecked" : false})
 			}
@@ -271,7 +271,7 @@ Rectangle {
 	}
 
 	Connections {
-		target: backend
+		target: overlayModel
 		function onBeamspacePowerImagedataChanged(beamspacePowerImagedata) {
 			//spatialSpectrumCanvas.imageData.data.set(new Uint8ClampedArray(beamspacePowerImagedata));
 			if (spatialSpectrumCanvas.imageData === undefined)
