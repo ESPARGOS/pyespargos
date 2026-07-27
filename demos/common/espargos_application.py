@@ -539,7 +539,8 @@ class SingleCSIFormatMixin:
       format argument stores and reads only that CSI format.
     """
 
-    CSI_FORMATS = ("lltf", "ht20", "ht40", "he20")
+    # Formats are ordered by priority: the first format wins if sample counts tie.
+    CSI_FORMATS = ("ht40", "ht20", "he20", "lltf")
 
     def _ensure_backlog_fields_for_preamble_format(self):
         if not self._uses_backlog() or not hasattr(self, "backlog"):
@@ -564,16 +565,16 @@ class SingleCSIFormatMixin:
         if not hasattr(self, "backlog"):
             return default
 
-        counts = []
+        counts = {}
         for fmt in self.CSI_FORMATS:
             try:
                 count = self.backlog.count_valid_datapoints(fmt, allow_incomplete=allow_incomplete)
             except ValueError:
                 count = 0
-            counts.append((fmt, count))
+            counts[fmt] = count
 
-        best_format, best_count = max(counts, key=lambda item: item[1])
-        return best_format if best_count > 0 else default
+        best_format = max(self.CSI_FORMATS, key=counts.get)
+        return best_format if counts[best_format] > 0 else default
 
     def get_backlog_csi(self, *additional_keys: str, allow_incomplete: bool = False, remove_global_sto=True, return_format: bool = False) -> np.ndarray | tuple[np.ndarray, ...] | None:
         """
