@@ -51,7 +51,7 @@ class CSIBacklog(object):
     :param fields: List of fields to store (default: all), e.g., ["lltf", "ht40", "rssi", "rx_gain", "fft_gain", "cfo", "lltf_8bit_mode", "timestamp", "host_timestamp", "mac", "radar_tx_timestamp", "radar_tx_index", "radar_tx_power", "radar_tx_rfswitch_state"]
     :param calibrate: Apply calibration to CSI data (default: True)
     :param cb_predicate: A function that defines the conditions under which clustered CSI is regarded as completed and thus added to the backlog.
-        See :meth:`espargos.pool.Pool.add_csi_callback` for more details.
+        See :meth:`espargos.csi_pool.CSIPool.add_csi_callback` for more details.
     :param size: Size of the ringbuffer (default: 100)
     """
 

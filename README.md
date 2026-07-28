@@ -394,7 +394,7 @@ After installation, import the `espargos` package in your Python application. Us
 import espargos
 import time
 
-pool = espargos.Pool([espargos.Board("192.168.1.2")])
+pool = espargos.CSIPool([espargos.Board("192.168.1.2")])
 pool.set_csi_acquire_config({"acquire_csi_force_lltf": True})
 pool.start()
 backlog = None
@@ -430,7 +430,7 @@ finally:
 * During normal CSI capture, ESPARGOS is passive: it receives packets in promiscuous mode and reports CSI for packets it can decode. The radar mode described below is the exception because it actively transmits measurement frames.
 * To receive over-the-air packets, the transmitter and ESPARGOS must use the same primary channel and compatible bandwidth settings.
 * The current firmware and *pyespargos* support these CSI formats:
-  - **L-LTF** (`lltf`): legacy long training field from 802.11g-style packets, represented as 53 subcarriers (`-26..26`, with DC reconstructed/interpolated when needed). In fact, even the newer HT/HE packets contain L-LTF fields. In a **force L-LTF** mode you can change the behavior of ESPARGOS to *always* extract the L-LTF CSI instead of the other training fields. The L-LTF CSI supports 12-bit I/Q encoding (instead of just 8-bit encoding like the other preamble formats), which makes this mode preferable for situations in which dynamic range is important.
+  - **L-LTF** (`lltf`): legacy long training field from 802.11g-style packets, represented as 53 subcarriers (`-26..26`, with DC reconstructed/interpolated when needed). In fact, even the newer HT/HE packets contain L-LTF fields. In a **force L-LTF** mode you can change the behavior of ESPARGOS to *always* extract the L-LTF CSI instead of the other training fields. The L-LTF CSI supports 12-bit encoding of the real and imaginary components (instead of just 8-bit encoding like the other preamble formats), which makes this mode preferable for situations in which dynamic range is important.
   - **HT20** (`ht20`): 802.11n HT-LTF for 20 MHz packets, represented as 57 subcarriers (`-28..28`).
   - **HT40** (`ht40`): 802.11n HT-LTF for 40 MHz channel bonding, represented as 117 bins (`-58..58`, including the 3-bin gap between the bonded channels).
   - **HE20** (`he20`): 802.11ax HE-LTF for 20 MHz packets, represented as 245 bins (`-122..122`, with invalid/null tones around DC zeroed by *pyespargos*).
@@ -459,11 +459,11 @@ finally:
 * Utility functions in `espargos/util.py` provide common CSI post-processing helpers, including subcarrier frequency axes, gap interpolation, feed separation, time-domain transforms and AoA/ToA helpers.
 
 ### CSI Clustering
-* Each sensor reports CSI separately. `Pool` groups those sensor reports into `CSICluster` objects that represent one WiFi packet across one or more ESPARGOS boards.
+* Each sensor reports CSI separately. `CSIPool` groups those sensor reports into `CSICluster` objects that represent one WiFi packet across one or more ESPARGOS boards.
 * Clustering uses a `WiFiFrameKey` containing source/destination MAC addresses and sequence control, with separate caches for calibration packets and over-the-air packets.
 * A cluster tracks which sensors have reported, so applications can wait for all antennas or provide a custom callback predicate for partial clusters.
 * An identical report from the same sensor is treated as a harmless duplicate. If the same sensor reports different data for an existing frame key, *pyespargos* logs a rate-limited collision warning, keeps the established cluster, and drops the incoming report.
-* Applications drive clustering by calling `Pool.run()`. A call waits up to its timeout for the first message and processes one bounded batch. Use `timeout=0` in GUI/event loops; dedicated workers may use a longer timeout such as `0.5` seconds.
+* Applications drive clustering by calling `CSIPool.run()`. A call waits up to its timeout for the first message and processes one bounded batch. Use `timeout=0` in GUI/event loops; dedicated workers may use a longer timeout such as `0.5` seconds.
 * `CSICluster` exposes deserializers for `lltf`, `ht20`, `ht40` and `he20`, plus metadata such as RSSI, CFO, RF switch state, source MAC, primary/secondary channel, host timestamp and per-sensor hardware timestamps.
 * The deserializers also apply format-specific corrections such as STO/CFO phase correction and HE20 null-tone handling.
 * If you use `CSIBacklog`, clustering happens underneath it and you usually only interact with the backlog arrays.
@@ -477,7 +477,7 @@ finally:
 * Calibration is tied to the WiFi channel configuration used when it was collected. Recalibrate after changing primary/secondary channel settings or after changing the synchronization topology.
 
 ### Multi-Board / Combined Arrays
-* *pyespargos* supports pools with one or more ESPARGOS boards. A multi-board `Pool` clusters packets across all boards and presents CSI in `(boards, rows, antennas, subcarriers)` layout.
+* *pyespargos* supports pools with one or more ESPARGOS boards. A multi-board `CSIPool` clusters packets across all boards and presents CSI in `(boards, rows, antennas, subcarriers)` layout.
 * Board revisions are detected from the controller API, and board-specific calibration trace delays are applied automatically.
 * For combined arrays, pass external sync-cable lengths / velocity factors when creating calibration data so phase offsets caused by the synchronization distribution are compensated.
 * `refgen_boards` can be used when separate ESPARGOS controllers generate calibration packets but are not part of the receive array.
@@ -485,7 +485,7 @@ finally:
 
 ### Radar / controlled transmissions
 * In addition to passive CSI capture, the current firmware exposes low-level radar/TX configuration through the controller API.
-* `board.wifi_tx.set_config()` / `Pool.set_radar_config()` configure per-antenna transmit activity, timing, MAC addresses, PHY mode/rate and TX power.
+* `board.wifi_tx.set_config()` / `CSIPool.set_radar_config()` configure per-antenna transmit activity, timing, MAC addresses, PHY mode/rate and TX power.
 * Radar packets can carry TX metadata. `CSICluster` and `CSIBacklog` expose this through fields such as `radar_tx_timestamp` and `radar_tx_index`, which are useful when correcting CSI using known transmit timing.
 * The `espargos.radar` helpers provide higher-level utilities for building radar pool configurations and correcting radar CSI phase using TX timestamps.
 * This mode is *experimental* and the APIs are *unstable*.

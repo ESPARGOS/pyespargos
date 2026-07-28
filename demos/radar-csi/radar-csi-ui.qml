@@ -227,7 +227,7 @@ Common.ESPARGOSApplication {
 
 	Timer {
 		id: updateTimer
-		interval: 50
+		interval: 40
 		running: !backend.initializing
 		repeat: true
 		onTriggered: backend.updateCSI(amplitudeSeries, phaseSeries, csiAmplitudeAxis)

@@ -32,7 +32,7 @@ The following code example receives clustered CSI from one ESPARGOS device:
    board = espargos.Board("192.168.1.2")
 
    # Create new ESPARGOS pool with only one board
-   pool = espargos.Pool([board])
+   pool = espargos.CSIPool([board])
 
    # Always acquire the legacy long training field (L-LTF), independently of
    # the received WiFi packet format.
@@ -64,31 +64,31 @@ The following code example receives clustered CSI from one ESPARGOS device:
    finally:
        pool.stop()
 
-The example illustrates the basic usage of the :class:`.Board` and :class:`.Pool` classes:
+The example illustrates the basic usage of the :class:`.Board` and :class:`.CSIPool` classes:
 
 **The** :class:`.Board` **class** represents one ESPARGOS controller.
 It connects to the controller and receives measurements from its sensors over Ethernet or USB.
 WiFi reception settings and individual CSI messages are available through :attr:`~espargos.board.Board.wifi_rx`.
 The optional :attr:`~espargos.board.Board.wifi_tx` interface controls scheduled WiFi transmissions used for radar measurements.
-Most CSI applications use :class:`.Pool`, even when working with only one ESPARGOS device.
+Most CSI applications use :class:`.CSIPool`, even when working with only one ESPARGOS device.
 
-**The** :class:`.Pool` **class** is responsible for handling the clustering of CSI from one or multiple ESPARGOS boards.
+**The** :class:`.CSIPool` **class** is responsible for handling the clustering of CSI from one or multiple ESPARGOS boards.
 When the microcontrollers ("sensors") on the ESPARGOS array board receive a WiFi packet, they just forward the CSI estimates to the central controller together with packet metadata like MAC address, timestamp and frame counter.
 The controller then forwards the CSI estimates to the computer running *pyespargos*, which is then responsible for figuring out which CSI estimates belong to the same WiFi packet.
 This is easy to achieve by finding matching packet metadata.
-By default, the CSI callback is only triggered if CSI is available from *all* sensors, but you can change this behavior (see documentation of :func:`~espargos.pool.Pool.add_csi_callback` for details).
+By default, the CSI callback is only triggered if CSI is available from *all* sensors, but you can change this behavior (see documentation of :func:`~espargos.csi_pool.CSIPool.add_csi_callback` for details).
 The example enables ``acquire_csi_force_lltf`` so that every supported OFDM packet is represented by its L-LTF channel estimate, regardless of whether its native format is legacy, HT, or HE.
 This gives applications a consistent 53-subcarrier CSI representation across different transmitters.
 The callback predicate additionally ignores packets without usable L-LTF CSI, such as 802.11b packets.
 
 An ESPARGOS pool is initialized with a list of objects of the :class:`.Board` class, which can also contain just one entry if you only use a single ESPARGOS device.
-Applications must call :meth:`~espargos.pool.Pool.run` regularly unless a helper such as :class:`.CSIBacklog` does so in its own worker thread.
+Applications must call :meth:`~espargos.csi_pool.CSIPool.run` regularly unless a helper such as :class:`.CSIBacklog` does so in its own worker thread.
 Each call waits briefly for the first message and then processes one bounded batch of queued messages.
 Use ``timeout=0`` when integrating with a GUI or another event loop that must never block; a dedicated worker may use a longer timeout such as ``timeout=0.5``.
 
 With CSI Backlog
 ----------------
-When working with a :class:`.Pool` of ESPARGOS devices, you get a callback whenever there is a new complete CSI cluster.
+When working with a :class:`.CSIPool` of ESPARGOS devices, you get a callback whenever there is a new complete CSI cluster.
 However, in many cases, you don't care about the instantaneous CSI at this very moment in time, but instead want to operate on the last couple of channel estimates.
 This is what the :class:`.CSIBacklog` class is for:
 This class collects CSI alongside other data (like timestamps, RSSI) from complete cluster up until a certain predefined size limit is reached.
@@ -99,7 +99,7 @@ The application code can query the backlog whenever it needs recent CSI.
   import espargos
   import time
 
-  pool = espargos.Pool([espargos.Board("192.168.1.2")])
+  pool = espargos.CSIPool([espargos.Board("192.168.1.2")])
   pool.set_csi_acquire_config({"acquire_csi_force_lltf": True})
   pool.start()
   backlog = None

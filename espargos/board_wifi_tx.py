@@ -7,7 +7,7 @@ report containing the result and precise transmit metadata.
 
 ``board.wifi_tx`` groups those transmit-side operations.  It deliberately does
 not perform clustering or radar signal processing; those remain higher-level
-responsibilities of :class:`espargos.pool.Pool` and :mod:`espargos.radar`.
+responsibilities of :class:`espargos.csi_pool.CSIPool` and :mod:`espargos.radar`.
 """
 
 from __future__ import annotations

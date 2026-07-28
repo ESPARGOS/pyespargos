@@ -117,7 +117,7 @@ This way, the master generates the phase reference signal for the whole system d
    Leave the setting at *Internal* unless the device is part of a properly wired phase-coherent setup.
 
 .. note::
-   Switching to calibration mode (e.g., by running :code:`Pool.calibrate` or in the web interface) on any slave device will now only show phase reference packets if the master is also in calibration mode.
+   Switching to calibration mode (e.g., by running :code:`CSIPool.calibrate` or in the web interface) on any slave device will now only show phase reference packets if the master is also in calibration mode.
 
 To obtain phase-coherent CSI data from the combined arrays, you can use the following code snippet:
 
@@ -126,7 +126,7 @@ To obtain phase-coherent CSI data from the combined arrays, you can use the foll
   import espargos
   import time
 
-  pool = espargos.Pool([
+  pool = espargos.CSIPool([
     espargos.Board("192.168.1.2"),
     espargos.Board("192.168.1.3"),
     espargos.Board("192.168.1.4"),
@@ -157,8 +157,8 @@ To obtain phase-coherent CSI data from the combined arrays, you can use the foll
   backlog.stop()
   pool.stop()
 
-In this example, we create a pool of four ESPARGOS boards by passing a list of four :class:`.Board` instances to the :class:`.Pool` constructor.
-The important change is to call the :meth:`.Pool.calibrate` method with the *per_board* parameter set to *False*, which means that the phase calibration is performed globally across all arrays and not per-board.
+In this example, we create a pool of four ESPARGOS boards by passing a list of four :class:`.Board` instances to the :class:`.CSIPool` constructor.
+The important change is to call the :meth:`.CSIPool.calibrate` method with the *per_board* parameter set to *False*, which means that the phase calibration is performed globally across all arrays and not per-board.
 This requires all ESPARGOS devices to be connected to the same phase reference signal generator (the master) so that all sensors receive the same phase reference signal packets.
 Forced L-LTF acquisition provides the same 53-subcarrier CSI representation for supported legacy, HT, and HE packets.
 

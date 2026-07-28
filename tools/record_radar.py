@@ -18,7 +18,7 @@ parser.add_argument("-d", "--duration", type=float, default=20.0, help="Capture 
 parser.add_argument("-g", "--gain-calib-duration", type=float, default=1.0, help="Duration over which packets are collected for gain calibration, in seconds")
 args = parser.parse_args()
 
-pool = espargos.Pool([espargos.Board(args.host)])
+pool = espargos.CSIPool([espargos.Board(args.host)])
 
 csi_count = 0
 start_time = 0

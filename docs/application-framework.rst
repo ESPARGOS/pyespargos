@@ -12,7 +12,7 @@ Structure
 The framework is centered on the :code:`ESPARGOSApplication` base class, which every demo subclasses.
 Optional functionality is added through *mixins* that a demo combines as needed:
 
-* :code:`ESPARGOSApplication`: the base class. Handles command-line argument parsing, YAML configuration loading, QML engine setup, and creation and calibration of the ESPARGOS :class:`.Pool`.
+* :code:`ESPARGOSApplication`: the base class. Handles command-line argument parsing, YAML configuration loading, QML engine setup, and creation and calibration of the ESPARGOS :class:`.CSIPool`.
 * :code:`BacklogMixin`: adds a :class:`.CSIBacklog` and a settings panel for it (backlog size, stored CSI fields, packet filters).
 * :code:`CombinedArrayMixin`: adds support for phase-coherent multi-board *combined arrays* (see :doc:`combined-arrays`), including parsing of the array geometry and per-cable length compensation.
 * :code:`SingleCSIFormatMixin`: adds selection of a single preamble format (L-LTF, HT20, HT40 or HE20) to work with.

@@ -1,174 +1,293 @@
 #!/usr/bin/env python
 
-from weakref import WeakKeyDictionary
-from collections import OrderedDict
-from typing import Callable
-import queue
-import numpy as np
-import threading
-import logging
-import time
+"""Receive sensor messages from one or more boards and group related data.
+
+Each ESPARGOS sensor reports its measurements independently. For example, when
+one Wi-Fi packet reaches all eight sensors of a board, the host receives eight
+separate sensor messages containing CSI for that packet. A pool collects those
+messages and a pool subclass uses packet metadata to determine that they belong
+to the same cluster.
+
+Messages are first placed in a thread-safe input queue. :meth:`Pool.run`
+processes them in bounded batches and adds each message to its cluster. Clusters
+that are still being assembled are kept in named caches; a CSI pool uses
+separate caches for ordinary over-the-air packets and calibration packets. The
+base class does not prescribe a particular sensor-message format; subclasses
+provide the cache, key, and cluster behavior for the messages they support.
+"""
+
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Hashable
 import json
+import logging
+import queue
+import threading
+import time
 
-from . import calibration
-from . import constants
-from . import cluster
 from . import board
-from . import util
-from . import csi_packet
-from . import radar_packet
+from . import constants
 from . import sensor
-from . import radar
-from . import wifi
-
-
-class CalibrationError(RuntimeError):
-    """Raised when ESPARGOS calibration cannot collect usable calibration CSI."""
-
-
-class _CSICallback(object):
-    def __init__(
-        self,
-        cb: Callable[[cluster.CSICluster], None],
-        cb_predicate: Callable[[cluster.CSICluster], bool] = None,
-    ):
-        # By default, provide csi if CSI is available from all antennas
-        self.cb_predicate = cb_predicate
-        self.cb = cb
-
-        # Track fired state per cluster.CSICluster object
-        self.fired = WeakKeyDictionary()
-
-    def try_call(self, csi_cluster: cluster.CSICluster):
-        # Check if callback has already been fired for this cluster.CSICluster object
-        if self.fired.get(csi_cluster, False):
-            return True
-
-        # Check if callback needs to be called: Use predicate function if defined, otherwise call if all antennas have CSI
-        callback_required = False
-        if self.cb_predicate is not None:
-            callback_required = self.cb_predicate(csi_cluster)
-        else:
-            callback_required = csi_cluster.get_completion_all()
-
-        if callback_required:
-            self.cb(csi_cluster)
-
-            # Mark as fired for this cluster.CSICluster object
-            self.fired[csi_cluster] = True
-            return True
-
-        return False
-
-
-# WiFi configuration fields that legitimately differ between boards. Pool-wide
-# reads and writes must leave these board-local calibration settings untouched.
-WIFICONF_PER_BOARD_KEYS = {
-    "calib-source",
-    "calib-mode",
-    "calib-txpower",
-    "calib-interval",
-}
+from .sensor_cluster import ClusterCollisionError, SensorCluster
 
 _DEFAULT_RUN_TIMEOUT = 0.005
 _RUN_BATCH_BOUNDARY = object()
-_FRAME_COLLISION_WARNING_INTERVAL = 5.0
+_CLUSTER_COLLISION_WARNING_INTERVAL = 5.0
 
 
-class Pool(object):
+class Pool(ABC):
+    """Manage boards, message reception, and the lifecycle of sensor clusters.
+
+    ``Pool`` provides the mechanics shared by different measurement types. It
+    starts and stops the boards, queues messages received by their stream
+    threads, and retains incomplete clusters. A subclass defines how messages
+    are identified and combined. For example, :class:`.CSIPool` groups CSI
+    reports from different sensors by the Wi-Fi frame's MAC addresses and
+    sequence control field.
     """
-    A Pool is a collection of ESPARGOS boards.
-    The pool manages the clustering of CSI data from multiple ESPARGOS sensors (antennas)
-    that belong to the same WiFi packet and provides :class:'cluster.CSICluster' objects to registered callbacks.
-    """
 
-    def __init__(self, boards: list[board.Board], ota_cache_timeout=5, refgen_boards=None):
-        """
-        Constructor for the Pool class.
-
-        :param boards: A list of ESPARGOS boards that belong to the pool
-        :param ota_cache_timeout: Optional. The timeout in seconds after which over-the-air CSI data is considered stale and discarded
-                                  if the cluster is not complete
-        :param refgen_boards: Optional. In some multi-board setups, the calibration signal is provided by (a) separate ESPARGOS device(s)
-                              that is / are not part of the pool (only controller is used to generate packets, sensors not used).
-                              If provided, sends calibration command to these boards, which will then generate the calibration signal
-                              during calibration phase.
-        """
-        self.logger = logging.getLogger("pyespargos.pool")
-        self.boards = boards
-        self.refgen_boards = refgen_boards if refgen_boards is not None else []
-
-        self.ota_cache_timeout = ota_cache_timeout
-        self.emit_calibration_csi = False
-
-        # We have two caches: One for calibration packets, the other one for over-the-air packets
-        self.cluster_cache_calib_lock = threading.Lock()
-        self.cluster_cache_calib = OrderedDict[wifi.WiFiFrameKey, cluster.CSICluster]()
-        self.cluster_cache_ota_lock = threading.Lock()
-        self.cluster_cache_ota = OrderedDict[wifi.WiFiFrameKey, cluster.CSICluster]()
+    def __init__(self, boards: list[board.Board]):
+        module_name = type(self).__module__.rsplit(".", maxsplit=1)[-1]
+        self.logger = logging.getLogger(f"pyespargos.{module_name}")
+        self.boards = list(boards)
+        self.board_revisions = tuple(board_obj.revision for board_obj in self.boards)
 
         self._input_queue = queue.Queue()
         self._run_lock = threading.Lock()
-        self._frame_collisions_since_warning = 0
-        self._last_frame_collision_warning = None
+        self._cluster_lock = threading.Lock()
+        self._cluster_caches: dict[str, dict[Hashable, SensorCluster]] = {}
+        self._sensor_message_subscriptions: list[tuple[board.BoardCapability, board.SensorMessageSubscription]] = []
+        self._cluster_collisions_since_warning = 0
+        self._last_cluster_collision_warning: float | None = None
+
+        self.logger.info(f"Created new {type(self).__name__} with {len(self.boards)} board(s)")
+
+    def _subscribe_sensor_messages(
+        self,
+        board_num: int,
+        capability: board.BoardCapability,
+        subscribe: Callable[[Callable[[sensor.SensorMessage], None]], board.SensorMessageSubscription],
+    ) -> None:
+        """Subscribe one decoded message type and enqueue it for this pool."""
+
+        def enqueue(sensor_message: sensor.SensorMessage):
+            self._input_queue.put_nowait((board_num, sensor_message))
+
+        subscription = subscribe(enqueue)
+        self._sensor_message_subscriptions.append((capability, subscription))
+
+    def start(self):
+        """Start sensor-message reception on every board."""
+
+        for board_obj in self.boards:
+            board_obj.start()
+
+    def stop(self):
+        """Stop sensor-message reception on every board."""
+
+        for board_obj in self.boards:
+            board_obj.stop()
+
+    def close(self):
+        """Detach this pool from its boards without stopping the boards."""
+
+        subscriptions = self._sensor_message_subscriptions
         self._sensor_message_subscriptions = []
+        for capability, subscription in subscriptions:
+            capability.unsubscribe(subscription)
 
-        for board_num, board_obj in enumerate(self.boards):
-            wifi_rx = board_obj.wifi_rx
-            wifi_tx = board_obj.wifi_tx
-            self._sensor_message_subscriptions.append(
-                (
-                    wifi_rx,
-                    wifi_rx.subscribe_csi(
-                        self._make_sensor_message_callback(
-                            board_obj,
-                            board_num,
-                        ),
-                    ),
+    def reboot(self):
+        """Reboot every board in the pool."""
+
+        for board_obj in self.boards:
+            board_obj.reboot()
+
+    def get_shape(self) -> tuple[int, int, int]:
+        """Return the logical ``(board, row, column)`` sensor-array shape."""
+
+        return (
+            len(self.boards),
+            constants.ROWS_PER_BOARD,
+            constants.ANTENNAS_PER_ROW,
+        )
+
+    def run(self, timeout: float | None = _DEFAULT_RUN_TIMEOUT) -> int:
+        """Process one bounded batch of pending sensor messages.
+
+        If no message is immediately available, wait up to ``timeout`` seconds
+        for the first one. Once a message is available, all messages ahead of a
+        FIFO batch boundary are processed together. Messages arriving after the
+        boundary remain queued for the next call. In the CSI case, one batch
+        commonly contains reports from several sensors for the same Wi-Fi
+        packet, possibly together with reports for other packets.
+
+        Completion checks are performed once per updated cluster after the
+        batch, rather than after every individual sensor report. Calls must not
+        overlap; concurrent or reentrant calls raise :class:`RuntimeError`.
+
+        :return: Number of sensor messages processed.
+        """
+
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must be non-negative or None")
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError("Pool.run() must not be called concurrently or reentrantly")
+
+        try:
+            try:
+                first_message = self._input_queue.get(timeout=timeout)
+            except queue.Empty:
+                self._expire_cluster_caches()
+                return 0
+
+            messages = [first_message]
+            self._input_queue.put_nowait(_RUN_BATCH_BOUNDARY)
+            while True:
+                message = self._input_queue.get_nowait()
+                if message is _RUN_BATCH_BOUNDARY:
+                    break
+                messages.append(message)
+
+            # A cluster commonly receives several sensor messages in one
+            # batch. Coalesce those updates by object identity so the
+            # subclass's completion checks run only once, without repeatedly
+            # hashing potentially structured cluster keys.
+            updated_clusters: dict[int, tuple[str, Hashable, SensorCluster]] = {}
+            for board_num, sensor_message in messages:
+                updated = self._add_sensor_message(board_num, sensor_message)
+                if updated is not None:
+                    cache_name, cluster_key, sensor_cluster = updated
+                    updated_clusters[id(sensor_cluster)] = updated
+
+            for cache_name, cluster_key, sensor_cluster in updated_clusters.values():
+                if self._on_cluster_updated(cache_name, cluster_key, sensor_cluster):
+                    self._remove_cluster_if_current(cache_name, cluster_key, sensor_cluster)
+
+            self._expire_cluster_caches()
+            return len(messages)
+        finally:
+            self._run_lock.release()
+
+    def _add_sensor_message(
+        self,
+        board_num: int,
+        sensor_message: sensor.SensorMessage,
+    ) -> tuple[str, Hashable, SensorCluster] | None:
+        cache_name = self._get_cluster_cache_name(board_num, sensor_message)
+        cluster_key = self._get_cluster_key(board_num, sensor_message)
+
+        collision = None
+        with self._cluster_lock:
+            cache = self._cluster_caches.setdefault(cache_name, {})
+            sensor_cluster = cache.get(cluster_key)
+            if sensor_cluster is None:
+                sensor_cluster = self._create_cluster(
+                    cache_name,
+                    cluster_key,
+                    board_num,
+                    sensor_message,
                 )
-            )
-            self._sensor_message_subscriptions.append(
-                (
-                    wifi_tx,
-                    wifi_tx.subscribe_reports(
-                        self._make_sensor_message_callback(
-                            board_obj,
-                            board_num,
-                        ),
-                    ),
-                )
-            )
+                cache[cluster_key] = sensor_cluster
 
-        self.callbacks: list[_CSICallback] = []
-        self.logger.info(f"Created new pool with {len(boards)} board(s)")
+            try:
+                changed = sensor_cluster.add_message(board_num, sensor_message)
+            except ClusterCollisionError as error:
+                collision = error
 
-        self.stored_calibration: calibration.CSICalibration = None
+        if collision is not None:
+            self._warn_cluster_collision(cache_name, cluster_key, collision)
+            return None
+        if not changed:
+            return None
+        return cache_name, cluster_key, sensor_cluster
 
-    def _make_sensor_message_callback(self, board_obj, board_num: int):
-        """Build the short stream-thread callback for one decoded message type."""
+    def _remove_cluster_if_current(
+        self,
+        cache_name: str,
+        cluster_key: Hashable,
+        sensor_cluster: SensorCluster,
+    ) -> None:
+        with self._cluster_lock:
+            cache = self._cluster_caches.get(cache_name)
+            if cache is not None and cache.get(cluster_key) is sensor_cluster:
+                cache.pop(cluster_key)
 
-        def callback(decoded_message: sensor.SensorMessage):
-            esp_num = board_obj.revision.antid_to_esp_num[decoded_message.antenna_id]
-            self._input_queue.put_nowait((esp_num, decoded_message, board_num))
+    def _expire_cluster_caches(self) -> None:
+        with self._cluster_lock:
+            cache_names = tuple(self._cluster_caches)
 
-        return callback
+        cache_timeouts = {
+            cache_name: timeout
+            for cache_name in cache_names
+            if (timeout := self._get_cluster_cache_timeout(cache_name)) is not None
+        }
+        if not cache_timeouts:
+            return
+
+        # Only inspect expiring caches. In particular, retained calibration
+        # clusters can be numerous and must not be copied on every run() call.
+        with self._cluster_lock:
+            for cache_name, timeout in cache_timeouts.items():
+                cache = self._cluster_caches.get(cache_name)
+                if not cache:
+                    continue
+                expired_keys = [
+                    cluster_key
+                    for cluster_key, sensor_cluster in cache.items()
+                    if sensor_cluster.get_age() > timeout
+                ]
+                for cluster_key in expired_keys:
+                    cache.pop(cluster_key)
+
+    def _clear_cluster_cache(self, cache_name: str) -> None:
+        """Clear a named cache if it exists."""
+
+        with self._cluster_lock:
+            cache = self._cluster_caches.get(cache_name)
+            if cache is not None:
+                cache.clear()
+
+    def _get_cluster_cache_snapshot(self, cache_name: str) -> list[SensorCluster]:
+        """Return a stable list of clusters currently in a named cache."""
+
+        with self._cluster_lock:
+            return list(self._cluster_caches.get(cache_name, {}).values())
+
+    def _warn_cluster_collision(
+        self,
+        cache_name: str,
+        cluster_key: Hashable,
+        collision: ClusterCollisionError,
+    ) -> None:
+        self._cluster_collisions_since_warning += 1
+        now = time.monotonic()
+        if self._last_cluster_collision_warning is not None and now - self._last_cluster_collision_warning < _CLUSTER_COLLISION_WARNING_INTERVAL:
+            return
+
+        self.logger.warning(
+            "Cluster-key collision in cache %r for %r: %s; dropping the incoming " "message and retaining the existing cluster (%d collision(s) since " "the previous warning)",
+            cache_name,
+            cluster_key,
+            collision,
+            self._cluster_collisions_since_warning,
+        )
+        self._cluster_collisions_since_warning = 0
+        self._last_cluster_collision_warning = now
 
     def _assert_same_across_boards(self, values: list, what: str):
-        """
-        Ensure all entries in `values` are identical (after canonical JSON encoding for dict/list).
-        """
+        """Ensure all values are equal after canonical JSON encoding."""
+
         if not values:
             raise ValueError(f"{what}: no boards in pool")
 
-        def canon(v):
-            if isinstance(v, (dict, list)):
-                return json.dumps(v, sort_keys=True, separators=(",", ":"))
-            return v
+        def canonical(value):
+            if isinstance(value, (dict, list)):
+                return json.dumps(value, sort_keys=True, separators=(",", ":"))
+            return value
 
-        c0 = canon(values[0])
-        for i, v in enumerate(values[1:], start=1):
-            if canon(v) != c0:
-                raise ValueError(f"{what}: mismatch between boards (board 0 != board {i})")
+        reference = canonical(values[0])
+        for index, value in enumerate(values[1:], start=1):
+            if canonical(value) != reference:
+                raise ValueError(f"{what}: mismatch between boards (board 0 != board {index})")
 
     def _reconcile_across_boards(
         self,
@@ -178,14 +297,8 @@ class Pool(object):
         reset_value=None,
         ignore_keys: set[str] | None = None,
     ):
-        """Return a consistent pool-wide setting, reconciling mismatched boards.
+        """Return a consistent setting, reconciling mismatched boards."""
 
-        Matching values are returned without writing anything. On mismatch,
-        every board is reset to board 0's value, or to ``reset_value`` when a
-        safer explicit default is supplied. ``apply`` must write directly to
-        boards rather than call a validating pool setter, to avoid recursive
-        reconciliation.
-        """
         if not values:
             raise ValueError(f"{what}: no boards in pool")
 
@@ -210,751 +323,47 @@ class Pool(object):
         self.logger.warning(f"{what}: boards disagree (board 0 != board(s) {mismatched}); resetting all boards to {target}.")
         try:
             apply(apply_value)
-        except Exception as exc:
-            self.logger.warning(f"{what}: could not reset boards to a consistent value ({exc}); using board 0's value.")
+        except Exception as error:
+            self.logger.warning(f"{what}: could not reset boards to a consistent value ({error}); using board 0's value.")
             return values[0]
         return chosen
 
-    def set_rfswitch(self, state: sensor.RFSwitchState):
-        """
-        Set RF switch state for all boards in the pool.
-
-        :param state: The RF switch state to set, must be one of :class:`sensor.RFSwitchState`
-        """
-        for board in self.boards + self.refgen_boards:
-            board.wifi_rx.set_rf_switch(state)
-
-    def get_rfswitch(self) -> sensor.RFSwitchState:
-        """
-        Get RF switch state from the first board in the pool.
-
-        :return: The RF switch state of the first board in the pool
-        """
-        if not self.boards:
-            raise ValueError("No boards in pool to get RF switch state from")
-
-        states = [b.wifi_rx.get_rf_switch() for b in self.boards]
-        return self._reconcile_across_boards(
-            states,
-            "RF switch state",
-            lambda value: [board.wifi_rx.set_rf_switch(value) for board in self.boards],
-        )
-
-    def set_mac_filter(self, mac_filter: dict):
-        """
-        Set the MAC address filter for all boards in the pool. Will only accept packets from the specified MAC address.
-
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_mac_filter` for each board.
-        """
-        for board in self.boards:
-            board.wifi_rx.set_mac_filter(mac_filter)
-
-    def clear_mac_filter(self):
-        """
-        Clear the MAC address filter for all boards in the pool.
-        """
-        for board in self.boards:
-            board.wifi_rx.clear_mac_filter()
-
-    def get_mac_filter(self) -> dict:
-        """
-        Return MAC filter configuration, reconciling boards when needed.
-
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.get_mac_filter` for each board.
-        """
-        filters = [b.wifi_rx.get_mac_filter() for b in self.boards]
-        return self._reconcile_across_boards(
-            filters,
-            "MAC filter",
-            lambda value: [board.wifi_rx.set_mac_filter(value) for board in self.boards],
-        )
-
-    def get_csi_acquire_config(self) -> dict:
-        """
-        Return CSI acquire config, reconciling boards when needed.
-        """
-        cfgs = [b.wifi_rx.get_csi_acquisition_config() for b in self.boards]
-        return self._reconcile_across_boards(
-            cfgs,
-            "CSI acquire config",
-            lambda value: [board.wifi_rx.set_csi_acquisition_config(value) for board in self.boards],
-        )
-
-    def set_csi_acquire_config(self, config: dict):
-        """
-        Set CSI acquisition configuration on all boards in this pool and sanity-check that all boards
-        end up with the same config.
-
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_csi_acquisition_config` for each board.
-        For the expected JSON/dict format, refer to that method's documentation.
-
-        :param config: CSI acquisition configuration dict to apply to all boards.
-        :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
-        """
-        for b in self.boards:
-            b.wifi_rx.set_csi_acquisition_config(config)
-        _ = self.get_csi_acquire_config()
-
-    def get_cfo_correction(self) -> dict:
-        """
-        Return CFO correction config, reconciling boards when needed.
-        """
-        configs = [b.wifi_rx.get_cfo_correction() for b in self.boards]
-        return self._reconcile_across_boards(
-            configs,
-            "CFO correction",
-            lambda value: [board.wifi_rx.set_cfo_correction(value["auto"], value.get("value", 0)) for board in self.boards],
-        )
-
-    def set_cfo_correction(self, auto: bool, value: int = 0):
-        """
-        Configure CFO correction on all boards in this pool.
-        """
-        for b in self.boards:
-            b.wifi_rx.set_cfo_correction(auto, value)
-        _ = self.get_cfo_correction()
-
-    def get_gain_settings(self) -> dict:
-        """
-        Return gain settings, resetting mismatched boards to automatic gain.
-        """
-        settings = [b.wifi_rx.get_gain_settings() for b in self.boards]
-        return self._reconcile_across_boards(
-            settings,
-            "Gain settings",
-            lambda value: self.set_gain_settings(value),
-            reset_value={
-                "rx_gain_enable": False,
-                "fft_scale_enable": False,
-                "rx_gain_value": 32,
-                "fft_scale_value": 0,
-            },
-        )
-
-    def set_gain_settings(self, settings: dict):
-        """
-        Set gain settings on all boards in this pool.
-
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_gain_settings` for each board.
-        Values may be scalars, board-local ``(row, column)`` arrays applied to every
-        board, or pool-wide ``(board, row, column)`` arrays.
-
-        :param settings: Gain settings dict to apply to all boards.
-        :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
-        """
-        per_board_settings = [dict() for _ in self.boards]
-        for key, value in settings.items():
-            array = np.asarray(value)
-            if array.shape == self.get_shape():
-                for board_index in range(len(self.boards)):
-                    per_board_settings[board_index][key] = array[board_index]
-            else:
-                for board_settings in per_board_settings:
-                    board_settings[key] = value
-
-        for board_obj, board_settings in zip(self.boards, per_board_settings):
-            board_obj.wifi_rx.set_gain_settings(board_settings)
-
-    def get_wifi_channel_overrides(self) -> dict:
-        """
-        Return per-sensor WiFi channel overrides, reconciling boards when needed.
-        """
-        settings = [b.wifi_rx.get_channel_overrides() for b in self.boards]
-        return self._reconcile_across_boards(
-            settings,
-            "WiFi channel overrides",
-            lambda value: [board.wifi_rx.set_channel_overrides(value) for board in self.boards],
-        )
-
-    def set_wifi_channel_overrides(self, settings: dict):
-        """
-        Set per-sensor WiFi channel overrides on all boards in this pool and sanity-check that all boards end up with the same settings.
-
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_channel_overrides` for each board.
-        For the expected JSON/dict format, refer to that method's documentation.
-
-        :param settings: Per-sensor WiFi channel override settings dict to apply to all boards.
-        :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
-        """
-        for b in self.boards:
-            b.wifi_rx.set_channel_overrides(settings)
-        _ = self.get_wifi_channel_overrides()
-
-    def get_radar_configs(self) -> list[dict]:
-        """
-        Return radar TX configuration for all boards in the pool.
-        """
-        return [b.wifi_tx.get_config() for b in self.boards]
-
-    def get_radar_config(self) -> dict:
-        """
-        Return radar TX configuration; sanity-check all boards report the same value.
-        """
-        configs = self.get_radar_configs()
-        self._assert_same_across_boards(configs, "Radar config")
-        return configs[0]
-
-    def set_radar_config(self, config: dict | radar.RadarPoolConfig):
-        """
-        Set radar TX configuration on the boards in this pool.
-
-        ``config`` may either be a single controller config dict applied to every board,
-        or a :class:`pyespargos.espargos.radar.RadarPoolConfig` containing one config per board.
-        """
-        if isinstance(config, radar.RadarPoolConfig):
-            if len(config.board_configs) != len(self.boards):
-                raise ValueError(f"RadarPoolConfig contains {len(config.board_configs)} board configs, expected {len(self.boards)}")
-            for board_obj, board_config in zip(self.boards, config.board_configs):
-                board_obj.wifi_tx.set_config(board_config)
-            return
-
-        for b in self.boards:
-            b.wifi_tx.set_config(config)
-
-    def get_wificonf(self) -> dict:
-        """
-        Return WiFi config, reconciling pool-wide settings when boards disagree.
-
-        Board-local calibration fields are excluded from both comparison and
-        reconciliation, so each board retains its own values.
-        """
-        wificonfs = [b.wifi_rx.get_config() for b in self.boards]
-        return self._reconcile_across_boards(
-            wificonfs,
-            "WiFi config",
-            lambda value: [board.wifi_rx.set_config(value) for board in self.boards],
-            ignore_keys=WIFICONF_PER_BOARD_KEYS,
-        )
-
-    def set_wificonf(self, wificonf: dict):
-        """
-        Set WiFi config on all boards and sanity-check resulting configs match across boards.
-
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_config` for each board.
-        For the expected JSON/dict format, refer to that method's documentation.
-
-        Fields listed in :data:`WIFICONF_PER_BOARD_KEYS` are ignored and not
-        propagated because they may legitimately differ between boards. Set
-        those directly through :meth:`pyespargos.board_wifi_rx.WiFiRx.set_config`.
-
-        :param wificonf: WiFi configuration dict to apply to all boards.
-        :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
-        """
-        wificonf = {key: value for key, value in wificonf.items() if key not in WIFICONF_PER_BOARD_KEYS}
-        for b in self.boards:
-            b.wifi_rx.set_config(wificonf)
-        _ = self.get_wificonf()
-
-    def start(self):
-        """
-        Start sensor-message reception for all boards in the pool.
-        """
-        for board in self.boards:
-            board.start()
-
-    def stop(self):
-        """
-        Stop sensor-message reception for all boards in the pool.
-        """
-        for board in self.boards:
-            board.stop()
-
-    def close(self):
-        """
-        Detach this pool from its boards.
-
-        Closing a pool removes its sensor-message subscriptions without
-        stopping or closing the boards themselves. It is safe to call this
-        method more than once.
-        """
-        subscriptions = self._sensor_message_subscriptions
-        self._sensor_message_subscriptions = []
-        for capability, subscription in subscriptions:
-            capability.unsubscribe(subscription)
-
-    def reboot(self):
-        """
-        Trigger a reboot on all boards in the pool.
-        """
-        for board in self.boards + self.refgen_boards:
-            board.reboot()
-
-    def add_csi_callback(
+    @abstractmethod
+    def _get_cluster_cache_name(
         self,
-        cb: Callable[[cluster.CSICluster], None],
-        cb_predicate: Callable[[cluster.CSICluster], bool] = None,
-    ):
-        """
-        Register callback function that is invoked whenever a new CSI cluster is completed.
+        board_num: int,
+        sensor_message: sensor.SensorMessage,
+    ) -> str:
+        """Return the named cache that should receive a message."""
 
-        :param cb: The function to call, gets instance of class :class:`.cluster.CSICluster` as parameter
-        :param cb_predicate: A function with signature :code:`(csi_cluster)` that defines the conditions under which
-            clustered CSI is regarded as completed and thus provided to the callback.
-            If :code:`cb_predicate` returns true, clustered CSI is regarded as completed.
-            If no predicate is provided, the default behavior is to trigger the callback when CSI has been received
-            from all sensors on all boards. By default, callbacks receive over-the-air/radar CSI only. Enable
-            :meth:`set_emit_calibration_csi` to also emit calibration CSI (from internal reference generators)
-            through this same callback path.
-        :return: A callback handle that can be passed to :meth:`remove_csi_callback`
-        """
-        callback = _CSICallback(cb, cb_predicate)
-        self.callbacks.append(callback)
-        return callback
-
-    def remove_csi_callback(self, callback: _CSICallback) -> bool:
-        """
-        Remove a CSI callback previously returned by :meth:`add_csi_callback`.
-
-        :param callback: Callback handle returned by :meth:`add_csi_callback`
-        :return: True if the callback was registered and removed, False otherwise
-        """
-        try:
-            self.callbacks.remove(callback)
-            return True
-        except ValueError:
-            return False
-
-    def set_emit_calibration_csi(self, enabled: bool):
-        """
-        Control whether calibration CSI clusters are emitted through normal CSI callbacks.
-
-        Calibration clusters remain marked as calibration packets via
-        :meth:`espargos.cluster.CSICluster.is_calib`.
-        """
-        self.emit_calibration_csi = bool(enabled)
-
-    def get_emit_calibration_csi(self) -> bool:
-        """
-        Return whether calibration CSI clusters are emitted through normal CSI callbacks.
-        """
-        return self.emit_calibration_csi
-
-    def _try_callbacks(self, csi_cluster: cluster.CSICluster) -> bool:
-        all_callbacks_fired = True
-        for cb in self.callbacks:
-            all_callbacks_fired = all_callbacks_fired and cb.try_call(csi_cluster)
-        return all_callbacks_fired
-
-    def _clusters_to_calibration(self, board_num=None):
-        """
-        Convert collected calibration clusters to phase calibration values.
-
-        :param board_num: If provided, only process calibration clusters for the specified board number
-        """
-        # Take snapshot of current calibration clusters under lock
-        with self.cluster_cache_calib_lock:
-            clusters = list(self.cluster_cache_calib.values())
-
-        # Collection of complete clusters (= reference CSI data from all antennas available): L-LTF, HT20-LTF, and HT40-LTF
-        complete_clusters_lltf = []
-        complete_cluster_timestamps_lltf = []
-        complete_clusters_ht20 = []
-        complete_cluster_timestamps_ht20 = []
-        complete_clusters_ht40 = []
-        complete_cluster_timestamps = []
-
-        # Read wificonf to determine primary/secondary channel
-        wificonf = self.get_wificonf()
-        channel_primary = wificonf.get("channel-primary", None)
-        channel_secondary = wificonf.get("channel-secondary", None)
-        channel_secondary = -1 if channel_secondary == 2 else channel_secondary
-
-        any_csi_count = 0
-        for cluster in clusters:
-            cluster_channel_primary = cluster.get_primary_channel()
-            cluster_channel_secondary = cluster.get_secondary_channel_relative()
-            if channel_primary != cluster_channel_primary or channel_secondary != cluster_channel_secondary:
-                self.logger.warning(
-                    f"Calibration cluster with differing channel settings detected (most likely stale data), expected primary channel {channel_primary} and secondary channel {channel_secondary}, but got primary channel {cluster_channel_primary} and secondary channel {cluster_channel_secondary}. Skipping cluster."
-                )
-                continue
-
-            completion = cluster.get_completion()[board_num] if board_num is not None else cluster.get_completion()
-            if np.any(completion):
-                any_csi_count = any_csi_count + 1
-
-            if np.all(completion):
-                cluster_timestamps = cluster.get_sensor_timestamps()[board_num] if board_num is not None else cluster.get_sensor_timestamps()
-                complete_cluster_timestamps.append(cluster_timestamps)
-                if cluster.has_lltf():
-                    complete_clusters_lltf.append(cluster.deserialize_csi_lltf()[board_num] if board_num is not None else cluster.deserialize_csi_lltf())
-                    complete_cluster_timestamps_lltf.append(cluster_timestamps)
-                if cluster.has_ht20ltf():
-                    complete_clusters_ht20.append(cluster.deserialize_csi_ht20ltf()[board_num] if board_num is not None else cluster.deserialize_csi_ht20ltf())
-                    complete_cluster_timestamps_ht20.append(cluster_timestamps)
-                if cluster.has_ht40ltf():
-                    complete_clusters_ht40.append(cluster.deserialize_csi_ht40ltf()[board_num] if board_num is not None else cluster.deserialize_csi_ht40ltf())
-
-        if board_num is not None:
-            self.logger.info(f"Board {self.boards[board_num].get_name()}: Collected {any_csi_count} calibration clusters:")
-        else:
-            self.logger.info(f"Collected {any_csi_count} calibration clusters:")
-        self.logger.info(f"  - {len(complete_clusters_ht40)} complete clusters with HT40-LTF")
-        self.logger.info(f"  - {len(complete_clusters_ht20)} complete clusters with HT20-LTF")
-        self.logger.info(f"  - {len(complete_clusters_lltf)} complete clusters with L-LTF")
-
-        if len(complete_clusters_ht20) > 0:
-            # If we only have HT20 but no LLTF calibration, we can still proceed: Use corresponding subcarriers from HT20 for LLTF calibration
-            if len(complete_clusters_lltf) == 0:
-                self.logger.warning("No LLTF calibration clusters received, deriving LLTF calibration from HT20 calibration")
-            complete_clusters_lltf.extend([util.extract_lltf_subcarriers_from_ht20(csi_ht20) for csi_ht20 in complete_clusters_ht20])
-            complete_cluster_timestamps_lltf.extend(complete_cluster_timestamps_ht20)
-
-        complete_cluster_count = len(complete_cluster_timestamps)
-        calibration_error = None
-        if any_csi_count < 5:
-            calibration_error = "too few calibration packets were received"
-        elif complete_cluster_count == 0:
-            calibration_error = "no packet contained CSI from the complete calibrated array"
-        elif len(complete_clusters_lltf) == 0:
-            calibration_error = "no complete packet contained L-LTF or HT20-LTF CSI"
-
-        if calibration_error is not None:
-            raise CalibrationError(
-                f"ESPARGOS calibration failed: {calibration_error}. "
-                f"Received {any_csi_count} calibration packets with any CSI, "
-                f"{complete_cluster_count} complete packets, "
-                f"{len(complete_clusters_ht20)} complete HT20-LTF packets, "
-                f"and {len(complete_clusters_lltf)} complete L-LTF/HT20-derived packets. "
-                "Calibration needs several packets with CSI from the complete array and at least one complete L-LTF or HT20-LTF packet. "
-                "Check signal level, RX gain, packet filtering, and whether all sensors are receiving the calibration/reference signal."
-            )
-
-        return (
-            np.asarray(complete_clusters_lltf),
-            np.asarray(complete_clusters_ht20),
-            np.asarray(complete_clusters_ht40),
-            np.asarray(complete_cluster_timestamps),
-            np.asarray(complete_cluster_timestamps_lltf),
-            channel_primary,
-            channel_secondary,
-        )
-
-    def _compute_sensor_clock_offsets(self, complete_cluster_timestamps: np.ndarray) -> np.ndarray:
-        """
-        Compute per-sensor clock offsets relative to sensor 0 from complete calibration clusters.
-
-        :param complete_cluster_timestamps: Array of shape ``(clusters, boards, rows, columns)`` containing per-sensor timestamps in seconds.
-        :return: Array of shape ``(boards, rows, columns)`` with offsets in seconds relative to sensor 0.
-        """
-        if len(complete_cluster_timestamps) == 0:
-            return np.full(self.get_shape(), np.nan, dtype=np.float64)
-
-        sensor_clock_offsets = np.asarray(complete_cluster_timestamps, dtype=np.float64)
-        sensor_clock_offsets -= sensor_clock_offsets[:, 0:1, 0:1, 0:1]
-        return np.mean(sensor_clock_offsets, axis=0)
-
-    def calibrate(
+    @abstractmethod
+    def _get_cluster_key(
         self,
-        per_board=True,
-        duration=2,
-        cable_lengths=None,
-        cable_velocity_factors=None,
-        run_in_thread=True,
-    ):
-        """
-        Run calibration for a specified duration.
+        board_num: int,
+        sensor_message: sensor.SensorMessage,
+    ) -> Hashable:
+        """Return the logical-observation key for a message."""
 
-        :param per_board: True to calibrate each board separately, False to calibrate all boards together.
-                          Set to False if the same phase reference signal is used for all boards, otherwise set to True.
-        :param duration: The duration in seconds for which calibration should be run
-        :param cable_lengths: The lengths of the feeder cables that distribute the clock and phase calibration signal to the ESPARGOS boards, in meters.
-                              Only needed for phase-coherent multi-board setups, omit if all cables have the same length.
-        :param cable_velocity_factors: The velocity factors of the feeder cables that distribute the clock and phase calibration signal to the ESPARGOS boards
-                                       Must be the same length as :code:`cable_lengths`, and all entries should be in the range [0, 1].
-        :param run_in_thread: If True, the pool handling will be performed in the current thread. Set to False in case the pool is already running in a separate thread (e.g., backlog is already active).
-        """
-        # Clear calibration cache
-        with self.cluster_cache_calib_lock:
-            self.cluster_cache_calib.clear()
-
-        # Back up and clear MAC filter
-        previous_mac_filter = self.get_mac_filter()
-        previous_rfswitch_state = self.get_rfswitch()
-
-        try:
-            self.clear_mac_filter()
-
-            # Enable calibration mode
-            self.logger.info("Starting calibration")
-            self.set_rfswitch(sensor.RFSwitchState.SENSOR_RFSWITCH_REFERENCE)
-
-            # Run calibration for specified duration
-            start = time.monotonic()
-            while time.monotonic() - start < duration:
-                if run_in_thread:
-                    remaining = max(0.0, duration - (time.monotonic() - start))
-                    self.run(timeout=min(0.05, remaining))
-                else:
-                    time.sleep(0.01)
-        finally:
-            # Disable calibration mode
-            self.logger.info("Finished calibration")
-            self.set_rfswitch(previous_rfswitch_state)
-            self.set_mac_filter(previous_mac_filter)
-            with self.cluster_cache_ota_lock:
-                self.cluster_cache_ota.clear()
-
-        # Collect calibration packets and compute calibration phases
-        (
-            complete_clusters_lltf,
-            complete_clusters_ht20,
-            complete_clusters_ht40,
-            complete_cluster_timestamps,
-            complete_cluster_timestamps_lltf,
-            channel_primary,
-            channel_secondary,
-        ) = self._clusters_to_calibration()
-        sensor_clock_offsets = self._compute_sensor_clock_offsets(complete_cluster_timestamps)
-        phase_calibration_he20 = util.derive_he20_calibration_from_lltf(complete_clusters_lltf, complete_cluster_timestamps_lltf, channel_secondary)
-
-        if per_board:
-            phase_calibrations_lltf = []
-            phase_calibrations_ht20 = []
-            phase_calibrations_ht40 = []
-
-            for board_num in range(len(self.boards)):
-                (
-                    complete_clusters_lltf,
-                    complete_clusters_ht20,
-                    complete_clusters_ht40,
-                    _complete_cluster_timestamps,
-                    _complete_cluster_timestamps_lltf,
-                    _channel_primary,
-                    _channel_secondary,
-                ) = self._clusters_to_calibration(board_num)
-
-                phase_calibrations_lltf.append(
-                    util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf))
-                    if len(complete_clusters_lltf) > 0
-                    else np.full(
-                        self.get_shape()[1:] + (csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,),
-                        np.nan,
-                    )
-                )
-                phase_calibrations_ht20.append(
-                    util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20))
-                    if len(complete_clusters_ht20) > 0
-                    else np.full(
-                        self.get_shape()[1:] + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL,),
-                        np.nan,
-                    )
-                )
-                phase_calibrations_ht40.append(
-                    util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
-                    if len(complete_clusters_ht40) > 0
-                    else np.full(
-                        self.get_shape()[1:] + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi_packet.HT40_GAP_SUBCARRIERS,),
-                        np.nan,
-                    )
-                )
-
-            self.stored_calibration = calibration.CSICalibration(
-                self.boards,
-                channel_primary,
-                channel_secondary,
-                np.asarray(phase_calibrations_lltf),
-                np.asarray(phase_calibrations_ht20),
-                np.asarray(phase_calibrations_ht40),
-                phase_calibration_he20,
-                sensor_clock_offsets=sensor_clock_offsets,
-            )
-
-        else:
-            phase_calibrations_lltf = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
-            phase_calibrations_ht20 = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
-            phase_calibration_ht40 = (
-                util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
-                if len(complete_clusters_ht40) > 0
-                else np.full(
-                    self.get_shape() + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi_packet.HT40_GAP_SUBCARRIERS,),
-                    np.nan,
-                )
-            )
-
-            # Each antenna just gets a delayed and phase-shifted version of the reference signal,
-            # so frequency response is just a complex sinusoid over subcarrier axis.
-            # Fit optimal complex sinusoid to the CSI of each antenna across subcarriers to extract the phase shift and delay, which we can then use for calibration.
-            phase_calibrations_lltf = util.fit_complex_sinusoid(phase_calibrations_lltf)
-            phase_calibrations_ht20 = util.fit_complex_sinusoid(phase_calibrations_ht20)
-            phase_calibration_ht40 = util.fit_complex_sinusoid(phase_calibration_ht40)
-
-            self.stored_calibration = calibration.CSICalibration(
-                self.boards,
-                channel_primary,
-                channel_secondary,
-                phase_calibrations_lltf,
-                phase_calibrations_ht20,
-                phase_calibration_ht40,
-                phase_calibration_he20,
-                sensor_clock_offsets=sensor_clock_offsets,
-                board_cable_lengths=cable_lengths,
-                board_cable_vfs=cable_velocity_factors,
-            )
-
-    def get_calibration(self):
-        """
-        Get the stored calibration values.
-
-        :return: The stored calibration values as a :class:`.calibration.CSICalibration` object
-        """
-        return self.stored_calibration
-
-    def get_shape(self):
-        """
-        Get the outer shape of the stored data, i.e., only the antenna dimensions and not subcarrier dimensions or similar.
-        """
-        return (len(self.boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
-
-    def run(self, timeout: float | None = _DEFAULT_RUN_TIMEOUT) -> int:
-        """Process one bounded batch of pending sensor messages.
-
-        If no message is immediately available, wait up to ``timeout`` seconds
-        for the first one. Once a message is available, all messages ahead of a
-        FIFO batch boundary are removed from the input queue and processed
-        together. Messages arriving after that boundary remain queued for the
-        next call. Pass ``timeout=0`` for strictly non-blocking operation or
-        ``timeout=None`` to wait indefinitely.
-
-        Cluster completion and expiration are checked once after the batch.
-        Calls must not overlap; concurrent or reentrant calls raise
-        :class:`RuntimeError`.
-
-        :param timeout: Maximum time to wait for the first message, in seconds.
-        :return: Number of sensor messages processed.
-        """
-        if timeout is not None and timeout < 0:
-            raise ValueError("timeout must be non-negative or None")
-        if not self._run_lock.acquire(blocking=False):
-            raise RuntimeError("Pool.run() must not be called concurrently or reentrantly")
-
-        try:
-            try:
-                first_packet = self._input_queue.get(timeout=timeout)
-            except queue.Empty:
-                self._check_ota_clusters()
-                return 0
-
-            packets = [first_packet]
-            self._input_queue.put_nowait(_RUN_BATCH_BOUNDARY)
-            while True:
-                packet = self._input_queue.get_nowait()
-                if packet is _RUN_BATCH_BOUNDARY:
-                    break
-                packets.append(packet)
-
-            for packet in packets:
-                self._handle_packet(packet)
-            self._check_ota_clusters()
-            return len(packets)
-        finally:
-            self._run_lock.release()
-
-    def _handle_packet(self, packet):
-        esp_num, sensor_message, board_num = packet[0], packet[1], packet[2]
-        stream_packet = sensor_message.payload
-
-        if isinstance(stream_packet, csi_packet.CSIPacket):
-            cache = self.cluster_cache_calib if stream_packet.is_calib else self.cluster_cache_ota
-            cache_lock = self.cluster_cache_calib_lock if stream_packet.is_calib else self.cluster_cache_ota_lock
-            description = f"CSI from board {board_num}, sensor {esp_num}"
-        elif isinstance(stream_packet, radar_packet.RadarTxReportPacket):
-            cache = self.cluster_cache_ota
-            cache_lock = self.cluster_cache_ota_lock
-            description = f"radar TX report with tx_count={stream_packet.tx_count}"
-        else:
-            raise TypeError(f"Unsupported Pool sensor-message payload: {type(stream_packet).__name__}")
-
-        frame_key = wifi.WiFiFrameKey.from_packet(stream_packet)
-        collision = False
-        completed_calibration_cluster = None
-        with cache_lock:
-            current_cluster = cache.get(frame_key)
-            if current_cluster is None:
-                current_cluster = cluster.CSICluster(
-                    frame_key.source_mac.hex(),
-                    frame_key.destination_mac.hex(),
-                    stream_packet.seq_ctrl,
-                    [b.revision for b in self.boards],
-                )
-                cache[frame_key] = current_cluster
-
-            if isinstance(stream_packet, csi_packet.CSIPacket):
-                existing_csi = current_cluster.get_csi_packet(board_num, esp_num)
-                if existing_csi is not None:
-                    if bytes(existing_csi) == bytes(stream_packet):
-                        return
-                    collision = True
-                elif np.any(current_cluster.get_completion()) and current_cluster.is_radar() != stream_packet.is_radar:
-                    collision = True
-                elif current_cluster.has_radar_tx_report() and not stream_packet.is_radar:
-                    collision = True
-                else:
-                    current_cluster.add_csi(board_num, esp_num, stream_packet)
-                    if stream_packet.is_calib:
-                        completed_calibration_cluster = current_cluster
-            else:
-                existing_report = current_cluster.get_radar_tx_info()
-                if existing_report is not None:
-                    if bytes(existing_report) == bytes(stream_packet):
-                        return
-                    collision = True
-                elif np.any(current_cluster.get_completion()) and not current_cluster.is_radar():
-                    collision = True
-                else:
-                    current_cluster.set_radar_tx_report(stream_packet, board_num=board_num, esp_num=esp_num)
-
-        if collision:
-            self._warn_frame_collision(current_cluster, frame_key, description)
-            return
-        if completed_calibration_cluster is not None and self.emit_calibration_csi:
-            self._try_callbacks(completed_calibration_cluster)
-
-    def _warn_frame_collision(
+    @abstractmethod
+    def _create_cluster(
         self,
-        existing_cluster: cluster.CSICluster,
-        frame_key: wifi.WiFiFrameKey,
-        description: str,
-    ):
-        """Emit a rate-limited warning when a reusable frame key collides."""
+        cache_name: str,
+        cluster_key: Hashable,
+        board_num: int,
+        first_message: sensor.SensorMessage,
+    ) -> SensorCluster:
+        """Create a cluster for a previously unseen key."""
 
-        self._frame_collisions_since_warning += 1
-        now = time.monotonic()
-        if self._last_frame_collision_warning is not None and now - self._last_frame_collision_warning < _FRAME_COLLISION_WARNING_INTERVAL:
-            return
+    @abstractmethod
+    def _on_cluster_updated(
+        self,
+        cache_name: str,
+        cluster_key: Hashable,
+        sensor_cluster: SensorCluster,
+    ) -> bool:
+        """Process an updated cluster and return whether it can be removed."""
 
-        completion = existing_cluster.get_completion()
-        self.logger.warning(
-            "Wi-Fi frame-key collision for "
-            f"source={frame_key.source_mac.hex()}, "
-            f"destination={frame_key.destination_mac.hex()}, "
-            f"sequence={frame_key.sequence_number}, "
-            f"fragment={frame_key.fragment_number} while adding {description}; "
-            "dropping the incoming message and retaining the existing cluster, which contains CSI from "
-            f"{int(np.sum(completion))}/{completion.size} sensors "
-            f"({self._frame_collisions_since_warning} collision(s) since the previous warning)"
-        )
-        self._frame_collisions_since_warning = 0
-        self._last_frame_collision_warning = now
+    def _get_cluster_cache_timeout(self, cache_name: str) -> float | None:
+        """Return a cache timeout in seconds, or ``None`` to retain clusters."""
 
-    def _check_ota_clusters(self):
-        # Check OTA cluster cache for packets where callback is due and for stale packets.
-        # Snapshot under the lock so concurrent mutation (e.g. cache clear at the end of
-        # calibration) cannot invalidate the iteration, then fire callbacks without holding
-        # the lock to avoid blocking packet ingestion or deadlocking on re-entrant calls.
-        with self.cluster_cache_ota_lock:
-            ota_clusters = list(self.cluster_cache_ota.items())
-
-        stale = set()
-        for id, csi_cluster in ota_clusters:
-            all_callbacks_fired = self._try_callbacks(csi_cluster)
-
-            if all_callbacks_fired and np.any(csi_cluster.get_completion()):
-                stale.add(id)
-
-            if csi_cluster.get_age() > self.ota_cache_timeout:
-                stale.add(id)
-
-        with self.cluster_cache_ota_lock:
-            for id in stale:
-                self.cluster_cache_ota.pop(id, None)
+        return None

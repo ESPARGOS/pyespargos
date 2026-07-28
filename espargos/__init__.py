@@ -2,7 +2,7 @@
 
 from .calibration import CSICalibration
 from .backlog import BacklogFilter, CSIBacklog, Exclude11bFilter, MacFilter
-from .cluster import CSICluster
+from .csi_cluster import CSICluster
 from .board import Board, BoardCapability, BoardControl, EspargosAPIVersionError, EspargosHTTPStatusError, EspargosStreamConnectionError, EspargosUnexpectedResponseError, SensorMessageSubscription
 from .board_wifi_rx import WiFiRx
 from .board_wifi_tx import WiFiTx
@@ -10,16 +10,21 @@ from .board_wifi_tx import WiFiTx
 Board.register_capability("wifi_rx", WiFiRx)
 Board.register_capability("wifi_tx", WiFiTx)
 
-from .pool import CalibrationError, Pool
+from .pool import Pool
+from .csi_pool import CSIPool, CalibrationError
+from .sensor_cluster import ClusterCollisionError, SensorCluster
 from .csi_packet import CSIPacket
 from .radar_packet import RadarTxReportPacket
 from .sensor import RFSwitchState, SensorFragment, SensorMessage, SensorPacket
 from .wifi import SequenceControl, WiFiFrameKey, WiFiPhyMode, WiFiPhyRate, WiFiTxPower
 from . import csi_compression
 from . import csi_packet
+from . import csi_cluster
+from . import csi_pool
 from . import radar
 from . import radar_packet
 from . import sensor
+from . import sensor_cluster
 from . import util
 from . import wifi
 from . import board_wifi_rx

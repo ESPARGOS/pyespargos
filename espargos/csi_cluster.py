@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 
-import numpy as np
+"""Store the CSI reported by multiple sensors for one Wi-Fi packet."""
+
 import binascii
 import time
+
+import numpy as np
 
 from . import revisions
 from . import constants
@@ -12,6 +15,7 @@ from . import radar_packet
 from . import sensor
 from . import util
 from . import wifi
+from .sensor_cluster import ClusterCollisionError, SensorCluster
 
 _RAW_LLTF_BYTES = csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL * 2
 _RAW_HT20_BYTES = csi_packet.HT_COEFFICIENTS_PER_CHANNEL * 2
@@ -19,20 +23,20 @@ _RAW_HT40_BYTES = (csi_packet.HT_COEFFICIENTS_PER_CHANNEL * 2) + (csi_packet.HT4
 _RAW_HE20_BYTES = csi_packet.HE20_COEFFICIENTS_PER_CHANNEL * 2
 
 
-class CSICluster(object):
+class CSICluster(SensorCluster):
     """
-    A CSICluster object represents a collection of CSI data estimated for the same WiFi packet.
+    CSI reported by the sensor array for one Wi-Fi packet.
 
-    The class clusters the CSI data from multiple ESPARGOS sensors (antennas), which may belong to the same or different ESPARGOS boards.
-    It is used to store CSI data until it is complete and can be provided to a callback.
-    CSI data may be from calibration packets or over-the-air packets.
+    Sensors report the packet independently. This class places each report at
+    its ``(board, row, column)`` position so consumers receive one array-shaped
+    measurement. A cluster may additionally contain the transmit-side report
+    for a radar packet. CSI can come from ordinary over-the-air traffic or from
+    packets used during calibration.
     """
 
     def __init__(
         self,
-        source_mac: str,
-        dest_mac: str,
-        seq_ctrl: wifi.SequenceControl,
+        frame_key: wifi.WiFiFrameKey,
         board_revisions: list[revisions.BoardRevision],
     ):
         """
@@ -42,29 +46,24 @@ class CSICluster(object):
         so they share the same source and destination MAC addresses and sequence control field.
         The constructor pre-allocates memory for the CSI data.
 
-        :param source_mac: The source MAC address of the WiFi packet
-        :param dest_mac: The destination MAC address of the WiFi packet
-        :param seq_ctrl: The sequence control field of the WiFi packet
+        :param frame_key: Fields identifying the WiFi packet
         :param board_revisions: The ESPARGOS board revisions in the pool
         """
-        self.source_mac = source_mac
-        self.dest_mac = dest_mac
-        self.seq_ctrl = seq_ctrl
+        super().__init__(board_revisions)
+        self.frame_key = frame_key
+        self.source_mac = frame_key.source_mac.hex()
+        self.dest_mac = frame_key.destination_mac.hex()
+        self.seq_ctrl = wifi.SequenceControl(b"\x00\x00")
+        self.seq_ctrl.seg = frame_key.sequence_number
+        self.seq_ctrl.frag = frame_key.fragment_number
 
         self.timestamp = time.time()
-        self.board_revisions = board_revisions
         self.serialized_csi_all = [[[None for c in range(constants.ANTENNAS_PER_ROW)] for r in range(constants.ROWS_PER_BOARD)] for b in self.board_revisions]
         self.radar_tx_report = None
         self.radar_tx_index = -1
-        self.shape = (
-            len(self.board_revisions),
-            constants.ROWS_PER_BOARD,
-            constants.ANTENNAS_PER_ROW,
-        )
 
         # Remember which sensors have already provided CSI data
-        self.csi_completion_state = np.full(self.shape, False)
-        self.csi_completion_state_all = False
+        self.csi_completion_state = self._completion
 
         # Allocate memory for the RSSI, gain, rf switch state and noise floor values
         self.rssi_all = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
@@ -83,19 +82,54 @@ class CSICluster(object):
         row, col = self.board_revisions[board_num].esp_num_to_row_col(esp_num)
         return self.serialized_csi_all[board_num][row][col]
 
-    def add_csi(
+    def add_message(self, board_num: int, sensor_message: sensor.SensorMessage) -> bool:
+        """Add CSI or radar metadata for this cluster's Wi-Fi frame."""
+
+        stream_packet = sensor_message.payload
+        board_index, row, col = self.get_sensor_position(board_num, sensor_message.antenna_id)
+
+        if isinstance(stream_packet, csi_packet.CSIPacket):
+            existing_csi = self.serialized_csi_all[board_index][row][col]
+            if existing_csi is not None:
+                if bytes(existing_csi) == bytes(stream_packet):
+                    return False
+                raise ClusterCollisionError(
+                    f"conflicting CSI from board {board_num}, row {row}, column {col}"
+                )
+            if np.any(self.get_completion()) and self.is_radar() != stream_packet.is_radar:
+                raise ClusterCollisionError("radar and non-radar CSI use the same Wi-Fi frame key")
+            if self.has_radar_tx_report() and not stream_packet.is_radar:
+                raise ClusterCollisionError("non-radar CSI conflicts with an existing radar TX report")
+            self._add_csi((board_index, row, col), stream_packet)
+            self._mark_sensor_position_complete((board_index, row, col))
+            return True
+
+        if isinstance(stream_packet, radar_packet.RadarTxReportPacket):
+            existing_report = self.get_radar_tx_info()
+            if existing_report is not None:
+                if bytes(existing_report) == bytes(stream_packet):
+                    return False
+                raise ClusterCollisionError(f"conflicting radar TX report with tx_count={stream_packet.tx_count}")
+            if np.any(self.get_completion()) and not self.is_radar():
+                raise ClusterCollisionError("radar TX report conflicts with existing non-radar CSI")
+            self._set_radar_tx_report(
+                stream_packet,
+                sensor_position=(board_index, row, col),
+            )
+            return True
+
+        raise TypeError(f"Unsupported CSICluster sensor-message payload: {type(stream_packet).__name__}")
+
+    def _add_csi(
         self,
-        board_num: int,
-        esp_num: int,
+        sensor_position: tuple[int, int, int],
         serialized_csi: csi_packet.CSIPacket,
     ):
         """
         Add CSI data to the cluster.
 
-        :param board_num: The number of the ESPARGOS board that received the CSI data
-        :param esp_num: The number of the ESPARGOS sensor within that board that received the CSI data
+        :param sensor_position: The logical ``(board, row, column)`` position
         :param serialized_csi: The serialized CSI data
-        :param csi_cplx: The complex-valued CSI data
         """
         assert binascii.hexlify(bytearray(serialized_csi.source_mac)).decode("utf-8") == self.source_mac
         assert binascii.hexlify(bytearray(serialized_csi.dest_mac)).decode("utf-8") == self.dest_mac
@@ -104,16 +138,11 @@ class CSICluster(object):
         if self.radar_tx_report is not None:
             assert serialized_csi.is_radar
 
-        # TODO: Assert that esp_num matches self-identified antenna ID
-
-        # Convert esp_num to row and column, mapping may differ across board revisions
-        row, col = self.board_revisions[board_num].esp_num_to_row_col(esp_num)
+        board_num, row, col = sensor_position
 
         # Store CSI data to pre-allocated memory
         self.serialized_csi_all[board_num][row][col] = serialized_csi
         # self.complex_csi_all[board_num, row, col] = csi_cplx # TODO: Will not work for V3 :(
-        self.csi_completion_state[board_num, row, col] = True
-        self.csi_completion_state_all = np.all(self.csi_completion_state)
 
         # Handle signed values for RSSI and noise floor (stored as uint32_t in rx_ctrl due to ctypes packing limitations)
         rx_ctrl = csi_packet.wifi_pkt_rx_ctrl_v3_t(serialized_csi.rx_ctrl)
@@ -130,7 +159,11 @@ class CSICluster(object):
         if serialized_csi.gain_table_entry_valid:
             self.gain_table_entry_raw_all[board_num, row, col, :] = np.frombuffer(serialized_csi.gain_table_entry_raw, dtype=np.uint8)
 
-    def set_radar_tx_report(self, radar_tx_report: radar_packet.RadarTxReportPacket, board_num: int | None = None, esp_num: int | None = None):
+    def _set_radar_tx_report(
+        self,
+        radar_tx_report: radar_packet.RadarTxReportPacket,
+        sensor_position: tuple[int, int, int] | None = None,
+    ):
         """
         Attach radar transmit metadata for the Wi-Fi packet represented by this cluster.
         """
@@ -147,8 +180,8 @@ class CSICluster(object):
             assert bytes(self.radar_tx_report) == bytes(radar_tx_report)
 
         self.radar_tx_report = radar_tx_report
-        if board_num is not None and esp_num is not None:
-            row, col = self.board_revisions[board_num].esp_num_to_row_col(esp_num)
+        if sensor_position is not None:
+            board_num, row, col = sensor_position
             self.radar_tx_index = board_num * constants.ROWS_PER_BOARD * constants.ANTENNAS_PER_ROW + row * constants.ANTENNAS_PER_ROW + col
 
     def has_radar_tx_report(self) -> bool:
@@ -521,7 +554,7 @@ class CSICluster(object):
 
         :return: True if all sensors have provided CSI data, False otherwise
         """
-        return self.csi_completion_state_all
+        return super().get_completion_all()
 
     def get_age(self):
         """
@@ -532,7 +565,7 @@ class CSICluster(object):
 
         :return: The age of the CSI data, in seconds
         """
-        return time.time() - self.timestamp
+        return super().get_age()
 
     def get_sensor_timestamps(self):
         """

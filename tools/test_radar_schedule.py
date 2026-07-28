@@ -17,7 +17,7 @@ def normalize_mac(mac: str) -> str:
     return str(mac).replace(":", "").lower()
 
 
-def build_schedule_lookup(pool: espargos.Pool, pool_radar_config: espargos.radar.RadarPoolConfig):
+def build_schedule_lookup(pool: espargos.CSIPool, pool_radar_config: espargos.radar.RadarPoolConfig):
     calibration = pool.get_calibration()
     schedule_by_source_mac = {}
     for board_index, (board_obj, board_config) in enumerate(zip(pool.boards, pool_radar_config.board_configs)):
@@ -43,7 +43,7 @@ def main():
     parser.add_argument("--threshold-us", type=float, default=50.0, help="Acceptable absolute mean residual threshold [us]")
     args = parser.parse_args()
 
-    pool = espargos.Pool([espargos.Board(args.host)])
+    pool = espargos.CSIPool([espargos.Board(args.host)])
     collected = []
 
     def on_cluster(csi_cluster: espargos.CSICluster):

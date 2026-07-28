@@ -3,6 +3,7 @@
 import argparse
 import pathlib
 import sys
+import threading
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
@@ -39,6 +40,7 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         super().__init__(argv, argparse_parent=parser)
 
         self.initial_config["pool"]["acquire_lltf_force"] = True
+        self.explicit_initial_config.setdefault("pool", {})["acquire_lltf_force"] = True
 
         self.stable_power_minimum = None
         self.stable_power_maximum = None
@@ -47,8 +49,17 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         self._link_tx_indices = np.asarray([], dtype=np.int32)
         self._link_index_by_rx_tx = np.full((self.sensor_count, self.sensor_count), -1, dtype=np.int32)
         self._subcarrier_range = espargos.csi_packet.get_csi_format_subcarrier_indices("lltf")
+        self._subcarrier_frequency_channel = None
+        self._cached_subcarrier_frequencies = None
         self._latest_link_csi = {}
         self._dirty_link_indices = set()
+        self._power_plot_points = {}
+        self._phase_plot_points = {}
+        self._csi_data_lock = threading.Lock()
+        self._pending_csi_lock = threading.Lock()
+        self._pending_csi_by_tx = {}
+        self._pool_worker_stop = threading.Event()
+        self._pool_worker_thread = None
         self._update_link_indices()
 
         self.initComplete.connect(self.applyRadarSchedule)
@@ -64,14 +75,20 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         self._update_link_indices()
         self.sensorCountChanged.emit()
         self.pool.add_csi_callback(
-            self.onCSI,
+            self._queueCSI,
             cb_predicate=lambda cluster: cluster.is_radar() and cluster.has_radar_tx_report() and np.any(cluster.get_completion()),
         )
 
     def onInitComplete(self):
-        self.poll_timer = PyQt6.QtCore.QTimer(self)
-        self.poll_timer.timeout.connect(self.pollCSI)
-        self.poll_timer.start(10)
+        if self._pool_worker_thread is not None:
+            return
+        self._pool_worker_stop.clear()
+        self._pool_worker_thread = threading.Thread(
+            target=self._pool_worker,
+            name="radar-csi-pool",
+            daemon=True,
+        )
+        self._pool_worker_thread.start()
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=sensorCountChanged)
     def sensorCount(self):
@@ -129,9 +146,12 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
             wificonf = self.pool.get_wificonf()
             channel_primary = int(wificonf.get("channel-primary", 1))
 
-        frequencies = espargos.util.get_frequencies_lltf(channel_primary)
-        center = espargos.util.get_center_frequency(channel_primary)
-        return frequencies - center
+        if channel_primary != self._subcarrier_frequency_channel:
+            frequencies = espargos.util.get_frequencies_lltf(channel_primary)
+            center = espargos.util.get_center_frequency(channel_primary)
+            self._cached_subcarrier_frequencies = frequencies - center
+            self._subcarrier_frequency_channel = channel_primary
+        return self._cached_subcarrier_frequencies
 
     def _link_indices(self, link_index: int) -> tuple[int, int]:
         return int(self._link_rx_indices[link_index]), int(self._link_tx_indices[link_index])
@@ -167,14 +187,48 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
             return new
         return previous * 0.92 + new * 0.08
 
-    @PyQt6.QtCore.pyqtSlot()
-    def pollCSI(self):
-        if hasattr(self, "pool"):
-            self.pool.run(timeout=0)
+    def _queueCSI(self, clustered_csi: espargos.CSICluster):
+        """Keep only the newest pending frame for each transmitting sensor."""
 
-    def _deserialize_cluster_csi_lltf(self, clustered_csi):
-        calibration = self.pool.get_calibration()
-        if calibration is None or not clustered_csi.has_lltf():
+        tx_index = clustered_csi.get_radar_tx_index()
+        if tx_index < 0 or tx_index >= self.sensor_count:
+            return
+        with self._pending_csi_lock:
+            self._pending_csi_by_tx[tx_index] = clustered_csi
+
+    def _take_pending_csi(self):
+        with self._pending_csi_lock:
+            pending_csi = tuple(self._pending_csi_by_tx.values())
+            self._pending_csi_by_tx.clear()
+        return pending_csi
+
+    def _pool_worker(self):
+        while not self._pool_worker_stop.is_set():
+            try:
+                self.pool.run(timeout=0.05)
+            except RuntimeError as error:
+                # Pool calibration also drives run(). Wait until it releases
+                # the single-consumer lock instead of competing with it.
+                if str(error) != "Pool.run() must not be called concurrently or reentrantly":
+                    self.logger.exception("Radar CSI processing stopped after an unexpected error")
+                    return
+                self._pool_worker_stop.wait(0.01)
+                continue
+            except Exception:
+                self.logger.exception("Radar CSI processing stopped after an unexpected error")
+                return
+
+            # Pool callbacks above are deliberately cheap. A bounded run may
+            # contain several frames from the same transmitter; only its most
+            # recent frame matters to this latest-value visualization.
+            for clustered_csi in self._take_pending_csi():
+                try:
+                    self.onCSI(clustered_csi)
+                except Exception:
+                    self.logger.exception("Ignoring a radar CSI frame that could not be processed")
+
+    def _deserialize_cluster_csi_lltf(self, clustered_csi, calibration):
+        if not clustered_csi.has_lltf():
             return None
         return calibration.apply_lltf(clustered_csi.deserialize_csi_lltf())
 
@@ -186,7 +240,7 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         if tx_index < 0 or tx_index >= self.sensor_count:
             return
 
-        csi = self._deserialize_cluster_csi_lltf(clustered_csi)
+        csi = self._deserialize_cluster_csi_lltf(clustered_csi, calibration)
         if csi is None:
             return
 
@@ -213,49 +267,74 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         if finite_power.size == 0:
             return
 
-        self.stable_power_minimum = self._interpolate_axis_range(self.stable_power_minimum, float(np.min(finite_power) - 3.0))
-        self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, float(np.max(finite_power) + 3.0))
-        for rx_index in np.flatnonzero(finite_links):
-            link_index = int(self._link_index_by_rx_tx[rx_index, tx_index])
-            if link_index < 0:
-                continue
+        with self._csi_data_lock:
+            self.stable_power_minimum = self._interpolate_axis_range(self.stable_power_minimum, float(np.min(finite_power) - 3.0))
+            self.stable_power_maximum = self._interpolate_axis_range(self.stable_power_maximum, float(np.max(finite_power) + 3.0))
+            for rx_index in np.flatnonzero(finite_links):
+                link_index = int(self._link_index_by_rx_tx[rx_index, tx_index])
+                if link_index < 0:
+                    continue
 
-            self._latest_link_csi[link_index] = np.array(corrected[rx_index], copy=True)
-            self._dirty_link_indices.add(link_index)
+                self._latest_link_csi[link_index] = np.array(corrected[rx_index], copy=True)
+                self._dirty_link_indices.add(link_index)
 
     @PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis)
     def updateCSI(self, powerSeries, phaseSeries, axis):
-        if not self._dirty_link_indices:
-            if self.stable_power_minimum is not None and self.stable_power_maximum is not None:
-                axis.setMin(self.stable_power_minimum)
-                axis.setMax(self.stable_power_maximum)
-            return
+        with self._csi_data_lock:
+            stable_power_minimum = self.stable_power_minimum
+            stable_power_maximum = self.stable_power_maximum
+            dirty_link_csi = [
+                (link_index, self._latest_link_csi.get(link_index))
+                for link_index in sorted(self._dirty_link_indices)
+            ]
+            self._dirty_link_indices.clear()
 
-        dirty_link_indices = sorted(self._dirty_link_indices)
-        self._dirty_link_indices.clear()
-
-        for link_index in dirty_link_indices:
+        for link_index, link_csi in dirty_link_csi:
             if link_index >= len(powerSeries) or link_index >= len(phaseSeries):
                 continue
-            link_csi = self._latest_link_csi.get(link_index)
             if link_csi is None or not np.all(np.isfinite(link_csi)):
                 continue
 
             link_power = 20.0 * np.log10(np.abs(link_csi) + 1e-5)
             link_phase = np.angle(link_csi)
-            powerSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(self._subcarrier_range, link_power)])
-            phaseSeries[link_index].replace([PyQt6.QtCore.QPointF(s, p) for s, p in zip(self._subcarrier_range, link_phase)])
+            power_points = self._power_plot_points.get(link_index)
+            phase_points = self._phase_plot_points.get(link_index)
+            if power_points is None:
+                power_points = [
+                    PyQt6.QtCore.QPointF(float(subcarrier), 0.0)
+                    for subcarrier in self._subcarrier_range
+                ]
+                phase_points = [
+                    PyQt6.QtCore.QPointF(float(subcarrier), 0.0)
+                    for subcarrier in self._subcarrier_range
+                ]
+                self._power_plot_points[link_index] = power_points
+                self._phase_plot_points[link_index] = phase_points
 
-        axis.setMin(self.stable_power_minimum)
-        axis.setMax(self.stable_power_maximum)
+            for point, value in zip(power_points, link_power):
+                point.setY(float(value))
+            for point, value in zip(phase_points, link_phase):
+                point.setY(float(value))
+
+            powerSeries[link_index].replace(power_points)
+            phaseSeries[link_index].replace(phase_points)
+
+        if stable_power_minimum is not None and stable_power_maximum is not None:
+            axis.setMin(stable_power_minimum)
+            axis.setMax(stable_power_maximum)
 
     def onAboutToQuit(self):
         try:
             self.disableRadarSchedule()
         except Exception:
             pass
+        self._pool_worker_stop.set()
+        if self._pool_worker_thread is not None:
+            self._pool_worker_thread.join(timeout=1.0)
+            self._pool_worker_thread = None
         super().onAboutToQuit()
 
 
-app = EspargosDemoRadarCSI(sys.argv)
-sys.exit(app.exec())
+if __name__ == "__main__":
+    app = EspargosDemoRadarCSI(sys.argv)
+    sys.exit(app.exec())

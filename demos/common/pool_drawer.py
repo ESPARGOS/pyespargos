@@ -6,7 +6,7 @@ import threading
 import copy
 import re
 
-import espargos.pool
+import espargos.csi_pool
 import espargos.sensor
 
 from .config_manager import ConfigManager
@@ -42,7 +42,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
     calibrationStarted = PyQt6.QtCore.pyqtSignal()
     calibrationFinished = PyQt6.QtCore.pyqtSignal(bool, str)
 
-    def __init__(self, pool: espargos.pool.Pool, force_config=None, parent=None):
+    def __init__(self, pool: espargos.csi_pool.CSIPool, force_config=None, parent=None):
         # Note that the current pool config is authoritative, the default config is just for UI initialization
         # However, if force_config is given, it takes precedence
         super().__init__(parent=parent)

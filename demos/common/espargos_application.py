@@ -312,7 +312,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         # Let mixins prepare pool initialization
         additional_calibrate_args = self._prepare_pool_init(additional_calibrate_args)
 
-        self.pool = espargos.Pool([espargos.Board(host) for host in self.get_initial_config("pool", "hosts")])
+        self.pool = espargos.CSIPool([espargos.Board(host) for host in self.get_initial_config("pool", "hosts")])
 
         # Pool configuration UI
         pool_cfg = self.get_explicit_initial_config("pool", default={})

@@ -35,6 +35,14 @@ espargos.pool
    :undoc-members:
    :show-inheritance:
 
+espargos.csi_pool
+-----------------
+
+.. automodule:: espargos.csi_pool
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 espargos.backlog
 ----------------
 
@@ -51,10 +59,18 @@ espargos.calibration
    :undoc-members:
    :show-inheritance:
 
-espargos.cluster
-----------------
+espargos.sensor_cluster
+-----------------------
 
-.. automodule:: espargos.cluster
+.. automodule:: espargos.sensor_cluster
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.csi_cluster
+--------------------
+
+.. automodule:: espargos.csi_cluster
    :members:
    :undoc-members:
    :show-inheritance:
