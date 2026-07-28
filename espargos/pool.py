@@ -467,6 +467,19 @@ class Pool(object):
         for board in self.boards:
             board.stop()
 
+    def close(self):
+        """
+        Detach this pool from its boards.
+
+        Closing a pool removes its sensor-message subscriptions without
+        stopping or closing the boards themselves. It is safe to call this
+        method more than once.
+        """
+        subscriptions = self._sensor_message_subscriptions
+        self._sensor_message_subscriptions = []
+        for board_obj, subscription in subscriptions:
+            board_obj.unsubscribe_sensor_messages(subscription)
+
     def reboot(self):
         """
         Trigger a reboot on all boards in the pool.
