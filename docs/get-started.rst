@@ -1,7 +1,7 @@
 Getting Started
 ===============
 
-Before you get started with *pyespargos*, please make sure to that your ESPARGOS controller can be reached either via its IP address or a hostname.
+Before you get started with *pyespargos*, make sure that your ESPARGOS controller can be reached either via its IP address or a hostname.
 In the following examples, we will assume that ESPARGOS controllers are reachable at IP addresses :code:`192.168.1.2`, :code:`192.168.1.3`, :code:`192.168.1.4` and so on,
 but you may replace the IP addresses with hostnames if you prefer that.
 
@@ -34,41 +34,57 @@ The following code example receives clustered CSI from one ESPARGOS device:
    # Create new ESPARGOS pool with only one board
    pool = espargos.Pool([board])
 
-   # Start CSI reception thread for all board in pool (just one board in this case)
+   # Always acquire the legacy long training field (L-LTF), independently of
+   # the received WiFi packet format.
+   pool.set_csi_acquire_config({"acquire_csi_force_lltf": True})
+
+   # Start sensor-message reception for all boards in the pool
+   # (just one board in this case).
    pool.start()
 
-   # Collect CSI from reference channel for calibration
-   pool.calibrate(2)
+   try:
+       # Collect CSI from the reference channel for calibration.
+       pool.calibrate(duration=2)
 
-   # Get a callback whenever CSI for one HT40 packet is available from all antennas.
-   # The argument to this function clustered_csi is an instance of the "CSICluster" class.
-   def handle_csi(clustered_csi):
-       csi_raw = clustered_csi.deserialize_csi_ht40ltf()
-       csi_calibrated = pool.get_calibration().apply_ht40(csi_raw)
-       print("Got channel coefficients with shape:", csi_calibrated.shape)
+       # Get a callback whenever CSI for one WiFi packet is available from all
+       # antennas. clustered_csi is an instance of CSICluster.
+       def handle_csi(clustered_csi):
+           csi_raw = clustered_csi.deserialize_csi_lltf()
+           csi_calibrated = pool.get_calibration().apply_lltf(csi_raw)
+           print("Got channel coefficients with shape:", csi_calibrated.shape)
 
-   pool.add_csi_callback(handle_csi)
+       def complete_lltf(clustered_csi):
+           return clustered_csi.get_completion_all() and clustered_csi.has_lltf()
 
-   # Main loop, add your break condition here
-   while True:
-       pool.run()
+       pool.add_csi_callback(handle_csi, cb_predicate=complete_lltf)
 
-   # Stop CSI reception thread
-   pool.stop()
+       # Main loop; add your break condition here.
+       while True:
+           pool.run()
+   finally:
+       pool.stop()
 
 The example illustrates the basic usage of the :class:`.Board` and :class:`.Pool` classes:
 
-**The** :class:`.Board` **class** is responsible for handling the connection (i.e., websockets stream for CSI data and HTTP for configuration) to one single ESPARGOS controller.
-There are very few reasons to use this class directly.
-In application code, you should always - even if only using a single ESPARGOS device - use the :class:`.Pool` class.
+**The** :class:`.Board` **class** represents one ESPARGOS controller.
+It handles controller configuration and receives the sensor-message stream over UDP, WebSocket, or UART.
+The controller efficiently transports fragments from the sensors without interpreting their message-specific payloads; :class:`.Board` reassembles those fragments and dispatches complete messages to callbacks selected by their four-byte type header.
+CSI applications normally use :class:`.Pool`, even with a single ESPARGOS device.
+Extensions that define another sensor-message type may instead subscribe directly through :meth:`~espargos.board.Board.subscribe_sensor_messages` and perform their own decoding.
 
 **The** :class:`.Pool` **class** is responsible for handling the clustering of CSI from one or multiple ESPARGOS boards.
 When the microcontrollers ("sensors") on the ESPARGOS array board receive a WiFi packet, they just forward the CSI estimates to the central controller together with packet metadata like MAC address, timestamp and frame counter.
 The controller then forwards the CSI estimates to the computer running *pyespargos*, which is then responsible for figuring out which CSI estimates belong to the same WiFi packet.
 This is easy to achieve by finding matching packet metadata.
 By default, the CSI callback is only triggered if CSI is available from *all* sensors, but you can change this behavior (see documentation of :func:`~espargos.pool.Pool.add_csi_callback` for details).
+The example enables ``acquire_csi_force_lltf`` so that every supported OFDM packet is represented by its L-LTF channel estimate, regardless of whether its native format is legacy, HT, or HE.
+This gives applications a consistent 53-subcarrier CSI representation across different transmitters.
+The callback predicate additionally ignores packets without usable L-LTF CSI, such as 802.11b packets.
 
 An ESPARGOS pool is initialized with a list of objects of the :class:`.Board` class, which can also contain just one entry if you only use a single ESPARGOS device.
+Applications must call :meth:`~espargos.pool.Pool.run` regularly unless a helper such as :class:`.CSIBacklog` does so in its own worker thread.
+Each call waits briefly for the first message and then processes one bounded batch of queued messages.
+Use ``timeout=0`` when integrating with a GUI or another event loop that must never block; a dedicated worker may use a longer timeout such as ``timeout=0.5``.
 
 With CSI Backlog
 ----------------
@@ -84,19 +100,28 @@ The application code can query the backlog whenever it needs recent CSI.
   import time
 
   pool = espargos.Pool([espargos.Board("192.168.1.2")])
+  pool.set_csi_acquire_config({"acquire_csi_force_lltf": True})
   pool.start()
-  pool.calibrate(duration=2)
-  backlog = espargos.CSIBacklog(pool, size=20)
-  backlog.start()
+  backlog = None
+  try:
+      pool.calibrate(duration=2)
+      backlog = espargos.CSIBacklog(
+          pool,
+          fields=["lltf"],
+          size=20,
+      )
+      backlog.add_filter(espargos.Exclude11bFilter())
+      backlog.start()
 
-  # Wait for a while to collect some WiFi packets to the backlog...
-  time.sleep(4)
+      # Wait for a while to collect some WiFi packets in the backlog...
+      time.sleep(4)
 
-  csi_ht40 = backlog.get("ht40")
-  print("Received CSI: ", csi_ht40)
-
-  backlog.stop()
-  pool.stop()
+      csi_lltf = backlog.get("lltf")
+      print("Received CSI:", csi_lltf)
+  finally:
+      if backlog is not None:
+          backlog.stop()
+      pool.stop()
 
 The backlog supports multiple data fields that can be retrieved using the :meth:`~espargos.backlog.CSIBacklog.get` method:
 

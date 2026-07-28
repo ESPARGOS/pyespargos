@@ -455,14 +455,14 @@ class Pool(object):
 
     def start(self):
         """
-        Start the streaming of CSI data for all boards in the pool.
+        Start sensor-message reception for all boards in the pool.
         """
         for board in self.boards:
             board.start()
 
     def stop(self):
         """
-        Stop the streaming of CSI data for all boards in the pool.
+        Stop sensor-message reception for all boards in the pool.
         """
         for board in self.boards:
             board.stop()

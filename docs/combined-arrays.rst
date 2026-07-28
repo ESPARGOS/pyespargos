@@ -127,25 +127,32 @@ To obtain phase-coherent CSI data from the combined arrays, you can use the foll
   import time
 
   pool = espargos.Pool([
-   espargos.Board("192.168.1.2"),
-   espargos.Board("192.168.1.3"),
-   espargos.Board("192.168.1.4"),
-   espargos.Board("192.168.1.5")
+    espargos.Board("192.168.1.2"),
+    espargos.Board("192.168.1.3"),
+    espargos.Board("192.168.1.4"),
+    espargos.Board("192.168.1.5")
   ])
+  pool.set_csi_acquire_config({"acquire_csi_force_lltf": True})
   pool.start()
   pool.calibrate(
-   duration = 2,
-   per_board = False,
-   cable_lengths = [0.4, 0.4, 0.8, 0.8],
-   cable_velocity_factors = [0.76, 0.76, 0.76, 0.76]
+      duration=2,
+      per_board=False,
+      cable_lengths=[0.4, 0.4, 0.8, 0.8],
+      cable_velocity_factors=[0.76, 0.76, 0.76, 0.76],
   )
-  backlog = espargos.CSIBacklog(pool, size = 20)
+
+  backlog = espargos.CSIBacklog(
+      pool,
+      fields=["lltf"],
+      size=20,
+  )
+  backlog.add_filter(espargos.Exclude11bFilter())
   backlog.start()
 
-  # Wait for a while to collect some WiFi packets to the backlog...
+  # Wait for a while to collect some WiFi packets in the backlog...
   time.sleep(4)
 
-  print("Received CSI of shape: ", backlog.get_ht40().shape)
+  print("Received CSI of shape:", backlog.get("lltf").shape)
 
   backlog.stop()
   pool.stop()
@@ -153,6 +160,7 @@ To obtain phase-coherent CSI data from the combined arrays, you can use the foll
 In this example, we create a pool of four ESPARGOS boards by passing a list of four :class:`.Board` instances to the :class:`.Pool` constructor.
 The important change is to call the :meth:`.Pool.calibrate` method with the *per_board* parameter set to *False*, which means that the phase calibration is performed globally across all arrays and not per-board.
 This requires all ESPARGOS devices to be connected to the same phase reference signal generator (the master) so that all sensors receive the same phase reference signal packets.
+Forced L-LTF acquisition provides the same 53-subcarrier CSI representation for supported legacy, HT, and HE packets.
 
 The optional *cable_lengths* and *cable_velocity_factors* parameters are used to compensate for potentially different cable lengths between the splitter and the ESPARGOS devices.
 If your cables are all the same length, you can omit these parameters.

@@ -44,7 +44,7 @@ class EspargosUnexpectedResponseError(Exception):
 
 
 class EspargosCsiStreamConnectionError(Exception):
-    "Raised when the CSI stream connection could not be established (e.g. magic packet not received)"
+    "Raised when the sensor-message stream connection could not be established."
 
     pass
 
@@ -208,17 +208,26 @@ class Board(object):
 
     def start(self, transports=None):
         """
-        Starts the CSI stream thread for the ESPARGOS controller. The thread will run indefinitely until the stop() method is called.
+        Start receiving sensor messages from the ESPARGOS controller.
+
+        The controller forwards transport packets containing fragments from its
+        sensors. This board reassembles complete sensor messages and dispatches
+        them to callbacks registered with :meth:`subscribe_sensor_messages`.
+        Reception continues until :meth:`stop` is called.
 
         Supported transports:
 
-        - "udp": The controller will send CSI packets to a local UDP socket. This transport is lower-latency and more efficient (higher throughput), but may not work in all network environments.
-        - "websocket": The controller will send CSI packets over a WebSocket connection. This transport is more widely compatible but may have higher latency and overhead.
-        - "uart": The controller will stream CSI data over the local serial/UART link. This transport is only available for hosts specified as ``uart:<port>``.
+        - "udp": The controller sends sensor packets to a local UDP socket. This transport is lower-latency and more efficient (higher throughput), but may not work in all network environments.
+        - "websocket": The controller sends sensor packets over a WebSocket connection. This transport is more widely compatible but may have higher latency and overhead.
+        - "uart": The controller streams sensor packets over the local serial/UART link. This transport is only available for hosts specified as ``uart:<port>``.
 
-        :param transports: Optional list of transports to try, in order of preference. Valid values are "udp" and "websocket". If None (default), tries UDP first (if supported by API version) and then WebSocket.
+        :param transports: Optional list of transports to try, in order of
+            preference. Network boards support ``"udp"`` and ``"websocket"``;
+            UART boards use ``"uart"``. If omitted, network boards try UDP
+            first and then WebSocket, while UART boards use UART.
 
-        :raises EspargosCsiStreamConnectionError: If neither UDP nor WebSocket CSI stream could be established
+        :raises EspargosCsiStreamConnectionError: If none of the enabled
+            sensor-message transports can be established.
         """
         if self._transport_kind == "uart":
             transports = ["uart"] if transports is None else transports
@@ -395,7 +404,10 @@ class Board(object):
 
     def stop(self):
         """
-        Stops the CSI stream thread for the ESPARGOS controller. The thread will stop after the current packet has been processed, or after a short timeout.
+        Stop receiving sensor messages from the ESPARGOS controller.
+
+        The receiver stops after the current packet has been processed, or
+        after a short transport timeout.
         """
         if self.csistream_connected:
             self.csistream_connected = False

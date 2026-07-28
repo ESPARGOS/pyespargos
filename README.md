@@ -395,13 +395,19 @@ import espargos
 import time
 
 pool = espargos.Pool([espargos.Board("192.168.1.2")])
+pool.set_csi_acquire_config({"acquire_csi_force_lltf": True})
 pool.start()
-pool.calibrate(duration=2)
-
-backlog = espargos.CSIBacklog(pool, fields=["lltf", "rssi"], size=20)
-backlog.start()
-
+backlog = None
 try:
+    pool.calibrate(duration=2)
+    backlog = espargos.CSIBacklog(
+        pool,
+        fields=["lltf", "rssi"],
+        size=20,
+    )
+    backlog.add_filter(espargos.Exclude11bFilter())
+    backlog.start()
+
     # Wait a moment so the backlog can collect some WiFi packets.
     time.sleep(4)
 
@@ -412,7 +418,8 @@ try:
     else:
         print("No CSI data received yet.")
 finally:
-    backlog.stop()
+    if backlog is not None:
+        backlog.stop()
     pool.stop()
 ```
 
@@ -420,7 +427,7 @@ finally:
 
 ### WiFi
 * ESPARGOS extracts channel state information (CSI) from WiFi training fields received by the sensor ESP32s.
-* During normal CSI capture, ESPARGOS is passive: it receives packets in promiscuous mode and reports CSI for packets it can decode (the only exception to this is an experimental radar mode, to be documented).
+* During normal CSI capture, ESPARGOS is passive: it receives packets in promiscuous mode and reports CSI for packets it can decode. The radar mode described below is the exception because it actively transmits measurement frames.
 * To receive over-the-air packets, the transmitter and ESPARGOS must use the same primary channel and compatible bandwidth settings.
 * The current firmware and *pyespargos* support these CSI formats:
   - **L-LTF** (`lltf`): legacy long training field from 802.11g-style packets, represented as 53 subcarriers (`-26..26`, with DC reconstructed/interpolated when needed). In fact, even the newer HT/HE packets contain L-LTF fields. In a **force L-LTF** mode you can change the behavior of ESPARGOS to *always* extract the L-LTF CSI instead of the other training fields. The L-LTF CSI supports 12-bit I/Q encoding (instead of just 8-bit encoding like the other preamble formats), which makes this mode preferable for situations in which dynamic range is important.
@@ -432,13 +439,13 @@ finally:
 
 ### Communication between pyespargos and ESPARGOS
 * The controller exposes a small HTTP API for identification, configuration, RF switch control, calibration, gain settings, MAC filtering and radar/TX configuration.
-* On Ethernet, *pyespargos* sends control commands via HTTP and can receive CSI through:
+* On Ethernet, *pyespargos* sends control commands via HTTP and receives the sensor-message stream, including CSI and radar TX reports, through:
   - **UDP** (default): lower latency and higher throughput. *pyespargos* opens a local UDP socket, asks the controller to stream to it via `/csi_udp`, waits for a magic packet, and sends periodic keepalives to keep firewall/NAT state alive.
   - **WebSocket** (`/csi`): more compatible fallback, and the transport used by the web interface.
-* Over USB, *pyespargos* accepts UART host specifiers such as `uart:/dev/ttyUSB0` or `uart:COM3`. Control RPCs and CSI streaming are then tunnelled over the serial link.
+* Over USB, *pyespargos* accepts UART host specifiers such as `uart:/dev/ttyUSB0` or `uart:COM3`. Control RPCs and sensor-message streaming are then tunnelled over the serial link.
 * `Board.start()` chooses transports automatically: network hosts try UDP first and fall back to WebSocket; UART hosts use the UART transport.
 * After reassembling sensor messages, `Board` dispatches them through callbacks filtered by their four-byte type header. Callbacks receive the raw `SensorMessage`, including its UID and antenna ID. Consumers own parsing: `Pool` decodes CSI and radar TX reports, while optional features can subscribe to and decode their own message types without adding those formats to `board.py`.
-* Only one CSI stream transport can be active on a controller at a time. The UART router and direct *pyespargos* UART access also need exclusive access to the serial device.
+* Only one sensor-message stream transport can be active on a controller at a time. The UART router and direct *pyespargos* UART access also need exclusive access to the serial device.
 
 ### The Backlog
 * Individual WiFi training fields are short, so single-packet CSI is often noisy. Many applications work on a recent window of packets instead of only the newest packet.
@@ -451,8 +458,10 @@ finally:
 
 ### CSI Clustering
 * Each sensor reports CSI separately. `Pool` groups those sensor reports into `CSICluster` objects that represent one WiFi packet across one or more ESPARGOS boards.
-* Clustering uses packet metadata such as source/destination MAC addresses and sequence control, with separate handling for calibration packets and over-the-air packets.
+* Clustering uses a `WiFiFrameKey` containing source/destination MAC addresses and sequence control, with separate caches for calibration packets and over-the-air packets.
 * A cluster tracks which sensors have reported, so applications can wait for all antennas or provide a custom callback predicate for partial clusters.
+* An identical report from the same sensor is treated as a harmless duplicate. If the same sensor reports different data for an existing frame key, *pyespargos* logs a rate-limited collision warning, keeps the established cluster, and drops the incoming report.
+* Applications drive clustering by calling `Pool.run()`. A call waits up to its timeout for the first message and processes one bounded batch. Use `timeout=0` in GUI/event loops; dedicated workers may use a longer timeout such as `0.5` seconds.
 * `CSICluster` exposes deserializers for `lltf`, `ht20`, `ht40` and `he20`, plus metadata such as RSSI, CFO, RF switch state, source MAC, primary/secondary channel, host timestamp and per-sensor hardware timestamps.
 * The deserializers also apply format-specific corrections such as STO/CFO phase correction and HE20 null-tone handling.
 * If you use `CSIBacklog`, clustering happens underneath it and you usually only interact with the backlog arrays.
