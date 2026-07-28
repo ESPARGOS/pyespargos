@@ -67,10 +67,10 @@ The following code example receives clustered CSI from one ESPARGOS device:
 The example illustrates the basic usage of the :class:`.Board` and :class:`.Pool` classes:
 
 **The** :class:`.Board` **class** represents one ESPARGOS controller.
-It handles controller configuration and receives the sensor-message stream over UDP, WebSocket, or UART.
-The controller efficiently transports fragments from the sensors without interpreting their message-specific payloads; :class:`.Board` reassembles those fragments and dispatches complete messages to callbacks selected by their four-byte type header.
-CSI applications normally use :class:`.Pool`, even with a single ESPARGOS device.
-Extensions that define another sensor-message type may instead subscribe directly through :meth:`~espargos.board.Board.subscribe_sensor_messages` and perform their own decoding.
+It connects to the controller and receives measurements from its sensors over Ethernet or USB.
+WiFi reception settings and individual CSI messages are available through :attr:`~espargos.board.Board.wifi_rx`.
+The optional :attr:`~espargos.board.Board.wifi_tx` interface controls scheduled WiFi transmissions used for radar measurements.
+Most CSI applications use :class:`.Pool`, even when working with only one ESPARGOS device.
 
 **The** :class:`.Pool` **class** is responsible for handling the clustering of CSI from one or multiple ESPARGOS boards.
 When the microcontrollers ("sensors") on the ESPARGOS array board receive a WiFi packet, they just forward the CSI estimates to the central controller together with packet metadata like MAC address, timestamp and frame counter.

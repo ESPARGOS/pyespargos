@@ -20,12 +20,12 @@ FRAME_TYPE_HELLO_REQ = 0x01
 FRAME_TYPE_HELLO_RESP = 0x02
 FRAME_TYPE_RPC_REQ = 0x10
 FRAME_TYPE_RPC_RESP = 0x11
-FRAME_TYPE_CSI_DATA = 0x20
+FRAME_TYPE_SENSOR_DATA = 0x20
 FRAME_TYPE_STREAM_CTRL = 0x21
 FRAME_TYPE_LOG = 0x30
 UART_ACTIVATION_TOKEN = b"ESPARGOS-UART-MODE\n"
 
-STREAM_ID_CSI = 1
+STREAM_ID_SENSOR_DATA = 1
 STREAM_ID_TRANSPORT = 0
 
 RPC_METHOD_GET = 0
@@ -194,7 +194,7 @@ class UARTClient:
         self._pending_lock = threading.Lock()
         self._reqid = 1
         self._reqid_lock = threading.Lock()
-        self._csi_callbacks = []
+        self._stream_callbacks = []
         self._log_callbacks = []
         self._rx_buffer = bytearray()
         self._connected = False
@@ -246,7 +246,7 @@ class UARTClient:
             self._keepalive_thread.join(timeout=1.0)
             self._keepalive_thread = None
         try:
-            self.disable_csi_stream()
+            self.disable_sensor_stream()
         except Exception:
             pass
         try:
@@ -270,12 +270,12 @@ class UARTClient:
             self._serial = None
             self._connected = False
 
-    def add_csi_callback(self, callback):
-        self._csi_callbacks.append(callback)
+    def add_stream_callback(self, callback):
+        self._stream_callbacks.append(callback)
 
-    def remove_csi_callback(self, callback):
-        if callback in self._csi_callbacks:
-            self._csi_callbacks.remove(callback)
+    def remove_stream_callback(self, callback):
+        if callback in self._stream_callbacks:
+            self._stream_callbacks.remove(callback)
 
     def add_log_callback(self, callback):
         self._log_callbacks.append(callback)
@@ -327,12 +327,12 @@ class UARTClient:
         body = response[8 + content_type_len : expected]
         return UARTControlResponse(status, content_type, body)
 
-    def enable_csi_stream(self):
+    def enable_sensor_stream(self):
         self._ensure_reader_thread()
-        self._send_frame(FRAME_TYPE_STREAM_CTRL, 0, struct.pack("<BB", STREAM_ID_CSI, 1))
+        self._send_frame(FRAME_TYPE_STREAM_CTRL, 0, struct.pack("<BB", STREAM_ID_SENSOR_DATA, 1))
 
-    def disable_csi_stream(self):
-        self._send_frame(FRAME_TYPE_STREAM_CTRL, 0, struct.pack("<BB", STREAM_ID_CSI, 0))
+    def disable_sensor_stream(self):
+        self._send_frame(FRAME_TYPE_STREAM_CTRL, 0, struct.pack("<BB", STREAM_ID_SENSOR_DATA, 0))
 
     def disable_transport_mode(self):
         self._send_frame(FRAME_TYPE_STREAM_CTRL, 0, struct.pack("<BB", STREAM_ID_TRANSPORT, 0))
@@ -585,8 +585,8 @@ class UARTClient:
                 q.put((frame_type, payload))
             return
 
-        if frame_type == FRAME_TYPE_CSI_DATA:
-            for callback in list(self._csi_callbacks):
+        if frame_type == FRAME_TYPE_SENSOR_DATA:
+            for callback in list(self._stream_callbacks):
                 callback(payload)
             return
 
@@ -599,7 +599,7 @@ class UARTClient:
         self.logger.debug(f"Ignoring UART frame type 0x{frame_type:02x}")
 
 
-def validate_csistream_payload(payload: bytes, revision) -> bool:
+def validate_sensor_stream_payload(payload: bytes, revision) -> bool:
     del revision
     if len(payload) < 4:
         return False

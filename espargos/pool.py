@@ -114,28 +114,26 @@ class Pool(object):
         self._sensor_message_subscriptions = []
 
         for board_num, board_obj in enumerate(self.boards):
+            wifi_rx = board_obj.wifi_rx
+            wifi_tx = board_obj.wifi_tx
             self._sensor_message_subscriptions.append(
                 (
-                    board_obj,
-                    board_obj.subscribe_sensor_messages(
-                        board_obj.revision.type_header,
+                    wifi_rx,
+                    wifi_rx.subscribe_csi(
                         self._make_sensor_message_callback(
                             board_obj,
                             board_num,
-                            board_obj.revision.serialized_csi_t,
                         ),
                     ),
                 )
             )
             self._sensor_message_subscriptions.append(
                 (
-                    board_obj,
-                    board_obj.subscribe_sensor_messages(
-                        radar_packet.RADAR_TX_REPORT_TYPE_HEADER,
+                    wifi_tx,
+                    wifi_tx.subscribe_reports(
                         self._make_sensor_message_callback(
                             board_obj,
                             board_num,
-                            radar_packet.RadarTxReportPacket,
                         ),
                     ),
                 )
@@ -146,17 +144,11 @@ class Pool(object):
 
         self.stored_calibration: calibration.CSICalibration = None
 
-    def _make_sensor_message_callback(self, board_obj, board_num: int, decoder):
-        """Build the short stream-thread callback for one message type."""
+    def _make_sensor_message_callback(self, board_obj, board_num: int):
+        """Build the short stream-thread callback for one decoded message type."""
 
-        def callback(message: sensor.SensorMessage[bytes]):
-            try:
-                decoded_message = sensor.decode_sensor_message(message, decoder)
-            except (AssertionError, ValueError) as exc:
-                self.logger.debug(f"Ignoring malformed sensor message: {exc}")
-                return
-
-            esp_num = board_obj.revision.antid_to_esp_num[message.antenna_id]
+        def callback(decoded_message: sensor.SensorMessage):
+            esp_num = board_obj.revision.antid_to_esp_num[decoded_message.antenna_id]
             self._input_queue.put_nowait((esp_num, decoded_message, board_num))
 
         return callback
@@ -230,7 +222,7 @@ class Pool(object):
         :param state: The RF switch state to set, must be one of :class:`sensor.RFSwitchState`
         """
         for board in self.boards + self.refgen_boards:
-            board.set_rfswitch(state)
+            board.wifi_rx.set_rf_switch(state)
 
     def get_rfswitch(self) -> sensor.RFSwitchState:
         """
@@ -241,51 +233,51 @@ class Pool(object):
         if not self.boards:
             raise ValueError("No boards in pool to get RF switch state from")
 
-        states = [b.get_rfswitch() for b in self.boards]
+        states = [b.wifi_rx.get_rf_switch() for b in self.boards]
         return self._reconcile_across_boards(
             states,
             "RF switch state",
-            lambda value: [board.set_rfswitch(value) for board in self.boards],
+            lambda value: [board.wifi_rx.set_rf_switch(value) for board in self.boards],
         )
 
     def set_mac_filter(self, mac_filter: dict):
         """
         Set the MAC address filter for all boards in the pool. Will only accept packets from the specified MAC address.
 
-        This is forwarded to :meth:`pyespargos.board.Board.set_mac_filter` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_mac_filter` for each board.
         """
         for board in self.boards:
-            board.set_mac_filter(mac_filter)
+            board.wifi_rx.set_mac_filter(mac_filter)
 
     def clear_mac_filter(self):
         """
         Clear the MAC address filter for all boards in the pool.
         """
         for board in self.boards:
-            board.clear_mac_filter()
+            board.wifi_rx.clear_mac_filter()
 
     def get_mac_filter(self) -> dict:
         """
         Return MAC filter configuration, reconciling boards when needed.
 
-        This is forwarded to :meth:`pyespargos.board.Board.get_mac_filter` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.get_mac_filter` for each board.
         """
-        filters = [b.get_mac_filter() for b in self.boards]
+        filters = [b.wifi_rx.get_mac_filter() for b in self.boards]
         return self._reconcile_across_boards(
             filters,
             "MAC filter",
-            lambda value: [board.set_mac_filter(value) for board in self.boards],
+            lambda value: [board.wifi_rx.set_mac_filter(value) for board in self.boards],
         )
 
     def get_csi_acquire_config(self) -> dict:
         """
         Return CSI acquire config, reconciling boards when needed.
         """
-        cfgs = [b.get_csi_acquire_config() for b in self.boards]
+        cfgs = [b.wifi_rx.get_csi_acquisition_config() for b in self.boards]
         return self._reconcile_across_boards(
             cfgs,
             "CSI acquire config",
-            lambda value: [board.set_csi_acquire_config(value) for board in self.boards],
+            lambda value: [board.wifi_rx.set_csi_acquisition_config(value) for board in self.boards],
         )
 
     def set_csi_acquire_config(self, config: dict):
@@ -293,25 +285,25 @@ class Pool(object):
         Set CSI acquisition configuration on all boards in this pool and sanity-check that all boards
         end up with the same config.
 
-        This is forwarded to :meth:`pyespargos.board.Board.set_csi_acquire_config` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_csi_acquisition_config` for each board.
         For the expected JSON/dict format, refer to that method's documentation.
 
         :param config: CSI acquisition configuration dict to apply to all boards.
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
         for b in self.boards:
-            b.set_csi_acquire_config(config)
+            b.wifi_rx.set_csi_acquisition_config(config)
         _ = self.get_csi_acquire_config()
 
     def get_cfo_correction(self) -> dict:
         """
         Return CFO correction config, reconciling boards when needed.
         """
-        configs = [b.get_cfo_correction() for b in self.boards]
+        configs = [b.wifi_rx.get_cfo_correction() for b in self.boards]
         return self._reconcile_across_boards(
             configs,
             "CFO correction",
-            lambda value: [board.set_cfo_correction(value["auto"], value.get("value", 0)) for board in self.boards],
+            lambda value: [board.wifi_rx.set_cfo_correction(value["auto"], value.get("value", 0)) for board in self.boards],
         )
 
     def set_cfo_correction(self, auto: bool, value: int = 0):
@@ -319,14 +311,14 @@ class Pool(object):
         Configure CFO correction on all boards in this pool.
         """
         for b in self.boards:
-            b.set_cfo_correction(auto, value)
+            b.wifi_rx.set_cfo_correction(auto, value)
         _ = self.get_cfo_correction()
 
     def get_gain_settings(self) -> dict:
         """
         Return gain settings, resetting mismatched boards to automatic gain.
         """
-        settings = [b.get_gain_settings() for b in self.boards]
+        settings = [b.wifi_rx.get_gain_settings() for b in self.boards]
         return self._reconcile_across_boards(
             settings,
             "Gain settings",
@@ -343,7 +335,7 @@ class Pool(object):
         """
         Set gain settings on all boards in this pool.
 
-        This is forwarded to :meth:`pyespargos.board.Board.set_gain_settings` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_gain_settings` for each board.
         Values may be scalars, board-local ``(row, column)`` arrays applied to every
         board, or pool-wide ``(board, row, column)`` arrays.
 
@@ -361,38 +353,38 @@ class Pool(object):
                     board_settings[key] = value
 
         for board_obj, board_settings in zip(self.boards, per_board_settings):
-            board_obj.set_gain_settings(board_settings)
+            board_obj.wifi_rx.set_gain_settings(board_settings)
 
     def get_wifi_channel_overrides(self) -> dict:
         """
         Return per-sensor WiFi channel overrides, reconciling boards when needed.
         """
-        settings = [b.get_wifi_channel_overrides() for b in self.boards]
+        settings = [b.wifi_rx.get_channel_overrides() for b in self.boards]
         return self._reconcile_across_boards(
             settings,
             "WiFi channel overrides",
-            lambda value: [board.set_wifi_channel_overrides(value) for board in self.boards],
+            lambda value: [board.wifi_rx.set_channel_overrides(value) for board in self.boards],
         )
 
     def set_wifi_channel_overrides(self, settings: dict):
         """
         Set per-sensor WiFi channel overrides on all boards in this pool and sanity-check that all boards end up with the same settings.
 
-        This is forwarded to :meth:`pyespargos.board.Board.set_wifi_channel_overrides` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_channel_overrides` for each board.
         For the expected JSON/dict format, refer to that method's documentation.
 
         :param settings: Per-sensor WiFi channel override settings dict to apply to all boards.
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
         for b in self.boards:
-            b.set_wifi_channel_overrides(settings)
+            b.wifi_rx.set_channel_overrides(settings)
         _ = self.get_wifi_channel_overrides()
 
     def get_radar_configs(self) -> list[dict]:
         """
         Return radar TX configuration for all boards in the pool.
         """
-        return [b.get_radar_config() for b in self.boards]
+        return [b.wifi_tx.get_config() for b in self.boards]
 
     def get_radar_config(self) -> dict:
         """
@@ -413,11 +405,11 @@ class Pool(object):
             if len(config.board_configs) != len(self.boards):
                 raise ValueError(f"RadarPoolConfig contains {len(config.board_configs)} board configs, expected {len(self.boards)}")
             for board_obj, board_config in zip(self.boards, config.board_configs):
-                board_obj.set_radar_config(board_config)
+                board_obj.wifi_tx.set_config(board_config)
             return
 
         for b in self.boards:
-            b.set_radar_config(config)
+            b.wifi_tx.set_config(config)
 
     def get_wificonf(self) -> dict:
         """
@@ -426,11 +418,11 @@ class Pool(object):
         Board-local calibration fields are excluded from both comparison and
         reconciliation, so each board retains its own values.
         """
-        wificonfs = [b.get_wificonf() for b in self.boards]
+        wificonfs = [b.wifi_rx.get_config() for b in self.boards]
         return self._reconcile_across_boards(
             wificonfs,
             "WiFi config",
-            lambda value: [board.set_wificonf(value) for board in self.boards],
+            lambda value: [board.wifi_rx.set_config(value) for board in self.boards],
             ignore_keys=WIFICONF_PER_BOARD_KEYS,
         )
 
@@ -438,19 +430,19 @@ class Pool(object):
         """
         Set WiFi config on all boards and sanity-check resulting configs match across boards.
 
-        This is forwarded to :meth:`pyespargos.board.Board.set_wificonf` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_config` for each board.
         For the expected JSON/dict format, refer to that method's documentation.
 
         Fields listed in :data:`WIFICONF_PER_BOARD_KEYS` are ignored and not
         propagated because they may legitimately differ between boards. Set
-        those directly through :meth:`pyespargos.board.Board.set_wificonf`.
+        those directly through :meth:`pyespargos.board_wifi_rx.WiFiRx.set_config`.
 
         :param wificonf: WiFi configuration dict to apply to all boards.
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
         wificonf = {key: value for key, value in wificonf.items() if key not in WIFICONF_PER_BOARD_KEYS}
         for b in self.boards:
-            b.set_wificonf(wificonf)
+            b.wifi_rx.set_config(wificonf)
         _ = self.get_wificonf()
 
     def start(self):
@@ -477,8 +469,8 @@ class Pool(object):
         """
         subscriptions = self._sensor_message_subscriptions
         self._sensor_message_subscriptions = []
-        for board_obj, subscription in subscriptions:
-            board_obj.unsubscribe_sensor_messages(subscription)
+        for capability, subscription in subscriptions:
+            capability.unsubscribe(subscription)
 
     def reboot(self):
         """
@@ -928,10 +920,7 @@ class Pool(object):
 
         self._frame_collisions_since_warning += 1
         now = time.monotonic()
-        if (
-            self._last_frame_collision_warning is not None
-            and now - self._last_frame_collision_warning < _FRAME_COLLISION_WARNING_INTERVAL
-        ):
+        if self._last_frame_collision_warning is not None and now - self._last_frame_collision_warning < _FRAME_COLLISION_WARNING_INTERVAL:
             return
 
         completion = existing_cluster.get_completion()

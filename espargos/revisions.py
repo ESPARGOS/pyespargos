@@ -13,11 +13,11 @@ class BoardRevision:
         raise NotImplementedError
 
     @property
-    def type_header(self) -> int:
+    def csi_type_header(self) -> int:
         raise NotImplementedError
 
     @property
-    def serialized_csi_t(self) -> type:
+    def csi_packet_type(self) -> type:
         raise NotImplementedError
 
     @property
@@ -78,11 +78,11 @@ class BoardRevisionDensiflorus(BoardRevision):
         return ("espargos", "densiflorus")
 
     @property
-    def type_header(self) -> int:
+    def csi_type_header(self) -> int:
         return 0xE4CD0BAC
 
     @property
-    def serialized_csi_t(self) -> type:
+    def csi_packet_type(self) -> type:
         return csi_packet.CSIPacket
 
     def esp_num_to_row_col(self, esp_num: int) -> tuple:

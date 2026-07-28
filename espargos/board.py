@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from __future__ import annotations
+
 import websockets.sync.client
 import http.client
 import threading
@@ -7,16 +9,16 @@ import logging
 import socket
 import json
 from dataclasses import dataclass
-from typing import Callable
-
-import numpy as np
+from typing import Any, Callable
 
 from . import revisions
 from . import sensor
 from . import uart
 
-# Port used by the controller as source port for UDP CSI packets
-CSISTREAM_CONTROLLER_SRC_PORT = 53330
+# Port used by the controller as the source port for UDP sensor packets
+STREAM_CONTROLLER_SRC_PORT = 53330
+WEBSOCKET_STREAM_PATHS = ("stream", "csi")
+UDP_STREAM_CONTROL_PATHS = ("stream_udp", "csi_udp")
 
 
 class EspargosHTTPStatusError(Exception):
@@ -43,7 +45,7 @@ class EspargosUnexpectedResponseError(Exception):
     pass
 
 
-class EspargosCsiStreamConnectionError(Exception):
+class EspargosStreamConnectionError(Exception):
     "Raised when the sensor-message stream connection could not be established."
 
     pass
@@ -63,66 +65,185 @@ class SensorMessageSubscription:
     callback: Callable[[sensor.SensorMessage[bytes]], None]
 
 
-# Magic bytes sent by the controller as the first WebSocket frame to confirm a valid CSI stream connection
-CSISTREAM_MAGIC = bytes([0xE5, 0xA7, 0x60, 0x00])
+# Magic bytes sent by the controller to confirm a valid sensor stream
+STREAM_MAGIC = bytes([0xE5, 0xA7, 0x60, 0x00])
 
 # Only this major API version is supported
 SUPPORTED_API_MAJOR = 3
 
 
+class BoardControl:
+    """Public, message-agnostic access to the controller request API."""
+
+    def __init__(self, board: Board):
+        self._board = board
+
+    def fetch(self, path: str, data: str | bytes | None = None) -> str:
+        """Fetch one controller endpoint and return its response as text.
+
+        Supplying ``data`` sends a POST request; otherwise a GET request is
+        used.
+        """
+
+        path = path.lstrip("/")
+        if not path:
+            raise ValueError("path must not be empty")
+        return self._board._fetch(path, data)
+
+    def get_json(self, path: str) -> Any:
+        """GET a controller endpoint and decode its JSON response."""
+
+        response = self.fetch(path)
+        try:
+            return json.loads(response)
+        except (json.JSONDecodeError, TypeError):
+            self._board.logger.error(f"Invalid response: {response}")
+            raise EspargosUnexpectedResponseError(str(response))
+
+    def post_json(self, path: str, payload: Any) -> str:
+        """POST a JSON value and return the controller response as text."""
+
+        return self.fetch(path, json.dumps(payload))
+
+    def command(
+        self,
+        path: str,
+        payload: Any | None = None,
+        expected_response: str = "ok",
+    ) -> str:
+        """Call a command endpoint and require its expected text response."""
+
+        response = self.fetch(path) if payload is None else self.post_json(path, payload)
+        if response != expected_response:
+            self._board.logger.error(f"Invalid response: {response}")
+            raise EspargosUnexpectedResponseError(str(response))
+        return response
+
+
+class BoardCapability:
+    """Base class for a lazily instantiated Board capability.
+
+    Extensions normally subclass this class, put controller operations on that
+    subclass, and register it with :meth:`Board.register_capability`.  The
+    protected subscription helper decodes feature-specific sensor messages and
+    ensures that :meth:`close` can detach them as a group.
+    """
+
+    def __init__(self, board: Board):
+        self.board = board
+        self._subscriptions: list[SensorMessageSubscription] = []
+        self._subscriptions_lock = threading.Lock()
+
+    def _subscribe_decoded_sensor_messages(
+        self,
+        type_header: int,
+        decoder: Callable[[bytes], Any],
+        callback: Callable[[sensor.SensorMessage[Any]], None],
+    ) -> SensorMessageSubscription:
+        """Subscribe to and decode one sensor-message type for this capability."""
+
+        def decode_and_dispatch(message: sensor.SensorMessage[bytes]):
+            try:
+                decoded_message = sensor.decode_sensor_message(message, decoder)
+            except (AssertionError, ValueError) as exc:
+                self.board.logger.debug(f"Ignoring malformed sensor message: {exc}")
+                return
+            callback(decoded_message)
+
+        subscription = self.board.subscribe_sensor_messages(
+            type_header,
+            decode_and_dispatch,
+        )
+        with self._subscriptions_lock:
+            self._subscriptions.append(subscription)
+        return subscription
+
+    def close(self):
+        """Remove every sensor-message subscription owned by this capability."""
+
+        with self._subscriptions_lock:
+            subscriptions = self._subscriptions
+            self._subscriptions = []
+        for subscription in subscriptions:
+            self.board.unsubscribe_sensor_messages(subscription)
+
+    def unsubscribe(self, subscription: SensorMessageSubscription) -> bool:
+        """Remove one subscription previously returned by this capability."""
+
+        with self._subscriptions_lock:
+            try:
+                self._subscriptions.remove(subscription)
+            except ValueError:
+                return False
+        return self.board.unsubscribe_sensor_messages(subscription)
+
+
 class Board(object):
-    _csistream_timeout = 5
+    _stream_timeout = 5
+    _capability_factories: dict[str, Callable[[Board], BoardCapability]] = {}
+    _capability_factories_lock = threading.Lock()
 
-    # Defaults for controller configuration
-    DEFAULT_CSI_ACQUIRE_CONFIG = {
-        "enable": True,
-        "acquire_csi_legacy": True,
-        "acquire_csi_force_lltf": False,
-        "compress_csi": False,
-        "acquire_csi_ht20": True,
-        "acquire_csi_ht40": True,
-        "acquire_csi_vht": True,
-        "acquire_csi_su": True,
-        "acquire_csi_mu": True,
-        "acquire_csi_dcm": True,
-        "acquire_csi_beamformed": True,
-        "acquire_csi_he_stbc_mode": 2,
-        "val_scale_cfg": 2,
-        "dump_ack_en": True,
-        "lltf_8bit_mode": False,
-    }
+    @classmethod
+    def register_capability(
+        cls,
+        name: str,
+        factory: Callable[[Board], BoardCapability],
+    ):
+        """Register a capability factory used by existing and future boards.
 
-    DEFAULT_CFO_CORRECTION_CONFIG = {
-        "auto": True,
-        "value": 0,
-    }
+        The factory receives the board instance and is called at most once per
+        board, when ``board.<name>`` or :meth:`get_capability` first requests
+        it. Registering a different factory under an existing name is rejected.
+        """
 
-    DEFAULT_GAIN_SETTINGS = {
-        "fft_scale_enable": False,
-        "fft_scale_value": 0,
-        "rx_gain_enable": False,
-        "rx_gain_value": 0,
-    }
+        if not isinstance(name, str) or not name.isidentifier() or name.startswith("_"):
+            raise ValueError("capability name must be a public Python identifier")
+        if not callable(factory):
+            raise TypeError("capability factory must be callable")
+        with cls._capability_factories_lock:
+            existing = cls._capability_factories.get(name)
+            if existing is not None and existing is not factory:
+                raise ValueError(f"Board capability {name!r} is already registered")
+            cls._capability_factories[name] = factory
 
-    DEFAULT_WIFI_CHANNEL_OVERRIDES = {
-        "override_active": False,
-        "channel-primary": [1] * 8,
-        "channel-secondary": [0] * 8,
-    }
+    @classmethod
+    def registered_capabilities(cls) -> tuple[str, ...]:
+        """Return the names of all registered Board capabilities."""
 
-    def _gain_value_for_controller(self, key: str, values):
-        if isinstance(values, (str, bytes)):
-            return values
-        if np.asarray(values).ndim == 0:
-            return values
-        return self.revision.sensor_values_to_antid_list(values, name=key)
+        with cls._capability_factories_lock:
+            return tuple(sorted(cls._capability_factories))
 
-    def _gain_settings_for_controller(self, settings: dict) -> dict:
-        return {key: self._gain_value_for_controller(key, value) for key, value in settings.items()}
+    def has_capability(self, name: str) -> bool:
+        """Return whether a capability with this name is registered."""
+
+        return name in type(self).registered_capabilities()
+
+    def get_capability(self, name: str) -> BoardCapability:
+        """Return one cached capability, creating it on first access."""
+
+        with self._capabilities_lock:
+            capability = self._capabilities.get(name)
+            if capability is not None:
+                return capability
+            with type(self)._capability_factories_lock:
+                factory = type(self)._capability_factories.get(name)
+            if factory is None:
+                raise AttributeError(f"Board has no registered capability {name!r}")
+            capability = factory(self)
+            self._capabilities[name] = capability
+            return capability
+
+    def __getattr__(self, name: str):
+        if self.has_capability(name):
+            return self.get_capability(name)
+        raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
 
     def __init__(self, host: str):
         """
-        Constructor for the Board class. Tries to connect to the ESPARGOS controller at the given host and fetches configuration information.
+        Connect to an ESPARGOS controller and identify its hardware and API.
+
+        Feature-specific configuration and message decoding are provided by
+        registered Board capabilities.
 
         :param host: The IP address or hostname of the ESPARGOS controller
 
@@ -132,6 +253,9 @@ class Board(object):
         self.logger = logging.getLogger("pyespargos.board")
 
         self.host = host
+        self.control = BoardControl(self)
+        self._capabilities: dict[str, BoardCapability] = {}
+        self._capabilities_lock = threading.RLock()
         self._uart_client = None
         self._transport_kind = "network"
         if uart.is_uart_host(host):
@@ -140,7 +264,7 @@ class Board(object):
             self._uart_client.add_log_callback(self._handle_uart_log)
             self._uart_client.connect()
         try:
-            identification_raw = self._fetch("identify")
+            identification_raw = self.control.fetch("identify")
         except TimeoutError:
             self.logger.error(f"Could not connect to {self.host} to fetch identification information")
             raise TimeoutError
@@ -149,7 +273,7 @@ class Board(object):
             raise EspargosUnexpectedResponseError(f"Server at {self.host} does not look like an ESPARGOS controller. Check if the host is correct.")
 
         try:
-            api_info_raw = self._fetch("api_info")
+            api_info_raw = self.control.fetch("api_info")
             try:
                 api_info = json.loads(api_info_raw)
             except (json.JSONDecodeError, TypeError):
@@ -185,15 +309,12 @@ class Board(object):
         if self.revision is None:
             raise EspargosUnexpectedResponseError(f"Unknown ESPARGOS revision: device={device!r}, revision={revision_name!r}")
 
-        self.netconf = json.loads(self._fetch("get_netconf"))
-        self.ip_info = json.loads(self._fetch("get_ip_info"))
-        self.wificonf = json.loads(self._fetch("get_wificonf"))
-        self.gain_settings = json.loads(self._fetch("get_gain_settings"))
-        self.csi_acquire_config = json.loads(self._fetch("get_csi_acquire_config"))
+        self.netconf = self.control.get_json("get_netconf")
+        self.ip_info = self.control.get_json("get_ip_info")
 
         self.logger.info(f"Identified ESPARGOS at {self.ip_info['ip']} as {self.get_name()}")
 
-        self.csistream_connected = False
+        self.stream_connected = False
         self._sensor_message_reassembler = sensor.SensorMessageReassembler(logger=self.logger)
         self._sensor_message_subscriptions: dict[int, list[SensorMessageSubscription]] = {}
         self._sensor_message_subscriptions_lock = threading.Lock()
@@ -226,7 +347,7 @@ class Board(object):
             UART boards use ``"uart"``. If omitted, network boards try UDP
             first and then WebSocket, while UART boards use UART.
 
-        :raises EspargosCsiStreamConnectionError: If none of the enabled
+        :raises EspargosStreamConnectionError: If none of the enabled
             sensor-message transports can be established.
         """
         if self._transport_kind == "uart":
@@ -240,52 +361,52 @@ class Board(object):
                 if uart_error is None:
                     return
 
-                self.logger.warning(f"UART CSI stream failed for {self.get_name()}: {uart_error}")
+                self.logger.warning(f"UART sensor stream failed for {self.get_name()}: {uart_error}")
             elif transport == "udp":
                 udp_error = self._try_start_udp()
                 if udp_error is None:
                     return
 
-                self.logger.warning(f"UDP CSI stream failed for {self.get_name()}: {udp_error}")
+                self.logger.warning(f"UDP sensor stream failed for {self.get_name()}: {udp_error}")
             elif transport == "websocket":
                 ws_error = self._try_start_websocket()
                 if ws_error is None:
                     return
 
-                self.logger.warning(f"WebSocket CSI stream failed for {self.get_name()}: {ws_error}")
+                self.logger.warning(f"WebSocket sensor stream failed for {self.get_name()}: {ws_error}")
             else:
                 self.logger.error(f"Unknown transport {transport} specified for {self.get_name()}, skipping")
 
-        raise EspargosCsiStreamConnectionError(f"Could not establish CSI stream to {self.host} via any of the enabled transports, tried transports: {transports}")
+        raise EspargosStreamConnectionError(f"Could not establish sensor stream to {self.host} via any of the enabled transports, tried transports: {transports}")
 
     def _try_start_uart(self) -> str | None:
         if self._uart_client is None:
             return f"Host {self.host!r} is not a UART host"
 
-        self.logger.info(f"Trying UART CSI stream for {self.get_name()}")
+        self.logger.info(f"Trying UART sensor stream for {self.get_name()}")
 
         def _callback(payload: bytes):
-            self._csistream_handle_message(payload)
+            self._stream_handle_message(payload)
 
-        self._uart_csi_callback = _callback
-        self._uart_client.add_csi_callback(self._uart_csi_callback)
+        self._uart_stream_callback = _callback
+        self._uart_client.add_stream_callback(self._uart_stream_callback)
         try:
-            self._uart_client.enable_csi_stream()
+            self._uart_client.enable_sensor_stream()
         except Exception as e:
-            self._uart_client.remove_csi_callback(self._uart_csi_callback)
-            return f"Could not enable UART CSI stream: {e}"
+            self._uart_client.remove_stream_callback(self._uart_stream_callback)
+            return f"Could not enable UART sensor stream: {e}"
 
-        self._csistream_transport = "uart"
-        self.csistream_connected = True
-        self.logger.info(f"Started UART CSI stream for {self.get_name()} on {self.host}")
+        self._stream_transport = "uart"
+        self.stream_connected = True
+        self.logger.info(f"Started UART sensor stream for {self.get_name()} on {self.host}")
         return None
 
     def _try_start_udp(self) -> str | None:
         """
-        Try to start the CSI stream via UDP.
+        Try to start the sensor stream via UDP.
         Returns None on success, or an error message string on failure.
         """
-        self.logger.info(f"Trying UDP CSI stream for {self.get_name()}")
+        self.logger.info(f"Trying UDP sensor stream for {self.get_name()}")
 
         # Resolve remote endpoint first so we can create a socket with the right family
         try:
@@ -298,7 +419,7 @@ class Board(object):
             except OSError:
                 host_is_ipv6_literal = False
             preferred_family = socket.AF_INET6 if (host_is_bracketed_ipv6 or host_is_ipv6_literal) else socket.AF_INET
-            udp_info = socket.getaddrinfo(udp_host, CSISTREAM_CONTROLLER_SRC_PORT, preferred_family, socket.SOCK_DGRAM)
+            udp_info = socket.getaddrinfo(udp_host, STREAM_CONTROLLER_SRC_PORT, preferred_family, socket.SOCK_DGRAM)
             if len(udp_info) == 0:
                 return f"Could not resolve UDP endpoint for host {self.host}"
             udp_family, udp_socktype, udp_proto, _, udp_remote_addr = udp_info[0]
@@ -325,14 +446,10 @@ class Board(object):
             self.logger.warning(f"Could not send firewall-punch packet: {e}")
 
         # Tell the server to start streaming to us via UDP
-        try:
-            res = self._fetch("csi_udp", json.dumps({"enable": True, "port": local_port}))
-            if res != "ok":
-                udp_sock.close()
-                return f"Server rejected UDP stream request: {res}"
-        except Exception as e:
+        udp_control_error = self._enable_udp_stream(local_port)
+        if udp_control_error is not None:
             udp_sock.close()
-            return f"HTTP request to enable UDP stream failed: {e}"
+            return udp_control_error
 
         # Wait for the magic packet on the UDP socket
         udp_sock.settimeout(3)
@@ -347,58 +464,78 @@ class Board(object):
             self._disable_udp_stream()
             return f"Error receiving UDP magic packet: {e}"
 
-        if data != CSISTREAM_MAGIC:
+        if data != STREAM_MAGIC:
             udp_sock.close()
             self._disable_udp_stream()
-            return f"Invalid UDP magic packet: expected {CSISTREAM_MAGIC.hex()}, got {data.hex()}"
+            return f"Invalid UDP magic packet: expected {STREAM_MAGIC.hex()}, got {data.hex()}"
 
         # UDP stream established successfully
         self._udp_sock = udp_sock
         self._udp_remote_addr = udp_remote_addr
-        self._csistream_transport = "udp"
-        self.csistream_connected = True
-        self.csistream_thread = threading.Thread(target=self._csistream_loop_udp)
-        self.csistream_thread.start()
+        self._stream_transport = "udp"
+        self.stream_connected = True
+        self._stream_thread = threading.Thread(target=self._stream_loop_udp)
+        self._stream_thread.start()
 
         # Start keepalive thread that periodically sends empty packets to punch through the firewall
         self._udp_keepalive_stop = threading.Event()
         self._udp_keepalive_thread = threading.Thread(target=self._udp_keepalive_loop, daemon=True)
         self._udp_keepalive_thread.start()
 
-        self.logger.info(f"Started UDP CSI stream for {self.get_name()} on local port {local_port}")
+        self.logger.info(f"Started UDP sensor stream for {self.get_name()} on local port {local_port}")
         return None
 
+    def _enable_udp_stream(self, local_port: int) -> str | None:
+        errors = []
+        for path in UDP_STREAM_CONTROL_PATHS:
+            try:
+                self.control.command(path, {"enable": True, "port": local_port})
+            except Exception as exc:
+                errors.append(f"/{path}: {exc}")
+                continue
+            self._udp_stream_control_path = path
+            return None
+        return f"HTTP request to enable UDP stream failed ({'; '.join(errors)})"
+
     def _try_start_websocket(self) -> str | None:
-        """
-        Try to start the CSI stream via WebSocket.
-        Returns None on success, or an error message string on failure.
-        """
-        self.logger.info(f"Trying WebSocket CSI stream for {self.get_name()}")
+        """Try the generic WebSocket endpoint, then its legacy alias."""
 
-        self._csistream_magic_event = threading.Event()
-        self._csistream_error = None
-        self._csistream_transport = "websocket"
-        self.csistream_thread = threading.Thread(target=self._csistream_loop_websocket)
-        self.csistream_thread.start()
+        errors = []
+        for path in WEBSOCKET_STREAM_PATHS:
+            error = self._try_start_websocket_path(path)
+            if error is None:
+                return None
+            errors.append(f"/{path}: {error}")
+        return "; ".join(errors)
 
-        # Only API version major 1 or greater sends magic packet
-        if not self._csistream_magic_event.wait(timeout=3):
-            self.csistream_connected = False
-            self.csistream_thread.join()
-            return "Did not receive WebSocket magic packet within 3 seconds"
+    def _try_start_websocket_path(self, path: str) -> str | None:
+        self.logger.info(f"Trying WebSocket sensor stream for {self.get_name()} via /{path}")
 
-        if self._csistream_error is not None:
-            self.csistream_connected = False
-            self.csistream_thread.join()
-            return str(self._csistream_error)
+        self._stream_ready_event = threading.Event()
+        self._stream_error = None
+        self._stream_transport = "websocket"
+        self._stream_websocket_path = path
+        self._stream_thread = threading.Thread(target=self._stream_loop_websocket, args=(path,))
+        self._stream_thread.start()
 
-        self.logger.info(f"Started WebSocket CSI stream for {self.get_name()}")
+        if not self._stream_ready_event.wait(timeout=3):
+            self.stream_connected = False
+            self._stream_thread.join()
+            return "Connection was not established within 3 seconds"
+
+        if self._stream_error is not None:
+            self.stream_connected = False
+            self._stream_thread.join()
+            return str(self._stream_error)
+
+        self.logger.info(f"Started WebSocket sensor stream for {self.get_name()} via /{path}")
         return None
 
     def _disable_udp_stream(self):
         """Tell the server to stop the UDP stream (best-effort)."""
         try:
-            self._fetch("csi_udp", json.dumps({"enable": False}))
+            path = getattr(self, "_udp_stream_control_path", UDP_STREAM_CONTROL_PATHS[-1])
+            self.control.command(path, {"enable": False})
         except Exception:
             pass
 
@@ -409,352 +546,41 @@ class Board(object):
         The receiver stops after the current packet has been processed, or
         after a short transport timeout.
         """
-        if self.csistream_connected:
-            self.csistream_connected = False
-            if hasattr(self, "csistream_thread"):
-                self.csistream_thread.join()
+        if self.stream_connected:
+            self.stream_connected = False
+            if hasattr(self, "_stream_thread"):
+                self._stream_thread.join()
 
-            if getattr(self, "_csistream_transport", None) == "udp":
+            if getattr(self, "_stream_transport", None) == "udp":
                 if hasattr(self, "_udp_keepalive_stop"):
                     self._udp_keepalive_stop.set()
                     self._udp_keepalive_thread.join()
                 if hasattr(self, "_udp_sock"):
                     self._udp_sock.close()
                 self._disable_udp_stream()
-            elif getattr(self, "_csistream_transport", None) == "uart":
-                if hasattr(self, "_uart_csi_callback"):
-                    self._uart_client.remove_csi_callback(self._uart_csi_callback)
+            elif getattr(self, "_stream_transport", None) == "uart":
+                if hasattr(self, "_uart_stream_callback"):
+                    self._uart_client.remove_stream_callback(self._uart_stream_callback)
                 if self._uart_client is not None:
-                    self._uart_client.disable_csi_stream()
+                    self._uart_client.disable_sensor_stream()
 
-            self.logger.info(f"Stopped CSI stream for {self.get_name()}")
+            self.logger.info(f"Stopped sensor stream for {self.get_name()}")
 
     def close(self):
         """
-        Close transport resources associated with this board.
+        Close capabilities and transport resources associated with this board.
 
         For UART-backed boards, this releases the serial port lock. Calling this on
         network-backed boards is harmless.
         """
+        with self._capabilities_lock:
+            capabilities = list(self._capabilities.values())
+            self._capabilities = {}
+        for capability in capabilities:
+            capability.close()
         self.stop()
         if self._uart_client is not None:
             self._uart_client.close()
-
-    def set_rfswitch(self, state: sensor.RFSwitchState):
-        """
-        Sets the RF switch state on the ESPARGOS controller for reception mode.
-
-        :param state: The RF switch state to set, must be one of :class:`sensor.RFSwitchState`
-
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        res = self._fetch("set_rfswitch", str(int(state)))
-        if res != "ok":
-            self.logger.error(f"Invalid response: {res}")
-            raise EspargosUnexpectedResponseError
-
-    def get_rfswitch(self) -> sensor.RFSwitchState:
-        """
-        Fetches the current RF switch state from the ESPARGOS controller.
-
-        :return: The current RF switch state as one of :class:`sensor.RFSwitchState`
-
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        res = self._fetch("get_rfswitch")
-        try:
-            state_int = int(res)
-            # Check if valid enum value
-            if state_int not in [e.value for e in sensor.RFSwitchState]:
-                raise EspargosUnexpectedResponseError("get_rfswitch returned invalid enum value")
-            return sensor.RFSwitchState(state_int)
-        except (ValueError, KeyError):
-            self.logger.error(f"Invalid response: {res}")
-            raise EspargosUnexpectedResponseError
-
-    def set_mac_filter(self, mac_filter: dict):
-        """
-        Tell ESPARGOS board to only receive packets from transmitters with this sender MAC.
-
-        mac_filter is a dict with the following format::
-
-            {
-              "enable": true|false,
-              "mac": "00:11:22:33:44:55",
-              "mac_mask": "ff:ff:ff:ff:ff:ff"
-            }
-
-        The "enable" field toggles MAC filtering. When enabled, only packets from transmitters
-        whose MAC address matches the given "mac" (applying the "mac_mask") will be received.
-        "mac_mask" is a bitmask applied to both the configured MAC and the sender MAC before comparison.
-        Only provided fields will be changed; others will remain as previously configured.
-
-        :param mac_filter: MAC filter configuration dict
-
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        self._post_json_ok("set_mac_filter", mac_filter)
-
-    def get_mac_filter(self) -> dict:
-        """
-        Fetches the current MAC filter configuration from the ESPARGOS controller.
-
-        The returned JSON/dict matches what is configured via :meth:`set_mac_filter` / :meth:`clear_mac_filter`.
-        Format::
-
-            {
-              "enable": true|false,
-              "mac": "00:11:22:33:44:55",
-              "mac_mask": "ff:ff:ff:ff:ff:ff"
-            }
-
-        :return: MAC filter configuration dict
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        return self._get_json("get_mac_filter")
-
-    def clear_mac_filter(self):
-        """
-        Tell ESPARGOS board to receive packets from all transmitters.
-
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        self._post_json_ok("set_mac_filter", {"enable": False})
-
-    def set_wificonf(self, wificonf: dict):
-        """
-        Sets WiFi configuration on the ESPARGOS controller.
-
-        The controller expects a Python dict with fixed field names
-        using hyphenated keys. Expected format::
-
-            {
-              "calib-mode": 1,
-              "calib-source": 0,
-              "channel-primary": 13,
-              "channel-secondary": 2,
-              "country-code": "DE",
-              "calib-txpower": 34,
-              "calib-interval": 10
-            }
-
-        Field meanings / types (as used by the controller firmware):
-          - "calib-mode" (int): When to generate phase reference packets:
-            - 0: Never generate calibration packets
-            - 1: Generate calibration packets if receiver RF switch is in reference channel configuration
-            - 2: Always generate calibration packets
-          - "calib-source" (int): Configures REFIN / REFOUT ports of controller:
-            - 0: Use internal clock and phase reference for antennas
-            - 1: Output clock and phase reference on REFOUT port, antennas expect clock and calibration from REFIN port (master mode)
-            - 2: Antennas expect clock and calibration from REFIN port, do not output anything on REFOUT (slave mode)
-          - "channel-primary" (int): Primary WiFi channel.
-          - "channel-secondary" (int): Secondary channel selector (e.g. 0 = None, 1 = Above, 2 = Below).
-          - "country-code" (str): Two-letter country code (e.g. "DE").
-          - "calib-txpower" (int): TX power used for calibration packets (between 8 = 2dBm and 80 = 20dBm).
-          - "calib-interval" (int): Calibration interval (milliseconds).
-
-        :param wificonf: WiFi configuration dict
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        self._post_json_ok("set_wificonf", wificonf)
-
-    def get_wificonf(self) -> dict:
-        """
-        Fetches the current WiFi configuration from the ESPARGOS controller.
-
-        The returned JSON/dict uses the same hyphenated keys as accepted by :meth:`set_wificonf`,
-        e.g. contains fields like "channel-primary", "channel-secondary", "country-code", etc.
-
-        :return: WiFi configuration dict
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        return self._get_json("get_wificonf")
-
-    def set_csi_acquire_config(self, config: dict):
-        """
-        Sets the CSI acquisition configuration on the ESPARGOS controller.
-
-        The controller expects a JSON object (provided here as a Python dict) with integer
-        fields (use 0/1 for booleans). Field names are fixed.
-
-        Boolean toggles:
-          - enable: Enable to acquire CSI.
-          - acquire_csi_legacy: Enable to acquire L-LTF when receiving a 11g PPDU.
-          - acquire_csi_force_lltf: Force receiver to acquire L-LTF, regardless of PPDU type.
-          - compress_csi: Transform CSI to a time-domain CIR before transport.
-          - acquire_csi_ht20: Enable to acquire HT-LTF when receiving an HT20 PPDU.
-          - acquire_csi_ht40: Enable to acquire HT-LTF when receiving an HT40 PPDU.
-          - acquire_csi_vht: Present in the HTTP API; semantics depend on firmware build / PHY mode support.
-          - acquire_csi_su: Enable to acquire HE-LTF when receiving an HE20 SU PPDU.
-          - acquire_csi_mu: Enable to acquire HE-LTF when receiving an HE20 MU PPDU.
-          - acquire_csi_dcm: Enable to acquire HE-LTF when receiving an HE20 DCM applied PPDU.
-          - acquire_csi_beamformed: Enable to acquire HE-LTF when receiving an HE20 Beamformed applied PPDU.
-          - dump_ack_en: Enable to dump 802.11 ACK frame, default disabled.
-          - lltf_8bit_mode: Report L-LTF CSI as 8-bit values for every subcarrier instead of sparse 12-bit values.
-
-        Integer / enum fields:
-          - acquire_csi_he_stbc_mode: When receiving an STBC applied HE PPDU:
-                0 = acquire the complete HE-LTF1
-                1 = acquire the complete HE-LTF2
-                2 = sample evenly among the HE-LTF1 and HE-LTF2.
-          - val_scale_cfg: Value 0-8.
-
-        Example payload::
-
-            {
-              "enable": true,
-              "acquire_csi_legacy": true,
-              "acquire_csi_force_lltf": false,
-              "compress_csi": false,
-              "acquire_csi_ht20": true,
-              "acquire_csi_ht40": true,
-              "acquire_csi_vht": true,
-              "acquire_csi_su": true,
-              "acquire_csi_mu": true,
-              "acquire_csi_dcm": true,
-              "acquire_csi_beamformed": true,
-              "acquire_csi_he_stbc_mode": 2,
-              "val_scale_cfg": 2,
-              "dump_ack_en": true,
-              "lltf_8bit_mode": false
-            }
-
-        :param config: CSI acquisition configuration dict (will be JSON-encoded and POSTed to /set_csi_acquire_config)
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        payload = dict(config)
-        if "lltf_8bit_mode" in payload and "lltf_bit_mode" not in payload:
-            payload["lltf_bit_mode"] = payload["lltf_8bit_mode"]
-        self._post_json_ok("set_csi_acquire_config", payload)
-
-    def get_csi_acquire_config(self) -> dict:
-        """
-        Fetches the current CSI acquisition configuration from the ESPARGOS controller.
-
-        :return: CSI acquisition configuration dict
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        config = self._get_json("get_csi_acquire_config")
-        if "lltf_8bit_mode" not in config and "lltf_bit_mode" in config:
-            config["lltf_8bit_mode"] = config["lltf_bit_mode"]
-        return config
-
-    def set_cfo_correction(self, auto: bool, value: int = 0):
-        """
-        Configures receiver CFO correction on the ESPARGOS controller.
-
-        When ``auto`` is false, the receiver frequency-offset estimate is forced to
-        ``value`` (signed 13-bit NRXFOE reg_foe_force field, -4096..4095). A value
-        of zero can reduce packet-to-packet phase noise in radar mode when TX and
-        RX share the same reference clock.
-        """
-        self._post_json_ok("set_cfo_correction", {"auto": bool(auto), "value": int(value)})
-
-    def get_cfo_correction(self) -> dict:
-        """
-        Fetches receiver CFO correction configuration from the ESPARGOS controller.
-        """
-        return self._get_json("get_cfo_correction")
-
-    def set_gain_settings(self, settings: dict):
-        """
-        Sets the gain settings on the ESPARGOS controller.
-
-        The gain settings are provided as a JSON object (here as a Python dict) with fixed field names.
-        Values may be scalars, or arrays/lists with shape ``(2, 4)`` to configure
-        each sensor individually in board ``(row, column)`` order.
-
-          - fft_scale_enable (bool): Enable manual FFT scaling (false = automatic/firmware default).
-          - fft_scale_value (int): FFT scale value (meaning/range depends on firmware; commonly 0 when disabled).
-          - rx_gain_enable (bool): Enable manual RX gain (false = automatic/firmware default).
-          - rx_gain_value (int): RX gain table index, 0..76 (commonly 0 when disabled).
-          - expert_mode_enable (bool): Enable raw expert gain-table entry override.
-          - expert_mode_raw (str): Raw gain-table entry as hexadecimal string.
-
-        Example payload::
-
-            {
-              "fft_scale_enable": false,
-              "fft_scale_value": 0,
-              "rx_gain_enable": false,
-              "rx_gain_value": 0
-            }
-
-        :param settings: Gain settings dict (will be JSON-encoded and POSTed to /set_gain_settings)
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        self._post_json_ok("set_gain_settings", self._gain_settings_for_controller(settings))
-
-    def get_gain_settings(self) -> dict:
-        """
-        Fetches the current gain settings from the ESPARGOS controller.
-
-        :return: Gain settings dict
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        return self._get_json("get_gain_settings")
-
-    def set_wifi_channel_overrides(self, settings: dict):
-        """
-        Sets per-sensor WiFi channel overrides on the ESPARGOS controller.
-
-        The payload mirrors the controller's ``/set_wifi_channel_overrides`` API:
-
-          - ``override_active`` (bool): Enable per-sensor channel overrides.
-          - ``channel-primary`` (list[int], length 8): Primary WiFi channel for each sensor.
-          - ``channel-secondary`` (list[int], length 8): Secondary channel selector for each sensor
-            (0 = none, 1 = above, 2 = below).
-
-        Passing ``{"override_active": False}`` disables the overrides.
-
-        :param settings: Per-sensor WiFi channel override settings dict
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        self._post_json_ok("set_wifi_channel_overrides", settings)
-
-    def get_wifi_channel_overrides(self) -> dict:
-        """
-        Fetches the current per-sensor WiFi channel overrides from the ESPARGOS controller.
-
-        :return: Per-sensor WiFi channel override settings dict
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        return self._get_json("get_wifi_channel_overrides")
-
-    def set_radar_config(self, config: dict):
-        """
-        Sets the low-level radar TX configuration on the ESPARGOS controller.
-
-        The payload mirrors the controller's ``/set_tx_control`` API. Supported fields are:
-
-          - ``rfswitch_state`` (int)
-          - ``active_by_antid`` (list[bool], length 8)
-          - ``start_by_antid`` (list[int], length 8)
-          - ``period_by_antid`` (list[int], length 8)
-          - ``mac_by_antid`` (list[str], length 8, MAC addresses like ``"72:61:64:61:72:00"``)
-          - ``tx_power`` (int)
-          - ``tx_phymode`` (int)
-          - ``tx_rate`` (int)
-
-        Only provided fields are changed; others remain unchanged on the controller.
-
-        :param config: Radar TX configuration dict
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        self._post_json_ok("set_tx_control", config)
-
-    def get_radar_config(self) -> dict:
-        """
-        Fetches the current low-level radar TX configuration from the ESPARGOS controller.
-
-        The returned dict mirrors the controller's ``/get_tx_control`` response and contains fields such as
-        ``rfswitch_state``, ``active_by_antid``, ``start_by_antid``, ``period_by_antid``, ``mac_by_antid``,
-        ``tx_power``, ``tx_phymode``, and ``tx_rate``.
-
-        :return: Radar TX configuration dict
-        :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
-        """
-        return self._get_json("get_tx_control")
 
     def reboot(self):
         """
@@ -766,10 +592,7 @@ class Board(object):
         :raises EspargosUnexpectedResponseError: If the server at the given host
             is not an ESPARGOS controller or the request was invalid
         """
-        res = self._fetch("reboot")
-        if res != "ok":
-            self.logger.error(f"Invalid response: {res}")
-            raise EspargosUnexpectedResponseError(str(res))
+        self.control.command("reboot")
 
     def subscribe_sensor_messages(
         self,
@@ -829,7 +652,7 @@ class Board(object):
                 del self._sensor_message_subscriptions[subscription.type_header]
             return True
 
-    def _csistream_handle_message(self, message):
+    def _stream_handle_message(self, message):
         try:
             sensor_packet = sensor.SensorPacket.from_bytes(message)
         except ValueError as exc:
@@ -854,9 +677,7 @@ class Board(object):
                 try:
                     subscription.callback(message)
                 except Exception:
-                    self.logger.exception(
-                        f"Sensor-message callback failed for type 0x{type_header:08x}"
-                    )
+                    self.logger.exception(f"Sensor-message callback failed for type 0x{type_header:08x}")
 
     def _udp_keepalive_loop(self):
         """Periodically send empty UDP packets to the controller to keep the firewall hole open."""
@@ -866,62 +687,64 @@ class Board(object):
             except OSError:
                 break
 
-    def _csistream_loop_udp(self):
+    def _stream_loop_udp(self):
         self._udp_sock.settimeout(0.2)
         timeout_total = 0
-        while self.csistream_connected:
+        while self.stream_connected:
             try:
                 data, addr = self._udp_sock.recvfrom(65535)
                 timeout_total = 0
-                self._csistream_handle_message(data)
+                self._stream_handle_message(data)
             except socket.timeout:
                 timeout_total += 0.2
             except OSError as e:
                 self.logger.error(f"Board {self.host} has error in UDP socket: {e}")
-                self.csistream_connected = False
+                self.stream_connected = False
                 break
 
-            if timeout_total > self._csistream_timeout:
+            if timeout_total > self._stream_timeout:
                 self.logger.warning("UDP timeout, disconnecting")
-                self.csistream_connected = False
+                self.stream_connected = False
 
-    def _csistream_loop_websocket(self):
+    def _stream_loop_websocket(self, path: str):
         try:
-            ws = websockets.sync.client.connect("ws://" + self.host + "/csi", close_timeout=0.5)
+            ws = websockets.sync.client.connect(
+                f"ws://{self.host}/{path}",
+                open_timeout=3,
+                close_timeout=0.5,
+            )
         except Exception as e:
-            self._csistream_error = EspargosCsiStreamConnectionError(f"Could not connect to CSI stream WebSocket on {self.host}: {e}")
-            self._csistream_magic_event.set()
+            self._stream_error = EspargosStreamConnectionError(f"Could not connect to sensor stream WebSocket on {self.host}: {e}")
+            self._stream_ready_event.set()
             return
 
         with ws as websocket:
-            # Do not wait for magic packet, no need for that when using websockets
-            self.csistream_connected = True
-            self._csistream_magic_event.set()
+            self.stream_connected = True
+            self._stream_ready_event.set()
 
             timeout_total = 0
             timeout_once = 0.2
-            while self.csistream_connected:
+            while self.stream_connected:
                 try:
                     message = websocket.recv(timeout_once)
-                    if message == CSISTREAM_MAGIC:
-                        # Ignore magic packet, only relevant for UDP transport
+                    if message == STREAM_MAGIC:
+                        # WebSocket connections do not need the UDP handshake.
                         continue
                     timeout_total = 0
-                    self._csistream_handle_message(message)
+                    self._stream_handle_message(message)
                 except TimeoutError:
                     timeout_total = timeout_total + timeout_once
                 except Exception as e:
                     self.logger.error(f"Board {self.host} has error in websocket: {e}")
-                    self.csistream_connected = False
+                    self.stream_connected = False
                     break
 
-                if timeout_total > self._csistream_timeout:
+                if timeout_total > self._stream_timeout:
                     self.logger.warning("WebSocket timeout, disconnecting")
-                    self.csistream_connected = False
+                    self.stream_connected = False
 
-    def _fetch(self, path, data=None):
+    def _fetch(self, path: str, data: str | bytes | None = None) -> str:
         method = "GET" if data is None else "POST"
-
         if self._uart_client is not None:
             response = self._uart_client.request(method, path, data, timeout=5)
             if response.status != 200:
@@ -942,26 +765,6 @@ class Board(object):
             raise EspargosHTTPStatusError(res.status, path, body)
 
         return res.read().decode("utf-8")
-
-    def _post_json_ok(self, path: str, payload: dict):
-        """
-        POST JSON payload to `/<path>` and require literal response 'ok'.
-        """
-        res = self._fetch(path, json.dumps(payload))
-        if res != "ok":
-            self.logger.error(f"Invalid response: {res}")
-            raise EspargosUnexpectedResponseError(str(res))
-
-    def _get_json(self, path: str) -> dict:
-        """
-        GET `/<path>` and parse response as JSON.
-        """
-        res = self._fetch(path)
-        try:
-            return json.loads(res)
-        except json.JSONDecodeError:
-            self.logger.error(f"Invalid response: {res}")
-            raise EspargosUnexpectedResponseError(str(res))
 
     def _handle_uart_log(self, message: str):
         self.logger.info(f"[device] {message.rstrip()}")

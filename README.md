@@ -439,12 +439,14 @@ finally:
 
 ### Communication between pyespargos and ESPARGOS
 * The controller exposes a small HTTP API for identification, configuration, RF switch control, calibration, gain settings, MAC filtering and radar/TX configuration.
+* `Board` owns controller identity, transport and raw sensor-message delivery. Feature-specific operations are grouped into lazily created capabilities: receive/CSI controls live on `board.wifi_rx`, while scheduled-transmission controls live on `board.wifi_tx`.
+* Extensions can register another capability with `Board.register_capability(name, factory)`. The resulting API is available as `board.<name>` without changing how applications construct a board. A capability can use the public, transport-independent `board.control` request interface instead of depending on HTTP or UART internals.
 * On Ethernet, *pyespargos* sends control commands via HTTP and receives the sensor-message stream, including CSI and radar TX reports, through:
-  - **UDP** (default): lower latency and higher throughput. *pyespargos* opens a local UDP socket, asks the controller to stream to it via `/csi_udp`, waits for a magic packet, and sends periodic keepalives to keep firewall/NAT state alive.
-  - **WebSocket** (`/csi`): more compatible fallback, and the transport used by the web interface.
+  - **UDP** (default): lower latency and higher throughput. *pyespargos* opens a local UDP socket, asks the controller to stream to it through `/stream_udp`, waits for a magic packet, and sends periodic keepalives to keep firewall/NAT state alive. Older controllers expose the same operation as `/csi_udp`, which remains supported as a fallback.
+  - **WebSocket** (`/stream`): more compatible transport and the endpoint used by recent versions of the web interface. Controllers from before the generic endpoint was introduced expose the same sensor stream as `/csi`, which *pyespargos* retains as a fallback.
 * Over USB, *pyespargos* accepts UART host specifiers such as `uart:/dev/ttyUSB0` or `uart:COM3`. Control RPCs and sensor-message streaming are then tunnelled over the serial link.
 * `Board.start()` chooses transports automatically: network hosts try UDP first and fall back to WebSocket; UART hosts use the UART transport.
-* After reassembling sensor messages, `Board` dispatches them through callbacks filtered by their four-byte type header. Callbacks receive the raw `SensorMessage`, including its UID and antenna ID. Consumers own parsing: `Pool` decodes CSI and radar TX reports, while optional features can subscribe to and decode their own message types without adding those formats to `board.py`.
+* After reassembling sensor messages, `Board` dispatches them through callbacks filtered by their four-byte type header. Callbacks receive the raw `SensorMessage`, including its UID and antenna ID. Capabilities own format-specific parsing: `board.wifi_rx.subscribe_csi(...)` delivers decoded CSI, and `board.wifi_tx.subscribe_reports(...)` delivers decoded transmit reports. Optional features can do the same without adding their formats to `board.py`.
 * Only one sensor-message stream transport can be active on a controller at a time. The UART router and direct *pyespargos* UART access also need exclusive access to the serial device.
 
 ### The Backlog
@@ -483,7 +485,7 @@ finally:
 
 ### Radar / controlled transmissions
 * In addition to passive CSI capture, the current firmware exposes low-level radar/TX configuration through the controller API.
-* `Board.set_radar_config()` / `Pool.set_radar_config()` configure per-antenna transmit activity, timing, MAC addresses, PHY mode/rate and TX power.
+* `board.wifi_tx.set_config()` / `Pool.set_radar_config()` configure per-antenna transmit activity, timing, MAC addresses, PHY mode/rate and TX power.
 * Radar packets can carry TX metadata. `CSICluster` and `CSIBacklog` expose this through fields such as `radar_tx_timestamp` and `radar_tx_index`, which are useful when correcting CSI using known transmit timing.
 * The `espargos.radar` helpers provide higher-level utilities for building radar pool configurations and correcting radar CSI phase using TX timestamps.
 * This mode is *experimental* and the APIs are *unstable*.

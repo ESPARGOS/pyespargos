@@ -165,7 +165,7 @@ class CSICluster(object):
 
     def get_radar_tx_index(self) -> int:
         """
-        Return the flattened TX sensor index derived from the CSI stream UID, or -1 if unknown.
+        Return the flattened TX sensor index derived from the sensor-stream UID, or -1 if unknown.
         """
         return int(self.radar_tx_index)
 

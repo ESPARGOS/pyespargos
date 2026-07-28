@@ -11,6 +11,22 @@ espargos.board
    :undoc-members:
    :show-inheritance:
 
+espargos.board_wifi_rx
+----------------------
+
+.. automodule:: espargos.board_wifi_rx
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.board_wifi_tx
+----------------------
+
+.. automodule:: espargos.board_wifi_tx
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 espargos.pool
 -------------
 

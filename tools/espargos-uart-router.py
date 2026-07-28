@@ -18,7 +18,7 @@ class UARTRouter:
     def __init__(self, uart_host: str):
         self.logger = logging.getLogger("pyespargos.router")
         self.uart = UARTClient(uart_host)
-        self._ws_clients = set()
+        self._stream_clients = set()
         self._loop = None
         self._closing = False
         self._closed = False
@@ -26,7 +26,7 @@ class UARTRouter:
     async def start(self):
         self._loop = asyncio.get_running_loop()
         self.uart.connect()
-        self.uart.add_csi_callback(self._on_csi_frame)
+        self.uart.add_stream_callback(self._on_stream_frame)
 
     async def close(self):
         if self._closed:
@@ -34,8 +34,8 @@ class UARTRouter:
         self._closed = True
         self._closing = True
 
-        clients = list(self._ws_clients)
-        self._ws_clients.clear()
+        clients = list(self._stream_clients)
+        self._stream_clients.clear()
         for queue, ws in clients:
             with contextlib.suppress(Exception):
                 queue.put_nowait(None)
@@ -44,7 +44,7 @@ class UARTRouter:
                     await ws.close(code=1001, message=b"router shutting down")
 
         with contextlib.suppress(Exception):
-            self.uart.remove_csi_callback(self._on_csi_frame)
+            self.uart.remove_stream_callback(self._on_stream_frame)
         with contextlib.suppress(Exception):
             self.uart.close()
 
@@ -78,17 +78,17 @@ class UARTRouter:
             headers["Content-Type"] = response.content_type
         return web.Response(status=response.status, headers=headers, body=response.body)
 
-    async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
+    async def handle_stream(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
 
         queue = asyncio.Queue()
         client = (queue, ws)
-        self._ws_clients.add(client)
-        self.logger.info("Local CSI WebSocket client connected")
+        self._stream_clients.add(client)
+        self.logger.info("Local sensor-stream WebSocket client connected")
 
         try:
-            self.uart.enable_csi_stream()
+            self.uart.enable_sensor_stream()
             while True:
                 payload = await queue.get()
                 if payload is None:
@@ -99,21 +99,21 @@ class UARTRouter:
         except Exception:
             pass
         finally:
-            self._ws_clients.discard(client)
-            if not self._closing and not self._ws_clients:
+            self._stream_clients.discard(client)
+            if not self._closing and not self._stream_clients:
                 with contextlib.suppress(Exception):
-                    self.uart.disable_csi_stream()
+                    self.uart.disable_sensor_stream()
             if not ws.closed:
                 with contextlib.suppress(Exception):
                     await ws.close()
-            self.logger.info("Local CSI WebSocket client disconnected")
+            self.logger.info("Local sensor-stream WebSocket client disconnected")
 
         return ws
 
-    def _on_csi_frame(self, payload: bytes):
+    def _on_stream_frame(self, payload: bytes):
         if self._closing or self._loop is None:
             return
-        for q, _ws in list(self._ws_clients):
+        for q, _ws in list(self._stream_clients):
             try:
                 self._loop.call_soon_threadsafe(q.put_nowait, payload)
             except RuntimeError:
@@ -123,7 +123,8 @@ class UARTRouter:
 def build_app(router: UARTRouter) -> web.Application:
     app = web.Application()
     app["router"] = router
-    app.router.add_get("/csi", router.handle_ws)
+    app.router.add_get("/stream", router.handle_stream)
+    app.router.add_get("/csi", router.handle_stream)
     app.router.add_route("*", "/{path:.*}", router.handle_http)
 
     async def on_startup(app):
