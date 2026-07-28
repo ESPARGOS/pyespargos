@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 from .calibration import CSICalibration
-from .backlog import BacklogFilter, CSIBacklog, Exclude11bFilter, MacFilter
+from .csi_backlog import CSIBacklog, CSIBacklogFilter, Exclude11bFilter, MacFilter
+from .sensor_backlog import BacklogField, SensorBacklog
 from .csi_cluster import CSICluster
 from .board import Board, BoardCapability, BoardControl, EspargosAPIVersionError, EspargosHTTPStatusError, EspargosStreamConnectionError, EspargosUnexpectedResponseError, SensorMessageSubscription
 from .board_wifi_rx import WiFiRx
@@ -18,12 +19,14 @@ from .radar_packet import RadarTxReportPacket
 from .sensor import RFSwitchState, SensorFragment, SensorMessage, SensorPacket
 from .wifi import SequenceControl, WiFiFrameKey, WiFiPhyMode, WiFiPhyRate, WiFiTxPower
 from . import csi_compression
+from . import csi_backlog
 from . import csi_packet
 from . import csi_cluster
 from . import csi_pool
 from . import radar
 from . import radar_packet
 from . import sensor
+from . import sensor_backlog
 from . import sensor_cluster
 from . import util
 from . import wifi

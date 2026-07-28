@@ -120,10 +120,10 @@ The application code can query the backlog whenever it needs recent CSI.
       print("Received CSI:", csi_lltf)
   finally:
       if backlog is not None:
-          backlog.stop()
+          backlog.close()
       pool.stop()
 
-The backlog supports multiple data fields that can be retrieved using the :meth:`~espargos.backlog.CSIBacklog.get` method:
+The backlog supports multiple data fields that can be retrieved using the :meth:`~espargos.csi_backlog.CSIBacklog.get` method:
 
 * ``lltf`` - L-LTF CSI data
 * ``ht20`` - HT20 CSI data  
@@ -133,7 +133,7 @@ The backlog supports multiple data fields that can be retrieved using the :meth:
 * ``host_timestamp`` - Host timestamps
 * ``mac`` - Source MAC addresses
 
-You can also use :meth:`~espargos.backlog.CSIBacklog.get_multiple` to retrieve multiple fields atomically.
+You can also use :meth:`~espargos.csi_backlog.CSIBacklog.get_multiple` to retrieve multiple fields atomically.
 
 Advanced Usage
 --------------

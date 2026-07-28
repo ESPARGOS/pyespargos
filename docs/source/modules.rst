@@ -43,10 +43,10 @@ espargos.csi_pool
    :undoc-members:
    :show-inheritance:
 
-espargos.backlog
-----------------
+espargos.csi_backlog
+--------------------
 
-.. automodule:: espargos.backlog
+.. automodule:: espargos.csi_backlog
    :members:
    :undoc-members:
    :show-inheritance:
@@ -111,6 +111,14 @@ espargos.sensor
 ---------------
 
 .. automodule:: espargos.sensor
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.sensor_backlog
+-----------------------
+
+.. automodule:: espargos.sensor_backlog
    :members:
    :undoc-members:
    :show-inheritance:

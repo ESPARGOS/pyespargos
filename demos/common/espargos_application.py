@@ -372,10 +372,10 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             self.backlog.clear()
 
     def onAboutToQuit(self):
+        if hasattr(self, "backlog"):
+            self.backlog.close()
         if hasattr(self, "pool"):
             self.pool.stop()
-        if hasattr(self, "backlog"):
-            self.backlog.stop()
         if hasattr(self, "engine"):
             self.engine.deleteLater()
 
@@ -440,7 +440,7 @@ class BacklogMixin:
         fields_cfg = self.get_initial_config("backlog", "fields", default=None)
         initial_fields = None
         if isinstance(fields_cfg, dict):
-            initial_fields = set(espargos.CSIBacklog.DATA_FORMATS.keys())
+            initial_fields = set(espargos.CSIBacklog.FIELD_SPECS)
             for field, enabled in fields_cfg.items():
                 if enabled:
                     initial_fields.add(field)

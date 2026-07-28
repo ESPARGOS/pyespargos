@@ -13,6 +13,7 @@ calibration API.
 from weakref import WeakKeyDictionary
 from typing import Callable
 import numpy as np
+import threading
 import time
 
 from . import calibration
@@ -116,6 +117,7 @@ class CSIPool(Pool):
             )
 
         self.callbacks: list[_CSICallback] = []
+        self._callbacks_lock = threading.Lock()
         self.stored_calibration: calibration.CSICalibration = None
 
     def set_rfswitch(self, state: sensor.RFSwitchState):
@@ -375,7 +377,8 @@ class CSIPool(Pool):
         :return: A callback handle that can be passed to :meth:`remove_csi_callback`
         """
         callback = _CSICallback(cb, cb_predicate)
-        self.callbacks.append(callback)
+        with self._callbacks_lock:
+            self.callbacks.append(callback)
         return callback
 
     def remove_csi_callback(self, callback: _CSICallback) -> bool:
@@ -385,11 +388,36 @@ class CSIPool(Pool):
         :param callback: Callback handle returned by :meth:`add_csi_callback`
         :return: True if the callback was registered and removed, False otherwise
         """
-        try:
-            self.callbacks.remove(callback)
-            return True
-        except ValueError:
-            return False
+        with self._callbacks_lock:
+            try:
+                self.callbacks.remove(callback)
+                return True
+            except ValueError:
+                return False
+
+    def replace_csi_callback(
+        self,
+        callback: _CSICallback,
+        cb: Callable[[csi_cluster.CSICluster], None],
+        cb_predicate: Callable[[csi_cluster.CSICluster], bool] = None,
+    ) -> _CSICallback:
+        """Atomically replace a registered CSI callback.
+
+        :param callback: Existing handle returned by :meth:`add_csi_callback`
+        :param cb: Replacement callback function
+        :param cb_predicate: Replacement completion predicate
+        :return: New callback handle
+        :raises ValueError: If ``callback`` is no longer registered
+        """
+
+        replacement = _CSICallback(cb, cb_predicate)
+        with self._callbacks_lock:
+            try:
+                index = self.callbacks.index(callback)
+            except ValueError:
+                raise ValueError("CSI callback is not registered") from None
+            self.callbacks[index] = replacement
+        return replacement
 
     def set_emit_calibration_csi(self, enabled: bool):
         """
@@ -408,7 +436,9 @@ class CSIPool(Pool):
 
     def _try_callbacks(self, cluster_obj: csi_cluster.CSICluster) -> bool:
         all_callbacks_fired = True
-        for cb in self.callbacks:
+        with self._callbacks_lock:
+            callbacks = tuple(self.callbacks)
+        for cb in callbacks:
             callback_fired = cb.try_call(cluster_obj)
             all_callbacks_fired = callback_fired and all_callbacks_fired
         return all_callbacks_fired

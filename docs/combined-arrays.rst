@@ -154,7 +154,7 @@ To obtain phase-coherent CSI data from the combined arrays, you can use the foll
 
   print("Received CSI of shape:", backlog.get("lltf").shape)
 
-  backlog.stop()
+  backlog.close()
   pool.stop()
 
 In this example, we create a pool of four ESPARGOS boards by passing a list of four :class:`.Board` instances to the :class:`.CSIPool` constructor.

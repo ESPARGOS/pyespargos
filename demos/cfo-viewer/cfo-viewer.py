@@ -110,8 +110,7 @@ class EspargosDemoCFOViewer(BacklogMixin, ESPARGOSApplication):
         if not hasattr(self, "pool") or not hasattr(self, "backlog"):
             return
 
-        self.pool.callbacks = [callback for callback in self.pool.callbacks if getattr(callback.cb, "__self__", None) is not self.backlog or getattr(callback.cb, "__func__", None) is not self.backlog._on_new_csi.__func__]
-        self.pool.add_csi_callback(self.backlog._on_new_csi, cb_predicate=self._make_predicate())
+        self.backlog.set_callback_predicate(self._make_predicate())
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=maxAgeChanged)
     def maxCSIAge(self):

@@ -41,6 +41,7 @@ class EspargosDemoSpeedtest(ESPARGOSApplication):
         self._lock = threading.Lock()
         self._pool_runner_running = threading.Event()
         self._pool_runner_thread = None
+        self._callback_handle = None
 
         self.initialize_pool(calibrate=not self.args.no_calib)
 
@@ -66,9 +67,17 @@ class EspargosDemoSpeedtest(ESPARGOSApplication):
         return predicate
 
     def _register_callback(self):
-        # Clear existing callbacks and re-register with the new predicate
-        self.pool.callbacks.clear()
-        self.pool.add_csi_callback(self._on_csi, cb_predicate=self._make_predicate())
+        if self._callback_handle is None:
+            self._callback_handle = self.pool.add_csi_callback(
+                self._on_csi,
+                cb_predicate=self._make_predicate(),
+            )
+        else:
+            self._callback_handle = self.pool.replace_csi_callback(
+                self._callback_handle,
+                self._on_csi,
+                cb_predicate=self._make_predicate(),
+            )
 
     def _on_csi(self, clustered_csi):
         with self._lock:
@@ -119,6 +128,9 @@ class EspargosDemoSpeedtest(ESPARGOSApplication):
         self._pool_runner_running.clear()
         if self._pool_runner_thread is not None:
             self._pool_runner_thread.join(timeout=1.0)
+        if self._callback_handle is not None:
+            self.pool.remove_csi_callback(self._callback_handle)
+            self._callback_handle = None
         super().onAboutToQuit()
 
 
