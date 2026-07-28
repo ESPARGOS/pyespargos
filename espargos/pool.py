@@ -215,11 +215,7 @@ class Pool(ABC):
         with self._cluster_lock:
             cache_names = tuple(self._cluster_caches)
 
-        cache_timeouts = {
-            cache_name: timeout
-            for cache_name in cache_names
-            if (timeout := self._get_cluster_cache_timeout(cache_name)) is not None
-        }
+        cache_timeouts = {cache_name: timeout for cache_name in cache_names if (timeout := self._get_cluster_cache_timeout(cache_name)) is not None}
         if not cache_timeouts:
             return
 
@@ -230,11 +226,7 @@ class Pool(ABC):
                 cache = self._cluster_caches.get(cache_name)
                 if not cache:
                     continue
-                expired_keys = [
-                    cluster_key
-                    for cluster_key, sensor_cluster in cache.items()
-                    if sensor_cluster.get_age() > timeout
-                ]
+                expired_keys = [cluster_key for cluster_key, sensor_cluster in cache.items() if sensor_cluster.get_age() > timeout]
                 for cluster_key in expired_keys:
                     cache.pop(cluster_key)
 

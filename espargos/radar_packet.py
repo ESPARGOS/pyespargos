@@ -19,7 +19,6 @@ import binascii
 from .sensor import RFSwitchState
 from .wifi import SequenceControl
 
-
 RADAR_TX_REPORT_TYPE_HEADER = 0x52545852
 
 RADAR_TX_REPORT_TLV_TYPE_FRAME_META = 1
@@ -122,10 +121,7 @@ class RadarTxReportPacket:
                 self.crc32 = int.from_bytes(value, byteorder="little")
                 computed_crc = binascii.crc32(raw[:tlv_start]) & 0xFFFFFFFF
                 if computed_crc != self.crc32:
-                    raise ValueError(
-                        f"Radar TX report TLV CRC32 mismatch "
-                        f"(expected 0x{self.crc32:08x}, computed 0x{computed_crc:08x})"
-                    )
+                    raise ValueError(f"Radar TX report TLV CRC32 mismatch " f"(expected 0x{self.crc32:08x}, computed 0x{computed_crc:08x})")
                 self._crc_valid = True
             offset = tlv_end
 

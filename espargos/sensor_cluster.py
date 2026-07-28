@@ -68,9 +68,7 @@ class SensorCluster(ABC):
     def _mark_sensor_complete(self, board_num: int, antenna_id: int) -> None:
         """Mark the observation data for one sensor as complete."""
 
-        self._mark_sensor_position_complete(
-            self.get_sensor_position(board_num, antenna_id)
-        )
+        self._mark_sensor_position_complete(self.get_sensor_position(board_num, antenna_id))
 
     def _mark_sensor_position_complete(
         self,

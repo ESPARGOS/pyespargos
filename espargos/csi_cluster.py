@@ -93,9 +93,7 @@ class CSICluster(SensorCluster):
             if existing_csi is not None:
                 if bytes(existing_csi) == bytes(stream_packet):
                     return False
-                raise ClusterCollisionError(
-                    f"conflicting CSI from board {board_num}, row {row}, column {col}"
-                )
+                raise ClusterCollisionError(f"conflicting CSI from board {board_num}, row {row}, column {col}")
             if np.any(self.get_completion()) and self.is_radar() != stream_packet.is_radar:
                 raise ClusterCollisionError("radar and non-radar CSI use the same Wi-Fi frame key")
             if self.has_radar_tx_report() and not stream_packet.is_radar:

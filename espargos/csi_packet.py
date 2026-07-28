@@ -275,9 +275,7 @@ class CSIPacket:
             elif tlv_type == SERIALIZED_CSI_TLV_TYPE_RX_CTRL_COMPRESSED:
                 if tlv_len < csi_compression.COMPRESSED_RX_CTRL_MIN_SIZE:
                     raise ValueError("Invalid compressed RX CTRL TLV")
-                self.rx_ctrl = csi_compression.build_rx_ctrl_v3_from_compressed(
-                    bytes(value[: ctypes.sizeof(csi_compression.CompressedRxControl)])
-                )
+                self.rx_ctrl = csi_compression.build_rx_ctrl_v3_from_compressed(bytes(value[: ctypes.sizeof(csi_compression.CompressedRxControl)]))
                 self.timestamp = wifi_pkt_rx_ctrl_v3_t(self.rx_ctrl).timestamp
             elif tlv_type == SERIALIZED_CSI_TLV_TYPE_CSI_RAW:
                 self._raw_csi_tlv = bytes(value)

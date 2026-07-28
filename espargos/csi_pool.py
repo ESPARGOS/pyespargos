@@ -445,9 +445,7 @@ class CSIPool(Pool):
                     cluster_channel_primary,
                     cluster_channel_secondary,
                 )
-                stale_channel_counts[stale_channel] = (
-                    stale_channel_counts.get(stale_channel, 0) + 1
-                )
+                stale_channel_counts[stale_channel] = stale_channel_counts.get(stale_channel, 0) + 1
                 continue
 
             completion = cluster.get_completion()[board_num] if board_num is not None else cluster.get_completion()
@@ -467,13 +465,9 @@ class CSIPool(Pool):
                     complete_clusters_ht40.append(cluster.deserialize_csi_ht40ltf()[board_num] if board_num is not None else cluster.deserialize_csi_ht40ltf())
 
         if stale_channel_counts:
-            stale_channel_summary = ", ".join(
-                f"primary {primary}, secondary {secondary}: {count}"
-                for (primary, secondary), count in stale_channel_counts.items()
-            )
+            stale_channel_summary = ", ".join(f"primary {primary}, secondary {secondary}: {count}" for (primary, secondary), count in stale_channel_counts.items())
             self.logger.warning(
-                "Skipping %d calibration cluster(s) with stale channel settings; "
-                "expected primary %s and secondary %s, observed %s",
+                "Skipping %d calibration cluster(s) with stale channel settings; " "expected primary %s and secondary %s, observed %s",
                 sum(stale_channel_counts.values()),
                 channel_primary,
                 channel_secondary,

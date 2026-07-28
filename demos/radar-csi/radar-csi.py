@@ -283,10 +283,7 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         with self._csi_data_lock:
             stable_power_minimum = self.stable_power_minimum
             stable_power_maximum = self.stable_power_maximum
-            dirty_link_csi = [
-                (link_index, self._latest_link_csi.get(link_index))
-                for link_index in sorted(self._dirty_link_indices)
-            ]
+            dirty_link_csi = [(link_index, self._latest_link_csi.get(link_index)) for link_index in sorted(self._dirty_link_indices)]
             self._dirty_link_indices.clear()
 
         for link_index, link_csi in dirty_link_csi:
@@ -300,14 +297,8 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
             power_points = self._power_plot_points.get(link_index)
             phase_points = self._phase_plot_points.get(link_index)
             if power_points is None:
-                power_points = [
-                    PyQt6.QtCore.QPointF(float(subcarrier), 0.0)
-                    for subcarrier in self._subcarrier_range
-                ]
-                phase_points = [
-                    PyQt6.QtCore.QPointF(float(subcarrier), 0.0)
-                    for subcarrier in self._subcarrier_range
-                ]
+                power_points = [PyQt6.QtCore.QPointF(float(subcarrier), 0.0) for subcarrier in self._subcarrier_range]
+                phase_points = [PyQt6.QtCore.QPointF(float(subcarrier), 0.0) for subcarrier in self._subcarrier_range]
                 self._power_plot_points[link_index] = power_points
                 self._phase_plot_points[link_index] = phase_points
 

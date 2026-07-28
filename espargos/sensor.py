@@ -56,7 +56,6 @@ from dataclasses import dataclass, replace
 from enum import IntEnum
 from typing import Callable, Generic, Iterable, TypeVar
 
-
 SENSOR_PACKET_TYPE_HEADER = 0xDECAFBAD
 SENSOR_PACKET_TERMINATOR_UID = 0
 SENSOR_UID_ANTENNA_SHIFT = 29
@@ -217,10 +216,7 @@ class SensorMessageReassembler:
             uid = int(fragment.uid)
             if fragment.total_fragments <= 0 or fragment.fragment_index >= fragment.total_fragments:
                 if self.logger is not None:
-                    self.logger.debug(
-                        f"Ignoring invalid sensor fragment index "
-                        f"{fragment.fragment_index}/{fragment.total_fragments} for uid {uid}"
-                    )
+                    self.logger.debug(f"Ignoring invalid sensor fragment index " f"{fragment.fragment_index}/{fragment.total_fragments} for uid {uid}")
                 self._entries.pop(uid, None)
                 continue
 
