@@ -91,14 +91,6 @@ espargos.wifi
    :undoc-members:
    :show-inheritance:
 
-espargos.exithandler
---------------------
-
-.. automodule:: espargos.exithandler
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 espargos.radar
 --------------
 

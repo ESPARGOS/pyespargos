@@ -643,7 +643,6 @@ class Pool(object):
         self,
         per_board=True,
         duration=2,
-        exithandler=None,
         cable_lengths=None,
         cable_velocity_factors=None,
         run_in_thread=True,
@@ -654,7 +653,6 @@ class Pool(object):
         :param per_board: True to calibrate each board separately, False to calibrate all boards together.
                           Set to False if the same phase reference signal is used for all boards, otherwise set to True.
         :param duration: The duration in seconds for which calibration should be run
-        :param exithandler: An optional exit handler that can be used to stop calibration prematurely if :code:`exithandler.running` is set to False in a separate thread
         :param cable_lengths: The lengths of the feeder cables that distribute the clock and phase calibration signal to the ESPARGOS boards, in meters.
                               Only needed for phase-coherent multi-board setups, omit if all cables have the same length.
         :param cable_velocity_factors: The velocity factors of the feeder cables that distribute the clock and phase calibration signal to the ESPARGOS boards
@@ -677,10 +675,10 @@ class Pool(object):
             self.set_rfswitch(sensor.RFSwitchState.SENSOR_RFSWITCH_REFERENCE)
 
             # Run calibration for specified duration
-            start = time.time()
-            while (time.time() - start < duration) and (exithandler is None or exithandler.running):
+            start = time.monotonic()
+            while time.monotonic() - start < duration:
                 if run_in_thread:
-                    remaining = max(0.0, duration - (time.time() - start))
+                    remaining = max(0.0, duration - (time.monotonic() - start))
                     self.run(timeout=min(0.05, remaining))
                 else:
                     time.sleep(0.01)

@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 from .calibration import CSICalibration
-from .exithandler import ExitHandler
 from .backlog import BacklogFilter, CSIBacklog, Exclude11bFilter, MacFilter
 from .cluster import CSICluster
 from .board import Board, EspargosAPIVersionError, EspargosCsiStreamConnectionError, EspargosHTTPStatusError, EspargosUnexpectedResponseError, SensorMessageSubscription
