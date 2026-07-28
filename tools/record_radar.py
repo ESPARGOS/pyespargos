@@ -90,10 +90,10 @@ try:
         active_by_sensor,
         min_safe_start_s,
         0.01,
-        espargos.csi.wifi_tx_power_t.WIFI_TX_POWER_2_DBM,
-        espargos.csi.wifi_phy_mode_t.WIFI_PHY_MODE_11G,
-        espargos.csi.wifi_phy_rate_t.WIFI_PHY_RATE_6M,
-        espargos.csi.rfswitch_state_t.SENSOR_RFSWITCH_ANTENNA_R,
+        espargos.wifi.WiFiTxPower.WIFI_TX_POWER_2_DBM,
+        espargos.wifi.WiFiPhyMode.WIFI_PHY_MODE_11G,
+        espargos.wifi.WiFiPhyRate.WIFI_PHY_RATE_6M,
+        espargos.sensor.RFSwitchState.SENSOR_RFSWITCH_ANTENNA_R,
     )
 
     pool.set_radar_config(radar_config)

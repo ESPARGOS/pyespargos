@@ -6,7 +6,7 @@ import logging
 from . import constants
 from . import board
 from . import util
-from . import csi
+from . import csi_packet
 
 
 class CSICalibration(object):
@@ -33,9 +33,9 @@ class CSICalibration(object):
         :param revisions: A list of :class:`.revisions.BoardRevision` objects that specify the board revisions of the ESPARGOS boards in the pool
         :param channel_primary: The primary channel number
         :param channel_secondary: The secondary channel number. Must be equal to :code:`channel_primary + 4` or :code:`channel_primary - 4` if channel bonding is used, otherwise must be equal to :code:`channel_primary`
-        :param calibration_values_lltf: The phase calibration values for the L-LTF channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.LEGACY_COEFFICIENTS_PER_CHANNEL)`
-        :param calibration_values_ht20: The phase calibration values for the HT20 channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL)`
-        :param calibration_values_ht40: The phase calibration values for the HT40 channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL)`
+        :param calibration_values_lltf: The phase calibration values for the L-LTF channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL)`
+        :param calibration_values_ht20: The phase calibration values for the HT20 channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi_packet.HT_COEFFICIENTS_PER_CHANNEL)`
+        :param calibration_values_ht40: The phase calibration values for the HT40 channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi_packet.HT_COEFFICIENTS_PER_CHANNEL + csi_packet.HT40_GAP_SUBCARRIERS + csi_packet.HT_COEFFICIENTS_PER_CHANNEL)`
         :param sensor_clock_offsets: Per-sensor clock offsets relative to sensor 0, in seconds, as a numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)`
         :param board_cable_lengths: The lengths of the cables that distribute the clock and phase calibration signal to the ESP32 boards, in meters
         :param board_cable_vfs: The velocity factors of the cables that distribute the clock and phase calibration signal to the ESP32 boards
@@ -44,26 +44,26 @@ class CSICalibration(object):
             len(boards),
             constants.ROWS_PER_BOARD,
             constants.ANTENNAS_PER_ROW,
-            csi.LEGACY_COEFFICIENTS_PER_CHANNEL,
+            csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,
         )
         assert calibration_values_ht20.shape == (
             len(boards),
             constants.ROWS_PER_BOARD,
             constants.ANTENNAS_PER_ROW,
-            csi.HT_COEFFICIENTS_PER_CHANNEL,
+            csi_packet.HT_COEFFICIENTS_PER_CHANNEL,
         )
         assert calibration_values_ht40.shape == (
             len(boards),
             constants.ROWS_PER_BOARD,
             constants.ANTENNAS_PER_ROW,
-            csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL,
+            csi_packet.HT_COEFFICIENTS_PER_CHANNEL + csi_packet.HT40_GAP_SUBCARRIERS + csi_packet.HT_COEFFICIENTS_PER_CHANNEL,
         )
         if calibration_values_he20 is not None:
             assert calibration_values_he20.shape == (
                 len(boards),
                 constants.ROWS_PER_BOARD,
                 constants.ANTENNAS_PER_ROW,
-                csi.HE20_COEFFICIENTS_PER_CHANNEL,
+                csi_packet.HE20_COEFFICIENTS_PER_CHANNEL,
             )
         assert sensor_clock_offsets.shape == (
             len(boards),
@@ -143,7 +143,7 @@ class CSICalibration(object):
         Apply phase calibration to the provided HT40 CSI data.
         Also accounts for subcarrier-specific phase offsets, e.g., due to low-pass filter characteristic of baseband signal path inside the ESP32.
 
-        :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL)`
+        :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi_packet.HT_COEFFICIENTS_PER_CHANNEL + csi_packet.HT40_GAP_SUBCARRIERS + csi_packet.HT_COEFFICIENTS_PER_CHANNEL)`
         :return: The phase-calibrated CSI data
         """
         # TODO: Check if primary and secondary channel match
@@ -159,7 +159,7 @@ class CSICalibration(object):
         Apply phase calibration to the provided HT20 CSI data.
         Also accounts for subcarrier-specific phase offsets, e.g., due to low-pass filter characteristic of baseband signal path inside the ESP32.
 
-        :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL)`
+        :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi_packet.HT_COEFFICIENTS_PER_CHANNEL)`
         :return: The phase-calibrated CSI data
         """
         # TODO: Check if calibration value channel matches OTA channel
@@ -177,7 +177,7 @@ class CSICalibration(object):
 
         :param values: The CSI data to which the phase calibration should be
             applied, as a complex-valued numpy array of shape
-            :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HE20_COEFFICIENTS_PER_CHANNEL)`
+            :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi_packet.HE20_COEFFICIENTS_PER_CHANNEL)`
         :return: The phase-calibrated CSI data
         """
         if np.isnan(self.calibration_values_he20).any():
@@ -190,7 +190,7 @@ class CSICalibration(object):
         Apply phase calibration to the provided L-LTF CSI data.
         Also accounts for subcarrier-specific phase offsets, e.g., due to low-pass filter characteristic of baseband signal path inside the ESP32.
 
-        :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL)`
+        :param values: The CSI data to which the phase calibration should be applied, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi_packet.HT_COEFFICIENTS_PER_CHANNEL + csi_packet.HT40_GAP_SUBCARRIERS + csi_packet.HT_COEFFICIENTS_PER_CHANNEL)`
         :return: The phase-calibrated CSI data
         """
         # TODO: Check if calibration value channel matches OTA channel

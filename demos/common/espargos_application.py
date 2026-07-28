@@ -614,11 +614,11 @@ class SingleCSIFormatMixin:
 
         # Interpolate DC subcarrier gap for HT formats
         if csi_key == "ht40":
-            espargos.csi.interpolate_ht40ltf_gap(csi_backlog)
+            espargos.util.interpolate_ht40ltf_gap(csi_backlog)
         elif csi_key == "ht20":
-            espargos.csi.interpolate_ht20ltf_gap(csi_backlog)
+            espargos.util.interpolate_ht20ltf_gap(csi_backlog)
         elif csi_key == "he20":
-            espargos.csi.interpolate_he20ltf_gaps(csi_backlog)
+            espargos.util.interpolate_he20ltf_gaps(csi_backlog)
 
         # Handle data containing NaN values (from incomplete CSI clusters)
         if np.any(np.isnan(csi_backlog)):

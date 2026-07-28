@@ -4,7 +4,8 @@ import enum
 import numpy as np
 
 from . import constants
-from . import csi
+from . import csi_packet
+from . import sensor
 
 
 class AntennaOrientation(enum.Enum):
@@ -59,6 +60,65 @@ def scale_csi_by_reported_gain(csi_data: np.ndarray, rx_gain: np.ndarray, fft_ga
 def _reported_gain_to_signed(gain: np.ndarray) -> np.ndarray:
     gain = np.asarray(gain, dtype=np.float32)
     return np.where((gain >= 128.0) & (gain <= 255.0), gain - 256.0, gain)
+
+
+def interpolate_lltf_gap(csi_lltf: np.ndarray) -> None:
+    """
+    Fill the L-LTF DC subcarrier by linear interpolation in place.
+
+    :param csi_lltf: Complex L-LTF CSI array. The last dimension must contain
+        :data:`espargos.csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL` subcarriers
+        in ascending order ``-26..26``. Any leading dimensions are preserved.
+    """
+    dc_index = csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL // 2
+    csi_lltf[..., dc_index] = 0.5 * (csi_lltf[..., dc_index - 1] + csi_lltf[..., dc_index + 1])
+
+
+def interpolate_ht20ltf_gap(csi_ht20: np.ndarray) -> None:
+    """
+    Fill the HT20-LTF DC subcarrier by linear interpolation in place.
+
+    :param csi_ht20: Complex HT20-LTF CSI array. The last dimension must contain
+        :data:`espargos.csi_packet.HT_COEFFICIENTS_PER_CHANNEL` subcarriers in
+        ascending order ``-28..28``. Any leading dimensions are preserved.
+    """
+    dc_index = csi_packet.HT_COEFFICIENTS_PER_CHANNEL // 2
+    csi_ht20[..., dc_index] = 0.5 * (csi_ht20[..., dc_index - 1] + csi_ht20[..., dc_index + 1])
+
+
+def interpolate_ht40ltf_gap(csi_ht40: np.ndarray) -> None:
+    """
+    Fill the three HT40 gap subcarriers between primary and secondary channel in place.
+
+    :param csi_ht40: Complex HT40-LTF CSI array. The last dimension must contain
+        ``2 * HT_COEFFICIENTS_PER_CHANNEL + HT40_GAP_SUBCARRIERS`` subcarriers
+        in ascending order ``-58..58``. Any leading dimensions are preserved.
+    """
+    index_left = csi_packet.HT_COEFFICIENTS_PER_CHANNEL - 1
+    index_right = csi_packet.HT_COEFFICIENTS_PER_CHANNEL + csi_packet.HT40_GAP_SUBCARRIERS
+    missing_indices = np.arange(index_left + 1, index_right)
+    left = csi_ht40[..., index_left]
+    right = csi_ht40[..., index_right]
+    interp = (missing_indices - index_left) / (index_right - index_left)
+    csi_ht40[..., missing_indices] = interp * right[..., np.newaxis] + (1 - interp) * left[..., np.newaxis]
+
+
+def interpolate_he20ltf_gaps(csi_he20: np.ndarray) -> None:
+    """
+    Fill the HE20 invalid subcarriers ``-1, 0, 1`` by linear interpolation in place.
+
+    :param csi_he20: Complex HE20-LTF CSI array. The last dimension must contain
+        :data:`espargos.csi_packet.HE20_COEFFICIENTS_PER_CHANNEL` subcarriers in
+        ascending order ``-122..122``. Any leading dimensions are preserved.
+    """
+    center_index = csi_packet.HE20_COEFFICIENTS_PER_CHANNEL // 2
+    index_left = center_index - 2
+    index_right = center_index + 2
+    missing_indices = np.arange(index_left + 1, index_right)
+    left = csi_he20[..., index_left]
+    right = csi_he20[..., index_right]
+    interp = (missing_indices - index_left) / (index_right - index_left)
+    csi_he20[..., missing_indices] = interp * right[..., np.newaxis] + (1 - interp) * left[..., np.newaxis]
 
 
 def build_jones_matrices(antenna_orientations: np.ndarray, base_jones_matrix: np.ndarray = None):
@@ -259,7 +319,7 @@ def get_frequencies_ht40(primary_channel: int, secondary_channel: int):
     :return: The frequencies of the subcarriers, in Hz, NumPy array.
     """
     center_ht40 = get_center_frequency(primary_channel, secondary_channel)
-    return center_ht40 + csi.get_csi_format_subcarrier_indices("ht40") * constants.WIFI_SUBCARRIER_SPACING
+    return center_ht40 + csi_packet.get_csi_format_subcarrier_indices("ht40") * constants.WIFI_SUBCARRIER_SPACING
 
 
 def get_center_frequency(primary_channel: int, secondary_channel: int | None = None):
@@ -291,7 +351,7 @@ def get_frequencies_ht20(channel: int):
     :return: The frequencies of the subcarriers, in Hz, NumPy array.
     """
     center_ht20 = get_center_frequency(channel)
-    return center_ht20 + csi.get_csi_format_subcarrier_indices("ht20") * constants.WIFI_SUBCARRIER_SPACING
+    return center_ht20 + csi_packet.get_csi_format_subcarrier_indices("ht20") * constants.WIFI_SUBCARRIER_SPACING
 
 
 def get_frequencies_he20(channel: int):
@@ -305,7 +365,7 @@ def get_frequencies_he20(channel: int):
     :return: The frequencies of the HE20 subcarriers, in Hz, NumPy array.
     """
     center_he20 = get_center_frequency(channel)
-    return center_he20 + csi.get_csi_format_subcarrier_indices("he20").astype(np.float64) * (constants.WIFI_SUBCARRIER_SPACING / 4.0)
+    return center_he20 + csi_packet.get_csi_format_subcarrier_indices("he20").astype(np.float64) * (constants.WIFI_SUBCARRIER_SPACING / 4.0)
 
 
 def get_frequencies_lltf(channel: int):
@@ -316,7 +376,7 @@ def get_frequencies_lltf(channel: int):
     :return: The frequencies of the subcarriers, in Hz, NumPy array.
     """
     center_lltf = get_center_frequency(channel)
-    return center_lltf + csi.get_csi_format_subcarrier_indices("lltf") * constants.WIFI_SUBCARRIER_SPACING
+    return center_lltf + csi_packet.get_csi_format_subcarrier_indices("lltf") * constants.WIFI_SUBCARRIER_SPACING
 
 
 def get_cable_wavelength(frequencies: np.ndarray, velocity_factors: np.ndarray):
@@ -381,7 +441,7 @@ def derive_he20_calibration_from_lltf(
         channel used for the calibration packets. Use ``-1`` for HT40 below,
         ``+1`` for HT40 above, and ``0`` for a plain 20 MHz channel.
     :return: Complex-valued HE20 calibration array with shape
-        ``(boards, rows, columns, csi.HE20_COEFFICIENTS_PER_CHANNEL)``.
+        ``(boards, rows, columns, csi_packet.HE20_COEFFICIENTS_PER_CHANNEL)``.
     """
     # First estimate per-antenna constant phase offsets from the LLTF
     # calibration clusters exactly as provided by deserialize_csi_lltf(), i.e.
@@ -390,7 +450,7 @@ def derive_he20_calibration_from_lltf(
     csi_lltf_sto_corrected = np.asarray(complete_clusters_lltf, dtype=np.complex64)
 
     # Undo the timestamp-based STO correction from deserialize_csi_lltf().
-    subcarrier_range = csi.get_csi_format_subcarrier_indices("lltf").astype(np.float64)[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
+    subcarrier_range = csi_packet.get_csi_format_subcarrier_indices("lltf").astype(np.float64)[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
     subcarrier_range -= secondary_channel_relative * int(2 * constants.WIFI_CHANNEL_SPACING / constants.WIFI_SUBCARRIER_SPACING)
     sto_delay_correction = np.exp(1.0j * 2 * np.pi * complete_cluster_timestamps[:, :, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
 
@@ -414,7 +474,7 @@ def derive_he20_calibration_from_lltf(
     rx_baseband_sto = packet_times[:, :, :, :] - packet_times[:, 0:1, 0:1, 0:1]
 
     mean_rx_baseband_sto = np.mean(rx_baseband_sto, axis=0)
-    he20_subcarrier_indices = csi.get_csi_format_subcarrier_indices("he20").astype(np.float64)
+    he20_subcarrier_indices = csi_packet.get_csi_format_subcarrier_indices("he20").astype(np.float64)
     he20_frequencies_hz = he20_subcarrier_indices * (constants.WIFI_SUBCARRIER_SPACING / 4.0)
     calibration_he20 = np.exp(-1.0j * 2.0 * np.pi * mean_rx_baseband_sto[..., np.newaxis] * he20_frequencies_hz[np.newaxis, np.newaxis, np.newaxis, :]).astype(np.complex64)
     calibration_he20 *= antenna_phase_offsets[..., np.newaxis].astype(np.complex64)
@@ -846,15 +906,15 @@ def extract_lltf_subcarriers_from_ht40(csi_ht40: np.ndarray, secondary_channel_r
 
     :return: The extracted LLTF CSI data. Complex-valued NumPy array with shape (datapoints, arrays, rows, columns, subcarriers).
     """
-    base_offset = (csi.HT_COEFFICIENTS_PER_CHANNEL - csi.LEGACY_COEFFICIENTS_PER_CHANNEL) // 2
+    base_offset = (csi_packet.HT_COEFFICIENTS_PER_CHANNEL - csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL) // 2
     if secondary_channel_relative == -1:
         # Secondary channel is below primary channel
         start_index = base_offset
     else:
         # Secondary channel is above primary channel
-        start_index = base_offset + csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS
+        start_index = base_offset + csi_packet.HT_COEFFICIENTS_PER_CHANNEL + csi_packet.HT40_GAP_SUBCARRIERS
 
-    return csi_ht40[..., start_index : start_index + csi.LEGACY_COEFFICIENTS_PER_CHANNEL]
+    return csi_ht40[..., start_index : start_index + csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL]
 
 
 def extract_ht20_subcarriers_from_ht40(csi_ht40: np.ndarray, secondary_channel_relative: int):
@@ -871,9 +931,9 @@ def extract_ht20_subcarriers_from_ht40(csi_ht40: np.ndarray, secondary_channel_r
         start_index = 0
     else:
         # Secondary channel is above primary channel
-        start_index = csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS
+        start_index = csi_packet.HT_COEFFICIENTS_PER_CHANNEL + csi_packet.HT40_GAP_SUBCARRIERS
 
-    return csi_ht40[..., start_index : start_index + csi.HT_COEFFICIENTS_PER_CHANNEL]
+    return csi_ht40[..., start_index : start_index + csi_packet.HT_COEFFICIENTS_PER_CHANNEL]
 
 
 def extract_lltf_subcarriers_from_ht20(csi_ht20: np.ndarray):
@@ -884,12 +944,12 @@ def extract_lltf_subcarriers_from_ht20(csi_ht20: np.ndarray):
 
     :return: The extracted LLTF CSI data. Complex-valued NumPy array with shape (datapoints, arrays, rows, columns, subcarriers).
     """
-    start_index = (csi.HT_COEFFICIENTS_PER_CHANNEL - csi.LEGACY_COEFFICIENTS_PER_CHANNEL) // 2
+    start_index = (csi_packet.HT_COEFFICIENTS_PER_CHANNEL - csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL) // 2
 
-    return csi_ht20[..., start_index : start_index + csi.LEGACY_COEFFICIENTS_PER_CHANNEL]
+    return csi_ht20[..., start_index : start_index + csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL]
 
 
-def mask_csi_by_feed(csidata: np.ndarray, rfswitch_states: np.ndarray, desired_feed: csi.rfswitch_state_t):
+def mask_csi_by_feed(csidata: np.ndarray, rfswitch_states: np.ndarray, desired_feed: sensor.RFSwitchState):
     """
     Mask the CSI data by the RF switch state, i.e., set the CSI data to 0 for all datapoints where the RF switch state is not the desired feed.
     Also applies scaling to the remaining datapoints to account for the fact that only a fraction of the datapoints are kept, so that the overall power level is preserved.
@@ -919,8 +979,8 @@ def separate_feeds(csidata: np.ndarray, rfswitch_state: np.ndarray):
 
     :return: The separated CSI data. Complex-valued NumPy array with shape (datapoints, ..., subcarriers, 2), where the last dimension corresponds to the R/L feeds. Returns None if no datapoints have the desired RF switch state for any antenna.
     """
-    csi_R = mask_csi_by_feed(csidata, rfswitch_state, csi.rfswitch_state_t.SENSOR_RFSWITCH_ANTENNA_R)
-    csi_L = mask_csi_by_feed(csidata, rfswitch_state, csi.rfswitch_state_t.SENSOR_RFSWITCH_ANTENNA_L)
+    csi_R = mask_csi_by_feed(csidata, rfswitch_state, sensor.RFSwitchState.SENSOR_RFSWITCH_ANTENNA_R)
+    csi_L = mask_csi_by_feed(csidata, rfswitch_state, sensor.RFSwitchState.SENSOR_RFSWITCH_ANTENNA_L)
 
     if csi_R is None or csi_L is None:
         return None

@@ -11,7 +11,7 @@ import PyQt6.QtCore
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
 import espargos
-import espargos.csi
+import espargos.csi_packet
 from demos.common import BacklogMixin, CombinedArrayMixin, ESPARGOSApplication, SingleCSIFormatMixin
 
 
@@ -159,7 +159,7 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     @staticmethod
     def _subcarrier_bounds_for_format(preamble_format):
-        subcarrier_indices = espargos.csi.get_csi_format_subcarrier_indices(preamble_format)
+        subcarrier_indices = espargos.csi_packet.get_csi_format_subcarrier_indices(preamble_format)
         return int(subcarrier_indices[0]), int(subcarrier_indices[-1])
 
     @staticmethod
@@ -185,7 +185,7 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     def _subcarrier_array_index(self, preamble_format):
         selected = int(np.clip(self.subcarrier, *self._subcarrier_bounds_for_format(preamble_format)))
-        subcarrier_indices = espargos.csi.get_csi_format_subcarrier_indices(preamble_format)
+        subcarrier_indices = espargos.csi_packet.get_csi_format_subcarrier_indices(preamble_format)
         return int(np.argmin(np.abs(subcarrier_indices - selected)))
 
     def _compute_power_datapoints(self, preamble_format, csi_backlog, rx_gain_backlog, fft_gain_backlog):

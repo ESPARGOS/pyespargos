@@ -3,9 +3,9 @@
 from weakref import WeakKeyDictionary
 from collections import OrderedDict
 from typing import Callable
+import queue
 import numpy as np
 import threading
-import binascii
 import logging
 import time
 import json
@@ -15,8 +15,11 @@ from . import constants
 from . import cluster
 from . import board
 from . import util
-from . import csi
+from . import csi_packet
+from . import radar_packet
+from . import sensor
 from . import radar
+from . import wifi
 
 
 class CalibrationError(RuntimeError):
@@ -67,6 +70,10 @@ WIFICONF_PER_BOARD_KEYS = {
     "calib-interval",
 }
 
+_DEFAULT_RUN_TIMEOUT = 0.005
+_RUN_BATCH_BOUNDARY = object()
+_FRAME_COLLISION_WARNING_INTERVAL = 5.0
+
 
 class Pool(object):
     """
@@ -96,21 +103,63 @@ class Pool(object):
 
         # We have two caches: One for calibration packets, the other one for over-the-air packets
         self.cluster_cache_calib_lock = threading.Lock()
-        self.cluster_cache_calib = OrderedDict[str, cluster.CSICluster]()
+        self.cluster_cache_calib = OrderedDict[wifi.WiFiFrameKey, cluster.CSICluster]()
         self.cluster_cache_ota_lock = threading.Lock()
-        self.cluster_cache_ota = OrderedDict[str, cluster.CSICluster]()
+        self.cluster_cache_ota = OrderedDict[wifi.WiFiFrameKey, cluster.CSICluster]()
 
-        self.input_list = list()
-        self.input_cond = threading.Condition()
+        self._input_queue = queue.Queue()
+        self._run_lock = threading.Lock()
+        self._frame_collisions_since_warning = 0
+        self._last_frame_collision_warning = None
+        self._sensor_message_subscriptions = []
 
-        for board_num, board in enumerate(self.boards):
-            board.add_consumer(self.input_list, self.input_cond, board_num)
+        for board_num, board_obj in enumerate(self.boards):
+            self._sensor_message_subscriptions.append(
+                (
+                    board_obj,
+                    board_obj.subscribe_sensor_messages(
+                        board_obj.revision.type_header,
+                        self._make_sensor_message_callback(
+                            board_obj,
+                            board_num,
+                            board_obj.revision.serialized_csi_t,
+                        ),
+                    ),
+                )
+            )
+            self._sensor_message_subscriptions.append(
+                (
+                    board_obj,
+                    board_obj.subscribe_sensor_messages(
+                        radar_packet.RADAR_TX_REPORT_TYPE_HEADER,
+                        self._make_sensor_message_callback(
+                            board_obj,
+                            board_num,
+                            radar_packet.RadarTxReportPacket,
+                        ),
+                    ),
+                )
+            )
 
         self.callbacks: list[_CSICallback] = []
         self.logger.info(f"Created new pool with {len(boards)} board(s)")
 
         self.stored_calibration: calibration.CSICalibration = None
-        self.stats = dict()
+
+    def _make_sensor_message_callback(self, board_obj, board_num: int, decoder):
+        """Build the short stream-thread callback for one message type."""
+
+        def callback(message: sensor.SensorMessage[bytes]):
+            try:
+                decoded_message = sensor.decode_sensor_message(message, decoder)
+            except (AssertionError, ValueError) as exc:
+                self.logger.debug(f"Ignoring malformed sensor message: {exc}")
+                return
+
+            esp_num = board_obj.revision.antid_to_esp_num[message.antenna_id]
+            self._input_queue.put_nowait((esp_num, decoded_message, board_num))
+
+        return callback
 
     def _assert_same_across_boards(self, values: list, what: str):
         """
@@ -174,16 +223,16 @@ class Pool(object):
             return values[0]
         return chosen
 
-    def set_rfswitch(self, state: csi.rfswitch_state_t):
+    def set_rfswitch(self, state: sensor.RFSwitchState):
         """
         Set RF switch state for all boards in the pool.
 
-        :param state: The RF switch state to set, must be one of :class:`csi.rfswitch_state_t`
+        :param state: The RF switch state to set, must be one of :class:`sensor.RFSwitchState`
         """
         for board in self.boards + self.refgen_boards:
             board.set_rfswitch(state)
 
-    def get_rfswitch(self) -> csi.rfswitch_state_t:
+    def get_rfswitch(self) -> sensor.RFSwitchState:
         """
         Get RF switch state from the first board in the pool.
 
@@ -625,13 +674,14 @@ class Pool(object):
 
             # Enable calibration mode
             self.logger.info("Starting calibration")
-            self.set_rfswitch(csi.rfswitch_state_t.SENSOR_RFSWITCH_REFERENCE)
+            self.set_rfswitch(sensor.RFSwitchState.SENSOR_RFSWITCH_REFERENCE)
 
             # Run calibration for specified duration
             start = time.time()
             while (time.time() - start < duration) and (exithandler is None or exithandler.running):
                 if run_in_thread:
-                    self.run()
+                    remaining = max(0.0, duration - (time.time() - start))
+                    self.run(timeout=min(0.05, remaining))
                 else:
                     time.sleep(0.01)
         finally:
@@ -675,7 +725,7 @@ class Pool(object):
                     util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf))
                     if len(complete_clusters_lltf) > 0
                     else np.full(
-                        self.get_shape()[1:] + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,),
+                        self.get_shape()[1:] + (csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,),
                         np.nan,
                     )
                 )
@@ -683,7 +733,7 @@ class Pool(object):
                     util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20))
                     if len(complete_clusters_ht20) > 0
                     else np.full(
-                        self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL,),
+                        self.get_shape()[1:] + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL,),
                         np.nan,
                     )
                 )
@@ -691,7 +741,7 @@ class Pool(object):
                     util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
                     if len(complete_clusters_ht40) > 0
                     else np.full(
-                        self.get_shape()[1:] + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,),
+                        self.get_shape()[1:] + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi_packet.HT40_GAP_SUBCARRIERS,),
                         np.nan,
                     )
                 )
@@ -708,13 +758,13 @@ class Pool(object):
             )
 
         else:
-            phase_calibrations_lltf = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
-            phase_calibrations_ht20 = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
+            phase_calibrations_lltf = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
+            phase_calibrations_ht20 = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
             phase_calibration_ht40 = (
                 util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
                 if len(complete_clusters_ht40) > 0
                 else np.full(
-                    self.get_shape() + (csi.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi.HT40_GAP_SUBCARRIERS,),
+                    self.get_shape() + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi_packet.HT40_GAP_SUBCARRIERS,),
                     np.nan,
                 )
             )
@@ -753,81 +803,141 @@ class Pool(object):
         """
         return (len(self.boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
 
-    def get_stats(self):
+    def run(self, timeout: float | None = _DEFAULT_RUN_TIMEOUT) -> int:
+        """Process one bounded batch of pending sensor messages.
+
+        If no message is immediately available, wait up to ``timeout`` seconds
+        for the first one. Once a message is available, all messages ahead of a
+        FIFO batch boundary are removed from the input queue and processed
+        together. Messages arriving after that boundary remain queued for the
+        next call. Pass ``timeout=0`` for strictly non-blocking operation or
+        ``timeout=None`` to wait indefinitely.
+
+        Cluster completion and expiration are checked once after the batch.
+        Calls must not overlap; concurrent or reentrant calls raise
+        :class:`RuntimeError`.
+
+        :param timeout: Maximum time to wait for the first message, in seconds.
+        :return: Number of sensor messages processed.
         """
-        Get collected statistics about the pool.
-        """
-        return self.stats
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must be non-negative or None")
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError("Pool.run() must not be called concurrently or reentrantly")
 
-    def run(self):
-        """
-        Process incoming CSI data packets and call registered callbacks if CSI clusters are complete.
-        Repeatedly call this function from your main loop or from a separate thread.
-        May block for a short amount of time if no data is available.
-        """
-        with self.input_cond:
-            self.input_cond.wait(timeout=0.5)
-            packets = [p for p in self.input_list]
-            self.input_list.clear()
+        try:
+            try:
+                first_packet = self._input_queue.get(timeout=timeout)
+            except queue.Empty:
+                self._check_ota_clusters()
+                return 0
 
-        self._handle_packets(packets)
+            packets = [first_packet]
+            self._input_queue.put_nowait(_RUN_BATCH_BOUNDARY)
+            while True:
+                packet = self._input_queue.get_nowait()
+                if packet is _RUN_BATCH_BOUNDARY:
+                    break
+                packets.append(packet)
 
-    def _handle_packets(self, packets):
-        self.stats["packet_backlog"] = len(packets)
+            for packet in packets:
+                self._handle_packet(packet)
+            self._check_ota_clusters()
+            return len(packets)
+        finally:
+            self._run_lock.release()
 
-        for pkt in packets:
-            esp_num, stream_packet, board_num = pkt[0], pkt[1], pkt[2]
+    def _handle_packet(self, packet):
+        esp_num, sensor_message, board_num = packet[0], packet[1], packet[2]
+        stream_packet = sensor_message.payload
 
-            source_mac_str = binascii.hexlify(bytearray(stream_packet.source_mac)).decode("utf-8")
-            dest_mac_str = binascii.hexlify(bytearray(stream_packet.dest_mac)).decode("utf-8")
+        if isinstance(stream_packet, csi_packet.CSIPacket):
+            cache = self.cluster_cache_calib if stream_packet.is_calib else self.cluster_cache_ota
+            cache_lock = self.cluster_cache_calib_lock if stream_packet.is_calib else self.cluster_cache_ota_lock
+            description = f"CSI from board {board_num}, sensor {esp_num}"
+        elif isinstance(stream_packet, radar_packet.RadarTxReportPacket):
+            cache = self.cluster_cache_ota
+            cache_lock = self.cluster_cache_ota_lock
+            description = f"radar TX report with tx_count={stream_packet.tx_count}"
+        else:
+            raise TypeError(f"Unsupported Pool sensor-message payload: {type(stream_packet).__name__}")
 
-            # Identifier (here: MAC address & sequence control number)
-            cluster_id = f"{source_mac_str}-{dest_mac_str}-{stream_packet.seq_ctrl.seg:03x}-{stream_packet.seq_ctrl.frag:01x}"
+        frame_key = wifi.WiFiFrameKey.from_packet(stream_packet)
+        collision = False
+        completed_calibration_cluster = None
+        with cache_lock:
+            current_cluster = cache.get(frame_key)
+            if current_cluster is None:
+                current_cluster = cluster.CSICluster(
+                    frame_key.source_mac.hex(),
+                    frame_key.destination_mac.hex(),
+                    stream_packet.seq_ctrl,
+                    [b.revision for b in self.boards],
+                )
+                cache[frame_key] = current_cluster
 
-            if isinstance(stream_packet, csi.radar_tx_report_tlv_t):
-                with self.cluster_cache_ota_lock:
-                    if cluster_id not in self.cluster_cache_ota:
-                        self.cluster_cache_ota[cluster_id] = cluster.CSICluster(
-                            source_mac_str,
-                            dest_mac_str,
-                            stream_packet.seq_ctrl,
-                            [b.revision for b in self.boards],
-                        )
-
-                    self.cluster_cache_ota[cluster_id].set_radar_tx_report(stream_packet, board_num=board_num, esp_num=esp_num)
-                continue
-
-            serialized_csi = stream_packet
-
-            # Prepare a cache entry for a new cluster with a different and add received data to the current cluster
-            if serialized_csi.is_calib:
-                calib_cluster = None
-                with self.cluster_cache_calib_lock:
-                    if cluster_id not in self.cluster_cache_calib:
-                        self.cluster_cache_calib[cluster_id] = cluster.CSICluster(
-                            source_mac_str,
-                            dest_mac_str,
-                            serialized_csi.seq_ctrl,
-                            [b.revision for b in self.boards],
-                        )
-
-                    self.cluster_cache_calib[cluster_id].add_csi(board_num, esp_num, serialized_csi)
-                    calib_cluster = self.cluster_cache_calib[cluster_id]
-                if self.emit_calibration_csi:
-                    self._try_callbacks(calib_cluster)
+            if isinstance(stream_packet, csi_packet.CSIPacket):
+                existing_csi = current_cluster.get_csi_packet(board_num, esp_num)
+                if existing_csi is not None:
+                    if bytes(existing_csi) == bytes(stream_packet):
+                        return
+                    collision = True
+                elif np.any(current_cluster.get_completion()) and current_cluster.is_radar() != stream_packet.is_radar:
+                    collision = True
+                elif current_cluster.has_radar_tx_report() and not stream_packet.is_radar:
+                    collision = True
+                else:
+                    current_cluster.add_csi(board_num, esp_num, stream_packet)
+                    if stream_packet.is_calib:
+                        completed_calibration_cluster = current_cluster
             else:
-                with self.cluster_cache_ota_lock:
-                    if cluster_id not in self.cluster_cache_ota:
-                        self.cluster_cache_ota[cluster_id] = cluster.CSICluster(
-                            source_mac_str,
-                            dest_mac_str,
-                            serialized_csi.seq_ctrl,
-                            [b.revision for b in self.boards],
-                        )
+                existing_report = current_cluster.get_radar_tx_info()
+                if existing_report is not None:
+                    if bytes(existing_report) == bytes(stream_packet):
+                        return
+                    collision = True
+                elif np.any(current_cluster.get_completion()) and not current_cluster.is_radar():
+                    collision = True
+                else:
+                    current_cluster.set_radar_tx_report(stream_packet, board_num=board_num, esp_num=esp_num)
 
-                    # Add received data for the antenna to the current cluster
-                    self.cluster_cache_ota[cluster_id].add_csi(board_num, esp_num, serialized_csi)
+        if collision:
+            self._warn_frame_collision(current_cluster, frame_key, description)
+            return
+        if completed_calibration_cluster is not None and self.emit_calibration_csi:
+            self._try_callbacks(completed_calibration_cluster)
 
+    def _warn_frame_collision(
+        self,
+        existing_cluster: cluster.CSICluster,
+        frame_key: wifi.WiFiFrameKey,
+        description: str,
+    ):
+        """Emit a rate-limited warning when a reusable frame key collides."""
+
+        self._frame_collisions_since_warning += 1
+        now = time.monotonic()
+        if (
+            self._last_frame_collision_warning is not None
+            and now - self._last_frame_collision_warning < _FRAME_COLLISION_WARNING_INTERVAL
+        ):
+            return
+
+        completion = existing_cluster.get_completion()
+        self.logger.warning(
+            "Wi-Fi frame-key collision for "
+            f"source={frame_key.source_mac.hex()}, "
+            f"destination={frame_key.destination_mac.hex()}, "
+            f"sequence={frame_key.sequence_number}, "
+            f"fragment={frame_key.fragment_number} while adding {description}; "
+            "dropping the incoming message and retaining the existing cluster, which contains CSI from "
+            f"{int(np.sum(completion))}/{completion.size} sensors "
+            f"({self._frame_collisions_since_warning} collision(s) since the previous warning)"
+        )
+        self._frame_collisions_since_warning = 0
+        self._last_frame_collision_warning = now
+
+    def _check_ota_clusters(self):
         # Check OTA cluster cache for packets where callback is due and for stale packets.
         # Snapshot under the lock so concurrent mutation (e.g. cache clear at the end of
         # calibration) cannot invalidate the iteration, then fire callbacks without holding

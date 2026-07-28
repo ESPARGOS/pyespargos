@@ -7,7 +7,6 @@ sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
 from demos.common import ESPARGOSApplication, BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
 
-from espargos.csi import rfswitch_state_t
 import espargos.constants
 import espargos.util
 import numpy as np

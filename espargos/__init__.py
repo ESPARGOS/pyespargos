@@ -4,10 +4,19 @@ from .calibration import CSICalibration
 from .exithandler import ExitHandler
 from .backlog import BacklogFilter, CSIBacklog, Exclude11bFilter, MacFilter
 from .cluster import CSICluster
-from .board import Board, EspargosAPIVersionError, EspargosCsiStreamConnectionError, EspargosHTTPStatusError, EspargosUnexpectedResponseError
+from .board import Board, EspargosAPIVersionError, EspargosCsiStreamConnectionError, EspargosHTTPStatusError, EspargosUnexpectedResponseError, SensorMessageSubscription
 from .pool import CalibrationError, Pool
-from . import csi
+from .csi_packet import CSIPacket
+from .radar_packet import RadarTxReportPacket
+from .sensor import RFSwitchState, SensorFragment, SensorMessage, SensorPacket
+from .wifi import SequenceControl, WiFiFrameKey, WiFiPhyMode, WiFiPhyRate, WiFiTxPower
+from . import csi_compression
+from . import csi_packet
 from . import radar
+from . import radar_packet
+from . import sensor
+from . import util
+from . import wifi
 from .radar import RadarPoolConfig
 import logging
 import sys

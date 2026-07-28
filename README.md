@@ -437,6 +437,7 @@ finally:
   - **WebSocket** (`/csi`): more compatible fallback, and the transport used by the web interface.
 * Over USB, *pyespargos* accepts UART host specifiers such as `uart:/dev/ttyUSB0` or `uart:COM3`. Control RPCs and CSI streaming are then tunnelled over the serial link.
 * `Board.start()` chooses transports automatically: network hosts try UDP first and fall back to WebSocket; UART hosts use the UART transport.
+* After reassembling sensor messages, `Board` dispatches them through callbacks filtered by their four-byte type header. Callbacks receive the raw `SensorMessage`, including its UID and antenna ID. Consumers own parsing: `Pool` decodes CSI and radar TX reports, while optional features can subscribe to and decode their own message types without adding those formats to `board.py`.
 * Only one CSI stream transport can be active on a controller at a time. The UART router and direct *pyespargos* UART access also need exclusive access to the serial device.
 
 ### The Backlog

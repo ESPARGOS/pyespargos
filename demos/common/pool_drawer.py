@@ -7,7 +7,7 @@ import copy
 import re
 
 import espargos.pool
-import espargos.csi
+import espargos.sensor
 
 from .config_manager import ConfigManager
 
@@ -183,7 +183,7 @@ class PoolDrawer(PyQt6.QtCore.QObject):
 
                 # RF switch
                 if "rf_switch" in delta:
-                    self.pool.set_rfswitch(espargos.csi.rfswitch_state_t(int(delta["rf_switch"])))
+                    self.pool.set_rfswitch(espargos.sensor.RFSwitchState(int(delta["rf_switch"])))
 
                 # Pool-local reference CSI stream option
                 if "show_reference" in delta:

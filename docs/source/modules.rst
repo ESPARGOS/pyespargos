@@ -51,10 +51,42 @@ espargos.constants
    :undoc-members:
    :show-inheritance:
 
-espargos.csi
-------------
+espargos.csi_packet
+-------------------
 
-.. automodule:: espargos.csi
+.. automodule:: espargos.csi_packet
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.csi_compression
+------------------------
+
+.. automodule:: espargos.csi_compression
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.radar_packet
+---------------------
+
+.. automodule:: espargos.radar_packet
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.sensor
+---------------
+
+.. automodule:: espargos.sensor
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.wifi
+-------------
+
+.. automodule:: espargos.wifi
    :members:
    :undoc-members:
    :show-inheritance:

@@ -46,7 +46,7 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
         self._link_rx_indices = np.asarray([], dtype=np.int32)
         self._link_tx_indices = np.asarray([], dtype=np.int32)
         self._link_index_by_rx_tx = np.full((self.sensor_count, self.sensor_count), -1, dtype=np.int32)
-        self._subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices("lltf")
+        self._subcarrier_range = espargos.csi_packet.get_csi_format_subcarrier_indices("lltf")
         self._latest_link_csi = {}
         self._dirty_link_indices = set()
         self._update_link_indices()
@@ -83,7 +83,7 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def subcarrierCount(self):
-        return espargos.csi.get_csi_format_subcarrier_count("lltf")
+        return espargos.csi_packet.get_csi_format_subcarrier_count("lltf")
 
     @PyQt6.QtCore.pyqtSlot(int, result=str)
     def linkName(self, link_index: int):
@@ -109,10 +109,10 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
             active_by_sensor=True,
             t0_by_sensor=t0_by_sensor,
             period_by_sensor=period_by_sensor,
-            tx_power=espargos.csi.wifi_tx_power_t(int(self.appconfig.get("tx_power"))),
-            tx_phymode=espargos.csi.wifi_phy_mode_t(int(self.appconfig.get("tx_phymode"))),
-            tx_rate=espargos.csi.wifi_phy_rate_t(int(self.appconfig.get("tx_rate"))),
-            rfswitch_state=espargos.csi.rfswitch_state_t(int(self.appconfig.get("rfswitch_state"))),
+            tx_power=espargos.wifi.WiFiTxPower(int(self.appconfig.get("tx_power"))),
+            tx_phymode=espargos.wifi.WiFiPhyMode(int(self.appconfig.get("tx_phymode"))),
+            tx_rate=espargos.wifi.WiFiPhyRate(int(self.appconfig.get("tx_rate"))),
+            rfswitch_state=espargos.sensor.RFSwitchState(int(self.appconfig.get("rfswitch_state"))),
         )
         self.pool.set_radar_config(pool_radar_config)
 
@@ -170,7 +170,7 @@ class EspargosDemoRadarCSI(ESPARGOSApplication):
     @PyQt6.QtCore.pyqtSlot()
     def pollCSI(self):
         if hasattr(self, "pool"):
-            self.pool.run()
+            self.pool.run(timeout=0)
 
     def _deserialize_cluster_csi_lltf(self, clustered_csi):
         calibration = self.pool.get_calibration()

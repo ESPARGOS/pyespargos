@@ -3,7 +3,7 @@ import threading
 import logging
 import re
 
-from . import csi
+from . import csi_packet
 
 
 class BacklogFilter(object):
@@ -57,22 +57,22 @@ class CSIBacklog(object):
 
     DATA_FORMATS = {
         "lltf": {
-            "shape": (csi.LEGACY_COEFFICIENTS_PER_CHANNEL,),
+            "shape": (csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,),
             "per_antenna": True,
             "dtype": np.complex64,
         },
         "ht20": {
-            "shape": (csi.HT_COEFFICIENTS_PER_CHANNEL,),
+            "shape": (csi_packet.HT_COEFFICIENTS_PER_CHANNEL,),
             "per_antenna": True,
             "dtype": np.complex64,
         },
         "ht40": {
-            "shape": (csi.HT_COEFFICIENTS_PER_CHANNEL + csi.HT40_GAP_SUBCARRIERS + csi.HT_COEFFICIENTS_PER_CHANNEL,),
+            "shape": (csi_packet.HT_COEFFICIENTS_PER_CHANNEL + csi_packet.HT40_GAP_SUBCARRIERS + csi_packet.HT_COEFFICIENTS_PER_CHANNEL,),
             "per_antenna": True,
             "dtype": np.complex64,
         },
         "he20": {
-            "shape": (csi.HE20_COEFFICIENTS_PER_CHANNEL,),
+            "shape": (csi_packet.HE20_COEFFICIENTS_PER_CHANNEL,),
             "per_antenna": True,
             "dtype": np.complex64,
         },
@@ -512,4 +512,4 @@ class CSIBacklog(object):
         This function runs in a separate thread and continuously processes CSI data from the pool.
         """
         while self.running:
-            self.pool.run()
+            self.pool.run(timeout=0.5)

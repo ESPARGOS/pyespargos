@@ -12,7 +12,7 @@ import termios
 import serial
 import serial.tools.list_ports
 
-from . import csi
+from . import sensor
 
 UART_PROTOCOL_VERSION = 1
 
@@ -604,9 +604,7 @@ def validate_csistream_payload(payload: bytes, revision) -> bool:
     if len(payload) < 4:
         return False
     try:
-        jumbo = csi.parse_csistream_jumbo_message(payload)
-        for _header, _fragment in csi.iter_csistream_fragments(jumbo):
-            pass
+        sensor.SensorPacket.from_bytes(payload)
     except ValueError:
         return False
     return True

@@ -6,7 +6,8 @@ import numpy as np
 
 from . import calibration
 from . import constants
-from . import csi
+from . import sensor
+from . import wifi
 
 RADAR_TIME_SCALE = 1e6
 FTM_TIMESTAMP_UNIT_S = 1.5625e-9
@@ -200,10 +201,10 @@ def build_pool_config(
     active_by_sensor,
     t0_by_sensor,
     period_by_sensor,
-    tx_power: csi.wifi_tx_power_t,
-    tx_phymode: csi.wifi_phy_mode_t,
-    tx_rate: csi.wifi_phy_rate_t,
-    rfswitch_state: csi.rfswitch_state_t,
+    tx_power: wifi.WiFiTxPower,
+    tx_phymode: wifi.WiFiPhyMode,
+    tx_rate: wifi.WiFiPhyRate,
+    rfswitch_state: sensor.RFSwitchState,
     mac_by_sensor=None,
 ) -> RadarPoolConfig:
     """

@@ -7,7 +7,7 @@ sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
 from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin
 
-from espargos.csi import rfswitch_state_t
+from espargos.sensor import RFSwitchState
 import numpy as np
 import espargos
 import argparse
@@ -110,12 +110,12 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
     def relativePhase(self):
         return bool(self.appconfig.get("relative_phase"))
 
-    # Mapping from config string to rfswitch_state_t
+    # Mapping from config string to RFSwitchState
     FEED_FILTER_MAP = {
-        "R": rfswitch_state_t.SENSOR_RFSWITCH_ANTENNA_R,
-        "L": rfswitch_state_t.SENSOR_RFSWITCH_ANTENNA_L,
-        "ref": rfswitch_state_t.SENSOR_RFSWITCH_REFERENCE,
-        "iso": rfswitch_state_t.SENSOR_RFSWITCH_ISOLATION,
+        "R": RFSwitchState.SENSOR_RFSWITCH_ANTENNA_R,
+        "L": RFSwitchState.SENSOR_RFSWITCH_ANTENNA_L,
+        "ref": RFSwitchState.SENSOR_RFSWITCH_REFERENCE,
+        "iso": RFSwitchState.SENSOR_RFSWITCH_ISOLATION,
     }
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=preambleFormatChanged)
@@ -123,7 +123,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
         preamble_format = self.genericconfig.get("preamble_format")
         if preamble_format == "auto":
             preamble_format = self.last_preamble_format
-        return espargos.csi.get_csi_format_subcarrier_count(preamble_format)
+        return espargos.csi_packet.get_csi_format_subcarrier_count(preamble_format)
 
     def exec(self):
         return super().exec()
@@ -299,7 +299,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
             else:
                 csi_phase = np.angle(csi_flat)
 
-            subcarrier_range = espargos.csi.get_csi_format_subcarrier_indices(csi_key)
+            subcarrier_range = espargos.csi_packet.get_csi_format_subcarrier_indices(csi_key)
 
             for is_valid, pwr_series, phase_series, ant_pwr, ant_phase in zip(valid_antennas, powerSeries, phaseSeries, csi_power, csi_phase):
                 if is_valid:

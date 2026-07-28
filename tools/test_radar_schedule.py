@@ -73,10 +73,10 @@ def main():
             active_by_sensor=True,
             t0_by_sensor=t0_by_sensor,
             period_by_sensor=period_by_sensor,
-            tx_power=espargos.csi.wifi_tx_power_t(int(current_radar_config["tx_power"])),
-            tx_phymode=espargos.csi.wifi_phy_mode_t(int(current_radar_config["tx_phymode"])),
-            tx_rate=espargos.csi.wifi_phy_rate_t(int(current_radar_config["tx_rate"])),
-            rfswitch_state=espargos.csi.rfswitch_state_t(int(current_radar_config["rfswitch_state"])),
+            tx_power=espargos.wifi.WiFiTxPower(int(current_radar_config["tx_power"])),
+            tx_phymode=espargos.wifi.WiFiPhyMode(int(current_radar_config["tx_phymode"])),
+            tx_rate=espargos.wifi.WiFiPhyRate(int(current_radar_config["tx_rate"])),
+            rfswitch_state=espargos.sensor.RFSwitchState(int(current_radar_config["rfswitch_state"])),
         )
         schedule_by_source_mac = build_schedule_lookup(pool, pool_radar_config)
         pool.set_radar_config(pool_radar_config)

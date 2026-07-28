@@ -85,7 +85,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
         def _run_worker():
             while self._run_worker_enabled:
                 try:
-                    self.pool.run()
+                    self.pool.run(timeout=0.5)
                 except Exception:
                     time.sleep(0.05)
 
@@ -214,10 +214,10 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
                 active_by_sensor=True,
                 t0_by_sensor=t0_by_sensor,
                 period_by_sensor=period_by_sensor,
-                tx_power=espargos.csi.wifi_tx_power_t(int(self.appconfig.get("tx_power"))),
-                tx_phymode=espargos.csi.wifi_phy_mode_t(int(self.appconfig.get("tx_phymode"))),
-                tx_rate=espargos.csi.wifi_phy_rate_t(int(self.appconfig.get("tx_rate"))),
-                rfswitch_state=espargos.csi.rfswitch_state_t(int(self.appconfig.get("rfswitch_state"))),
+                tx_power=espargos.wifi.WiFiTxPower(int(self.appconfig.get("tx_power"))),
+                tx_phymode=espargos.wifi.WiFiPhyMode(int(self.appconfig.get("tx_phymode"))),
+                tx_rate=espargos.wifi.WiFiPhyRate(int(self.appconfig.get("tx_rate"))),
+                rfswitch_state=espargos.sensor.RFSwitchState(int(self.appconfig.get("rfswitch_state"))),
             )
             self.pool.set_radar_config(pool_radar_config)
         except Exception as exc:

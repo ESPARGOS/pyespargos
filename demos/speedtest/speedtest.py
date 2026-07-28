@@ -76,7 +76,7 @@ class EspargosDemoSpeedtest(ESPARGOSApplication):
 
     def _pool_runner(self):
         while self._pool_runner_running.is_set():
-            self.pool.run()
+            self.pool.run(timeout=0.5)
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):

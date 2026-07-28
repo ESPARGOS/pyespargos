@@ -5,15 +5,14 @@ import http.client
 import threading
 import logging
 import socket
-import ctypes
 import json
-import binascii
+from dataclasses import dataclass
+from typing import Callable
 
-import time
 import numpy as np
 
 from . import revisions
-from . import csi
+from . import sensor
 from . import uart
 
 # Port used by the controller as source port for UDP CSI packets
@@ -56,66 +55,12 @@ class EspargosAPIVersionError(Exception):
     pass
 
 
-class FragmentReassembler:
-    def __init__(self, timeout_s: float = 5.0, logger=None):
-        self.timeout_s = timeout_s
-        self.logger = logger
-        self._entries = {}
+@dataclass(frozen=True, eq=False)
+class SensorMessageSubscription:
+    """Handle for one sensor-message callback subscription."""
 
-    def clear(self):
-        self._entries.clear()
-
-    def _drop_stale(self, now: float):
-        stale_keys = [key for key, entry in self._entries.items() if now - entry["timestamp"] > self.timeout_s]
-        for key in stale_keys:
-            self._entries.pop(key, None)
-
-    def push(self, fragments, now: float | None = None):
-        if now is None:
-            now = time.monotonic()
-
-        self._drop_stale(now)
-        completed_packets = []
-        for header, payload in fragments:
-            uid = int(header.uid)
-            total_fragments = int(header.total_fragments)
-            fragment_index = int(header.fragment_index)
-
-            if total_fragments <= 0 or fragment_index >= total_fragments:
-                if self.logger is not None:
-                    self.logger.debug(f"Ignoring invalid jumbo fragment index {fragment_index}/{total_fragments} for uid {uid}")
-                self._entries.pop(uid, None)
-                continue
-
-            packet_antid = csi.csistream_uid_to_antid(uid)
-            entry = self._entries.get(uid)
-            if entry is None or entry["total_fragments"] != total_fragments:
-                entry = {
-                    "timestamp": now,
-                    "antid": packet_antid,
-                    "total_fragments": total_fragments,
-                    "parts": {},
-                }
-                self._entries[uid] = entry
-            elif entry["antid"] != packet_antid:
-                if self.logger is not None:
-                    self.logger.warning(f"Received jumbo fragments with inconsistent UID-derived antid for uid {uid}")
-                self._entries.pop(uid, None)
-                continue
-
-            entry["timestamp"] = now
-            entry["parts"][fragment_index] = bytes(payload)
-
-            if len(entry["parts"]) != entry["total_fragments"]:
-                continue
-
-            if any(index not in entry["parts"] for index in range(entry["total_fragments"])):
-                continue
-
-            completed_packets.append((entry["antid"], b"".join(entry["parts"][index] for index in range(entry["total_fragments"]))))
-            self._entries.pop(uid, None)
-
-        return completed_packets
+    type_header: int
+    callback: Callable[[sensor.SensorMessage[bytes]], None]
 
 
 # Magic bytes sent by the controller as the first WebSocket frame to confirm a valid CSI stream connection
@@ -249,8 +194,9 @@ class Board(object):
         self.logger.info(f"Identified ESPARGOS at {self.ip_info['ip']} as {self.get_name()}")
 
         self.csistream_connected = False
-        self.consumers = []
-        self._fragment_reassembler = FragmentReassembler(logger=self.logger)
+        self._sensor_message_reassembler = sensor.SensorMessageReassembler(logger=self.logger)
+        self._sensor_message_subscriptions: dict[int, list[SensorMessageSubscription]] = {}
+        self._sensor_message_subscriptions_lock = threading.Lock()
 
     def get_name(self):
         """
@@ -482,11 +428,11 @@ class Board(object):
         if self._uart_client is not None:
             self._uart_client.close()
 
-    def set_rfswitch(self, state: csi.rfswitch_state_t):
+    def set_rfswitch(self, state: sensor.RFSwitchState):
         """
         Sets the RF switch state on the ESPARGOS controller for reception mode.
 
-        :param state: The RF switch state to set, must be one of :class:`csi.rfswitch_state_t`
+        :param state: The RF switch state to set, must be one of :class:`sensor.RFSwitchState`
 
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
@@ -495,11 +441,11 @@ class Board(object):
             self.logger.error(f"Invalid response: {res}")
             raise EspargosUnexpectedResponseError
 
-    def get_rfswitch(self) -> csi.rfswitch_state_t:
+    def get_rfswitch(self) -> sensor.RFSwitchState:
         """
         Fetches the current RF switch state from the ESPARGOS controller.
 
-        :return: The current RF switch state as one of :class:`csi.rfswitch_state_t`
+        :return: The current RF switch state as one of :class:`sensor.RFSwitchState`
 
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
@@ -507,9 +453,9 @@ class Board(object):
         try:
             state_int = int(res)
             # Check if valid enum value
-            if state_int not in [e.value for e in csi.rfswitch_state_t]:
+            if state_int not in [e.value for e in sensor.RFSwitchState]:
                 raise EspargosUnexpectedResponseError("get_rfswitch returned invalid enum value")
-            return csi.rfswitch_state_t(state_int)
+            return sensor.RFSwitchState(state_int)
         except (ValueError, KeyError):
             self.logger.error(f"Invalid response: {res}")
             raise EspargosUnexpectedResponseError
@@ -813,44 +759,92 @@ class Board(object):
             self.logger.error(f"Invalid response: {res}")
             raise EspargosUnexpectedResponseError(str(res))
 
-    def add_consumer(self, clist: list, cv: threading.Condition, *args):
-        """
-        Adds a consumer to the CSI stream.
-        A consumer is defined by a list, a condition variable and additional arguments.
-        When a CSI packet is received, it will be appended to the list, and the condition variable will be notified.
+    def subscribe_sensor_messages(
+        self,
+        type_header: int,
+        callback: Callable[[sensor.SensorMessage[bytes]], None],
+    ) -> SensorMessageSubscription:
+        """Subscribe a callback to one raw sensor-message type.
 
-        :param clist: A list to which the CSI packet will be appended. The entry added to the list is a tuple :code:`(esp_num, serialized_csi, *args)`,
-                        where esp_num is the number of the sensor in the array, serialized_csi is the raw CSI packet and :code:`*args` are the additional arguments.
-        :param cv: A condition variable that will be notified when a CSI packet is received
-        :param args: Additional arguments that will be added to the list along with the CSI packet
+        The callback receives a complete, reassembled
+        :class:`sensor.SensorMessage` whose payload is still raw ``bytes``.
+        Parsing belongs to the consumer, keeping message-specific knowledge out
+        of the board transport. Callbacks run on the stream thread and must
+        therefore return quickly without performing blocking or expensive work.
+
+        :param type_header: Four-byte logical message type as an integer.
+        :param callback: Callable accepting a raw, reassembled
+            :class:`sensor.SensorMessage`.
+        :return: Subscription handle accepted by
+            :meth:`unsubscribe_sensor_messages`.
+        :raises ValueError: If the type header is invalid.
+        :raises TypeError: If ``callback`` is not callable.
         """
-        self.consumers.append((clist, cv, args))
+        if not isinstance(type_header, int) or not 0 <= type_header <= 0xFFFFFFFF:
+            raise ValueError("type_header must be a 32-bit unsigned integer")
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        subscription = SensorMessageSubscription(
+            type_header=type_header,
+            callback=callback,
+        )
+        with self._sensor_message_subscriptions_lock:
+            subscriptions = self._sensor_message_subscriptions.setdefault(type_header, [])
+            subscriptions.append(subscription)
+        return subscription
+
+    def unsubscribe_sensor_messages(self, subscription: SensorMessageSubscription) -> bool:
+        """Remove a sensor-message subscription.
+
+        The type-header entry is discarded automatically when its final
+        callback unsubscribes.
+
+        :param subscription: Handle returned by
+            :meth:`subscribe_sensor_messages`.
+        :return: ``True`` if the subscription was active.
+        """
+        if not isinstance(subscription, SensorMessageSubscription):
+            return False
+        with self._sensor_message_subscriptions_lock:
+            subscriptions = self._sensor_message_subscriptions.get(subscription.type_header)
+            if subscriptions is None:
+                return False
+            try:
+                subscriptions.remove(subscription)
+            except ValueError:
+                return False
+            if not subscriptions:
+                del self._sensor_message_subscriptions[subscription.type_header]
+            return True
 
     def _csistream_handle_message(self, message):
         try:
-            jumbo = csi.parse_csistream_jumbo_message(message)
-            fragments = list(csi.iter_csistream_fragments(jumbo))
+            sensor_packet = sensor.SensorPacket.from_bytes(message)
         except ValueError as exc:
-            self.logger.debug(f"Ignoring malformed CSI stream message: {exc}")
+            self.logger.debug(f"Ignoring malformed sensor packet: {exc}")
             return
 
-        completed_packets = self._fragment_reassembler.push(fragments)
+        completed_messages = self._sensor_message_reassembler.push(sensor_packet)
 
-        for packet_antid, packet_payload in completed_packets:
+        for message in completed_messages:
             try:
-                serialized_csi = csi.deserialize_packet_buffer(self.revision, packet_payload)
-            except (AssertionError, ValueError):
-                self.logger.debug("Ignoring CSI payload with unexpected logical type header")
+                type_header = sensor.get_sensor_message_type_header(message)
+            except ValueError:
+                self.logger.debug("Ignoring sensor message without a logical type header")
                 continue
 
-            serialized_csi.antid = packet_antid
+            with self._sensor_message_subscriptions_lock:
+                subscriptions = tuple(self._sensor_message_subscriptions.get(type_header, ()))
+            if not subscriptions:
+                continue
 
-            packet_esp_num = self.revision.antid_to_esp_num[packet_antid]
-
-            for clist, cv, args in self.consumers:
-                with cv:
-                    clist.append((packet_esp_num, serialized_csi, *args))
-                    cv.notify()
+            for subscription in subscriptions:
+                try:
+                    subscription.callback(message)
+                except Exception:
+                    self.logger.exception(
+                        f"Sensor-message callback failed for type 0x{type_header:08x}"
+                    )
 
     def _udp_keepalive_loop(self):
         """Periodically send empty UDP packets to the controller to keep the firewall hole open."""
