@@ -136,6 +136,12 @@ class RadarTxReportPacket:
         return self.tx_status != 0
 
     @property
+    def is_retry(self):
+        """Radar TX reports describe the initially enqueued transmission."""
+
+        return False
+
+    @property
     def has_hardware_tx_timestamp(self):
         return bool(self.flags & RADAR_TX_REPORT_FLAG_HAS_HW_TIMESTAMP)
 

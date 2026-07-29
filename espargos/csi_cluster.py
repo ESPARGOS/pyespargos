@@ -56,6 +56,7 @@ class CSICluster(SensorCluster):
         self.seq_ctrl = wifi.SequenceControl(b"\x00\x00")
         self.seq_ctrl.seg = frame_key.sequence_number
         self.seq_ctrl.frag = frame_key.fragment_number
+        self.retry = frame_key.retry
 
         self.timestamp = time.time()
         self.serialized_csi_all = [[[None for c in range(constants.ANTENNAS_PER_ROW)] for r in range(constants.ROWS_PER_BOARD)] for b in self.board_revisions]
@@ -92,6 +93,12 @@ class CSICluster(SensorCluster):
             existing_csi = self.serialized_csi_all[board_index][row][col]
             if existing_csi is not None:
                 if bytes(existing_csi) == bytes(stream_packet):
+                    return False
+                # The Retry bit distinguishes an original transmission from
+                # its retries, but not multiple retry attempts. Retain the
+                # first retry observed by this sensor and silently discard
+                # later attempts under the same key.
+                if self.retry:
                     return False
                 raise ClusterCollisionError(f"conflicting CSI from board {board_num}, row {row}, column {col}")
             if np.any(self.get_completion()) and self.is_radar() != stream_packet.is_radar:
@@ -133,6 +140,7 @@ class CSICluster(SensorCluster):
         assert binascii.hexlify(bytearray(serialized_csi.dest_mac)).decode("utf-8") == self.dest_mac
         assert serialized_csi.seq_ctrl.seg == self.seq_ctrl.seg
         assert serialized_csi.seq_ctrl.frag == self.seq_ctrl.frag
+        assert serialized_csi.is_retry == self.retry
         if self.radar_tx_report is not None:
             assert serialized_csi.is_radar
 

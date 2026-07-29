@@ -10,18 +10,50 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 
+class FrameControl(ctypes.LittleEndianStructure):
+    """The complete 16-bit IEEE 802.11 Frame Control field."""
+
+    _pack_ = 1
+    _layout_ = "ms"
+    _fields_ = [
+        ("version", ctypes.c_uint16, 2),
+        ("type", ctypes.c_uint16, 2),
+        ("subtype", ctypes.c_uint16, 4),
+        ("to_ds", ctypes.c_uint16, 1),
+        ("from_ds", ctypes.c_uint16, 1),
+        ("more_frag", ctypes.c_uint16, 1),
+        ("retry", ctypes.c_uint16, 1),
+        ("power_mgmt", ctypes.c_uint16, 1),
+        ("more_data", ctypes.c_uint16, 1),
+        ("protected", ctypes.c_uint16, 1),
+        ("order", ctypes.c_uint16, 1),
+    ]
+
+    def __new__(cls, buf=None):
+        return cls.from_buffer_copy(buf)
+
+    def __init__(self, buf=None):
+        pass
+
+
+assert ctypes.sizeof(FrameControl) == 2
+
+
 @dataclass(frozen=True)
 class WiFiFrameKey:
     """Reusable 802.11 fields used to associate observations of a frame.
 
     This is not a globally unique physical-transmission identifier: sequence
-    numbers wrap after 4096 values and retransmissions reuse them.
+    numbers wrap after 4096 values, and the one-bit Retry field distinguishes
+    original transmissions from initial retries but cannot distinguish those
+    initial retries from re-retries.
     """
 
     source_mac: bytes
     destination_mac: bytes
     sequence_number: int
     fragment_number: int
+    retry: bool = False
 
     @classmethod
     def from_packet(cls, packet) -> "WiFiFrameKey":
@@ -30,6 +62,7 @@ class WiFiFrameKey:
             destination_mac=bytes(packet.dest_mac),
             sequence_number=int(packet.seq_ctrl.seg),
             fragment_number=int(packet.seq_ctrl.frag),
+            retry=packet.is_retry,
         )
 
 

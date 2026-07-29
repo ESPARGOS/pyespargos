@@ -256,7 +256,10 @@ class Pool(ABC):
             return
 
         self.logger.warning(
-            "Cluster-key collision in cache %r for %r: %s; dropping the incoming " "message and retaining the existing cluster (%d collision(s) since " "the previous warning)",
+            "Cluster-key collision in cache %r for %r: %s; dropping the incoming "
+            "message and retaining the existing cluster. This can happen when a "
+            "transmitter does not advance its sequence number as intended. "
+            "(%d collision(s) since the previous warning)",
             cache_name,
             cluster_key,
             collision,

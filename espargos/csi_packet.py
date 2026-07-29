@@ -12,7 +12,7 @@ import numpy as np
 
 from . import constants
 from .sensor import RFSwitchState
-from .wifi import SequenceControl
+from .wifi import FrameControl, SequenceControl
 
 # Other constants
 HT_COEFFICIENTS_PER_CHANNEL = 57
@@ -215,6 +215,7 @@ class CSIPacket:
         self.dest_mac = bytes(6)
         self.seq_ctrl = SequenceControl(b"\x00\x00")
         self.frame_flags = 0
+        self.frame_ctrl = FrameControl(b"\x00\x00")
         self.timestamp = 0
         self.global_timestamp_us = 0
         self.acquire_flags = 0
@@ -253,6 +254,8 @@ class CSIPacket:
                 self.dest_mac = bytes(value[6:12])
                 self.seq_ctrl = SequenceControl(value[12:14])
                 self.frame_flags = int.from_bytes(value[14:16], byteorder="little")
+                if tlv_len >= 18:
+                    self.frame_ctrl = FrameControl(value[16:18])
             elif tlv_type == SERIALIZED_CSI_TLV_TYPE_TIMING_META:
                 if tlv_len < 8:
                     raise ValueError("Invalid timing meta TLV")
@@ -325,6 +328,10 @@ class CSIPacket:
     @property
     def first_word_invalid(self):
         return bool(self.frame_flags & SERIALIZED_CSI_TLV_FRAME_FLAG_FIRST_WORD_INVALID)
+
+    @property
+    def is_retry(self):
+        return bool(self.frame_ctrl.retry)
 
     @property
     def acquire_force_lltf(self):
