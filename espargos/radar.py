@@ -213,19 +213,20 @@ def build_pool_config(
     ``active_by_sensor``, ``t0_by_sensor`` and ``period_by_sensor`` may be scalars,
     board-local ``(row, column)`` arrays, or pool-wide ``(board, row, column)`` arrays.
 
-    ``t0_by_sensor`` is interpreted as a reference time in seconds relative to sensor 0.
-    The returned board configs contain ``start_by_antid`` values in controller units
-    (currently integer microseconds), converted to each sensor's local clock using the
-    stored ``sensor_clock_offsets`` from the provided calibration.
+    With a pool-wide clock reference, ``t0_by_sensor`` is interpreted relative
+    to sensor 0 of board 0. With independent per-board references, callers must
+    provide one explicit time per board. The returned board configs contain
+    ``start_by_antid`` values in controller units (currently integer
+    microseconds), converted to each sensor's local clock using the stored
+    ``sensor_clock_offsets`` from the provided calibration.
     """
     if calibration is None:
         raise ValueError("calibration must not be None")
 
+    sensor_local_times = calibration.time_to_sensor_time(t0_by_sensor)
     active_by_sensor = _broadcast_to_pool_shape(active_by_sensor, "active_by_sensor", calibration.boards, dtype=bool)
-    t0_by_sensor = _broadcast_to_pool_shape(t0_by_sensor, "t0_by_sensor", calibration.boards, dtype=np.float64)
     period_by_sensor = _broadcast_to_pool_shape(period_by_sensor, "period_by_sensor", calibration.boards, dtype=np.float64)
     mac_by_board = _macs_by_antids(mac_by_sensor, calibration.boards)
-    sensor_local_times = calibration.time_to_sensor_time(t0_by_sensor)
 
     board_configs = []
     for board_index, board in enumerate(calibration.boards):

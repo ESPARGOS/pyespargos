@@ -551,16 +551,31 @@ class CSIPool(Pool):
 
     def _compute_sensor_clock_offsets(self, complete_cluster_timestamps: np.ndarray) -> np.ndarray:
         """
-        Compute per-sensor clock offsets relative to sensor 0 from complete calibration clusters.
+        Compute clock offsets relative to the first sensor in the input scope.
 
-        :param complete_cluster_timestamps: Array of shape ``(clusters, boards, rows, columns)`` containing per-sensor timestamps in seconds.
-        :return: Array of shape ``(boards, rows, columns)`` with offsets in seconds relative to sensor 0.
+        The input may contain the complete pool or one board. Its first axis is
+        the calibration-cluster axis; all remaining axes describe the sensors
+        whose clocks share the selected reference.
+
+        :param complete_cluster_timestamps: Per-sensor timestamps in seconds.
+        :return: Mean clock offsets with the cluster axis removed.
         """
-        if len(complete_cluster_timestamps) == 0:
-            return np.full(self.get_shape(), np.nan, dtype=np.float64)
+        sensor_timestamps = np.asarray(
+            complete_cluster_timestamps,
+            dtype=np.float64,
+        )
+        if sensor_timestamps.ndim < 2:
+            raise ValueError(
+                "complete_cluster_timestamps must contain a cluster axis and "
+                "at least one sensor axis"
+            )
+        if len(sensor_timestamps) == 0:
+            return np.full(sensor_timestamps.shape[1:], np.nan, dtype=np.float64)
 
-        sensor_clock_offsets = np.asarray(complete_cluster_timestamps, dtype=np.float64)
-        sensor_clock_offsets -= sensor_clock_offsets[:, 0:1, 0:1, 0:1]
+        reference_slice = (slice(None),) + (slice(0, 1),) * (
+            sensor_timestamps.ndim - 1
+        )
+        sensor_clock_offsets = sensor_timestamps - sensor_timestamps[reference_slice]
         return np.mean(sensor_clock_offsets, axis=0)
 
     def calibrate(
@@ -574,8 +589,10 @@ class CSIPool(Pool):
         """
         Run calibration for a specified duration.
 
-        :param per_board: True to calibrate each board separately, False to calibrate all boards together.
-                          Set to False if the same phase reference signal is used for all boards, otherwise set to True.
+        :param per_board: True to calibrate each board against its own phase and
+                          clock reference. Set to False only when every board
+                          receives the same reference packets and shares a
+                          common clock.
         :param duration: The duration in seconds for which calibration should be run
         :param cable_lengths: The lengths of the feeder cables that distribute the clock and phase calibration signal to the ESPARGOS boards, in meters.
                               Only needed for phase-coherent multi-board setups, omit if all cables have the same length.
@@ -611,34 +628,37 @@ class CSIPool(Pool):
             self.set_mac_filter(previous_mac_filter)
             self._clear_cluster_cache(_CACHE_OTA)
 
-        # Collect calibration packets and compute calibration phases
-        (
-            complete_clusters_lltf,
-            complete_clusters_ht20,
-            complete_clusters_ht40,
-            complete_cluster_timestamps,
-            complete_cluster_timestamps_lltf,
-            channel_primary,
-            channel_secondary,
-        ) = self._clusters_to_calibration()
-        sensor_clock_offsets = self._compute_sensor_clock_offsets(complete_cluster_timestamps)
-        phase_calibration_he20 = util.derive_he20_calibration_from_lltf(complete_clusters_lltf, complete_cluster_timestamps_lltf, channel_secondary)
-
         if per_board:
             phase_calibrations_lltf = []
             phase_calibrations_ht20 = []
             phase_calibrations_ht40 = []
+            phase_calibrations_he20 = []
+            sensor_clock_offsets = []
+            channel_primary = None
+            channel_secondary = None
 
             for board_num in range(len(self.boards)):
                 (
                     complete_clusters_lltf,
                     complete_clusters_ht20,
                     complete_clusters_ht40,
-                    _complete_cluster_timestamps,
-                    _complete_cluster_timestamps_lltf,
-                    _channel_primary,
-                    _channel_secondary,
+                    complete_cluster_timestamps,
+                    complete_cluster_timestamps_lltf,
+                    board_channel_primary,
+                    board_channel_secondary,
                 ) = self._clusters_to_calibration(board_num)
+
+                if channel_primary is None:
+                    channel_primary = board_channel_primary
+                    channel_secondary = board_channel_secondary
+                elif (
+                    channel_primary != board_channel_primary
+                    or channel_secondary != board_channel_secondary
+                ):
+                    raise CalibrationError(
+                        "ESPARGOS calibration failed: boards reported different "
+                        "calibration channels"
+                    )
 
                 phase_calibrations_lltf.append(
                     util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf))
@@ -664,6 +684,18 @@ class CSIPool(Pool):
                         np.nan,
                     )
                 )
+                phase_calibrations_he20.append(
+                    util.derive_he20_calibration_from_lltf(
+                        complete_clusters_lltf[:, np.newaxis, ...],
+                        complete_cluster_timestamps_lltf[:, np.newaxis, ...],
+                        board_channel_secondary,
+                    )[0]
+                )
+                sensor_clock_offsets.append(
+                    self._compute_sensor_clock_offsets(
+                        complete_cluster_timestamps,
+                    )
+                )
 
             self.stored_calibration = calibration.CSICalibration(
                 self.boards,
@@ -672,11 +704,34 @@ class CSIPool(Pool):
                 np.asarray(phase_calibrations_lltf),
                 np.asarray(phase_calibrations_ht20),
                 np.asarray(phase_calibrations_ht40),
-                phase_calibration_he20,
-                sensor_clock_offsets=sensor_clock_offsets,
+                np.asarray(phase_calibrations_he20),
+                sensor_clock_offsets=np.asarray(sensor_clock_offsets),
+                clock_scope=(
+                    calibration.ClockReferenceScope.POOL
+                    if len(self.boards) == 1
+                    else calibration.ClockReferenceScope.PER_BOARD
+                ),
             )
 
         else:
+            (
+                complete_clusters_lltf,
+                complete_clusters_ht20,
+                complete_clusters_ht40,
+                complete_cluster_timestamps,
+                complete_cluster_timestamps_lltf,
+                channel_primary,
+                channel_secondary,
+            ) = self._clusters_to_calibration()
+            sensor_clock_offsets = self._compute_sensor_clock_offsets(
+                complete_cluster_timestamps
+            )
+            phase_calibration_he20 = util.derive_he20_calibration_from_lltf(
+                complete_clusters_lltf,
+                complete_cluster_timestamps_lltf,
+                channel_secondary,
+            )
+
             phase_calibrations_lltf = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
             phase_calibrations_ht20 = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
             phase_calibration_ht40 = (
@@ -704,6 +759,7 @@ class CSIPool(Pool):
                 phase_calibration_ht40,
                 phase_calibration_he20,
                 sensor_clock_offsets=sensor_clock_offsets,
+                clock_scope=calibration.ClockReferenceScope.POOL,
                 board_cable_lengths=cable_lengths,
                 board_cable_vfs=cable_velocity_factors,
             )

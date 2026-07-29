@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from .calibration import CSICalibration
+from .calibration import CSICalibration, ClockReferenceScope
 from .csi_backlog import CSIBacklog, CSIBacklogFilter, Exclude11bFilter, MacFilter
 from .sensor_backlog import BacklogField, SensorBacklog
 from .csi_cluster import CSICluster

@@ -326,7 +326,17 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
                 self.pool.start()
                 if calibrate:
                     try:
-                        self.pool.calibrate(duration=2, per_board=False, **additional_calibrate_args)
+                        per_board = bool(
+                            self.pooldrawer.configManager().get(
+                                "calibration",
+                                "per_board",
+                            )
+                        )
+                        self.pool.calibrate(
+                            duration=2,
+                            per_board=per_board,
+                            **additional_calibrate_args,
+                        )
                     except espargos.CalibrationError as exc:
                         error_message = str(exc)
                         self.logger.error(error_message)

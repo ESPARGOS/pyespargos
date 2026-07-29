@@ -2,11 +2,19 @@
 
 import numpy as np
 import logging
+from enum import StrEnum
 
 from . import constants
 from . import board
 from . import util
 from . import csi_packet
+
+
+class ClockReferenceScope(StrEnum):
+    """Describe whether sensor clocks share one reference across the pool."""
+
+    POOL = "pool"
+    PER_BOARD = "per_board"
 
 
 class CSICalibration(object):
@@ -22,6 +30,7 @@ class CSICalibration(object):
         sensor_clock_offsets: np.ndarray,
         board_cable_lengths=None,
         board_cable_vfs=None,
+        clock_scope: ClockReferenceScope | str = ClockReferenceScope.POOL,
     ):
         """
         Constructor for the CSICalibration class.
@@ -36,7 +45,8 @@ class CSICalibration(object):
         :param calibration_values_lltf: The phase calibration values for the L-LTF channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL)`
         :param calibration_values_ht20: The phase calibration values for the HT20 channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi_packet.HT_COEFFICIENTS_PER_CHANNEL)`
         :param calibration_values_ht40: The phase calibration values for the HT40 channel, as a complex-valued numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW, csi_packet.HT_COEFFICIENTS_PER_CHANNEL + csi_packet.HT40_GAP_SUBCARRIERS + csi_packet.HT_COEFFICIENTS_PER_CHANNEL)`
-        :param sensor_clock_offsets: Per-sensor clock offsets relative to sensor 0, in seconds, as a numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)`
+        :param sensor_clock_offsets: Per-sensor clock offsets in seconds, as a numpy array of shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)`. For a pool-wide clock reference, offsets are relative to sensor 0 of board 0. For per-board references, offsets are relative to sensor 0 of the respective board.
+        :param clock_scope: Whether :code:`sensor_clock_offsets` use one pool-wide reference or one independent reference per board.
         :param board_cable_lengths: The lengths of the cables that distribute the clock and phase calibration signal to the ESP32 boards, in meters
         :param board_cable_vfs: The velocity factors of the cables that distribute the clock and phase calibration signal to the ESP32 boards
         """
@@ -111,6 +121,7 @@ class CSICalibration(object):
         self.calibration_values_ht40 = np.einsum("bras,bras->bras", calibration_values_ht40, np.conj(prop_phase_offsets_ht40))
         self.calibration_values_he20 = np.einsum("bras,bras->bras", calibration_values_he20, np.conj(prop_phase_offsets_he20))
         self.sensor_clock_offsets = np.asarray(sensor_clock_offsets, dtype=np.float64)
+        self.clock_scope = ClockReferenceScope(clock_scope)
 
         ## Account for additional board-specific phase offsets due to different feeder cable lengths in a multi-board antenna array system
         # if board_cable_lengths is not None:
@@ -205,10 +216,38 @@ class CSICalibration(object):
         """
         Convert a reference time into the corresponding local time for each sensor.
 
-        The provided reference time is interpreted relative to sensor 0. The return value
-        therefore contains one time per sensor, offset by :attr:`sensor_clock_offsets`.
+        With a pool-wide clock reference, ``time`` may be a scalar relative to
+        sensor 0 of board 0. With per-board clock references, there is no
+        meaningful common scalar time: callers must provide one time per board
+        using shape ``(boards,)``, ``(boards, 1, 1)``, or the full sensor shape.
 
-        :param time: Reference time in seconds, relative to sensor 0. May be a scalar or an array broadcastable to the sensor layout.
+        :param time: Reference time or times in seconds.
         :return: Per-sensor time values as a numpy array with shape :code:`(boardcount, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)`
         """
-        return np.asarray(time, dtype=np.float64) + self.sensor_clock_offsets
+        reference_times = np.asarray(time, dtype=np.float64)
+        board_count = len(self.boards)
+
+        if self.clock_scope == ClockReferenceScope.PER_BOARD and board_count > 1:
+            if reference_times.shape == (board_count,):
+                reference_times = reference_times[:, np.newaxis, np.newaxis]
+            elif (
+                reference_times.ndim != 3
+                or reference_times.shape[0] != board_count
+            ):
+                raise ValueError(
+                    "This calibration has independent per-board clock references; "
+                    "provide one reference time per board using shape (boards,), "
+                    "(boards, 1, 1), or the full sensor-array shape"
+                )
+
+        try:
+            reference_times = np.broadcast_to(
+                reference_times,
+                self.sensor_clock_offsets.shape,
+            )
+        except ValueError as error:
+            raise ValueError(
+                "Reference times must be broadcastable to the sensor-array shape"
+            ) from error
+
+        return reference_times + self.sensor_clock_offsets
