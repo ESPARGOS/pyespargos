@@ -18,6 +18,7 @@ provide the cache, key, and cluster behavior for the messages they support.
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable
+from weakref import WeakKeyDictionary
 import json
 import logging
 import queue
@@ -30,8 +31,46 @@ from . import sensor
 from .sensor_cluster import ClusterCollisionError, SensorCluster
 
 _DEFAULT_RUN_TIMEOUT = 0.005
+_PROCESSING_RUN_TIMEOUT = 0.5
 _RUN_BATCH_BOUNDARY = object()
 _CLUSTER_COLLISION_WARNING_INTERVAL = 5.0
+
+
+class _ClusterCallback(object):
+    """One registered cluster-completion callback and its fired-state tracking."""
+
+    def __init__(
+        self,
+        cb: Callable[[SensorCluster], None],
+        cb_predicate: Callable[[SensorCluster], bool] = None,
+    ):
+        # By default, emit a cluster once every sensor has contributed to it
+        self.cb_predicate = cb_predicate
+        self.cb = cb
+
+        # Track fired state per cluster object
+        self.fired = WeakKeyDictionary()
+
+    def try_call(self, cluster_obj: SensorCluster):
+        # Check if callback has already been fired for this cluster object
+        if self.fired.get(cluster_obj, False):
+            return True
+
+        # Check if callback needs to be called: Use predicate function if defined, otherwise call if cluster is complete
+        callback_required = False
+        if self.cb_predicate is not None:
+            callback_required = self.cb_predicate(cluster_obj)
+        else:
+            callback_required = cluster_obj.get_completion_all()
+
+        if callback_required:
+            self.cb(cluster_obj)
+
+            # Mark as fired for this cluster object
+            self.fired[cluster_obj] = True
+            return True
+
+        return False
 
 
 class Pool(ABC):
@@ -58,6 +97,11 @@ class Pool(ABC):
         self._sensor_message_subscriptions: list[tuple[board.BoardCapability, board.SensorMessageSubscription]] = []
         self._cluster_collisions_since_warning = 0
         self._last_cluster_collision_warning: float | None = None
+        self._cluster_callbacks: list[_ClusterCallback] = []
+        self._cluster_callbacks_lock = threading.Lock()
+        self._processing_thread: threading.Thread | None = None
+        self._processing_lock = threading.Lock()
+        self._processing = False
 
         self.logger.info(f"Created new {type(self).__name__} with {len(self.boards)} board(s)")
 
@@ -76,13 +120,24 @@ class Pool(ABC):
         self._sensor_message_subscriptions.append((capability, subscription))
 
     def start(self):
-        """Start sensor-message reception on every board."""
+        """Start sensor-message reception on every board.
+
+        Each board's sensor stream is a single shared resource and
+        :meth:`.Board.start` is idempotent, so several pools over the same
+        boards may all call :meth:`start` safely.
+        """
 
         for board_obj in self.boards:
             board_obj.start()
 
     def stop(self):
-        """Stop sensor-message reception on every board."""
+        """Stop sensor-message reception on every board.
+
+        This tears down each board's shared sensor stream for every consumer.
+        A pool that shares its boards with other consumers should use
+        :meth:`close` instead and leave stopping the boards to whoever owns
+        their lifecycle.
+        """
 
         for board_obj in self.boards:
             board_obj.stop()
@@ -90,10 +145,120 @@ class Pool(ABC):
     def close(self):
         """Detach this pool from its boards without stopping the boards."""
 
+        self.stop_processing()
         subscriptions = self._sensor_message_subscriptions
         self._sensor_message_subscriptions = []
         for capability, subscription in subscriptions:
             capability.unsubscribe(subscription)
+
+    def start_processing(self):
+        """Start a worker thread that continuously processes this pool.
+
+        The worker calls :meth:`run` in a loop until :meth:`stop_processing`
+        is called. Since :meth:`run` must not be called concurrently, the pool
+        has at most one processing worker, and starting it again while it is
+        running is a no-op. Alternatively, consumers may drive :meth:`run`
+        from their own thread and leave this worker unused.
+        """
+
+        with self._processing_lock:
+            if self._processing_thread is not None and self._processing_thread.is_alive():
+                return
+            self._processing = True
+            self._processing_thread = threading.Thread(
+                target=self._processing_loop,
+                name=f"{type(self).__name__.lower()}-processing",
+                daemon=True,
+            )
+            self._processing_thread.start()
+            self.logger.info(f"Started {type(self).__name__} processing thread")
+
+    def stop_processing(self):
+        """Stop the pool-processing worker, if running."""
+
+        with self._processing_lock:
+            thread = self._processing_thread
+            self._processing = False
+            self._processing_thread = None
+        if thread is not None:
+            thread.join()
+
+    def _processing_loop(self):
+        while self._processing:
+            self.run(timeout=_PROCESSING_RUN_TIMEOUT)
+
+    def add_cluster_callback(
+        self,
+        cb: Callable[[SensorCluster], None],
+        cb_predicate: Callable[[SensorCluster], bool] = None,
+    ) -> _ClusterCallback:
+        """Register a callback invoked when a sensor cluster is completed.
+
+        Completion is decided by ``cb_predicate``; without a predicate, a
+        cluster is emitted once every sensor has contributed to it. Each
+        callback fires at most once per cluster. The registry only stores the
+        callbacks: the pool subclass decides from :meth:`_on_cluster_updated`
+        which updated clusters are offered to them via :meth:`_try_callbacks`.
+
+        :param cb: The function to call, gets the completed :class:`.SensorCluster`
+        :param cb_predicate: A function with signature :code:`(sensor_cluster)` that defines the conditions under which
+            a cluster is regarded as completed and thus provided to the callback.
+        :return: A callback handle that can be passed to :meth:`remove_cluster_callback`
+        """
+
+        callback = _ClusterCallback(cb, cb_predicate)
+        with self._cluster_callbacks_lock:
+            self._cluster_callbacks.append(callback)
+        return callback
+
+    def remove_cluster_callback(self, callback: _ClusterCallback) -> bool:
+        """Remove a callback previously returned by :meth:`add_cluster_callback`.
+
+        :param callback: Callback handle returned by :meth:`add_cluster_callback`
+        :return: True if the callback was registered and removed, False otherwise
+        """
+
+        with self._cluster_callbacks_lock:
+            try:
+                self._cluster_callbacks.remove(callback)
+                return True
+            except ValueError:
+                return False
+
+    def replace_cluster_callback(
+        self,
+        callback: _ClusterCallback,
+        cb: Callable[[SensorCluster], None],
+        cb_predicate: Callable[[SensorCluster], bool] = None,
+    ) -> _ClusterCallback:
+        """Atomically replace a registered cluster callback.
+
+        :param callback: Existing handle returned by :meth:`add_cluster_callback`
+        :param cb: Replacement callback function
+        :param cb_predicate: Replacement completion predicate
+        :return: New callback handle
+        :raises ValueError: If ``callback`` is no longer registered
+        """
+
+        replacement = _ClusterCallback(cb, cb_predicate)
+        with self._cluster_callbacks_lock:
+            try:
+                index = self._cluster_callbacks.index(callback)
+            except ValueError:
+                raise ValueError("Cluster callback is not registered") from None
+            self._cluster_callbacks[index] = replacement
+        return replacement
+
+    def _try_callbacks(self, cluster_obj: SensorCluster) -> bool:
+        """Offer a cluster to every registered callback; return whether all have fired."""
+
+        all_callbacks_fired = True
+        with self._cluster_callbacks_lock:
+            callbacks = tuple(self._cluster_callbacks)
+        for cb in callbacks:
+            callback_fired = cb.try_call(cluster_obj)
+            all_callbacks_fired = callback_fired and all_callbacks_fired
+        return all_callbacks_fired
 
     def reboot(self):
         """Reboot every board in the pool."""

@@ -230,15 +230,8 @@ class CSICalibration(object):
         if self.clock_scope == ClockReferenceScope.PER_BOARD and board_count > 1:
             if reference_times.shape == (board_count,):
                 reference_times = reference_times[:, np.newaxis, np.newaxis]
-            elif (
-                reference_times.ndim != 3
-                or reference_times.shape[0] != board_count
-            ):
-                raise ValueError(
-                    "This calibration has independent per-board clock references; "
-                    "provide one reference time per board using shape (boards,), "
-                    "(boards, 1, 1), or the full sensor-array shape"
-                )
+            elif reference_times.ndim != 3 or reference_times.shape[0] != board_count:
+                raise ValueError("This calibration has independent per-board clock references; " "provide one reference time per board using shape (boards,), " "(boards, 1, 1), or the full sensor-array shape")
 
         try:
             reference_times = np.broadcast_to(
@@ -246,8 +239,6 @@ class CSICalibration(object):
                 self.sensor_clock_offsets.shape,
             )
         except ValueError as error:
-            raise ValueError(
-                "Reference times must be broadcastable to the sensor-array shape"
-            ) from error
+            raise ValueError("Reference times must be broadcastable to the sensor-array shape") from error
 
         return reference_times + self.sensor_clock_offsets

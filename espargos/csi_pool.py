@@ -10,10 +10,8 @@ completion requirement is met. It also provides the pool-wide Wi-Fi, radar, and
 calibration API.
 """
 
-from weakref import WeakKeyDictionary
 from typing import Callable
 import numpy as np
-import threading
 import time
 
 from . import calibration
@@ -31,41 +29,6 @@ from .sensor_cluster import SensorCluster
 
 class CalibrationError(RuntimeError):
     """Raised when ESPARGOS calibration cannot collect usable calibration CSI."""
-
-
-class _CSICallback(object):
-    def __init__(
-        self,
-        cb: Callable[[csi_cluster.CSICluster], None],
-        cb_predicate: Callable[[csi_cluster.CSICluster], bool] = None,
-    ):
-        # By default, provide csi if CSI is available from all antennas
-        self.cb_predicate = cb_predicate
-        self.cb = cb
-
-        # Track fired state per CSICluster object
-        self.fired = WeakKeyDictionary()
-
-    def try_call(self, cluster_obj: csi_cluster.CSICluster):
-        # Check if callback has already been fired for this CSICluster object
-        if self.fired.get(cluster_obj, False):
-            return True
-
-        # Check if callback needs to be called: Use predicate function if defined, otherwise call if all antennas have CSI
-        callback_required = False
-        if self.cb_predicate is not None:
-            callback_required = self.cb_predicate(cluster_obj)
-        else:
-            callback_required = cluster_obj.get_completion_all()
-
-        if callback_required:
-            self.cb(cluster_obj)
-
-            # Mark as fired for this CSICluster object
-            self.fired[cluster_obj] = True
-            return True
-
-        return False
 
 
 # WiFi configuration fields that legitimately differ between boards. Pool-wide
@@ -116,8 +79,6 @@ class CSIPool(Pool):
                 wifi_tx.subscribe_reports,
             )
 
-        self.callbacks: list[_CSICallback] = []
-        self._callbacks_lock = threading.Lock()
         self.stored_calibration: calibration.CSICalibration = None
 
     def set_rfswitch(self, state: sensor.RFSwitchState):
@@ -376,31 +337,23 @@ class CSIPool(Pool):
             through this same callback path.
         :return: A callback handle that can be passed to :meth:`remove_csi_callback`
         """
-        callback = _CSICallback(cb, cb_predicate)
-        with self._callbacks_lock:
-            self.callbacks.append(callback)
-        return callback
+        return self.add_cluster_callback(cb, cb_predicate)
 
-    def remove_csi_callback(self, callback: _CSICallback) -> bool:
+    def remove_csi_callback(self, callback) -> bool:
         """
         Remove a CSI callback previously returned by :meth:`add_csi_callback`.
 
         :param callback: Callback handle returned by :meth:`add_csi_callback`
         :return: True if the callback was registered and removed, False otherwise
         """
-        with self._callbacks_lock:
-            try:
-                self.callbacks.remove(callback)
-                return True
-            except ValueError:
-                return False
+        return self.remove_cluster_callback(callback)
 
     def replace_csi_callback(
         self,
-        callback: _CSICallback,
+        callback,
         cb: Callable[[csi_cluster.CSICluster], None],
         cb_predicate: Callable[[csi_cluster.CSICluster], bool] = None,
-    ) -> _CSICallback:
+    ):
         """Atomically replace a registered CSI callback.
 
         :param callback: Existing handle returned by :meth:`add_csi_callback`
@@ -410,14 +363,7 @@ class CSIPool(Pool):
         :raises ValueError: If ``callback`` is no longer registered
         """
 
-        replacement = _CSICallback(cb, cb_predicate)
-        with self._callbacks_lock:
-            try:
-                index = self.callbacks.index(callback)
-            except ValueError:
-                raise ValueError("CSI callback is not registered") from None
-            self.callbacks[index] = replacement
-        return replacement
+        return self.replace_cluster_callback(callback, cb, cb_predicate)
 
     def set_emit_calibration_csi(self, enabled: bool):
         """
@@ -433,15 +379,6 @@ class CSIPool(Pool):
         Return whether calibration CSI clusters are emitted through normal CSI callbacks.
         """
         return self.emit_calibration_csi
-
-    def _try_callbacks(self, cluster_obj: csi_cluster.CSICluster) -> bool:
-        all_callbacks_fired = True
-        with self._callbacks_lock:
-            callbacks = tuple(self.callbacks)
-        for cb in callbacks:
-            callback_fired = cb.try_call(cluster_obj)
-            all_callbacks_fired = callback_fired and all_callbacks_fired
-        return all_callbacks_fired
 
     def _clusters_to_calibration(self, board_num=None):
         """
@@ -565,16 +502,11 @@ class CSIPool(Pool):
             dtype=np.float64,
         )
         if sensor_timestamps.ndim < 2:
-            raise ValueError(
-                "complete_cluster_timestamps must contain a cluster axis and "
-                "at least one sensor axis"
-            )
+            raise ValueError("complete_cluster_timestamps must contain a cluster axis and " "at least one sensor axis")
         if len(sensor_timestamps) == 0:
             return np.full(sensor_timestamps.shape[1:], np.nan, dtype=np.float64)
 
-        reference_slice = (slice(None),) + (slice(0, 1),) * (
-            sensor_timestamps.ndim - 1
-        )
+        reference_slice = (slice(None),) + (slice(0, 1),) * (sensor_timestamps.ndim - 1)
         sensor_clock_offsets = sensor_timestamps - sensor_timestamps[reference_slice]
         return np.mean(sensor_clock_offsets, axis=0)
 
@@ -651,14 +583,8 @@ class CSIPool(Pool):
                 if channel_primary is None:
                     channel_primary = board_channel_primary
                     channel_secondary = board_channel_secondary
-                elif (
-                    channel_primary != board_channel_primary
-                    or channel_secondary != board_channel_secondary
-                ):
-                    raise CalibrationError(
-                        "ESPARGOS calibration failed: boards reported different "
-                        "calibration channels"
-                    )
+                elif channel_primary != board_channel_primary or channel_secondary != board_channel_secondary:
+                    raise CalibrationError("ESPARGOS calibration failed: boards reported different " "calibration channels")
 
                 phase_calibrations_lltf.append(
                     util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf))
@@ -706,11 +632,7 @@ class CSIPool(Pool):
                 np.asarray(phase_calibrations_ht40),
                 np.asarray(phase_calibrations_he20),
                 sensor_clock_offsets=np.asarray(sensor_clock_offsets),
-                clock_scope=(
-                    calibration.ClockReferenceScope.POOL
-                    if len(self.boards) == 1
-                    else calibration.ClockReferenceScope.PER_BOARD
-                ),
+                clock_scope=(calibration.ClockReferenceScope.POOL if len(self.boards) == 1 else calibration.ClockReferenceScope.PER_BOARD),
             )
 
         else:
@@ -723,9 +645,7 @@ class CSIPool(Pool):
                 channel_primary,
                 channel_secondary,
             ) = self._clusters_to_calibration()
-            sensor_clock_offsets = self._compute_sensor_clock_offsets(
-                complete_cluster_timestamps
-            )
+            sensor_clock_offsets = self._compute_sensor_clock_offsets(complete_cluster_timestamps)
             phase_calibration_he20 = util.derive_he20_calibration_from_lltf(
                 complete_clusters_lltf,
                 complete_cluster_timestamps_lltf,

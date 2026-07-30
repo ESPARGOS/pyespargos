@@ -315,6 +315,7 @@ class Board(object):
         self.logger.info(f"Identified ESPARGOS at {self.ip_info['ip']} as {self.get_name()}")
 
         self.stream_connected = False
+        self._stream_lifecycle_lock = threading.Lock()
         self._sensor_message_reassembler = sensor.SensorMessageReassembler(logger=self.logger)
         self._sensor_message_subscriptions: dict[int, list[SensorMessageSubscription]] = {}
         self._sensor_message_subscriptions_lock = threading.Lock()
@@ -336,6 +337,15 @@ class Board(object):
         them to callbacks registered with :meth:`subscribe_sensor_messages`.
         Reception continues until :meth:`stop` is called.
 
+        Each board has exactly one sensor stream, shared by all consumers.
+        Calling :meth:`start` while the stream is already running is a no-op,
+        so independent consumers (for example two pools over the same board)
+        may each call it safely. The converse is not true: :meth:`stop` always
+        tears down the shared stream for every consumer. A consumer that does
+        not own the board's lifecycle should detach by removing its
+        subscriptions (e.g. :meth:`.Pool.close`) instead of calling
+        :meth:`stop`.
+
         Supported transports:
 
         - "udp": The controller sends sensor packets to a local UDP socket. This transport is lower-latency and more efficient (higher throughput), but may not work in all network environments.
@@ -355,27 +365,32 @@ class Board(object):
         elif transports is None:
             transports = ["udp", "websocket"]
 
-        for transport in transports:
-            if transport == "uart":
-                uart_error = self._try_start_uart()
-                if uart_error is None:
-                    return
+        with self._stream_lifecycle_lock:
+            if self.stream_connected:
+                self.logger.debug(f"Sensor stream for {self.get_name()} is already running, ignoring start()")
+                return
 
-                self.logger.warning(f"UART sensor stream failed for {self.get_name()}: {uart_error}")
-            elif transport == "udp":
-                udp_error = self._try_start_udp()
-                if udp_error is None:
-                    return
+            for transport in transports:
+                if transport == "uart":
+                    uart_error = self._try_start_uart()
+                    if uart_error is None:
+                        return
 
-                self.logger.warning(f"UDP sensor stream failed for {self.get_name()}: {udp_error}")
-            elif transport == "websocket":
-                ws_error = self._try_start_websocket()
-                if ws_error is None:
-                    return
+                    self.logger.warning(f"UART sensor stream failed for {self.get_name()}: {uart_error}")
+                elif transport == "udp":
+                    udp_error = self._try_start_udp()
+                    if udp_error is None:
+                        return
 
-                self.logger.warning(f"WebSocket sensor stream failed for {self.get_name()}: {ws_error}")
-            else:
-                self.logger.error(f"Unknown transport {transport} specified for {self.get_name()}, skipping")
+                    self.logger.warning(f"UDP sensor stream failed for {self.get_name()}: {udp_error}")
+                elif transport == "websocket":
+                    ws_error = self._try_start_websocket()
+                    if ws_error is None:
+                        return
+
+                    self.logger.warning(f"WebSocket sensor stream failed for {self.get_name()}: {ws_error}")
+                else:
+                    self.logger.error(f"Unknown transport {transport} specified for {self.get_name()}, skipping")
 
         raise EspargosStreamConnectionError(f"Could not establish sensor stream to {self.host} via any of the enabled transports, tried transports: {transports}")
 
@@ -545,26 +560,32 @@ class Board(object):
 
         The receiver stops after the current packet has been processed, or
         after a short transport timeout.
+
+        This tears down the board's single shared sensor stream for every
+        consumer, and is therefore reserved for whoever owns the board's
+        lifecycle; see :meth:`start` for the sharing contract. Calling
+        :meth:`stop` on an already stopped board is a no-op.
         """
-        if self.stream_connected:
-            self.stream_connected = False
-            if hasattr(self, "_stream_thread"):
-                self._stream_thread.join()
+        with self._stream_lifecycle_lock:
+            if self.stream_connected:
+                self.stream_connected = False
+                if hasattr(self, "_stream_thread"):
+                    self._stream_thread.join()
 
-            if getattr(self, "_stream_transport", None) == "udp":
-                if hasattr(self, "_udp_keepalive_stop"):
-                    self._udp_keepalive_stop.set()
-                    self._udp_keepalive_thread.join()
-                if hasattr(self, "_udp_sock"):
-                    self._udp_sock.close()
-                self._disable_udp_stream()
-            elif getattr(self, "_stream_transport", None) == "uart":
-                if hasattr(self, "_uart_stream_callback"):
-                    self._uart_client.remove_stream_callback(self._uart_stream_callback)
-                if self._uart_client is not None:
-                    self._uart_client.disable_sensor_stream()
+                if getattr(self, "_stream_transport", None) == "udp":
+                    if hasattr(self, "_udp_keepalive_stop"):
+                        self._udp_keepalive_stop.set()
+                        self._udp_keepalive_thread.join()
+                    if hasattr(self, "_udp_sock"):
+                        self._udp_sock.close()
+                    self._disable_udp_stream()
+                elif getattr(self, "_stream_transport", None) == "uart":
+                    if hasattr(self, "_uart_stream_callback"):
+                        self._uart_client.remove_stream_callback(self._uart_stream_callback)
+                    if self._uart_client is not None:
+                        self._uart_client.disable_sensor_stream()
 
-            self.logger.info(f"Stopped sensor stream for {self.get_name()}")
+                self.logger.info(f"Stopped sensor stream for {self.get_name()}")
 
     def close(self):
         """

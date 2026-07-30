@@ -2,23 +2,23 @@
 
 """Store selected values from completed CSI clusters.
 
-The generic ring-buffer mechanics live in :mod:`espargos.sensor_backlog`.
-This module describes the fields available for CSI and translates each
-completed :class:`.CSICluster` into one backlog datapoint. Packet filtering,
-CSI deserialization, calibration, and radar metadata remain CSI-specific.
+The generic ring-buffer and filter-chain mechanics live in
+:mod:`espargos.sensor_backlog`. This module describes the fields available for
+CSI and translates each completed :class:`.CSICluster` into one backlog
+datapoint. CSI deserialization, calibration, radar metadata, and the concrete
+packet filters remain CSI-specific.
 """
 
 import logging
 import re
-import threading
 
 import numpy as np
 
 from . import csi_packet
-from .sensor_backlog import BacklogField, SensorBacklog
+from .sensor_backlog import BacklogField, BacklogFilter, SensorBacklog
 
 
-class CSIBacklogFilter(object):
+class CSIBacklogFilter(BacklogFilter):
     """Base class for filters applied to completed CSI clusters."""
 
     def matches(self, clustered_csi):
@@ -160,10 +160,6 @@ class CSIBacklog(SensorBacklog):
     ):
         self.pool = pool
         self.calibrate = calibrate
-        self.filter_mutex = threading.Lock()
-        self.filters = []
-        self.running = False
-        self.thread = None
         self._callback_handle = None
 
         super().__init__(
@@ -220,9 +216,7 @@ class CSIBacklog(SensorBacklog):
     def _on_new_csi(self, clustered_csi):
         """Translate one accepted CSI cluster into a backlog datapoint."""
 
-        with self.filter_mutex:
-            filters = tuple(self.filters)
-        if any(not backlog_filter.matches(clustered_csi) for backlog_filter in filters):
+        if not self._passes_filters(clustered_csi):
             return
 
         fields = self.get_fields()
@@ -312,26 +306,14 @@ class CSIBacklog(SensorBacklog):
         self.append_datapoint(values)
 
     def start(self):
-        """Start a worker that regularly processes the CSI pool."""
+        """Start the pool's processing worker so completed clusters reach this backlog."""
 
-        if self.thread is not None and self.thread.is_alive():
-            return
-        self.running = True
-        self.thread = threading.Thread(
-            target=self._run,
-            name="csi-backlog",
-            daemon=True,
-        )
-        self.thread.start()
-        self.logger.info("Started CSI backlog thread")
+        self.pool.start_processing()
 
     def stop(self):
         """Stop the pool-processing worker, if running."""
 
-        self.running = False
-        if self.thread is not None:
-            self.thread.join()
-            self.thread = None
+        self.pool.stop_processing()
 
     def close(self):
         """Stop processing and detach this backlog from its CSI pool."""
@@ -340,35 +322,3 @@ class CSIBacklog(SensorBacklog):
         if self._callback_handle is not None:
             self.pool.remove_csi_callback(self._callback_handle)
             self._callback_handle = None
-
-    def add_filter(self, backlog_filter):
-        """Add a CSI-cluster filter."""
-
-        if not isinstance(backlog_filter, CSIBacklogFilter):
-            raise TypeError("backlog_filter must be an instance of CSIBacklogFilter")
-        with self.filter_mutex:
-            if backlog_filter not in self.filters:
-                self.filters.append(backlog_filter)
-
-    def remove_filter(self, backlog_filter):
-        """Remove a CSI-cluster filter."""
-
-        with self.filter_mutex:
-            if backlog_filter in self.filters:
-                self.filters.remove(backlog_filter)
-
-    def clear_filters(self):
-        """Remove all CSI-cluster filters."""
-
-        with self.filter_mutex:
-            self.filters.clear()
-
-    def get_filters(self):
-        """Return the currently active CSI-cluster filters."""
-
-        with self.filter_mutex:
-            return list(self.filters)
-
-    def _run(self):
-        while self.running:
-            self.pool.run(timeout=0.5)

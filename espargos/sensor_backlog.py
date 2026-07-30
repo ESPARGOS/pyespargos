@@ -14,10 +14,16 @@ A format-specific backlog supplies the field descriptions and converts each
 completed cluster into a mapping passed to
 :meth:`SensorBacklog.append_datapoint`. For WiFi packets, for example,
 :class:`.CSIBacklog` subscribes to completed CSI clusters, extracts CSI and
-packet metadata, and handles CSI-specific filtering and calibration before
-appending a datapoint. Fields omitted from a datapoint receive their declared
-fill value, so partially available measurements cannot leave stale data
-behind when the ring buffer wraps.
+packet metadata, and handles CSI-specific calibration before appending a
+datapoint. Fields omitted from a datapoint receive their declared fill value,
+so partially available measurements cannot leave stale data behind when the
+ring buffer wraps.
+
+The filter-chain mechanics are also generic: :class:`BacklogFilter` instances
+registered with :meth:`SensorBacklog.add_filter` decide whether a completed
+measurement enters the backlog. What a filter inspects (e.g., a CSI cluster,
+a gain table report) is defined by the format-specific backlog, which consults
+the chain via :meth:`SensorBacklog._passes_filters` before appending.
 """
 
 from collections.abc import Callable, Mapping
@@ -42,6 +48,19 @@ class BacklogField:
     dtype: Any
     per_sensor: bool
     fill_value: Any
+
+
+class BacklogFilter(object):
+    """Base class for filters that decide whether a measurement enters a backlog.
+
+    The object passed to :meth:`matches` is whatever the format-specific
+    backlog collects, for example a completed CSI cluster.
+    """
+
+    def matches(self, measurement):
+        """Return whether a completed measurement should enter the backlog."""
+
+        raise NotImplementedError("BacklogFilter subclasses must implement matches()")
 
 
 class SensorBacklog:
@@ -72,6 +91,8 @@ class SensorBacklog:
         self.storage_mutex = threading.Lock()
         self._callbacks_lock = threading.Lock()
         self.callbacks: list[Callable[[], None]] = []
+        self.filter_mutex = threading.Lock()
+        self.filters: list[BacklogFilter] = []
         self.storage: dict[str, np.ndarray] = {}
         self.fields: set[str] = set()
         self.size = 0
@@ -186,6 +207,41 @@ class SensorBacklog:
                 return True
             except ValueError:
                 return False
+
+    def add_filter(self, backlog_filter: BacklogFilter) -> None:
+        """Add a measurement filter."""
+
+        if not isinstance(backlog_filter, BacklogFilter):
+            raise TypeError("backlog_filter must be an instance of BacklogFilter")
+        with self.filter_mutex:
+            if backlog_filter not in self.filters:
+                self.filters.append(backlog_filter)
+
+    def remove_filter(self, backlog_filter: BacklogFilter) -> None:
+        """Remove a measurement filter."""
+
+        with self.filter_mutex:
+            if backlog_filter in self.filters:
+                self.filters.remove(backlog_filter)
+
+    def clear_filters(self) -> None:
+        """Remove all measurement filters."""
+
+        with self.filter_mutex:
+            self.filters.clear()
+
+    def get_filters(self) -> list[BacklogFilter]:
+        """Return the currently active measurement filters."""
+
+        with self.filter_mutex:
+            return list(self.filters)
+
+    def _passes_filters(self, measurement) -> bool:
+        """Return whether a completed measurement passes every active filter."""
+
+        with self.filter_mutex:
+            filters = tuple(self.filters)
+        return all(backlog_filter.matches(measurement) for backlog_filter in filters)
 
     def get(self, key: str) -> np.ndarray:
         """Return one field for all stored datapoints, oldest first."""

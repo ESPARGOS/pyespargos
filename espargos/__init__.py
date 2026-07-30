@@ -2,7 +2,7 @@
 
 from .calibration import CSICalibration, ClockReferenceScope
 from .csi_backlog import CSIBacklog, CSIBacklogFilter, Exclude11bFilter, MacFilter
-from .sensor_backlog import BacklogField, SensorBacklog
+from .sensor_backlog import BacklogField, BacklogFilter, SensorBacklog
 from .csi_cluster import CSICluster
 from .board import Board, BoardCapability, BoardControl, EspargosAPIVersionError, EspargosHTTPStatusError, EspargosStreamConnectionError, EspargosUnexpectedResponseError, SensorMessageSubscription
 from .board_wifi_rx import WiFiRx
