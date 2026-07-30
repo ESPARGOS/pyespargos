@@ -6,14 +6,14 @@ import "." as Common
 
 
 Item  {
-	id: genericAppSettings
+	id: csiAppSettings
 	property Item insertBefore: null
 	property int controlWidth: 0
 	onInsertBeforeChanged: {
 		if (!insertBefore) return
 
 		let items = [
-			genericAppSettingsHeader,
+			csiAppSettingsHeader,
 			preambleFieldLabel,
 			preambleFieldCombo
 		]
@@ -52,16 +52,16 @@ Item  {
 	}
 
 	Common.ConfigManager {
-		id: genericConfigManager
-		endpoint: genericconfig
+		id: csiConfigManager
+		endpoint: csiconfig
 	}
 
-	Component.onCompleted: genericConfigManager.fetchAndApply()
+	Component.onCompleted: csiConfigManager.fetchAndApply()
 
 	Label {
-		id: genericAppSettingsHeader
+		id: csiAppSettingsHeader
 		Layout.columnSpan: 2;
-		text: "Generic App Settings";
+		text: "CSI Settings";
 		color: "#9fb3c8"
 	}
 
@@ -79,10 +79,10 @@ Item  {
 		property string configKey: "preamble_format"
 		property string configProp: "currentValue"
 
-		Component.onCompleted: genericConfigManager.register(this)
-		onCurrentValueChanged: genericConfigManager.onControlChanged(this)
+		Component.onCompleted: csiConfigManager.register(this)
+		onCurrentValueChanged: csiConfigManager.onControlChanged(this)
 
-		implicitWidth: genericAppSettings.controlWidth > 0 ? genericAppSettings.controlWidth : 210
+		implicitWidth: csiAppSettings.controlWidth > 0 ? csiAppSettings.controlWidth : 210
 
 		// Different internal representation than displayed strings
 		model: [

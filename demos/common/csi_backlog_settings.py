@@ -6,7 +6,7 @@ import espargos
 from .config_manager import ConfigManager
 
 
-class BacklogSettings(PyQt6.QtCore.QObject):
+class CSIBacklogSettings(PyQt6.QtCore.QObject):
     DEFAULT_CONFIG = {
         "size": 20,
         "fields": {"ht20": False, "ht40": False, "he20": False, "lltf": True},
@@ -49,7 +49,7 @@ class BacklogSettings(PyQt6.QtCore.QObject):
 
     def onUpdateAppState(self, newcfg):
         if self.backlog is None:
-            print("BacklogSettings: backlog not set before config update")
+            print("CSIBacklogSettings: backlog not set before config update")
             self.cfgman.updateAppStateHandled.emit()
             return
 

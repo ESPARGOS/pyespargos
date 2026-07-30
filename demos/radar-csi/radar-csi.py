@@ -7,7 +7,7 @@ import threading
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication
+from demos.common import ESPARGOSCSIApplication
 
 import espargos
 import espargos.constants
@@ -17,7 +17,7 @@ import PyQt6.QtCharts
 import PyQt6.QtCore
 
 
-class EspargosDemoRadarCSI(ESPARGOSApplication):
+class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
     sensorCountChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {

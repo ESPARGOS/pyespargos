@@ -138,7 +138,7 @@ Common.ESPARGOSApplication {
 				value: backend.sensorCount
 			}
 
-			Common.GenericAppSettings {
+			Common.CSIAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
 				controlWidth: 180
@@ -152,7 +152,7 @@ Common.ESPARGOSApplication {
 				visible: false
 			}
 
-			Common.BacklogSettings {
+			Common.CSIBacklogSettings {
 				id: backlogSettings
 				insertBefore: backlogSettingsAnchor
 			}

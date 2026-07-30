@@ -9,11 +9,12 @@ This page describes the framework in general and, in particular, how it is confi
 
 Structure
 ---------
-The framework is centered on the :code:`ESPARGOSApplication` base class, which every demo subclasses.
-Optional functionality is added through *mixins* that a demo combines as needed:
+The framework separates the generic application scaffolding from the sensing modality a demo works with.
+Every demo subclasses a *modality* application class; optional functionality is then added through *mixins* that a demo combines as needed:
 
-* :code:`ESPARGOSApplication`: the base class. Handles command-line argument parsing, YAML configuration loading, QML engine setup, and creation and calibration of the ESPARGOS :class:`.CSIPool`.
-* :code:`BacklogMixin`: adds a :class:`.CSIBacklog` and a settings panel for it (backlog size, stored CSI fields, packet filters).
+* :code:`ESPARGOSApplication`: the generic base class. Handles command-line argument parsing, YAML configuration loading, QML engine setup, and the pool lifecycle. It does not commit to a sensing modality; the modality subclass provides the pool type and its calibration procedure.
+* :code:`ESPARGOSCSIApplication`: the CSI modality. Creates and calibrates the ESPARGOS :class:`.CSIPool` and provides the CSI receiver drawer and preamble format selection. All demos shipped with *pyespargos* build on this class.
+* :code:`CSIBacklogMixin`: adds a :class:`.CSIBacklog` and a settings panel for it (backlog size, stored CSI fields, packet filters).
 * :code:`CombinedArrayMixin`: adds support for phase-coherent multi-board *combined arrays* (see :doc:`combined-arrays`), including parsing of the array geometry and per-cable length compensation.
 * :code:`SingleCSIFormatMixin`: adds selection of a single preamble format (L-LTF, HT20, HT40 or HE20) to work with.
 
@@ -21,9 +22,9 @@ A typical demo therefore starts like this:
 
 .. code-block:: python
 
-  from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin
+  from demos.common import ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIFormatMixin
 
-  class EspargosDemoPhasesOverSpace(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+  class EspargosDemoPhasesOverSpace(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
       ...
 
 The framework also provides an optional :code:`CSIReceiverDrawer` for connecting to and calibrating ESPARGOS devices at runtime.
@@ -42,9 +43,10 @@ Later sources are *deep-merged* on top of earlier ones: a source only needs to s
 The configuration is grouped into top-level sections:
 
 * :code:`pool`: which ESPARGOS devices to connect to (:code:`hosts`) and how to operate them: WiFi channel, calibration behavior, RF switch, receiver/FFT gain, MAC filtering, and so on.
-* :code:`backlog`: CSI backlog settings, i.e., :code:`size`, which CSI :code:`fields` to store (:code:`lltf`, :code:`ht20`, :code:`ht40`, :code:`he20`), and packet :code:`filters` (e.g. :code:`exclude_11b`). Only relevant for demos using :code:`BacklogMixin`.
+* :code:`backlog`: CSI backlog settings, i.e., :code:`size`, which CSI :code:`fields` to store (:code:`lltf`, :code:`ht20`, :code:`ht40`, :code:`he20`), and packet :code:`filters` (e.g. :code:`exclude_11b`). Only relevant for demos using :code:`CSIBacklogMixin`.
 * :code:`combined-array`: the geometry of a phase-coherent multi-board array. Only relevant for demos using :code:`CombinedArrayMixin` (see :doc:`combined-arrays`).
-* :code:`generic`: framework-wide application settings, such as :code:`preamble_format` and :code:`kiosk_mode`.
+* :code:`generic`: framework-wide application settings, such as :code:`kiosk_mode`.
+* :code:`csi`: CSI modality settings, currently the :code:`preamble_format` selection.
 * :code:`app`: reserved for settings specific to the individual demo.
 
 To see the complete list of configuration keys and their default values for any demo, run it with :code:`--help`.
@@ -64,8 +66,9 @@ The bottom of the help output lists every available option, for example:
       pool.channel: default: 13
       ...
     generic:
-      generic.preamble_format: default: 'auto'
       generic.kiosk_mode: default: false
+    csi:
+      csi.preamble_format: default: 'auto'
     app: default: {}
 
 YAML Configuration Files (``-c``/``--config``)
@@ -158,8 +161,8 @@ Which of these are available depends on the mixins a demo uses; run the demo wit
 
 * **Device hosts** (positional argument): for demos that operate on plain, independent arrays, a comma-separated list of host addresses sets :code:`pool.hosts`, e.g. :code:`instantaneous-csi.py 192.168.1.2,192.168.1.3`.
 * :code:`-s`/:code:`--single-array HOST` (with :code:`CombinedArrayMixin`): a shortcut that auto-generates a single-board :code:`combined-array` configuration for the given host, so you do not need a configuration file just to run a combined-array demo on one board.
-* :code:`-b`/:code:`--backlog-size N` (with :code:`BacklogMixin`): sets :code:`backlog.size`.
-* :code:`--lltf` / :code:`--ht20` / :code:`--ht40` / :code:`--he20` (with :code:`SingleCSIFormatMixin`): restrict the demo to a single preamble format (:code:`generic.preamble_format`). Without any of these flags, the format is chosen automatically.
+* :code:`-b`/:code:`--backlog-size N` (with :code:`CSIBacklogMixin`): sets :code:`backlog.size`.
+* :code:`--lltf` / :code:`--ht20` / :code:`--ht40` / :code:`--he20` (with :code:`SingleCSIFormatMixin`): restrict the demo to a single preamble format (:code:`csi.preamble_format`). Without any of these flags, the format is chosen automatically.
 
 .. note::
    These shortcuts and the corresponding configuration keys control the same underlying settings.

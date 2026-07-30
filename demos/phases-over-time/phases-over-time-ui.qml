@@ -101,7 +101,7 @@ Common.ESPARGOSApplication {
 				currentValue: "antenna"
 			}
 
-			Common.GenericAppSettings {
+			Common.CSIAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
 				controlWidth: 160
@@ -115,7 +115,7 @@ Common.ESPARGOSApplication {
 				visible: false
 			}
 
-			Common.BacklogSettings {
+			Common.CSIBacklogSettings {
 				id: backlogSettings
 				insertBefore: backlogSettingsAnchor
 			}

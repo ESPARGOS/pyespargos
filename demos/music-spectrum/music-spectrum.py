@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin
+from demos.common import ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIFormatMixin
 
 import numpy as np
 import espargos
@@ -15,7 +15,7 @@ import PyQt6.QtCharts
 import PyQt6.QtCore
 
 
-class EspargosDemoMusicSpectrum(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class EspargosDemoMusicSpectrum(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
 
     DEFAULT_CONFIG = {}
 

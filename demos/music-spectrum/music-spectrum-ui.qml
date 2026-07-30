@@ -21,7 +21,7 @@ Common.ESPARGOSApplication {
 			title: "Settings"
 			endpoint: appconfig
 
-			Common.GenericAppSettings {
+			Common.CSIAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
 			}
@@ -34,7 +34,7 @@ Common.ESPARGOSApplication {
 				visible: false
 			}
 
-			Common.BacklogSettings {
+			Common.CSIBacklogSettings {
 				id: backlogSettings
 				insertBefore: backlogSettingsAnchor
 			}

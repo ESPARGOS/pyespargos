@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
+from demos.common import ESPARGOSCSIApplication, CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
 
 import matplotlib.colors
 import numpy as np
@@ -97,7 +97,7 @@ class RadiationPatternGeometry(PyQt6.QtQuick3D.QQuick3DGeometry):
         )
 
 
-class EspargosDemoRadiationPattern3D(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class EspargosDemoRadiationPattern3D(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     configChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {

@@ -13,10 +13,10 @@ sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
 import espargos
 import espargos.constants
-from demos.common import ESPARGOSApplication
+from demos.common import ESPARGOSCSIApplication
 
 
-class EspargosDemoRadarScheduleCheck(ESPARGOSApplication):
+class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
     radarResidualsChanged = PyQt6.QtCore.pyqtSignal()
     latestSourceChanged = PyQt6.QtCore.pyqtSignal()
     packetCountChanged = PyQt6.QtCore.pyqtSignal()

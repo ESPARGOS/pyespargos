@@ -11,10 +11,10 @@ import PyQt6.QtCore
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
 import espargos
-from demos.common import BacklogMixin, CombinedArrayMixin, ESPARGOSApplication, SingleCSIFormatMixin
+from demos.common import CSIBacklogMixin, CombinedArrayMixin, ESPARGOSCSIApplication, SingleCSIFormatMixin
 
 
-class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class EspargosDemoStochasticFading(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     RAYLEIGH_SIGMA = 1.0 / np.sqrt(2.0)
     DEFAULT_X_MAX = 4.0
     AXIS_SMOOTHING = 0.15
@@ -78,7 +78,7 @@ class EspargosDemoStochasticFading(BacklogMixin, CombinedArrayMixin, SingleCSIFo
     def _prepare_pool_init(self, additional_calibrate_args):
         if self._use_combined_array:
             return super()._prepare_pool_init(additional_calibrate_args)
-        return ESPARGOSApplication._prepare_pool_init(self, additional_calibrate_args)
+        return ESPARGOSCSIApplication._prepare_pool_init(self, additional_calibrate_args)
 
     def _on_update_app_state(self, newcfg):
         signal_map = {

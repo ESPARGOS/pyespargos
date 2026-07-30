@@ -82,7 +82,7 @@ Common.ESPARGOSApplication {
 				onClicked: backend.resetHistogram()
 			}
 
-			Common.GenericAppSettings {
+			Common.CSIAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
 				controlWidth: 148
@@ -96,7 +96,7 @@ Common.ESPARGOSApplication {
 				visible: false
 			}
 
-			Common.BacklogSettings {
+			Common.CSIBacklogSettings {
 				id: backlogSettings
 				insertBefore: backlogSettingsAnchor
 			}

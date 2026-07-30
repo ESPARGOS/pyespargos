@@ -432,7 +432,7 @@ Common.ESPARGOSApplication {
 				ToolTip.text: "Exposure: " + (value * 100).toFixed(0) + "%"
 			}
 
-			Common.GenericAppSettings {
+			Common.CSIAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
 			}
@@ -445,7 +445,7 @@ Common.ESPARGOSApplication {
 				visible: false
 			}
 
-			Common.BacklogSettings {
+			Common.CSIBacklogSettings {
 				id: backlogSettings
 				insertBefore: backlogSettingsAnchor
 			}

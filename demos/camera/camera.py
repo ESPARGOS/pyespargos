@@ -7,7 +7,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import BacklogMixin, CameraView, CombinedArrayMixin, ESPARGOSApplication, SingleCSIFormatMixin
+from demos.common import CSIBacklogMixin, CameraView, CombinedArrayMixin, ESPARGOSCSIApplication, SingleCSIFormatMixin
 import numpy as np
 import espargos
 import time
@@ -20,7 +20,7 @@ except ImportError:
     from csi_overlay import CSIOverlay
 
 
-class CSICameraDemo(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     """Acquire CSI, compute its spatial spectrum, and publish it to the camera UI."""
 
     DEFAULT_CONFIG = {

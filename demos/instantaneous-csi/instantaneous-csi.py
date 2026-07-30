@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin
+from demos.common import ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIFormatMixin
 
 from espargos.sensor import RFSwitchState
 import numpy as np
@@ -16,7 +16,7 @@ import PyQt6.QtCharts
 import PyQt6.QtCore
 
 
-class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class EspargosDemoInstantaneousCSI(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     # Re-declare base class signal so it's visible to notify= in pyqtProperty decorators
     preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
 
@@ -120,7 +120,7 @@ class EspargosDemoInstantaneousCSI(BacklogMixin, SingleCSIFormatMixin, ESPARGOSA
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=preambleFormatChanged)
     def subcarrierCount(self):
-        preamble_format = self.genericconfig.get("preamble_format")
+        preamble_format = self.csiconfig.get("preamble_format")
         if preamble_format == "auto":
             preamble_format = self.last_preamble_format
         return espargos.csi_packet.get_csi_format_subcarrier_count(preamble_format)

@@ -138,7 +138,7 @@ Common.ESPARGOSApplication {
                 }
             }
 
-            Common.GenericAppSettings {
+            Common.CSIAppSettings {
                 id: genericAppSettings
                 insertBefore: genericAppSettingsAnchor
                 controlWidth: 180
@@ -150,7 +150,7 @@ Common.ESPARGOSApplication {
                 width: 0; height: 0; visible: false
             }
 
-            Common.BacklogSettings {
+            Common.CSIBacklogSettings {
                 id: backlogSettings
                 insertBefore: backlogSettingsAnchor
             }

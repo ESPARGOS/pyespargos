@@ -6,7 +6,6 @@ import PyQt6.QtQml
 
 import espargos.util
 
-import numpy as np
 import subprocess
 import threading
 import argparse
@@ -14,62 +13,65 @@ import copy
 import yaml
 import logging
 
-from .backlog_settings import BacklogSettings, ConfigManager
-from .config_manager import deep_update
-from .pool_drawer import PoolDrawer
+from .config_manager import ConfigManager, deep_update
 
 
 class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
     """
-    Base class for ESPARGOS demo applications.
+    Generic base class for ESPARGOS demo applications.
 
-    This class provides core functionality for ESPARGOS demos including:
+    This class provides the functionality shared by all ESPARGOS demos:
     - Command-line argument parsing (config file support)
     - YAML configuration loading
     - QML engine initialization
-    - Pool initialization and management
+    - Pool lifecycle management (creation, start-up, calibration, teardown)
 
-    Use mixins to extend functionality:
-    - BacklogMixin: Adds CSI backlog support
-    - CombinedArrayMixin: Adds combined array configuration support
-    - SingleCSIFormatMixin: Adds single preamble format selection
+    The concrete sensing modality is supplied by a subclass such as
+    :class:`.ESPARGOSCSIApplication`, which implements the pool factory
+    (:meth:`_create_pool`) and may provide a receiver-drawer backend
+    (:meth:`_create_pool_drawer`) and a calibration procedure
+    (:meth:`_calibrate_pool`).
+
+    Optional features are added through cooperative mixins that a demo
+    combines as needed, for example :class:`CombinedArrayMixin` or the
+    CSI-specific mixins from :mod:`.csi_application`.
     """
 
     BASE_DEFAULT_CONFIG = {
-        "backlog": {
-            "size": 20,
-            "fields": {"lltf": True, "ht20": False, "ht40": False, "he20": False},
-            "filters": {"exclude_11b": True},
-        },
         "pool": {
-            # Pool configuration settings, partially handled by PoolDrawer
+            # Pool configuration settings; "hosts" is generic, additional keys
+            # are contributed by the modality subclass and its drawer backend
             "hosts": []
         },
         "combined-array": {
             # Combined array configuration settings
         },
         "generic": {
-            # Generic application settings, handled by GenericAppSettings
-            "preamble_format": "auto",
+            # Generic application settings
             "kiosk_mode": False,
-        },
-        "app": {
-            # The 'app' section is reserved for application-specific settings
         },
     }
 
     initComplete = PyQt6.QtCore.pyqtSignal()
-    preambleFormatChanged = PyQt6.QtCore.pyqtSignal()
     appConfigChanged = PyQt6.QtCore.pyqtSignal(dict)  # Emitted when app config changes, with the changed keys
 
     DEFAULT_CONFIG = {}  # Override in subclasses to provide app-specific defaults
 
     def _default_config_template(self) -> dict:
         config = copy.deepcopy(self.BASE_DEFAULT_CONFIG)
-        deep_update(config, {"backlog": BacklogSettings.DEFAULT_CONFIG})
-        deep_update(config, {"pool": PoolDrawer.DEFAULT_CONFIG})
-        deep_update(config, {"app": getattr(self, "DEFAULT_CONFIG", {})})
+        self._extend_default_config(config)
+        # The 'app' section is reserved for application-specific settings
+        deep_update(config, copy.deepcopy({"app": getattr(self, "DEFAULT_CONFIG", {})}))
         return config
+
+    def _extend_default_config(self, config: dict):
+        """
+        Hook for modality subclasses and mixins to contribute their default configuration.
+
+        Override cooperatively: call super()._extend_default_config(config) first, then
+        deep_update(config, ...) with a deep copy of the contributed defaults.
+        """
+        pass
 
     @staticmethod
     def _format_config_value(value):
@@ -176,6 +178,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         self._init_config_managers()
 
         self.genericconfig = ConfigManager(self.get_initial_config("generic"), parent=self)
+        self.genericconfig.updateAppState.connect(self._on_generic_config_updated)
 
         # App configuration manager (uses DEFAULT_CONFIG from subclass)
         self.appconfig = ConfigManager(self.get_initial_config("app"), parent=self)
@@ -188,6 +191,13 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         """
         self.appConfigChanged.emit(newcfg)
         self.appconfig.updateAppStateHandled.emit()
+
+    def _on_generic_config_updated(self, newcfg):
+        """
+        Handler for generic configuration changes.
+        Override in subclasses to handle specific config changes, then call super()._on_generic_config_updated(newcfg).
+        """
+        self.genericconfig.updateAppStateHandled.emit()
 
     def _add_argparse_arguments(self, parser):
         """
@@ -206,14 +216,6 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
     def _uses_combined_array(self):
         """Check if this class uses the CombinedArrayMixin."""
         return isinstance(self, CombinedArrayMixin)
-
-    def _uses_backlog(self):
-        """Check if this class uses the BacklogMixin."""
-        return isinstance(self, BacklogMixin)
-
-    def _uses_single_csi_format(self):
-        """Check if this class uses the SingleCSIFormatMixin."""
-        return isinstance(self, SingleCSIFormatMixin)
 
     def _process_args(self):
         """
@@ -270,20 +272,10 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         # Generic app config manager
         context.setContextProperty("genericconfig", self.genericconfig)
 
-        # Handle generic config changes - emit preambleFormatChanged when needed
-        def _on_generic_config_changed(newcfg):
-            if "preamble_format" in newcfg:
-                if self._uses_single_csi_format():
-                    self._ensure_backlog_fields_for_preamble_format()
-                self.preambleFormatChanged.emit()
-            self.genericconfig.updateAppStateHandled.emit()
-
-        self.genericconfig.updateAppState.connect(_on_generic_config_changed)
-
         # Provide backend and optional additional context properties
         context.setContextProperty("backend", self)
         context.setContextProperty("appconfig", self.appconfig)
-        if hasattr(self, "pooldrawer"):
+        if getattr(self, "pooldrawer", None) is not None:
             context.setContextProperty("poolconfig", self.pooldrawer.configManager())
 
         for key, value in (context_props or {}).items():
@@ -307,54 +299,72 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         calibrate: bool = True,
     ):
         """
-        Initialize ESPARGOS Pool. Also triggers creation of pool drawer backend.
+        Initialize the ESPARGOS pool for this application's sensing modality.
+
+        Creates the boards and the modality's pool (:meth:`_create_pool`) and,
+        if the modality provides one, its receiver-drawer backend
+        (:meth:`_create_pool_drawer`). On a background thread, the pool is
+        then started and calibrated (:meth:`_calibrate_pool`); once the
+        mixins' :meth:`_finalize_pool_init` hooks have completed as well, the
+        application becomes ready and emits :code:`initComplete`.
         """
         # Let mixins prepare pool initialization
         additional_calibrate_args = self._prepare_pool_init(additional_calibrate_args)
 
-        self.pool = espargos.CSIPool([espargos.Board(host) for host in self.get_initial_config("pool", "hosts")])
+        self.pool = self._create_pool([espargos.Board(host) for host in self.get_initial_config("pool", "hosts")])
+        self.pooldrawer = self._create_pool_drawer()
 
-        # Pool configuration UI
-        pool_cfg = self.get_explicit_initial_config("pool", default={})
-        self.pooldrawer = PoolDrawer(self.pool, pool_cfg or None, parent=self)
-        self.pooldrawer.calibrationStarted.connect(self._on_pool_calibration_started)
-        self.pooldrawer.calibrationFinished.connect(self._on_pool_calibration_finished)
-
-        # Wait for config to be applied before starting pool and calibration
         def config_applied():
             def _init_worker():
                 self.pool.start()
-                if calibrate:
-                    try:
-                        per_board = bool(
-                            self.pooldrawer.configManager().get(
-                                "calibration",
-                                "per_board",
-                            )
-                        )
-                        self.pool.calibrate(
-                            duration=2,
-                            per_board=per_board,
-                            **additional_calibrate_args,
-                        )
-                    except espargos.CalibrationError as exc:
-                        error_message = str(exc)
-                        self.logger.error(error_message)
-                        self.pooldrawer.configManager().emitShowError("Initialization failed", error_message)
-                        self._finalize_pool_init(backlog_cb_predicate, calibrate=False)
-                        self.ready = True
-                        self.initComplete.emit()
-                        return
+                complete = self._calibrate_pool(calibrate=calibrate, additional_calibrate_args=additional_calibrate_args)
 
                 # Let mixins finalize pool initialization
-                self._finalize_pool_init(backlog_cb_predicate, calibrate)
+                self._finalize_pool_init(backlog_cb_predicate, calibrate and complete)
 
                 self.ready = True
                 self.initComplete.emit()
 
             threading.Thread(target=_init_worker, daemon=True).start()
 
-        self.pooldrawer.initComplete.connect(config_applied)
+        # If the modality provides a drawer backend, wait for its initial
+        # configuration to be applied before starting the pool.
+        if self.pooldrawer is not None:
+            self.pooldrawer.initComplete.connect(config_applied)
+        else:
+            config_applied()
+
+    def _create_pool(self, boards: list) -> espargos.Pool:
+        """
+        Create this application's pool over the given boards.
+
+        Must be implemented by a modality subclass such as
+        :class:`.ESPARGOSCSIApplication`.
+        """
+        raise NotImplementedError("ESPARGOSApplication does not implement a sensing modality; subclass e.g. ESPARGOSCSIApplication instead")
+
+    def _create_pool_drawer(self):
+        """
+        Create the receiver-drawer backend for this application's modality, or return None.
+
+        A returned backend must provide a :code:`configManager()` accessor and
+        an :code:`initComplete` signal that fires once its initial
+        configuration has been applied; pool start-up and calibration are
+        deferred until then.
+        """
+        return None
+
+    def _calibrate_pool(self, calibrate: bool, additional_calibrate_args: dict) -> bool:
+        """
+        Perform the modality's calibration procedure on a background thread.
+
+        Called after sensor-message reception has been started, before the
+        application becomes ready. The default implementation does nothing.
+        Modality subclasses override this with their calibration procedure and
+        return False if the pool came up in a degraded state (calibration
+        failed); feature mixins then finalize without calibration.
+        """
+        return True
 
     def _prepare_pool_init(self, additional_calibrate_args):
         """
@@ -370,16 +380,6 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         Override in mixins and call super()._finalize_pool_init(backlog_cb_predicate, calibrate).
         """
         pass
-
-    def _on_pool_calibration_started(self):
-        if hasattr(self, "backlog"):
-            self.backlog.calibrate = False
-            self.backlog.clear()
-
-    def _on_pool_calibration_finished(self, success: bool, _error_message: str):
-        if hasattr(self, "backlog"):
-            self.backlog.calibrate = bool(success and self.pool.get_calibration() is not None)
-            self.backlog.clear()
 
     def onAboutToQuit(self):
         if hasattr(self, "backlog"):
@@ -411,61 +411,6 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         self.onAboutToQuit()
         subprocess.Popen(["systemctl", "poweroff"])
         self.quit()
-
-
-class BacklogMixin:
-    """
-    Mixin that adds CSI backlog support to an ESPARGOSApplication.
-
-    Provides:
-    - Backlog size command-line argument (-b/--backlog-size)
-    - BacklogSettings configuration manager
-    - Automatic backlog creation during pool initialization
-    """
-
-    def _add_argparse_arguments(self, parser):
-        super()._add_argparse_arguments(parser)
-        parser.add_argument(
-            "-b",
-            "--backlog-size",
-            type=int,
-            default=20,
-            help="Size of CSI datapoint backlog",
-        )
-
-    def _process_args(self):
-        super()._process_args()
-        self.initial_config["backlog"]["size"] = self.args.backlog_size
-
-    def _init_config_managers(self):
-        super()._init_config_managers()
-        self.backlog_settings = BacklogSettings(force_config=self.get_initial_config("backlog"), parent=self)
-
-    def _setup_qml_context(self, context):
-        super()._setup_qml_context(context)
-        context.setContextProperty("backlogconfig", self.backlog_settings.configManager())
-
-    def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
-        super()._finalize_pool_init(backlog_cb_predicate, calibrate)
-        fields_cfg = self.get_initial_config("backlog", "fields", default=None)
-        initial_fields = None
-        if isinstance(fields_cfg, dict):
-            initial_fields = set(espargos.CSIBacklog.FIELD_SPECS)
-            for field, enabled in fields_cfg.items():
-                if enabled:
-                    initial_fields.add(field)
-                else:
-                    initial_fields.discard(field)
-
-        self.backlog = espargos.CSIBacklog(
-            self.pool,
-            fields=initial_fields,
-            cb_predicate=backlog_cb_predicate,
-            calibrate=calibrate,
-        )
-        self.backlog.start()
-
-        self.backlog_settings.set_backlog(self.backlog)
 
 
 class CombinedArrayMixin:
@@ -535,174 +480,3 @@ class CombinedArrayMixin:
         self.initial_config["pool"]["hosts"] = list(hosts.values())
 
         return additional_calibrate_args
-
-
-class SingleCSIFormatMixin:
-    """
-    Mixin that adds single preamble format selection to an ESPARGOSApplication.
-
-    Provides:
-    - Mutually exclusive command-line arguments (--lltf, --ht20, --ht40, --he20)
-    - Automatic backlog field configuration when combined with BacklogMixin.
-      Without a format command-line argument, all CSI formats are stored and
-      the backlog reader resolves the concrete format automatically. Passing a
-      format argument stores and reads only that CSI format.
-    """
-
-    # Formats are ordered by priority: the first format wins if sample counts tie.
-    CSI_FORMATS = ("ht40", "ht20", "he20", "lltf")
-
-    def _ensure_backlog_fields_for_preamble_format(self):
-        if not self._uses_backlog() or not hasattr(self, "backlog"):
-            return
-
-        preamble_format = self.genericconfig.get("preamble_format")
-        fields = set(self.backlog.get_fields())
-        if preamble_format == "auto":
-            fields.update(self.CSI_FORMATS)
-        elif preamble_format in self.CSI_FORMATS:
-            fields.add(preamble_format)
-        self.backlog.set_fields(fields)
-
-    def _configured_preamble_format(self, default: str = "lltf") -> str:
-        preamble_format = self.genericconfig.get("preamble_format")
-        return default if preamble_format == "auto" else preamble_format
-
-    def _resolve_backlog_preamble_format(self, allow_incomplete: bool = False, default: str = "lltf") -> str:
-        preamble_format = self.genericconfig.get("preamble_format")
-        if preamble_format != "auto":
-            return preamble_format
-        if not hasattr(self, "backlog"):
-            return default
-
-        counts = {}
-        for fmt in self.CSI_FORMATS:
-            try:
-                count = self.backlog.count_valid_datapoints(fmt, allow_incomplete=allow_incomplete)
-            except ValueError:
-                count = 0
-            counts[fmt] = count
-
-        best_format = max(self.CSI_FORMATS, key=counts.get)
-        return best_format if counts[best_format] > 0 else default
-
-    def get_backlog_csi(self, *additional_keys: str, allow_incomplete: bool = False, remove_global_sto=True, return_format: bool = False) -> np.ndarray | tuple[np.ndarray, ...] | None:
-        """
-        Retrieve latest CSI datapoints from backlog for the selected preamble format.
-
-        Returns None if backlog does not exist (yet), is empty, or data is otherwise unavailable.
-        Automatically interpolates gaps for HT20/HT40 formats.
-
-        :param additional_keys: Additional backlog keys to retrieve alongside the CSI data.
-        :param allow_incomplete: If True, keep CSI datapoints with at least one antenna with valid CSI and
-            leave missing antennas as NaN, instead of rejecting the whole backlog request.
-            Additional returned backlog fields are filtered to the same datapoints. Useful when
-            the CSI cluster predicate can create incomplete clusters (timeout or accepting non-full completion state).
-        :param remove_global_sto: If True, remove global STO from CSI data by re-centering the cluster on the mean STO.
-            This should be true unless you want to do processing across multiple subsequent CSI datapoints where the global STO would be relevant.
-        :param return_format: If true, include the concrete preamble format used
-            for this readback as the first returned tuple element.
-        :return: CSI array if no additional keys, tuple of (csi, *additional) if keys specified,
-                 tuple of (format, csi, *additional) if return_format is true, or None if unavailable.
-        """
-        if not hasattr(self, "backlog") or not self.backlog.nonempty():
-            return None
-
-        csi_key = self._resolve_backlog_preamble_format(allow_incomplete=allow_incomplete)
-
-        try:
-            results = list(self.backlog.get_multiple([csi_key, *additional_keys]))
-        except ValueError:
-            print(f"Requested CSI key {csi_key} not in backlog")
-            return None
-
-        csi_backlog = results[0]
-
-        # Apply STO removal if requested
-        if remove_global_sto:
-            espargos.util.remove_mean_sto(csi_backlog)
-
-        # Interpolate DC subcarrier gap for HT formats
-        if csi_key == "ht40":
-            espargos.util.interpolate_ht40ltf_gap(csi_backlog)
-        elif csi_key == "ht20":
-            espargos.util.interpolate_ht20ltf_gap(csi_backlog)
-        elif csi_key == "he20":
-            espargos.util.interpolate_he20ltf_gaps(csi_backlog)
-
-        # Handle data containing NaN values (from incomplete CSI clusters)
-        if np.any(np.isnan(csi_backlog)):
-            if allow_incomplete:
-                valid_datapoints = np.any(np.isfinite(csi_backlog.reshape(csi_backlog.shape[0], -1)), axis=1)
-                if not np.any(valid_datapoints):
-                    return None
-                results = [result[valid_datapoints] for result in results]
-                csi_backlog = results[0]
-            else:
-                return None
-
-        if return_format:
-            return (csi_key, *results)
-        if additional_keys:
-            return tuple(results)
-        return csi_backlog
-
-    def _add_argparse_arguments(self, parser):
-        super()._add_argparse_arguments(parser)
-        format_group = parser.add_mutually_exclusive_group()
-        format_group.add_argument(
-            "--lltf",
-            default=False,
-            help="Store and read only CSI from L-LTF",
-            action="store_true",
-        )
-        format_group.add_argument(
-            "--ht40",
-            default=False,
-            help="Store and read only CSI from HT40",
-            action="store_true",
-        )
-        format_group.add_argument(
-            "--ht20",
-            default=False,
-            help="Store and read only CSI from HT20",
-            action="store_true",
-        )
-        format_group.add_argument(
-            "--he20",
-            default=False,
-            help="Store and read only CSI from HE20",
-            action="store_true",
-        )
-
-    def _process_args(self):
-        super()._process_args()
-
-        # Make sure that only one format is selected
-        selected_formats = []
-        if self.args.lltf:
-            selected_formats.append("lltf")
-        if self.args.ht40:
-            selected_formats.append("ht40")
-        if self.args.ht20:
-            selected_formats.append("ht20")
-        if self.args.he20:
-            selected_formats.append("he20")
-        if len(selected_formats) > 1:
-            raise ValueError("At most one of --lltf, --ht40, --ht20 or --he20 can be selected!")
-
-        if len(selected_formats) == 1:
-            # Format flags explicitly narrow both backlog storage and readback.
-            self.initial_config["generic"]["preamble_format"] = selected_formats[0]
-            if self._uses_backlog():
-                self.initial_config["backlog"]["fields"] = {
-                    "lltf": self.args.lltf,
-                    "ht20": self.args.ht20,
-                    "ht40": self.args.ht40,
-                    "he20": self.args.he20,
-                }
-        elif self._uses_backlog():
-            # No format flag means Auto readback with all CSI formats available.
-            self.initial_config["generic"]["preamble_format"] = "auto"
-            for fmt in self.CSI_FORMATS:
-                self.initial_config["backlog"]["fields"][fmt] = True

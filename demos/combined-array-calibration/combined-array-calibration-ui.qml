@@ -62,7 +62,7 @@ Common.ESPARGOSApplication {
 				checked: false
 			}
 
-			Common.GenericAppSettings {
+			Common.CSIAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
 				controlWidth: 160

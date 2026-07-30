@@ -16,7 +16,7 @@ def _first_gain_value(value):
     return value[0] if isinstance(value, list) else value
 
 
-class PoolDrawer(PyQt6.QtCore.QObject):
+class CSIPoolDrawer(PyQt6.QtCore.QObject):
     DEFAULT_CONFIG = {
         "channel": 13,
         "secondary_channel": 2,

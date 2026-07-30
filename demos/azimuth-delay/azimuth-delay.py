@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
+from demos.common import ESPARGOSCSIApplication, CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
 
 from matplotlib import colormaps
 import numpy as np
@@ -17,7 +17,7 @@ BEAMSPACE_OVERSAMPLING = 16
 DELAY_OVERSAMPLING = 10
 
 
-class AzimuthDelayApp(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class AzimuthDelayApp(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     DEFAULT_CONFIG = {
         "delay_min": -3,
         "delay_max": 5,

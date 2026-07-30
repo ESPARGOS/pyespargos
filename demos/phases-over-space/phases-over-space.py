@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, BacklogMixin, SingleCSIFormatMixin
+from demos.common import ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIFormatMixin
 
 import numpy as np
 import matplotlib
@@ -15,7 +15,7 @@ import argparse
 import PyQt6.QtCore
 
 
-class EspargosDemoPhasesOverSpace(BacklogMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class EspargosDemoPhasesOverSpace(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     updateColors = PyQt6.QtCore.pyqtSignal(list)
 
     DEFAULT_CONFIG = {}

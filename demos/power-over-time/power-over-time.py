@@ -12,10 +12,10 @@ sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
 import espargos
 import espargos.csi_packet
-from demos.common import BacklogMixin, CombinedArrayMixin, ESPARGOSApplication, SingleCSIFormatMixin
+from demos.common import CSIBacklogMixin, CombinedArrayMixin, ESPARGOSCSIApplication, SingleCSIFormatMixin
 
 
-class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class EspargosDemoPowerOverTime(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     updatePowers = PyQt6.QtCore.pyqtSignal(float, list, float, float)
     maxAgeChanged = PyQt6.QtCore.pyqtSignal()
     modeChanged = PyQt6.QtCore.pyqtSignal()
@@ -81,7 +81,7 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
     def _prepare_pool_init(self, additional_calibrate_args):
         if self._use_combined_array:
             return super()._prepare_pool_init(additional_calibrate_args)
-        return ESPARGOSApplication._prepare_pool_init(self, additional_calibrate_args)
+        return ESPARGOSCSIApplication._prepare_pool_init(self, additional_calibrate_args)
 
     def _on_update_app_state(self, newcfg):
         changed_keys = set(newcfg)
@@ -152,7 +152,7 @@ class EspargosDemoPowerOverTime(BacklogMixin, CombinedArrayMixin, SingleCSIForma
 
     @property
     def _subcarrier_bounds(self):
-        preamble_format = self.genericconfig.get("preamble_format")
+        preamble_format = self.csiconfig.get("preamble_format")
         if preamble_format == "auto":
             preamble_format = self.last_preamble_format
         return self._subcarrier_bounds_for_format(preamble_format)

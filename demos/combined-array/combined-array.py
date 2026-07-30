@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
+from demos.common import ESPARGOSCSIApplication, CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
 
 import numpy as np
 import matplotlib
@@ -15,7 +15,7 @@ import argparse
 import PyQt6.QtCore
 
 
-class EspargosDemoCombinedArray(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class EspargosDemoCombinedArray(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     updateColors = PyQt6.QtCore.pyqtSignal(list)
 
     DEFAULT_CONFIG = {}

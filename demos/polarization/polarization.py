@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
-from demos.common import ESPARGOSApplication, BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
+from demos.common import ESPARGOSCSIApplication, CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
 
 import espargos.constants
 import espargos.util
@@ -15,7 +15,7 @@ import argparse
 import PyQt6.QtCore
 
 
-class EspargosDemoPolarization(BacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class EspargosDemoPolarization(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     # Signal to update constellation diagrams:
     # (feed_L_points, feed_R_points, linear_H_points, linear_V_points, axis_scale)
     # Each points list contains [[i1, q1], [i2, q2], ...]

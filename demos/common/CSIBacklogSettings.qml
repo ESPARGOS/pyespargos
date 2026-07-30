@@ -6,7 +6,7 @@ import "." as Common
 
 
 Item  {
-	id: backlogSettings
+	id: csiBacklogSettings
 	property Item insertBefore: null
 	onInsertBeforeChanged: {
 		if (!insertBefore) return

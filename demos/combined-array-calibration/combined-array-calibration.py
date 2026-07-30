@@ -14,10 +14,10 @@ import espargos
 import PyQt6.QtCharts
 import PyQt6.QtCore
 
-from common import ESPARGOSApplication, CombinedArrayMixin, SingleCSIFormatMixin, ConfigManager
+from common import ESPARGOSCSIApplication, CombinedArrayMixin, SingleCSIFormatMixin, ConfigManager
 
 
-class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSApplication):
+class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     DEFAULT_CONFIG = {
         "color_by_sensor_index": False,
         "update_rate": 0.01,
@@ -64,7 +64,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
         self.initComplete.connect(self.onInitComplete)
 
         # Register callback for preamble format changes
-        self.genericconfig.updateAppState.connect(self.onGeneralConfigUpdate)
+        self.csiconfig.updateAppState.connect(self.onGeneralConfigUpdate)
 
         # Initialize QML UI
         qml_file = pathlib.Path(__file__).resolve().parent / "combined-array-calibration-ui.qml"
@@ -79,7 +79,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
         self.poll_timer.timeout.connect(self.poll_csi)
         self.poll_timer.start(10)
 
-        self.onGeneralConfigUpdate(self.genericconfig.get())
+        self.onGeneralConfigUpdate(self.csiconfig.get())
 
         # Calculate sensor counts
         boardwise = self.appconfig.get("boardwise")
