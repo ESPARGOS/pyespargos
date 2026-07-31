@@ -59,7 +59,7 @@ def on_new_csi(cluster: espargos.CSICluster):
 
     tx_timestamp_s = cluster.get_radar_tx_info().get_hardware_tx_timestamp_ns() / 1e9
     corrected = espargos.radar.correct_radar_csi_tx_timestamps(
-        csi_lltf[np.newaxis, ...], np.asarray([tx_timestamp_s], dtype=np.float64), np.asarray([cluster.get_radar_tx_index()], dtype=np.int32), subcarrier_frequencies, calibration.sensor_clock_offsets, tx_timestamp_offset_s=1085e-9
+        csi_lltf[np.newaxis, ...], np.asarray([tx_timestamp_s], dtype=np.float64), np.asarray([cluster.get_radar_tx_index()], dtype=np.int32), subcarrier_frequencies, calibration.timing_offsets, tx_timestamp_offset_s=1085e-9
     )[0]
 
     timestamp_records.append(cluster.get_sensor_timestamps())
@@ -82,7 +82,7 @@ try:
     pool.calibrate(per_board=False, duration=2)
 
     calibration = pool.get_calibration()
-    min_safe_start_s = max(0.0, -float(np.nanmin(calibration.sensor_clock_offsets))) + 1e-6
+    min_safe_start_s = max(0.0, -float(np.nanmin(calibration.timing_offsets))) + 1e-6
     active_by_sensor = np.zeros((espargos.constants.ROWS_PER_BOARD, espargos.constants.ANTENNAS_PER_ROW), dtype=bool)
     active_by_sensor[0, 2] = True
     radar_config = espargos.radar.build_pool_config(

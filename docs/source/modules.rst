@@ -51,10 +51,18 @@ espargos.csi_backlog
    :undoc-members:
    :show-inheritance:
 
-espargos.calibration
---------------------
+espargos.sensor_calibration
+---------------------------
 
-.. automodule:: espargos.calibration
+.. automodule:: espargos.sensor_calibration
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.csi_calibration
+------------------------
+
+.. automodule:: espargos.csi_calibration
    :members:
    :undoc-members:
    :show-inheritance:

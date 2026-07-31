@@ -114,7 +114,7 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
 
         calibration = self.pool.get_calibration()
         requested_start_s = self._get_schedule_ms("start") / 1e3
-        min_safe_start_s = max(0.0, -float(np.nanmin(calibration.sensor_clock_offsets))) + 1e-6
+        min_safe_start_s = max(0.0, -float(np.nanmin(calibration.timing_offsets))) + 1e-6
         effective_start_s = max(requested_start_s, min_safe_start_s)
         slot_s = self._get_schedule_ms("slot") / 1e3
         sensor_shape = (espargos.constants.ROWS_PER_BOARD, espargos.constants.ANTENNAS_PER_ROW)
@@ -254,7 +254,7 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
             np.asarray([clustered_csi.get_radar_tx_info().get_hardware_tx_timestamp_ns() / 1e9], dtype=np.float64),
             np.asarray([tx_index], dtype=np.int32),
             subcarrier_frequencies,
-            calibration.sensor_clock_offsets,
+            calibration.timing_offsets,
             tx_timestamp_offset_s=float(self.appconfig.get("tx_timestamp_offset_ns")) * 1e-9,
         )[0].reshape(self.sensor_count, -1)
 

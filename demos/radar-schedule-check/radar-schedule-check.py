@@ -140,7 +140,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
         for board_index, (board_obj, board_config) in enumerate(zip(self.pool.boards, pool_radar_config.board_configs)):
             for antid, mac in enumerate(board_config["mac_by_antid"]):
                 row, col = board_obj.revision.antid_to_row_col(antid)
-                reference_start_s = board_config["start_by_antid"][antid] / espargos.radar.RADAR_TIME_SCALE - calibration.sensor_clock_offsets[board_index, row, col]
+                reference_start_s = board_config["start_by_antid"][antid] / espargos.radar.RADAR_TIME_SCALE - calibration.timing_offsets[board_index, row, col]
                 schedule_by_source_mac[self._normalize_mac(mac)] = {
                     "board_index": board_index,
                     "antid": antid,
@@ -198,7 +198,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
             return
 
         requested_start_s = float(self.appconfig.get("start_us")) / 1e6
-        min_safe_start_s = max(0.0, -float(np.nanmin(calibration.sensor_clock_offsets))) + 1e-6
+        min_safe_start_s = max(0.0, -float(np.nanmin(calibration.timing_offsets))) + 1e-6
         effective_start_s = max(requested_start_s, min_safe_start_s)
         if effective_start_s != requested_start_s:
             self.appconfig.set({"start_us": int(np.ceil(effective_start_s * 1e6))})
@@ -251,7 +251,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
         calibration = self.pool.get_calibration()
         timestamps = csi_cluster.get_sensor_timestamps()
         self._update_tx_rx_timestamp_table(schedule, csi_cluster.get_radar_tx_info(), timestamps)
-        reference_timestamps = timestamps - calibration.sensor_clock_offsets
+        reference_timestamps = timestamps - calibration.timing_offsets
 
         expected_reference_time = np.full_like(reference_timestamps, schedule["reference_start_s"], dtype=np.float64)
         if schedule["period_s"] > 0:

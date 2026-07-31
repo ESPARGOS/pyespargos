@@ -23,7 +23,7 @@ def build_schedule_lookup(pool: espargos.CSIPool, pool_radar_config: espargos.ra
     for board_index, (board_obj, board_config) in enumerate(zip(pool.boards, pool_radar_config.board_configs)):
         for antid, mac in enumerate(board_config["mac_by_antid"]):
             row, col = board_obj.revision.antid_to_row_col(antid)
-            reference_start_s = board_config["start_by_antid"][antid] / espargos.radar.RADAR_TIME_SCALE - calibration.sensor_clock_offsets[board_index, row, col]
+            reference_start_s = board_config["start_by_antid"][antid] / espargos.radar.RADAR_TIME_SCALE - calibration.timing_offsets[board_index, row, col]
             schedule_by_source_mac[normalize_mac(mac)] = {
                 "board_index": board_index,
                 "antid": antid,
@@ -60,7 +60,7 @@ def main():
             raise RuntimeError("Calibration did not produce a CSICalibration object")
 
         requested_start_s = args.start_us / 1e6
-        min_safe_start_s = max(0.0, -float(np.nanmin(calibration.sensor_clock_offsets))) + 1e-6
+        min_safe_start_s = max(0.0, -float(np.nanmin(calibration.timing_offsets))) + 1e-6
         effective_start_s = max(requested_start_s, min_safe_start_s)
 
         sensor_shape = (espargos.constants.ROWS_PER_BOARD, espargos.constants.ANTENNAS_PER_ROW)
@@ -102,7 +102,7 @@ def main():
                 continue
 
             timestamps = csi_cluster.get_sensor_timestamps()
-            reference_timestamps = timestamps - calibration.sensor_clock_offsets
+            reference_timestamps = timestamps - calibration.timing_offsets
             cycle_indices = np.rint((reference_timestamps - schedule["reference_start_s"]) / schedule["period_s"])
             cycle_index = int(np.rint(np.nanmedian(cycle_indices)))
             expected_reference_time = schedule["reference_start_s"] + cycle_index * schedule["period_s"]

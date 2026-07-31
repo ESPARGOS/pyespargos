@@ -81,7 +81,7 @@ class EspargosDemoTDOAOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSCS
             calibration = self.pool.get_calibration()
             if calibration is None:
                 return
-            corrected_sensor_timestamps = latest_sensor_timestamps - calibration.sensor_clock_offsets
+            corrected_sensor_timestamps = latest_sensor_timestamps - calibration.timing_offsets
             reference_timestamp = corrected_sensor_timestamps[0, 0, 0]
             tdoas_ns = (corrected_sensor_timestamps - reference_timestamp) * 1e9
             if do_average:

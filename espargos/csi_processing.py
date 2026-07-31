@@ -222,89 +222,133 @@ def _wrap_period_symmetric(values: np.ndarray, period: float) -> np.ndarray:
     return np.mod(values + period / 2.0, period) - period / 2.0
 
 
-def derive_he20_calibration_from_lltf(
-    complete_clusters_lltf: np.ndarray,
-    complete_cluster_timestamps: np.ndarray,
-    secondary_channel_relative: int,
-) -> np.ndarray:
+def get_csi_sto_correction_frequencies(csi_format: str, secondary_channel_relative: int = 0) -> tuple[np.ndarray, np.ndarray]:
     """
-    Derive a phase calibration for HE20 CSI from calibration packets that only
-    provide LLTF.
+    Return the baseband frequency grid on which CSI of a format is STO-corrected.
 
-    HE20 uses four times finer subcarrier spacing than LLTF / HT20. This means
-    that a delay which is only observed on the coarse 312.5 kHz LLTF / HT20
-    grid is ambiguous when projected onto the denser 78.125 kHz HE20 grid:
-    multiple HE20 phase slopes can agree on every fourth subcarrier while
-    disagreeing on the intermediate HE20 tones. We therefore cannot obtain a
-    reliable HE20 calibration by simply fitting a slope on the coarse grid and
-    reusing it unchanged.
+    :meth:`CSICluster.deserialize_csi_*` applies its timestamp-based STO
+    correction on a format-specific baseband subcarrier grid. Any code that
+    estimates or synthesizes per-antenna phase slopes on deserialized CSI (in
+    particular :func:`estimate_phase_time_offsets`) must use the exact same
+    grid. For L-LTF and HT20 the grid is referenced to the receiver LO center
+    (the HT40 mid-frequency in 40 MHz mode) and HT40 is natively LO-centered.
+    HE20 uses a primary-channel-centered grid; since HE20 cannot be received
+    with channel bonding, that always coincides with the LO center.
 
-    This helper resolves the problem by going back to "first principles" of
-    calibration and estimating time and phase offset separately:
+    :param csi_format: One of ``"lltf"``, ``"ht20"``, ``"ht40"``, ``"he20"``.
+    :param secondary_channel_relative: Relative position of the secondary
+        channel: ``-1`` for HT40 below, ``+1`` for HT40 above, ``0`` for none.
+    :return: Tuple of baseband frequencies in Hz (one per subcarrier) and a
+        boolean validity mask (False for gap / invalid subcarriers that carry
+        no usable CSI, e.g. the HT40 gap).
+    """
+    indices = csi_packet.get_csi_format_subcarrier_indices(csi_format).astype(np.float64)
+    valid = np.ones(len(indices), dtype=bool)
 
-    1. Estimate constant per-antenna phase offsets from the already
-       STO-corrected LLTF calibration clusters using a principal-eigenvector
-       estimate.
-    2. Undo the LLTF timestamp-based STO correction, recover the underlying
-       per-antenna baseband timing offsets from the raw LLTF slope together with
-       the calibration timestamps, and synthesize the corresponding HE20 phase
-       slope on the denser HE20 subcarrier grid.
+    if csi_format in ("lltf", "ht20"):
+        indices = indices - secondary_channel_relative * int(2 * constants.WIFI_CHANNEL_SPACING / constants.WIFI_SUBCARRIER_SPACING)
+        frequencies = indices * constants.WIFI_SUBCARRIER_SPACING
+    elif csi_format == "ht40":
+        frequencies = indices * constants.WIFI_SUBCARRIER_SPACING
+        gap_start = csi_packet.HT_COEFFICIENTS_PER_CHANNEL
+        valid[gap_start : gap_start + csi_packet.HT40_GAP_SUBCARRIERS] = False
+    elif csi_format == "he20":
+        if secondary_channel_relative != 0:
+            raise ValueError("HE20 CSI is not available with channel bonding")
+        frequencies = indices * (constants.WIFI_SUBCARRIER_SPACING / 4.0)
+        valid[np.isin(indices, (-1.0, 0.0, 1.0))] = False
+    else:
+        raise ValueError(f"Unknown CSI format {csi_format!r}")
 
-    The final HE20 calibration is the combination of those per-antenna constant
-    phase offsets and the timestamp-derived HE20 phase slope.
+    return frequencies, valid
 
-    :param complete_clusters_lltf: Complete LLTF calibration CSI clusters as a
+
+def estimate_phase_time_offsets(
+    complete_clusters: np.ndarray,
+    complete_cluster_timestamps: np.ndarray,
+    subcarrier_frequencies: np.ndarray,
+    valid_subcarriers: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Estimate per-antenna timing and phase offsets from calibration CSI clusters.
+
+    This is the "first principles" view of calibration: after the receivers
+    have locked, each antenna differs from the reference antenna only by a
+    baseband timing offset and a constant phase offset. Both are estimated
+    separately:
+
+    1. Undo the timestamp-based STO correction that deserialization applied,
+       recovering the raw per-antenna responses, and determine the STO of each
+       cluster from their phase slopes across the subcarrier grid.
+    2. Anchor the slopes to the hardware timestamps: the per-antenna timing
+       offsets are the mean differences of the recovered packet times relative
+       to the reference antenna. This makes them absolute, so they stay
+       unambiguous when projected onto denser subcarrier grids (e.g. HE20)
+       than the one they were measured on.
+    3. Estimate the constant per-antenna phase offsets from the STO-corrected
+       responses (which are stable over clusters), after removing the phase
+       slope that the timing offsets explain. The timestamp epochs contained
+       in the timing offsets make the raw responses rotate rapidly across
+       subcarriers, so the phase must be estimated in this slope-free domain.
+
+    The function is format-agnostic: it accepts deserialized clusters of any
+    CSI format together with that format's STO-correction grid, obtained from
+    :func:`get_csi_sto_correction_frequencies`. Estimating from the widest
+    available band yields the most accurate timing offsets.
+
+    :param complete_clusters: Complete calibration CSI clusters as a
         complex-valued NumPy array with shape
         ``(clusters, boards, rows, columns, subcarriers)``. These values are
-        expected to come from :meth:`CSICluster.deserialize_csi_lltf` and are
+        expected to come from :meth:`CSICluster.deserialize_csi_*` and are
         therefore already STO-corrected using the forwarded hardware
         timestamps.
     :param complete_cluster_timestamps: Per-sensor timestamps corresponding to
-        ``complete_clusters_lltf``, in seconds, as a NumPy array with shape
+        ``complete_clusters``, in seconds, as a NumPy array with shape
         ``(clusters, boards, rows, columns)``.
-    :param secondary_channel_relative: Relative position of the secondary
-        channel used for the calibration packets. Use ``-1`` for HT40 below,
-        ``+1`` for HT40 above, and ``0`` for a plain 20 MHz channel.
-    :return: Complex-valued HE20 calibration array with shape
-        ``(boards, rows, columns, csi_packet.HE20_COEFFICIENTS_PER_CHANNEL)``.
+    :param subcarrier_frequencies: The baseband frequency grid the clusters
+        were STO-corrected on, in Hz, one entry per subcarrier. Must be
+        uniformly spaced across the valid subcarriers.
+    :param valid_subcarriers: Optional boolean mask marking subcarriers that
+        carry usable CSI. Gap / invalid subcarriers are excluded from the
+        estimation. If None, all subcarriers are used.
+    :return: Tuple of per-antenna timing offsets (in seconds, real-valued) and
+        phase offsets (as complex values on the unit circle), both of shape
+        ``(boards, rows, columns)``, relative to antenna ``(0, 0, 0)``.
     """
-    # First estimate per-antenna constant phase offsets from the LLTF
-    # calibration clusters exactly as provided by deserialize_csi_lltf(), i.e.
-    # after its timestamp-based STO correction. Use a principal-eigenvector
-    # estimate so that we combine all clusters and subcarriers coherently.
-    csi_lltf_sto_corrected = np.asarray(complete_clusters_lltf, dtype=np.complex64)
+    csi_sto_corrected = np.asarray(complete_clusters, dtype=np.complex64)
+    frequencies = np.asarray(subcarrier_frequencies, dtype=np.float64)
+    valid = np.ones(len(frequencies), dtype=bool) if valid_subcarriers is None else np.asarray(valid_subcarriers, dtype=bool)
 
-    # Undo the timestamp-based STO correction from deserialize_csi_lltf().
-    subcarrier_range = csi_packet.get_csi_format_subcarrier_indices("lltf").astype(np.float64)[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
-    subcarrier_range -= secondary_channel_relative * int(2 * constants.WIFI_CHANNEL_SPACING / constants.WIFI_SUBCARRIER_SPACING)
-    sto_delay_correction = np.exp(1.0j * 2 * np.pi * complete_cluster_timestamps[:, :, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
+    pair_valid = valid[:-1] & valid[1:]
+    spacings = np.diff(frequencies)[pair_valid]
+    spacing = float(np.mean(spacings))
+    if not np.allclose(spacings, spacing, rtol=1e-6, atol=1e-3):
+        raise ValueError("subcarrier_frequencies must be uniformly spaced across valid subcarriers")
 
-    csi_lltf = np.einsum("cbras,cbras->cbras", csi_lltf_sto_corrected, sto_delay_correction)
+    # Undo the timestamp-based STO correction from deserialization
+    sto_delay_correction = np.exp(1.0j * 2 * np.pi * complete_cluster_timestamps[:, :, :, :, np.newaxis] * frequencies)
+    csi_raw = np.einsum("cbras,cbras->cbras", csi_sto_corrected, sto_delay_correction)
 
-    csi_lltf_flat = np.moveaxis(csi_lltf, -1, 1).reshape(csi_lltf.shape[0] * csi_lltf.shape[-1], -1)
-    covariance = np.einsum("na,nb->ab", csi_lltf_flat, np.conj(csi_lltf_flat)) / max(csi_lltf_flat.shape[0], 1)
-    eigvals, eigvecs = np.linalg.eig(covariance)
-    principal_eigenvector = eigvecs[:, np.argmax(np.real(eigvals))].reshape(csi_lltf.shape[1:4])
-    principal_eigenvector /= principal_eigenvector[0, 0, 0] / np.abs(principal_eigenvector[0, 0, 0])
-    antenna_phase_offsets = principal_eigenvector / np.abs(principal_eigenvector)
+    # Determine the STO of each cluster from the raw phase slope across the grid
+    incr = (csi_raw[..., 1:] * np.conj(csi_raw[..., :-1]))[..., pair_valid]
+    sto = np.angle(np.sum(incr, axis=-1)) / (2.0 * np.pi * spacing)  # in seconds
 
-    # Now we have the "raw" CSI and timestamps from the hardware again.
-    # First, determine the STO from the csi_lltf slope
-    incr = csi_lltf[..., 1:] * np.conj(csi_lltf[..., :-1])
-    sto = np.angle(np.sum(incr, axis=-1)) / (2.0 * np.pi * constants.WIFI_SUBCARRIER_SPACING)  # in seconds
-
-    # Now we can compute absolute timing for each cluster
+    # Now we can compute absolute timing for each cluster; anchoring the slope to
+    # the hardware timestamps makes the per-antenna timing offsets absolute
     packet_times = complete_cluster_timestamps - sto
 
     rx_baseband_sto = packet_times[:, :, :, :] - packet_times[:, 0:1, 0:1, 0:1]
-
     mean_rx_baseband_sto = np.mean(rx_baseband_sto, axis=0)
-    he20_subcarrier_indices = csi_packet.get_csi_format_subcarrier_indices("he20").astype(np.float64)
-    he20_frequencies_hz = he20_subcarrier_indices * (constants.WIFI_SUBCARRIER_SPACING / 4.0)
-    calibration_he20 = np.exp(-1.0j * 2.0 * np.pi * mean_rx_baseband_sto[..., np.newaxis] * he20_frequencies_hz[np.newaxis, np.newaxis, np.newaxis, :]).astype(np.complex64)
-    calibration_he20 *= antenna_phase_offsets[..., np.newaxis].astype(np.complex64)
 
-    return calibration_he20
+    # Constant per-antenna phase offsets in the slope-free domain
+    mean_response = csi_interp_eigenvec_per_subcarrier(csi_sto_corrected[..., valid])
+    timing_slope = np.exp(-1.0j * 2.0 * np.pi * mean_rx_baseband_sto[..., np.newaxis] * frequencies[valid])
+    residual = mean_response * np.conj(timing_slope)
+    residual_sum = np.sum(residual, axis=-1)
+    antenna_phase_offsets = residual_sum / np.maximum(np.abs(residual_sum), 1e-12)
+    antenna_phase_offsets = antenna_phase_offsets * np.conj(antenna_phase_offsets[0:1, 0:1, 0:1] / np.abs(antenna_phase_offsets[0:1, 0:1, 0:1]))
+
+    return mean_rx_baseband_sto, antenna_phase_offsets
 
 
 def remove_mean_sto(csi_datapoints: np.ndarray):

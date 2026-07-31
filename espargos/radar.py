@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import calibration
+from . import csi_calibration
 from . import constants
 from . import sensor
 from . import wifi
@@ -197,7 +197,7 @@ def _macs_by_antids(mac_by_sensor, boards) -> list[list[str]]:
 
 
 def build_pool_config(
-    calibration: calibration.CSICalibration,
+    calibration: csi_calibration.CSICalibration,
     active_by_sensor,
     t0_by_sensor,
     period_by_sensor,
@@ -218,7 +218,7 @@ def build_pool_config(
     provide one explicit time per board. The returned board configs contain
     ``start_by_antid`` values in controller units (currently integer
     microseconds), converted to each sensor's local clock using the stored
-    ``sensor_clock_offsets`` from the provided calibration.
+    ``timing_offsets`` from the provided calibration.
     """
     if calibration is None:
         raise ValueError("calibration must not be None")
@@ -255,7 +255,7 @@ def correct_radar_csi_tx_timestamps(
     tx_timestamps_s,
     tx_sensor_indices,
     subcarrier_frequencies_hz,
-    sensor_clock_offsets,
+    sensor_timing_offsets,
     *,
     tx_timestamp_offset_s: float = 0.0,
 ) -> np.ndarray:
@@ -278,7 +278,8 @@ def correct_radar_csi_tx_timestamps(
     :param tx_timestamps_s: TX timestamp(s), in seconds. Scalar or leading-shape array.
     :param tx_sensor_indices: Flattened TX sensor index/indices matching ``tx_timestamps_s``.
     :param subcarrier_frequencies_hz: Frequency for each subcarrier, in Hz.
-    :param sensor_clock_offsets: Sensor clock offsets, in seconds, as an array that
+    :param sensor_timing_offsets: Per-sensor timing offsets, in seconds (e.g.
+        :attr:`.SensorCalibration.timing_offsets`), as an array that
         flattens in the same order as ``tx_sensor_indices``.
     :param tx_timestamp_offset_s: Constant offset added to each TX timestamp
         before correction. This accounts for packet-boundary conventions in the
@@ -298,7 +299,7 @@ def correct_radar_csi_tx_timestamps(
     if tx_timestamps.ndim > csi_array.ndim - 1:
         raise ValueError("tx_timestamps_s has too many dimensions for csi_data")
 
-    flat_offsets = np.asarray(sensor_clock_offsets, dtype=np.float64).reshape(-1)
+    flat_offsets = np.asarray(sensor_timing_offsets, dtype=np.float64).reshape(-1)
     tx_reference_timestamps = np.full(tx_timestamps.shape, np.nan, dtype=np.float64)
     valid = np.isfinite(tx_timestamps) & (tx_indices >= 0) & (tx_indices < flat_offsets.size)
     valid_tx_indices = tx_indices[valid]

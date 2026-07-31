@@ -14,7 +14,7 @@ from typing import Callable
 import numpy as np
 import time
 
-from . import calibration
+from . import csi_calibration
 from . import board
 from . import csi_processing
 from . import csi_cluster
@@ -79,7 +79,7 @@ class CSIPool(Pool):
                 wifi_tx.subscribe_reports,
             )
 
-        self.stored_calibration: calibration.CSICalibration = None
+        self.stored_calibration: csi_calibration.CSICalibration = None
 
     def set_rfswitch(self, state: sensor.RFSwitchState):
         """
@@ -382,9 +382,15 @@ class CSIPool(Pool):
 
     def _clusters_to_calibration(self, board_num=None):
         """
-        Convert collected calibration clusters to phase calibration values.
+        Convert the collected calibration clusters into per-antenna calibration offsets.
+
+        Collects the complete calibration clusters per CSI format and estimates
+        the per-antenna timing and phase offsets from the widest available
+        format (a wider measurement band yields more accurate timing offsets).
 
         :param board_num: If provided, only process calibration clusters for the specified board number
+        :return: Tuple of per-antenna timing offsets, phase offsets, the primary channel,
+                 and the relative secondary channel position.
         """
         clusters = self._get_cluster_cache_snapshot(_CACHE_CALIBRATION)
 
@@ -394,6 +400,7 @@ class CSIPool(Pool):
         complete_clusters_ht20 = []
         complete_cluster_timestamps_ht20 = []
         complete_clusters_ht40 = []
+        complete_cluster_timestamps_ht40 = []
         complete_cluster_timestamps = []
 
         # Read wificonf to determine primary/secondary channel
@@ -430,6 +437,7 @@ class CSIPool(Pool):
                     complete_cluster_timestamps_ht20.append(cluster_timestamps)
                 if cluster.has_ht40ltf():
                     complete_clusters_ht40.append(cluster.deserialize_csi_ht40ltf()[board_num] if board_num is not None else cluster.deserialize_csi_ht40ltf())
+                    complete_cluster_timestamps_ht40.append(cluster_timestamps)
 
         if stale_channel_counts:
             stale_channel_summary = ", ".join(f"primary {primary}, secondary {secondary}: {count}" for (primary, secondary), count in stale_channel_counts.items())
@@ -449,66 +457,52 @@ class CSIPool(Pool):
         self.logger.info(f"  - {len(complete_clusters_ht20)} complete clusters with HT20-LTF")
         self.logger.info(f"  - {len(complete_clusters_lltf)} complete clusters with L-LTF")
 
-        if len(complete_clusters_ht20) > 0:
-            # If we only have HT20 but no LLTF calibration, we can still proceed: Use corresponding subcarriers from HT20 for LLTF calibration
-            if len(complete_clusters_lltf) == 0:
-                self.logger.warning("No LLTF calibration clusters received, deriving LLTF calibration from HT20 calibration")
-            complete_clusters_lltf.extend([csi_processing.extract_lltf_subcarriers_from_ht20(csi_ht20) for csi_ht20 in complete_clusters_ht20])
-            complete_cluster_timestamps_lltf.extend(complete_cluster_timestamps_ht20)
-
         complete_cluster_count = len(complete_cluster_timestamps)
+        format_count = len(complete_clusters_lltf) + len(complete_clusters_ht20) + len(complete_clusters_ht40)
         calibration_error = None
         if any_csi_count < 5:
             calibration_error = "too few calibration packets were received"
         elif complete_cluster_count == 0:
             calibration_error = "no packet contained CSI from the complete calibrated array"
-        elif len(complete_clusters_lltf) == 0:
-            calibration_error = "no complete packet contained L-LTF or HT20-LTF CSI"
+        elif format_count == 0:
+            calibration_error = "no complete packet contained L-LTF, HT20-LTF or HT40-LTF CSI"
 
         if calibration_error is not None:
             raise CalibrationError(
                 f"ESPARGOS calibration failed: {calibration_error}. "
                 f"Received {any_csi_count} calibration packets with any CSI, "
                 f"{complete_cluster_count} complete packets, "
-                f"{len(complete_clusters_ht20)} complete HT20-LTF packets, "
-                f"and {len(complete_clusters_lltf)} complete L-LTF/HT20-derived packets. "
-                "Calibration needs several packets with CSI from the complete array and at least one complete L-LTF or HT20-LTF packet. "
+                f"{len(complete_clusters_lltf)} complete L-LTF, "
+                f"{len(complete_clusters_ht20)} complete HT20-LTF, "
+                f"and {len(complete_clusters_ht40)} complete HT40-LTF packets. "
+                "Calibration needs several packets with CSI from the complete array. "
                 "Check signal level, RX gain, packet filtering, and whether all sensors are receiving the calibration/reference signal."
             )
 
-        return (
-            np.asarray(complete_clusters_lltf),
-            np.asarray(complete_clusters_ht20),
-            np.asarray(complete_clusters_ht40),
-            np.asarray(complete_cluster_timestamps),
-            np.asarray(complete_cluster_timestamps_lltf),
-            channel_primary,
-            channel_secondary,
-        )
+        # Estimate the offsets from the widest available format, since a wider
+        # measurement band yields more accurate timing offsets
+        clusters_by_format = {
+            "ht40": (np.asarray(complete_clusters_ht40), np.asarray(complete_cluster_timestamps_ht40)),
+            "ht20": (np.asarray(complete_clusters_ht20), np.asarray(complete_cluster_timestamps_ht20)),
+            "lltf": (np.asarray(complete_clusters_lltf), np.asarray(complete_cluster_timestamps_lltf)),
+        }
+        for csi_format, (format_clusters, format_timestamps) in clusters_by_format.items():
+            if len(format_clusters) > 0:
+                break
 
-    def _compute_sensor_clock_offsets(self, complete_cluster_timestamps: np.ndarray) -> np.ndarray:
-        """
-        Compute clock offsets relative to the first sensor in the input scope.
+        self.logger.info(f"Estimating calibration offsets from {len(format_clusters)} {csi_format} cluster(s)")
+        frequencies, valid = csi_processing.get_csi_sto_correction_frequencies(csi_format, channel_secondary)
 
-        The input may contain the complete pool or one board. Its first axis is
-        the calibration-cluster axis; all remaining axes describe the sensors
-        whose clocks share the selected reference.
+        # Per-board calibration data has no board axis; add and remove it around the estimation
+        if board_num is not None:
+            format_clusters = format_clusters[:, np.newaxis]
+            format_timestamps = format_timestamps[:, np.newaxis]
 
-        :param complete_cluster_timestamps: Per-sensor timestamps in seconds.
-        :return: Mean clock offsets with the cluster axis removed.
-        """
-        sensor_timestamps = np.asarray(
-            complete_cluster_timestamps,
-            dtype=np.float64,
-        )
-        if sensor_timestamps.ndim < 2:
-            raise ValueError("complete_cluster_timestamps must contain a cluster axis and " "at least one sensor axis")
-        if len(sensor_timestamps) == 0:
-            return np.full(sensor_timestamps.shape[1:], np.nan, dtype=np.float64)
+        timing_offsets, phase_offsets = csi_processing.estimate_phase_time_offsets(format_clusters, format_timestamps, frequencies, valid)
+        if board_num is not None:
+            timing_offsets, phase_offsets = timing_offsets[0], phase_offsets[0]
 
-        reference_slice = (slice(None),) + (slice(0, 1),) * (sensor_timestamps.ndim - 1)
-        sensor_clock_offsets = sensor_timestamps - sensor_timestamps[reference_slice]
-        return np.mean(sensor_clock_offsets, axis=0)
+        return timing_offsets, phase_offsets, channel_primary, channel_secondary
 
     def calibrate(
         self,
@@ -527,11 +521,16 @@ class CSIPool(Pool):
                           common clock.
         :param duration: The duration in seconds for which calibration should be run
         :param cable_lengths: The lengths of the feeder cables that distribute the clock and phase calibration signal to the ESPARGOS boards, in meters.
-                              Only needed for phase-coherent multi-board setups, omit if all cables have the same length.
+                              Only applicable to pool-wide calibration (:code:`per_board=False`) of phase-coherent multi-board setups; omit if all cables
+                              have the same length. In per-board mode, the cable delay is common to all sensors of a board and cancels within the board's
+                              own reference scope, so cable compensation does not apply.
         :param cable_velocity_factors: The velocity factors of the feeder cables that distribute the clock and phase calibration signal to the ESPARGOS boards
                                        Must be the same length as :code:`cable_lengths`, and all entries should be in the range [0, 1].
         :param run_in_thread: If True, the pool handling will be performed in the current thread. Set to False in case the pool is already running in a separate thread (e.g., backlog is already active).
         """
+        if per_board and cable_lengths is not None:
+            self.logger.warning("Cable lengths are ignored in per-board calibration mode: cable delays cancel within each board's own reference scope")
+
         self._clear_cluster_cache(_CACHE_CALIBRATION)
 
         # Back up and clear MAC filter
@@ -560,22 +559,21 @@ class CSIPool(Pool):
             self.set_mac_filter(previous_mac_filter)
             self._clear_cluster_cache(_CACHE_OTA)
 
+        # Each antenna receives a delayed and phase-shifted version of the reference
+        # signal, so calibration reduces to one timing offset and one phase offset
+        # per antenna, estimated from the L-LTF clusters and their timestamps. The
+        # per-format calibration vectors are synthesized from these offsets by
+        # CSICalibration, independently of which formats the reference provided.
         if per_board:
-            phase_calibrations_lltf = []
-            phase_calibrations_ht20 = []
-            phase_calibrations_ht40 = []
-            phase_calibrations_he20 = []
-            sensor_clock_offsets = []
+            timing_offsets = []
+            phase_offsets = []
             channel_primary = None
             channel_secondary = None
 
             for board_num in range(len(self.boards)):
                 (
-                    complete_clusters_lltf,
-                    complete_clusters_ht20,
-                    complete_clusters_ht40,
-                    complete_cluster_timestamps,
-                    complete_cluster_timestamps_lltf,
+                    board_timing_offsets,
+                    board_phase_offsets,
                     board_channel_primary,
                     board_channel_secondary,
                 ) = self._clusters_to_calibration(board_num)
@@ -586,100 +584,31 @@ class CSIPool(Pool):
                 elif channel_primary != board_channel_primary or channel_secondary != board_channel_secondary:
                     raise CalibrationError("ESPARGOS calibration failed: boards reported different " "calibration channels")
 
-                phase_calibrations_lltf.append(
-                    csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf))
-                    if len(complete_clusters_lltf) > 0
-                    else np.full(
-                        self.get_shape()[1:] + (csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,),
-                        np.nan,
-                    )
-                )
-                phase_calibrations_ht20.append(
-                    csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20))
-                    if len(complete_clusters_ht20) > 0
-                    else np.full(
-                        self.get_shape()[1:] + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL,),
-                        np.nan,
-                    )
-                )
-                phase_calibrations_ht40.append(
-                    csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
-                    if len(complete_clusters_ht40) > 0
-                    else np.full(
-                        self.get_shape()[1:] + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi_packet.HT40_GAP_SUBCARRIERS,),
-                        np.nan,
-                    )
-                )
-                phase_calibrations_he20.append(
-                    csi_processing.derive_he20_calibration_from_lltf(
-                        complete_clusters_lltf[:, np.newaxis, ...],
-                        complete_cluster_timestamps_lltf[:, np.newaxis, ...],
-                        board_channel_secondary,
-                    )[0]
-                )
-                sensor_clock_offsets.append(
-                    self._compute_sensor_clock_offsets(
-                        complete_cluster_timestamps,
-                    )
-                )
+                timing_offsets.append(board_timing_offsets)
+                phase_offsets.append(board_phase_offsets)
 
-            self.stored_calibration = calibration.CSICalibration(
+            # No cable compensation in per-board mode: each board is calibrated
+            # against its own reference, and the distribution cable delay is common
+            # to all sensors of a board, so it cancels within the board's scope.
+            self.stored_calibration = csi_calibration.CSICalibration(
                 self.boards,
                 channel_primary,
                 channel_secondary,
-                np.asarray(phase_calibrations_lltf),
-                np.asarray(phase_calibrations_ht20),
-                np.asarray(phase_calibrations_ht40),
-                np.asarray(phase_calibrations_he20),
-                sensor_clock_offsets=np.asarray(sensor_clock_offsets),
-                clock_scope=(calibration.ClockReferenceScope.POOL if len(self.boards) == 1 else calibration.ClockReferenceScope.PER_BOARD),
+                np.asarray(timing_offsets),
+                np.asarray(phase_offsets),
+                clock_scope=(csi_calibration.ClockReferenceScope.POOL if len(self.boards) == 1 else csi_calibration.ClockReferenceScope.PER_BOARD),
             )
 
         else:
-            (
-                complete_clusters_lltf,
-                complete_clusters_ht20,
-                complete_clusters_ht40,
-                complete_cluster_timestamps,
-                complete_cluster_timestamps_lltf,
-                channel_primary,
-                channel_secondary,
-            ) = self._clusters_to_calibration()
-            sensor_clock_offsets = self._compute_sensor_clock_offsets(complete_cluster_timestamps)
-            phase_calibration_he20 = csi_processing.derive_he20_calibration_from_lltf(
-                complete_clusters_lltf,
-                complete_cluster_timestamps_lltf,
-                channel_secondary,
-            )
+            timing_offsets, phase_offsets, channel_primary, channel_secondary = self._clusters_to_calibration()
 
-            phase_calibrations_lltf = csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
-            phase_calibrations_ht20 = csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
-            phase_calibration_ht40 = (
-                csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
-                if len(complete_clusters_ht40) > 0
-                else np.full(
-                    self.get_shape() + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi_packet.HT40_GAP_SUBCARRIERS,),
-                    np.nan,
-                )
-            )
-
-            # Each antenna just gets a delayed and phase-shifted version of the reference signal,
-            # so frequency response is just a complex sinusoid over subcarrier axis.
-            # Fit optimal complex sinusoid to the CSI of each antenna across subcarriers to extract the phase shift and delay, which we can then use for calibration.
-            phase_calibrations_lltf = csi_processing.fit_complex_sinusoid(phase_calibrations_lltf)
-            phase_calibrations_ht20 = csi_processing.fit_complex_sinusoid(phase_calibrations_ht20)
-            phase_calibration_ht40 = csi_processing.fit_complex_sinusoid(phase_calibration_ht40)
-
-            self.stored_calibration = calibration.CSICalibration(
+            self.stored_calibration = csi_calibration.CSICalibration(
                 self.boards,
                 channel_primary,
                 channel_secondary,
-                phase_calibrations_lltf,
-                phase_calibrations_ht20,
-                phase_calibration_ht40,
-                phase_calibration_he20,
-                sensor_clock_offsets=sensor_clock_offsets,
-                clock_scope=calibration.ClockReferenceScope.POOL,
+                timing_offsets,
+                phase_offsets,
+                clock_scope=csi_calibration.ClockReferenceScope.POOL,
                 board_cable_lengths=cable_lengths,
                 board_cable_vfs=cable_velocity_factors,
             )
@@ -688,7 +617,7 @@ class CSIPool(Pool):
         """
         Get the stored calibration values.
 
-        :return: The stored calibration values as a :class:`.calibration.CSICalibration` object
+        :return: The stored calibration values as a :class:`.csi_calibration.CSICalibration` object
         """
         return self.stored_calibration
 
