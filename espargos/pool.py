@@ -386,6 +386,7 @@ class Pool(ABC):
 
         # Only inspect expiring caches. In particular, retained calibration
         # clusters can be numerous and must not be copied on every run() call.
+        expired: list[tuple[str, Hashable, SensorCluster]] = []
         with self._cluster_lock:
             for cache_name, timeout in cache_timeouts.items():
                 cache = self._cluster_caches.get(cache_name)
@@ -393,7 +394,12 @@ class Pool(ABC):
                     continue
                 expired_keys = [cluster_key for cluster_key, sensor_cluster in cache.items() if sensor_cluster.get_age() > timeout]
                 for cluster_key in expired_keys:
-                    cache.pop(cluster_key)
+                    expired.append((cache_name, cluster_key, cache.pop(cluster_key)))
+
+        # Notify outside the cluster lock: the hook may offer the cluster to
+        # consumer callbacks, which are free to call back into the pool.
+        for cache_name, cluster_key, sensor_cluster in expired:
+            self._on_cluster_expired(cache_name, cluster_key, sensor_cluster)
 
     def _clear_cluster_cache(self, cache_name: str) -> None:
         """Clear a named cache if it exists."""
@@ -527,3 +533,19 @@ class Pool(ABC):
         """Return a cache timeout in seconds, or ``None`` to retain clusters."""
 
         return None
+
+    def _on_cluster_expired(
+        self,
+        cache_name: str,
+        cluster_key: Hashable,
+        sensor_cluster: SensorCluster,
+    ) -> None:
+        """A cluster timed out before completing and was evicted from its cache.
+
+        The default silently discards stale incomplete measurements. A
+        subclass whose consumers also want partial measurements (every sensor
+        that reported by the deadline, missing ones absent) can override this
+        and offer the evicted cluster to its callbacks via
+        :meth:`_try_callbacks`. Runs on the :meth:`run` caller's thread, like
+        ordinary completion callbacks.
+        """
