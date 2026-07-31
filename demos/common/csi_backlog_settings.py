@@ -1,4 +1,5 @@
 import copy
+import logging
 
 import PyQt6.QtCore
 import espargos
@@ -49,7 +50,7 @@ class CSIBacklogSettings(PyQt6.QtCore.QObject):
 
     def onUpdateAppState(self, newcfg):
         if self.backlog is None:
-            print("CSIBacklogSettings: backlog not set before config update")
+            logging.getLogger("demo.CSIBacklogSettings").warning("Backlog not set before config update")
             self.cfgman.updateAppStateHandled.emit()
             return
 

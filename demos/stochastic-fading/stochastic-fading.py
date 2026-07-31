@@ -191,7 +191,7 @@ class EspargosDemoStochasticFading(CSIBacklogMixin, CombinedArrayMixin, SingleCS
         try:
             results = list(self.backlog.get_multiple([csi_key, *additional_keys]))
         except ValueError:
-            print(f"Requested CSI key {csi_key} not in backlog")
+            self.logger.warning(f"Requested CSI key {csi_key} not in backlog")
             return None
 
         csi_backlog = results[0]

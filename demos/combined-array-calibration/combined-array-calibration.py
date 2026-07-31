@@ -123,7 +123,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
         # Deserialize CSI based on preamble format
         if preamble_format == "lltf":
             if not clustered_csi.has_lltf():
-                print("Received CSI without LLTF data; skipping calibration update.")
+                self.logger.warning("Received CSI without LLTF data; skipping calibration update.")
                 return
             csi = clustered_csi.deserialize_csi_lltf()
             csi = self.pool.get_calibration().apply_lltf(csi)
@@ -131,7 +131,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
             espargos.csi_processing.interpolate_lltf_gap(csi)
         elif preamble_format == "ht20":
             if not clustered_csi.has_ht20ltf():
-                print("Received CSI without HT20-LTF data; skipping calibration update.")
+                self.logger.warning("Received CSI without HT20-LTF data; skipping calibration update.")
                 return
             csi = clustered_csi.deserialize_csi_ht20ltf()
             csi = self.pool.get_calibration().apply_ht20(csi)
@@ -139,7 +139,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
             espargos.csi_processing.interpolate_ht20ltf_gap(csi)
         elif preamble_format == "ht40":
             if not clustered_csi.has_ht40ltf():
-                print("Received CSI without HT40-LTF data; skipping calibration update.")
+                self.logger.warning("Received CSI without HT40-LTF data; skipping calibration update.")
                 return
             csi = clustered_csi.deserialize_csi_ht40ltf()
             csi = self.pool.get_calibration().apply_ht40(csi)
@@ -147,7 +147,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
             espargos.csi_processing.interpolate_ht40ltf_gap(csi)
         elif preamble_format == "he20":
             if not clustered_csi.has_he20ltf():
-                print("Received CSI without HE20-LTF data; skipping calibration update.")
+                self.logger.warning("Received CSI without HE20-LTF data; skipping calibration update.")
                 return
             csi = clustered_csi.deserialize_csi_he20ltf()
             csi = self.pool.get_calibration().apply_he20(csi)
@@ -163,7 +163,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
             self.calibration_values = csi
         else:
             if csi.shape != self.calibration_values.shape:
-                print("Warning: Received CSI shape does not match stored calibration values; possibly reset in progress.")
+                self.logger.warning("Received CSI shape does not match stored calibration values; possibly reset in progress.")
                 return
 
             csi_to_interpolate = np.asarray([csi, self.calibration_values])
@@ -181,7 +181,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
             csi_phase = np.angle(csi_flat * np.exp(-1.0j * np.angle(csi_flat[0, csi_flat.shape[1] // 2])))
 
             if len(phaseSeries) != len(csi_phase):
-                print("Warning: Number of phase series matches number of sensors; possibly UI update in progress.")
+                self.logger.warning("Number of phase series matches number of sensors; possibly UI update in progress.")
                 return
 
             for phase_series, ant_phase in zip(phaseSeries, csi_phase):

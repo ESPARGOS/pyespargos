@@ -319,17 +319,15 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
             return
 
         tx_index = self._tx_flat_index_from_schedule(schedule)
-        print(
-            "radar tx timestamp raw:",
-            f"tx_sensor={tx_index}",
-            f"source_mac={self._normalize_mac(bytes(tx_report.source_mac).hex())}",
-            f"seq={tx_report.seq_ctrl.seg}",
-            f"slot={tx_report.descriptor_slot}",
-            f"reg0=0x{tx_report.timestamp_reg0:08x}",
-            f"reg1=0x{tx_report.timestamp_reg1:08x}",
-            f"reg2=0x{tx_report.timestamp_reg2:08x}",
-            f"phase_raw={tx_report.get_hardware_tx_phase_raw()}",
-            flush=True,
+        self.logger.info(
+            f"radar tx timestamp raw: tx_sensor={tx_index} "
+            f"source_mac={self._normalize_mac(bytes(tx_report.source_mac).hex())} "
+            f"seq={tx_report.seq_ctrl.seg} "
+            f"slot={tx_report.descriptor_slot} "
+            f"reg0=0x{tx_report.timestamp_reg0:08x} "
+            f"reg1=0x{tx_report.timestamp_reg1:08x} "
+            f"reg2=0x{tx_report.timestamp_reg2:08x} "
+            f"phase_raw={tx_report.get_hardware_tx_phase_raw()}"
         )
 
         for (board_index, row, col), rx_timestamp_s in np.ndenumerate(rx_timestamps_s):

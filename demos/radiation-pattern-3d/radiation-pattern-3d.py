@@ -213,7 +213,7 @@ class EspargosDemoRadiationPattern3D(CSIBacklogMixin, CombinedArrayMixin, Single
             rfswitch_combined = espargos.combined_array.build_combined_array_data(self.indexing_matrix, rfswitch_state_backlog)
             csi_largearray = espargos.csi_processing.separate_feeds(csi_largearray, rfswitch_combined)
             if csi_largearray is None:
-                print("Need measurements for both R and L feeds for polarization mode")
+                self.logger.warning("Need measurements for both R and L feeds for polarization mode")
                 return
             # Apply per-antenna Jones correction (R/L to global H/V)
             csi_largearray = np.einsum("dmnsf,mnfp->dmnsp", csi_largearray, self.jones_matrices_inv)

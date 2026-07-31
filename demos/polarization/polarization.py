@@ -73,7 +73,7 @@ class EspargosDemoPolarization(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFor
         csi_by_feed = espargos.csi_processing.separate_feeds(csi_combined, rfswitch_combined)  # (D, B=1, M, N, S, 2)
 
         if csi_by_feed is None:
-            print("Must have measurements for both R and L feeds to compute polarization (is RF switch in random mode?)")
+            self.logger.warning("Must have measurements for both R and L feeds to compute polarization (is RF switch in random mode?)")
             return
 
         # Apply per-antenna Jones correction to convert R/L feeds to global H/V polarization,

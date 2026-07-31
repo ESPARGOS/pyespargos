@@ -4,9 +4,11 @@ import PyQt6.QtWidgets
 import PyQt6.QtCore
 import PyQt6.QtQml
 
+import espargos
 import espargos.combined_array
 
 import subprocess
+import sys
 import threading
 import argparse
 import copy
@@ -109,7 +111,19 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         # Basic app initialization
         self.ready = False
         self.engine = PyQt6.QtQml.QQmlApplicationEngine()
-        self.logger = logging.getLogger("demo.Application")
+        # Named after the concrete application class, so log lines identify
+        # which demo they come from
+        self.logger = logging.getLogger(f"demo.{type(self).__name__}")
+
+        # Make the demo logger tree visible on stderr (same style as the
+        # pyespargos library logger); without a handler, logger.info() from
+        # demos would be silently dropped.
+        demo_logger = logging.getLogger("demo")
+        if not demo_logger.handlers:
+            handler = logging.StreamHandler(sys.stderr)
+            handler.setFormatter(espargos._ColorFormatter("[%(name)-20s] %(message)s"))
+            demo_logger.addHandler(handler)
+            demo_logger.setLevel(logging.INFO)
         self.aboutToQuit.connect(self.onAboutToQuit)
         self._qml_ok = True
 
@@ -167,7 +181,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
                 current[part] = {}
                 current = current[part]
             current[parts[-1]] = value
-            print(f"Overriding config option '{key}' with value: {value}")
+            self.logger.info(f"Overriding config option '{key}' with value: {value}")
             deep_update(self.initial_config, nested)
             deep_update(self.explicit_initial_config, nested)
 

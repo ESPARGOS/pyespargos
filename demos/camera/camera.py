@@ -173,12 +173,12 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
                 # csi_combined has shape (datapoints, boards, row, column, subcarriers)
                 if self.appconfig.get("beamformer", "polarization_mode") != "ignore":
                     if receiver_state_combined is None:
-                        print("Receiver-state metadata is required for polarization visualization")
+                        self.logger.warning("Receiver-state metadata is required for polarization visualization")
                         return
                     # Separate CSI by feed
                     csi_combined = espargos.csi_processing.separate_feeds(csi_combined, receiver_state_combined)  # (D, B, M, N, S, 2)
                     if csi_combined is None:
-                        print("Must have measurements for both R and L feeds for polarization visualization")
+                        self.logger.warning("Must have measurements for both R and L feeds for polarization visualization")
                         return
 
                     # Apply per-antenna Jones correction to convert R/L feeds to global H/V polarization
