@@ -6,11 +6,11 @@ from .csi_backlog import CSIBacklog, CSIBacklogFilter, Exclude11bFilter, MacFilt
 from .sensor_backlog import BacklogField, BacklogFilter, SensorBacklog
 from .csi_cluster import CSICluster
 from .board import Board, BoardCapability, BoardControl, EspargosAPIVersionError, EspargosHTTPStatusError, EspargosStreamConnectionError, EspargosUnexpectedResponseError, SensorMessageSubscription
-from .board_wifi_rx import WiFiRx
-from .board_wifi_tx import WiFiTx
+from .board_wifi_rx import WiFiRxCapability
+from .board_wifi_tx import WiFiTxCapability
 
-Board.register_capability("wifi_rx", WiFiRx)
-Board.register_capability("wifi_tx", WiFiTx)
+Board.register_capability("wifi_rx", WiFiRxCapability)
+Board.register_capability("wifi_tx", WiFiTxCapability)
 
 from .pool import Pool
 from .csi_pool import CSIPool, CalibrationError

@@ -27,7 +27,7 @@ from .board import (
 )
 
 
-class WiFiRx(BoardCapability):
+class WiFiRxCapability(BoardCapability):
     """WiFi receive configuration and decoded CSI delivery for one board."""
 
     DEFAULT_CSI_ACQUISITION_CONFIG = {

@@ -19,7 +19,7 @@ from . import sensor
 from .board import BoardCapability, SensorMessageSubscription
 
 
-class WiFiTx(BoardCapability):
+class WiFiTxCapability(BoardCapability):
     """Scheduled WiFi transmission controls for one board."""
 
     def set_config(self, config: dict):

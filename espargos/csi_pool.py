@@ -110,7 +110,7 @@ class CSIPool(Pool):
         """
         Set the MAC address filter for all boards in the pool. Will only accept packets from the specified MAC address.
 
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_mac_filter` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRxCapability.set_mac_filter` for each board.
         """
         for board in self.boards:
             board.wifi_rx.set_mac_filter(mac_filter)
@@ -126,7 +126,7 @@ class CSIPool(Pool):
         """
         Return MAC filter configuration, reconciling boards when needed.
 
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.get_mac_filter` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRxCapability.get_mac_filter` for each board.
         """
         filters = [b.wifi_rx.get_mac_filter() for b in self.boards]
         return self._reconcile_across_boards(
@@ -151,7 +151,7 @@ class CSIPool(Pool):
         Set CSI acquisition configuration on all boards in this pool and sanity-check that all boards
         end up with the same config.
 
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_csi_acquisition_config` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRxCapability.set_csi_acquisition_config` for each board.
         For the expected JSON/dict format, refer to that method's documentation.
 
         :param config: CSI acquisition configuration dict to apply to all boards.
@@ -201,7 +201,7 @@ class CSIPool(Pool):
         """
         Set gain settings on all boards in this pool.
 
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_gain_settings` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRxCapability.set_gain_settings` for each board.
         Values may be scalars, board-local ``(row, column)`` arrays applied to every
         board, or pool-wide ``(board, row, column)`` arrays.
 
@@ -236,7 +236,7 @@ class CSIPool(Pool):
         """
         Set per-sensor WiFi channel overrides on all boards in this pool and sanity-check that all boards end up with the same settings.
 
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_channel_overrides` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRxCapability.set_channel_overrides` for each board.
         For the expected JSON/dict format, refer to that method's documentation.
 
         :param settings: Per-sensor WiFi channel override settings dict to apply to all boards.
@@ -296,12 +296,12 @@ class CSIPool(Pool):
         """
         Set WiFi config on all boards and sanity-check resulting configs match across boards.
 
-        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRx.set_config` for each board.
+        This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRxCapability.set_config` for each board.
         For the expected JSON/dict format, refer to that method's documentation.
 
         Fields listed in :data:`WIFICONF_PER_BOARD_KEYS` are ignored and not
         propagated because they may legitimately differ between boards. Set
-        those directly through :meth:`pyespargos.board_wifi_rx.WiFiRx.set_config`.
+        those directly through :meth:`pyespargos.board_wifi_rx.WiFiRxCapability.set_config`.
 
         :param wificonf: WiFi configuration dict to apply to all boards.
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
