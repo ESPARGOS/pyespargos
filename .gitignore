@@ -22,3 +22,7 @@ demos/camera/img/*
 !demos/camera/img/*.tex
 !demos/camera/img/*.png
 !demos/camera/img/*.svg
+
+# addon checkouts (only the README is tracked)
+addons/*
+!addons/README.md

@@ -91,3 +91,57 @@ class Logger:
         Sets the logging level of the logger.
         """
         cls.logger.setLevel(level=level)
+
+
+def _load_addons():
+    """
+    Load ESPARGOS addon packages.
+
+    Addons extend pyespargos on import, e.g. by registering additional Board
+    capabilities or application modalities. Two discovery mechanisms are
+    supported:
+
+    - Addon checkouts in the ``addons/`` directory of a pyespargos repository
+      checkout: every package named ``espargos_*`` inside a subdirectory of
+      ``addons/`` is imported automatically.
+    - Installed addon packages that declare an entry point in the
+      ``espargos.addons`` group.
+
+    A failing addon import is logged but never prevents pyespargos itself
+    from loading. Safe to call more than once; already-imported addons are
+    skipped.
+    """
+    import importlib
+    import importlib.metadata
+    import pathlib
+
+    addons_dir = pathlib.Path(__file__).resolve().parents[1] / "addons"
+    if addons_dir.is_dir():
+        for package_init in sorted(addons_dir.glob("*/espargos_*/__init__.py")):
+            package_name = package_init.parent.name
+            if package_name in sys.modules:
+                continue
+            checkout_dir = str(package_init.parents[1])
+            if checkout_dir not in sys.path:
+                sys.path.insert(0, checkout_dir)
+            try:
+                importlib.import_module(package_name)
+                Logger.logger.info(f"Loaded ESPARGOS addon {package_name!r} from {checkout_dir}")
+            except Exception:
+                Logger.logger.exception(f"Failed to load ESPARGOS addon {package_name!r}")
+
+    try:
+        addon_entry_points = importlib.metadata.entry_points(group="espargos.addons")
+    except Exception:
+        addon_entry_points = ()
+    for entry_point in addon_entry_points:
+        if entry_point.value.partition(":")[0] in sys.modules:
+            continue
+        try:
+            entry_point.load()
+            Logger.logger.info(f"Loaded ESPARGOS addon {entry_point.name!r}")
+        except Exception:
+            Logger.logger.exception(f"Failed to load ESPARGOS addon {entry_point.name!r}")
+
+
+_load_addons()
