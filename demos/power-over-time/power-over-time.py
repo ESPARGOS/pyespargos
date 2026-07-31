@@ -190,10 +190,10 @@ class EspargosDemoPowerOverTime(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFo
 
     def _compute_power_datapoints(self, preamble_format, csi_backlog, rx_gain_backlog, fft_gain_backlog):
         csi = np.array(csi_backlog, copy=True)
-        csi = espargos.util.scale_csi_by_reported_gain(csi, rx_gain_backlog, fft_gain_backlog)
+        csi = espargos.csi_processing.scale_csi_by_reported_gain(csi, rx_gain_backlog, fft_gain_backlog)
 
         if getattr(self, "_use_combined_array", False):
-            csi = espargos.util.build_combined_array_data(self.indexing_matrix, csi)
+            csi = espargos.combined_array.build_combined_array_data(self.indexing_matrix, csi)
 
         if self.mode == "subcarrier":
             power = np.abs(csi[..., self._subcarrier_array_index(preamble_format)]) ** 2

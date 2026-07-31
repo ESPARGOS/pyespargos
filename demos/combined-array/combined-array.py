@@ -42,10 +42,10 @@ class EspargosDemoCombinedArray(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFo
             return
 
         csi_backlog, rx_gain_backlog, fft_gain_backlog = result
-        csi_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)
-        rx_gain_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, rx_gain_backlog)
-        fft_gain_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, fft_gain_backlog)
-        csi_largearray = espargos.util.scale_csi_by_reported_gain(csi_largearray, rx_gain_largearray, fft_gain_largearray)
+        csi_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, csi_backlog)
+        rx_gain_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, rx_gain_backlog)
+        fft_gain_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, fft_gain_backlog)
+        csi_largearray = espargos.csi_processing.scale_csi_by_reported_gain(csi_largearray, rx_gain_largearray, fft_gain_largearray)
 
         R = np.einsum("dnis,dmjs->nimj", csi_largearray, np.conj(csi_largearray))
         R = np.reshape(R, (R.shape[0] * R.shape[1], R.shape[2] * R.shape[3]))

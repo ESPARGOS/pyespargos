@@ -19,7 +19,7 @@ import ctypes
 import numpy as np
 
 from . import csi_packet
-from . import util
+from . import csi_processing
 
 COMPRESSED_LLTF_FFT_SIZE = 64
 COMPRESSED_HT20_FFT_SIZE = 64
@@ -602,7 +602,7 @@ def decode_compressed_lltf(buf, acquire_force_lltf: bool = False, lltf_8bit_mode
         float((1 << shift) * 8.0),
     )
     if lltf_8bit_mode:
-        util.interpolate_lltf_gap(spectrum)
+        csi_processing.interpolate_lltf_gap(spectrum)
         return spectrum
     if acquire_force_lltf:
         spectrum[-1] = 2.0 * spectrum[-3] - spectrum[-5]
@@ -624,7 +624,7 @@ def decode_compressed_ht20(buf) -> np.ndarray:
         _COMPRESSED_HT20_FIX32_CORRECTION,
         float((1 << COMPRESSED_HT20_FIX32_SHIFT) * 8.0),
     )
-    util.interpolate_ht20ltf_gap(spectrum)
+    csi_processing.interpolate_ht20ltf_gap(spectrum)
     return spectrum
 
 
@@ -653,5 +653,5 @@ def decode_compressed_he20(buf) -> np.ndarray:
         _COMPRESSED_HE20_FIX32_CORRECTION,
         float((1 << COMPRESSED_HE20_FIX32_SHIFT) * 8.0),
     )
-    util.interpolate_he20ltf_gaps(spectrum)
+    csi_processing.interpolate_he20ltf_gaps(spectrum)
     return spectrum

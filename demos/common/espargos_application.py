@@ -4,7 +4,7 @@ import PyQt6.QtWidgets
 import PyQt6.QtCore
 import PyQt6.QtQml
 
-import espargos.util
+import espargos.combined_array
 
 import subprocess
 import threading
@@ -473,7 +473,7 @@ class CombinedArrayMixin:
             self.n_rows,
             self.n_cols,
             self.antenna_orientations,
-        ) = espargos.util.parse_combined_array_config(combined_array_cfg)
+        ) = espargos.combined_array.parse_combined_array_config(combined_array_cfg)
 
         additional_calibrate_args["cable_lengths"] = cable_lengths
         additional_calibrate_args["cable_velocity_factors"] = cable_velocity_factors

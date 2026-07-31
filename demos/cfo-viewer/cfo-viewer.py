@@ -12,7 +12,7 @@ import argparse
 import numpy as np
 import PyQt6.QtCore
 
-import espargos.util
+import espargos.csi_processing
 
 
 class EspargosDemoCFOViewer(CSIBacklogMixin, ESPARGOSCSIApplication):
@@ -141,7 +141,7 @@ class EspargosDemoCFOViewer(CSIBacklogMixin, ESPARGOSCSIApplication):
         elif self._secondary_channel_mode == 2:
             secondary_channel = self._channel_primary - 4
 
-        return espargos.util.get_center_frequency(self._channel_primary, secondary_channel)
+        return espargos.csi_processing.get_center_frequency(self._channel_primary, secondary_channel)
 
     def onInitComplete(self):
         self._register_backlog_callback()

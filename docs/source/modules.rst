@@ -155,10 +155,34 @@ espargos.uart
    :undoc-members:
    :show-inheritance:
 
-espargos.util
--------------
+espargos.csi_processing
+-----------------------
 
-.. automodule:: espargos.util
+.. automodule:: espargos.csi_processing
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.delay_estimation
+-------------------------
+
+.. automodule:: espargos.delay_estimation
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.array_processing
+-------------------------
+
+.. automodule:: espargos.array_processing
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.combined_array
+-----------------------
+
+.. automodule:: espargos.combined_array
    :members:
    :undoc-members:
    :show-inheritance:

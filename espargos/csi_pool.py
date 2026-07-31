@@ -16,7 +16,7 @@ import time
 
 from . import calibration
 from . import board
-from . import util
+from . import csi_processing
 from . import csi_cluster
 from . import csi_packet
 from . import radar_packet
@@ -453,7 +453,7 @@ class CSIPool(Pool):
             # If we only have HT20 but no LLTF calibration, we can still proceed: Use corresponding subcarriers from HT20 for LLTF calibration
             if len(complete_clusters_lltf) == 0:
                 self.logger.warning("No LLTF calibration clusters received, deriving LLTF calibration from HT20 calibration")
-            complete_clusters_lltf.extend([util.extract_lltf_subcarriers_from_ht20(csi_ht20) for csi_ht20 in complete_clusters_ht20])
+            complete_clusters_lltf.extend([csi_processing.extract_lltf_subcarriers_from_ht20(csi_ht20) for csi_ht20 in complete_clusters_ht20])
             complete_cluster_timestamps_lltf.extend(complete_cluster_timestamps_ht20)
 
         complete_cluster_count = len(complete_cluster_timestamps)
@@ -587,7 +587,7 @@ class CSIPool(Pool):
                     raise CalibrationError("ESPARGOS calibration failed: boards reported different " "calibration channels")
 
                 phase_calibrations_lltf.append(
-                    util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf))
+                    csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf))
                     if len(complete_clusters_lltf) > 0
                     else np.full(
                         self.get_shape()[1:] + (csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,),
@@ -595,7 +595,7 @@ class CSIPool(Pool):
                     )
                 )
                 phase_calibrations_ht20.append(
-                    util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20))
+                    csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20))
                     if len(complete_clusters_ht20) > 0
                     else np.full(
                         self.get_shape()[1:] + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL,),
@@ -603,7 +603,7 @@ class CSIPool(Pool):
                     )
                 )
                 phase_calibrations_ht40.append(
-                    util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
+                    csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
                     if len(complete_clusters_ht40) > 0
                     else np.full(
                         self.get_shape()[1:] + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi_packet.HT40_GAP_SUBCARRIERS,),
@@ -611,7 +611,7 @@ class CSIPool(Pool):
                     )
                 )
                 phase_calibrations_he20.append(
-                    util.derive_he20_calibration_from_lltf(
+                    csi_processing.derive_he20_calibration_from_lltf(
                         complete_clusters_lltf[:, np.newaxis, ...],
                         complete_cluster_timestamps_lltf[:, np.newaxis, ...],
                         board_channel_secondary,
@@ -646,16 +646,16 @@ class CSIPool(Pool):
                 channel_secondary,
             ) = self._clusters_to_calibration()
             sensor_clock_offsets = self._compute_sensor_clock_offsets(complete_cluster_timestamps)
-            phase_calibration_he20 = util.derive_he20_calibration_from_lltf(
+            phase_calibration_he20 = csi_processing.derive_he20_calibration_from_lltf(
                 complete_clusters_lltf,
                 complete_cluster_timestamps_lltf,
                 channel_secondary,
             )
 
-            phase_calibrations_lltf = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
-            phase_calibrations_ht20 = util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
+            phase_calibrations_lltf = csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_lltf)) if len(complete_clusters_lltf) > 0 else np.full(self.get_shape() + (csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL,), np.nan)
+            phase_calibrations_ht20 = csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht20)) if len(complete_clusters_ht20) > 0 else np.full(self.get_shape() + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL,), np.nan)
             phase_calibration_ht40 = (
-                util.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
+                csi_processing.csi_interp_eigenvec_per_subcarrier(np.asarray(complete_clusters_ht40))
                 if len(complete_clusters_ht40) > 0
                 else np.full(
                     self.get_shape() + (csi_packet.HT_COEFFICIENTS_PER_CHANNEL * 2 + csi_packet.HT40_GAP_SUBCARRIERS,),
@@ -666,9 +666,9 @@ class CSIPool(Pool):
             # Each antenna just gets a delayed and phase-shifted version of the reference signal,
             # so frequency response is just a complex sinusoid over subcarrier axis.
             # Fit optimal complex sinusoid to the CSI of each antenna across subcarriers to extract the phase shift and delay, which we can then use for calibration.
-            phase_calibrations_lltf = util.fit_complex_sinusoid(phase_calibrations_lltf)
-            phase_calibrations_ht20 = util.fit_complex_sinusoid(phase_calibrations_ht20)
-            phase_calibration_ht40 = util.fit_complex_sinusoid(phase_calibration_ht40)
+            phase_calibrations_lltf = csi_processing.fit_complex_sinusoid(phase_calibrations_lltf)
+            phase_calibrations_ht20 = csi_processing.fit_complex_sinusoid(phase_calibrations_ht20)
+            phase_calibration_ht40 = csi_processing.fit_complex_sinusoid(phase_calibration_ht40)
 
             self.stored_calibration = calibration.CSICalibration(
                 self.boards,

@@ -33,8 +33,8 @@ else:
     wificonf = pool.get_wificonf()
     channel_primary = int(wificonf.get("channel-primary", 1))
 
-frequencies = espargos.util.get_frequencies_lltf(channel_primary)
-center = espargos.util.get_center_frequency(channel_primary)
+frequencies = espargos.csi_processing.get_frequencies_lltf(channel_primary)
+center = espargos.csi_processing.get_center_frequency(channel_primary)
 subcarrier_frequencies = frequencies - center
 
 rx_gain_records = []

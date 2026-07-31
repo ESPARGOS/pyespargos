@@ -130,7 +130,7 @@ class EspargosDemoRadiationPattern3D(CSIBacklogMixin, CombinedArrayMixin, Single
         self.element_pattern = np.cos(el_mesh) ** 0.4 * np.cos(az_mesh) ** 0.4
 
         # Per-antenna inverse Jones matrices for polarization correction (R/L to H/V)
-        self.jones_matrices_inv = espargos.util.build_jones_matrices(self.antenna_orientations)
+        self.jones_matrices_inv = espargos.combined_array.build_jones_matrices(self.antenna_orientations)
 
         self.geometry = RadiationPatternGeometry()
         self._board_placements = self._compute_board_placements()
@@ -157,10 +157,10 @@ class EspargosDemoRadiationPattern3D(CSIBacklogMixin, CombinedArrayMixin, Single
         center_c = (self.n_cols - 1) / 2.0
 
         orientation_to_z_rot = {
-            espargos.util.AntennaOrientation.N: 180,
-            espargos.util.AntennaOrientation.E: -90,
-            espargos.util.AntennaOrientation.S: 0,
-            espargos.util.AntennaOrientation.W: 90,
+            espargos.combined_array.AntennaOrientation.N: 180,
+            espargos.combined_array.AntennaOrientation.E: -90,
+            espargos.combined_array.AntennaOrientation.S: 0,
+            espargos.combined_array.AntennaOrientation.W: 90,
         }
 
         board_center_local = np.array([0.5, 1.5])
@@ -203,22 +203,22 @@ class EspargosDemoRadiationPattern3D(CSIBacklogMixin, CombinedArrayMixin, Single
                 return
             csi_backlog, rx_gain_backlog, fft_gain_backlog = result
 
-        csi_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)
-        rx_gain_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, rx_gain_backlog)
-        fft_gain_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, fft_gain_backlog)
-        csi_largearray = espargos.util.scale_csi_by_reported_gain(csi_largearray, rx_gain_largearray, fft_gain_largearray)
+        csi_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, csi_backlog)
+        rx_gain_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, rx_gain_backlog)
+        fft_gain_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, fft_gain_backlog)
+        csi_largearray = espargos.csi_processing.scale_csi_by_reported_gain(csi_largearray, rx_gain_largearray, fft_gain_largearray)
         csi_largearray = np.nan_to_num(csi_largearray, nan=0.0)
 
         if pol_mode == "incorporate":
-            rfswitch_combined = espargos.util.build_combined_array_data(self.indexing_matrix, rfswitch_state_backlog)
-            csi_largearray = espargos.util.separate_feeds(csi_largearray, rfswitch_combined)
+            rfswitch_combined = espargos.combined_array.build_combined_array_data(self.indexing_matrix, rfswitch_state_backlog)
+            csi_largearray = espargos.csi_processing.separate_feeds(csi_largearray, rfswitch_combined)
             if csi_largearray is None:
                 print("Need measurements for both R and L feeds for polarization mode")
                 return
             # Apply per-antenna Jones correction (R/L to global H/V)
             csi_largearray = np.einsum("dmnsf,mnfp->dmnsp", csi_largearray, self.jones_matrices_inv)
 
-        csi_avg = espargos.util.csi_interp_iterative(csi_largearray, iterations=5)
+        csi_avg = espargos.csi_processing.csi_interp_iterative(csi_largearray, iterations=5)
 
         az_steps, el_steps = SPHERE_AZIMUTH_STEPS, SPHERE_ELEVATION_STEPS
         use_elem = self.appconfig.get("element_pattern")

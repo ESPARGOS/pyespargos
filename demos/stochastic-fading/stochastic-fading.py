@@ -197,14 +197,14 @@ class EspargosDemoStochasticFading(CSIBacklogMixin, CombinedArrayMixin, SingleCS
         csi_backlog = results[0]
 
         if remove_global_sto:
-            espargos.util.remove_mean_sto(csi_backlog)
+            espargos.csi_processing.remove_mean_sto(csi_backlog)
 
         if csi_key == "ht40":
-            espargos.util.interpolate_ht40ltf_gap(csi_backlog)
+            espargos.csi_processing.interpolate_ht40ltf_gap(csi_backlog)
         elif csi_key == "ht20":
-            espargos.util.interpolate_ht20ltf_gap(csi_backlog)
+            espargos.csi_processing.interpolate_ht20ltf_gap(csi_backlog)
         elif csi_key == "he20":
-            espargos.util.interpolate_he20ltf_gaps(csi_backlog)
+            espargos.csi_processing.interpolate_he20ltf_gaps(csi_backlog)
 
         if additional_keys:
             return (csi_key, *results) if return_format else tuple(results)
@@ -289,10 +289,10 @@ class EspargosDemoStochasticFading(CSIBacklogMixin, CombinedArrayMixin, SingleCS
 
         csi_new = np.array(csi_backlog[new_mask], copy=True)
 
-        csi_new = espargos.util.scale_csi_by_reported_gain(csi_new, rx_gain_backlog[new_mask], fft_gain_backlog[new_mask])
+        csi_new = espargos.csi_processing.scale_csi_by_reported_gain(csi_new, rx_gain_backlog[new_mask], fft_gain_backlog[new_mask])
 
         if getattr(self, "_use_combined_array", False):
-            csi_new = espargos.util.build_combined_array_data(self.indexing_matrix, csi_new)
+            csi_new = espargos.combined_array.build_combined_array_data(self.indexing_matrix, csi_new)
 
         magnitudes = np.abs(csi_new).reshape(-1)
         magnitudes = magnitudes[np.isfinite(magnitudes)]

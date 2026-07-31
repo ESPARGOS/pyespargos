@@ -90,10 +90,10 @@ class EspargosDemoTDOAOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSCS
             csi_backlog, _ = result
 
             # Do interpolation "by_array" due to Doppler (destroys TDoA for moving targets otherwise)
-            csi_interp = espargos.util.csi_interp_iterative_by_array(csi_backlog, iterations=5)
+            csi_interp = espargos.csi_processing.csi_interp_iterative_by_array(csi_backlog, iterations=5)
 
             if algorithm == "music":
-                tdoas_ns = espargos.util.estimate_toas_rootmusic(csi_backlog, per_board_average=do_average) * 1e9
+                tdoas_ns = espargos.delay_estimation.estimate_toas_rootmusic(csi_backlog, per_board_average=do_average) * 1e9
             elif algorithm == "unwrap":
                 phases = np.unwrap(np.angle(csi_interp), axis=-1)
                 tdoas_ns = (phases[..., -1] - phases[..., 0]) / (2 * np.pi * phases.shape[-1]) / espargos.constants.WIFI_SUBCARRIER_SPACING * 1e9

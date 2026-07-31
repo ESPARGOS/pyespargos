@@ -221,21 +221,21 @@ class EspargosDemoInstantaneousCSI(CSIBacklogMixin, SingleCSIFormatMixin, ESPARG
         csi_backlog = np.nan_to_num(csi_backlog, nan=0.0)
         rx_gain_backlog = np.nan_to_num(rx_gain_backlog, nan=0.0)
         fft_gain_backlog = np.nan_to_num(fft_gain_backlog, nan=0.0)
-        csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, rx_gain_backlog, fft_gain_backlog)
+        csi_backlog = espargos.csi_processing.scale_csi_by_reported_gain(csi_backlog, rx_gain_backlog, fft_gain_backlog)
 
         if self.pooldrawer.cfgman.get("calibration", "per_board"):
-            csi_interp = espargos.util.csi_interp_iterative_by_array(csi_backlog, iterations=5)
+            csi_interp = espargos.csi_processing.csi_interp_iterative_by_array(csi_backlog, iterations=5)
         else:
-            csi_interp = espargos.util.csi_interp_iterative(csi_backlog, iterations=5)
+            csi_interp = espargos.csi_processing.csi_interp_iterative(csi_backlog, iterations=5)
         csi_flat = np.reshape(csi_interp, (-1, csi_interp.shape[-1]))
 
         oversampling = self.appconfig.get("oversampling")
 
         if display_mode in ["mvdr", "music"]:
             if display_mode == "music":
-                superres_delays, superres_pdps = espargos.util.fdomain_to_tdomain_pdp_music(csi_backlog)
+                superres_delays, superres_pdps = espargos.delay_estimation.fdomain_to_tdomain_pdp_music(csi_backlog)
             else:
-                superres_delays, superres_pdps = espargos.util.fdomain_to_tdomain_pdp_mvdr(csi_backlog)
+                superres_delays, superres_pdps = espargos.delay_estimation.fdomain_to_tdomain_pdp_mvdr(csi_backlog)
 
             superres_pdps_flat = np.reshape(superres_pdps, (-1, superres_pdps.shape[-1]))
             superres_pdps_flat_active = superres_pdps_flat[valid_antennas]

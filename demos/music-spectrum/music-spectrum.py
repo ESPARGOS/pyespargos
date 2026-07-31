@@ -55,7 +55,7 @@ class EspargosDemoMusicSpectrum(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSC
             return
 
         csi_backlog, rx_gain_backlog, fft_gain_backlog = result
-        csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, rx_gain_backlog, fft_gain_backlog)
+        csi_backlog = espargos.csi_processing.scale_csi_by_reported_gain(csi_backlog, rx_gain_backlog, fft_gain_backlog)
 
         # Compute array covariance matrix R over all backlog datapoints, all rows and all subcarriers
         csi_los = np.sum(csi_backlog, axis=-1)

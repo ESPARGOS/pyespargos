@@ -127,32 +127,32 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
                 return
             csi = clustered_csi.deserialize_csi_lltf()
             csi = self.pool.get_calibration().apply_lltf(csi)
-            espargos.util.remove_mean_sto(csi)
-            espargos.util.interpolate_lltf_gap(csi)
+            espargos.csi_processing.remove_mean_sto(csi)
+            espargos.csi_processing.interpolate_lltf_gap(csi)
         elif preamble_format == "ht20":
             if not clustered_csi.has_ht20ltf():
                 print("Received CSI without HT20-LTF data; skipping calibration update.")
                 return
             csi = clustered_csi.deserialize_csi_ht20ltf()
             csi = self.pool.get_calibration().apply_ht20(csi)
-            espargos.util.remove_mean_sto(csi)
-            espargos.util.interpolate_ht20ltf_gap(csi)
+            espargos.csi_processing.remove_mean_sto(csi)
+            espargos.csi_processing.interpolate_ht20ltf_gap(csi)
         elif preamble_format == "ht40":
             if not clustered_csi.has_ht40ltf():
                 print("Received CSI without HT40-LTF data; skipping calibration update.")
                 return
             csi = clustered_csi.deserialize_csi_ht40ltf()
             csi = self.pool.get_calibration().apply_ht40(csi)
-            espargos.util.remove_mean_sto(csi)
-            espargos.util.interpolate_ht40ltf_gap(csi)
+            espargos.csi_processing.remove_mean_sto(csi)
+            espargos.csi_processing.interpolate_ht40ltf_gap(csi)
         elif preamble_format == "he20":
             if not clustered_csi.has_he20ltf():
                 print("Received CSI without HE20-LTF data; skipping calibration update.")
                 return
             csi = clustered_csi.deserialize_csi_he20ltf()
             csi = self.pool.get_calibration().apply_he20(csi)
-            espargos.util.remove_mean_sto(csi)
-            espargos.util.interpolate_he20ltf_gaps(csi)
+            espargos.csi_processing.remove_mean_sto(csi)
+            espargos.csi_processing.interpolate_he20ltf_gaps(csi)
 
         else:
             raise ValueError(f"Unsupported preamble format: {preamble_format}")
@@ -168,7 +168,7 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
 
             csi_to_interpolate = np.asarray([csi, self.calibration_values])
             weights = np.asarray([update_rate, 1.0 - update_rate])
-            self.calibration_values = espargos.util.csi_interp_iterative(csi_to_interpolate, weights)
+            self.calibration_values = espargos.csi_processing.csi_interp_iterative(csi_to_interpolate, weights)
 
     @PyQt6.QtCore.pyqtSlot(list)
     def updateCalibrationResult(self, phaseSeries):

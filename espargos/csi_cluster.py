@@ -13,7 +13,7 @@ from . import csi_compression
 from . import csi_packet
 from . import radar_packet
 from . import sensor
-from . import util
+from . import csi_processing
 from . import wifi
 from .sensor_cluster import ClusterCollisionError, SensorCluster
 
@@ -234,7 +234,7 @@ class CSICluster(SensorCluster):
 
             if serialized_csi.acquire_lltf_8bit_mode:
                 csi_lltf_sensor[:] = csi_packet.unpack_lltf8_values(serialized_csi.buf, csi_packet.LEGACY_COEFFICIENTS_PER_CHANNEL)
-                util.interpolate_lltf_gap(csi_lltf_sensor)
+                csi_processing.interpolate_lltf_gap(csi_lltf_sensor)
             elif serialized_csi.acquire_force_lltf:
                 # In forced LLTF mode the ESP32-C61 reports 52 signed 12-bit values:
                 # 26 complex coefficients for every second subcarrier, including DC.

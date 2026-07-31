@@ -80,7 +80,7 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
 
         self.initialize_pool(backlog_cb_predicate=self._cb_predicate)
         self._update_steering_vectors()
-        self.jones_matrices_inv = espargos.util.build_jones_matrices(self.antenna_orientations)
+        self.jones_matrices_inv = espargos.combined_array.build_jones_matrices(self.antenna_orientations)
 
         self.camera_view = CameraView(self.appconfig, parent=self, update_signal=self.appConfigChanged)
         self.overlay = CSIOverlay(self.appconfig, parent=self, update_signal=self.appConfigChanged)
@@ -132,21 +132,21 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
         if self.appconfig.get("receiver", "mac_list_enabled"):
             self.overlay.publish_mac_addresses("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}".format(*mac) for mac in macs)
 
-        espargos.util.remove_mean_sto(csi)
+        espargos.csi_processing.remove_mean_sto(csi)
         if self.additional_calibration is not None:
             csi = np.einsum(
                 "dbrcs,brcs->dbrcs",
                 csi,
                 np.exp(-1.0j * np.angle(self.additional_calibration)),
             )
-        csi = espargos.util.scale_csi_by_reported_gain(csi, rx_gain, fft_gain)
+        csi = espargos.csi_processing.scale_csi_by_reported_gain(csi, rx_gain, fft_gain)
         csi = np.nan_to_num(csi, nan=0.0)
 
-        csi_combined = espargos.util.build_combined_array_data(self.indexing_matrix, csi)
+        csi_combined = espargos.combined_array.build_combined_array_data(self.indexing_matrix, csi)
         csi_combined = csi_combined[:, np.newaxis]
-        receiver_state_combined = espargos.util.build_combined_array_data(self.indexing_matrix, receiver_state)
+        receiver_state_combined = espargos.combined_array.build_combined_array_data(self.indexing_matrix, receiver_state)
         receiver_state_combined = receiver_state_combined[:, np.newaxis]
-        csi_combined = espargos.util.shift_to_firstpeak_sync(
+        csi_combined = espargos.csi_processing.shift_to_firstpeak_sync(
             csi_combined,
             peak_threshold=(0.4 if csi_format == "lltf" else 0.1),
         )
@@ -166,7 +166,7 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
                     csi_combined.shape[4],
                 )
                 R = np.einsum("dbis,dbjs->ij", csi_flat, np.conj(csi_flat)) / (csi_flat.shape[0] * csi_flat.shape[1] * csi_flat.shape[3])
-                self.beamspace_power = espargos.util.music_spectrum(R, self.steering_vectors_2d) if beamformer_type == "MUSIC" else espargos.util.mvdr_spectrum(R, self.steering_vectors_2d)
+                self.beamspace_power = espargos.array_processing.music_spectrum(R, self.steering_vectors_2d) if beamformer_type == "MUSIC" else espargos.array_processing.mvdr_spectrum(R, self.steering_vectors_2d)
 
             # Option 2: Beamspace via FFT
             case "FFT":
@@ -176,7 +176,7 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
                         print("Receiver-state metadata is required for polarization visualization")
                         return
                     # Separate CSI by feed
-                    csi_combined = espargos.util.separate_feeds(csi_combined, receiver_state_combined)  # (D, B, M, N, S, 2)
+                    csi_combined = espargos.csi_processing.separate_feeds(csi_combined, receiver_state_combined)  # (D, B, M, N, S, 2)
                     if csi_combined is None:
                         print("Must have measurements for both R and L feeds for polarization visualization")
                         return
@@ -189,7 +189,7 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
 
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
                 # This assumes a constant channel except for CFO-induced phase rotations and noise
-                csi_combined = espargos.util.csi_interp_iterative(csi_combined, iterations=5)
+                csi_combined = espargos.csi_processing.csi_interp_iterative(csi_combined, iterations=5)
 
                 # Now csi_combined can have two possible shapes:
                 # * Without polarization: (B=1, M, N, S)
@@ -315,7 +315,7 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
             case "Bartlett":
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
                 # This assumes a constant channel except for CFO-induced phase rotations and noise
-                csi_combined = np.asarray([espargos.util.csi_interp_iterative(csi_combined, iterations=5)])
+                csi_combined = np.asarray([espargos.csi_processing.csi_interp_iterative(csi_combined, iterations=5)])
 
                 # Compute sum of received power per steering angle over all datapoints and subcarriers
                 # real 2d spatial spectrum is too slow...
@@ -344,7 +344,7 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
         return np.all(csi_completion_state) or timeout_condition
 
     def _update_steering_vectors(self):
-        self.steering_vectors_2d = espargos.util.steering_vectors_2d(
+        self.steering_vectors_2d = espargos.array_processing.steering_vectors_2d(
             self.n_rows,
             self.n_cols,
             self.appconfig.get("beamformer", "resolution_azimuth"),

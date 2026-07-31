@@ -28,7 +28,10 @@ from . import radar_packet
 from . import sensor
 from . import sensor_backlog
 from . import sensor_cluster
-from . import util
+from . import array_processing
+from . import combined_array
+from . import csi_processing
+from . import delay_estimation
 from . import wifi
 from . import board_wifi_rx
 from . import board_wifi_tx

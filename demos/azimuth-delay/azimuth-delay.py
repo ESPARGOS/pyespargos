@@ -81,7 +81,7 @@ class AzimuthDelayApp(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         csi, rx_gain, fft_gain = result
 
         # Remove STO from CSI
-        espargos.util.remove_mean_sto(csi)
+        espargos.csi_processing.remove_mean_sto(csi)
 
         delay_min = self.appconfig.get("delay_min")
         delay_max = self.appconfig.get("delay_max")
@@ -89,10 +89,10 @@ class AzimuthDelayApp(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin,
         subcarriers = csi.shape[-1]
 
         # Build combined array CSI
-        csi_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, csi)
-        rx_gain_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, rx_gain)
-        fft_gain_largearray = espargos.util.build_combined_array_data(self.indexing_matrix, fft_gain)
-        csi_largearray = espargos.util.scale_csi_by_reported_gain(csi_largearray, rx_gain_largearray, fft_gain_largearray)
+        csi_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, csi)
+        rx_gain_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, rx_gain)
+        fft_gain_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, fft_gain)
+        csi_largearray = espargos.csi_processing.scale_csi_by_reported_gain(csi_largearray, rx_gain_largearray, fft_gain_largearray)
         # csi_largearray shape: (backlog_depth, n_rows, n_cols, subcarriers)
 
         # Sum over rows (beamform vertically)

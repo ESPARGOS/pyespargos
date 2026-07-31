@@ -2,7 +2,7 @@
 
 import PyQt6.QtCore
 
-import espargos.util
+import espargos.csi_processing
 
 import numpy as np
 import copy
@@ -257,15 +257,15 @@ class SingleCSIFormatMixin:
 
         # Apply STO removal if requested
         if remove_global_sto:
-            espargos.util.remove_mean_sto(csi_backlog)
+            espargos.csi_processing.remove_mean_sto(csi_backlog)
 
         # Interpolate DC subcarrier gap for HT formats
         if csi_key == "ht40":
-            espargos.util.interpolate_ht40ltf_gap(csi_backlog)
+            espargos.csi_processing.interpolate_ht40ltf_gap(csi_backlog)
         elif csi_key == "ht20":
-            espargos.util.interpolate_ht20ltf_gap(csi_backlog)
+            espargos.csi_processing.interpolate_ht20ltf_gap(csi_backlog)
         elif csi_key == "he20":
-            espargos.util.interpolate_he20ltf_gaps(csi_backlog)
+            espargos.csi_processing.interpolate_he20ltf_gaps(csi_backlog)
 
         # Handle data containing NaN values (from incomplete CSI clusters)
         if np.any(np.isnan(csi_backlog)):

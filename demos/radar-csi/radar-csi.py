@@ -11,7 +11,7 @@ from demos.common import ESPARGOSCSIApplication
 
 import espargos
 import espargos.constants
-import espargos.util
+import espargos.csi_processing
 import numpy as np
 import PyQt6.QtCharts
 import PyQt6.QtCore
@@ -147,8 +147,8 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
             channel_primary = int(wificonf.get("channel-primary", 1))
 
         if channel_primary != self._subcarrier_frequency_channel:
-            frequencies = espargos.util.get_frequencies_lltf(channel_primary)
-            center = espargos.util.get_center_frequency(channel_primary)
+            frequencies = espargos.csi_processing.get_frequencies_lltf(channel_primary)
+            center = espargos.csi_processing.get_center_frequency(channel_primary)
             self._cached_subcarrier_frequencies = frequencies - center
             self._subcarrier_frequency_channel = channel_primary
         return self._cached_subcarrier_frequencies

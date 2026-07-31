@@ -116,12 +116,12 @@ class EspargosDemoPhasesOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOS
             return
 
         csi_for_average = np.nan_to_num(csi_backlog, nan=0.0)
-        csi_shifted = espargos.util.shift_to_firstpeak_sync(csi_for_average) if self.appconfig.get("shift_peak") else csi_for_average
-        csi_interp = espargos.util.csi_interp_iterative(csi_shifted)
+        csi_shifted = espargos.csi_processing.shift_to_firstpeak_sync(csi_for_average) if self.appconfig.get("shift_peak") else csi_for_average
+        csi_interp = espargos.csi_processing.csi_interp_iterative(csi_shifted)
         csi_flat = np.reshape(csi_interp, (-1, csi_interp.shape[-1]))
 
         # TODO: Deal with non-synchronized multi-board setup
-        csi_by_antenna = espargos.util.csi_interp_iterative(np.transpose(csi_flat))
+        csi_by_antenna = espargos.csi_processing.csi_interp_iterative(np.transpose(csi_flat))
         reference_idx = self.appconfig.get("reference")
         reference_idx = min(reference_idx, len(csi_by_antenna) - 1)  # Clamp to valid range
         if not valid_antennas[reference_idx]:

@@ -8,7 +8,8 @@ sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 from demos.common import ESPARGOSCSIApplication, CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin
 
 import espargos.constants
-import espargos.util
+import espargos.combined_array
+import espargos.csi_processing
 import numpy as np
 import argparse
 
@@ -49,8 +50,8 @@ class EspargosDemoPolarization(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFor
         # Pre-compute per-antenna effective inverse Jones matrices for polarization correction
         # These account for the physical rotation of each sub-array in the combined array
         # Two variants: with full crosspol compensation and with ideal (simple) Jones matrix
-        self.jones_matrices_inv_crosspol = espargos.util.build_jones_matrices(self.antenna_orientations)
-        self.jones_matrices_inv_simple = espargos.util.build_jones_matrices(self.antenna_orientations, base_jones_matrix=espargos.constants.ANTENNA_JONES_MATRIX_SIMPLE)
+        self.jones_matrices_inv_crosspol = espargos.combined_array.build_jones_matrices(self.antenna_orientations)
+        self.jones_matrices_inv_simple = espargos.combined_array.build_jones_matrices(self.antenna_orientations, base_jones_matrix=espargos.constants.ANTENNA_JONES_MATRIX_SIMPLE)
 
         self.initialize_qml(pathlib.Path(__file__).resolve().parent / "polarization-ui.qml")
 
@@ -60,16 +61,16 @@ class EspargosDemoPolarization(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFor
             return
 
         csi_backlog, rx_gain_backlog, fft_gain_backlog, rfswitch_state = result
-        csi_backlog = espargos.util.scale_csi_by_reported_gain(csi_backlog, rx_gain_backlog, fft_gain_backlog)
+        csi_backlog = espargos.csi_processing.scale_csi_by_reported_gain(csi_backlog, rx_gain_backlog, fft_gain_backlog)
 
         # Build combined array CSI data
-        csi_combined = espargos.util.build_combined_array_data(self.indexing_matrix, csi_backlog)
+        csi_combined = espargos.combined_array.build_combined_array_data(self.indexing_matrix, csi_backlog)
         csi_combined = csi_combined[:, np.newaxis]  # add fake board dimension: (D, B=1, M, N, S)
-        rfswitch_combined = espargos.util.build_combined_array_data(self.indexing_matrix, rfswitch_state)
+        rfswitch_combined = espargos.combined_array.build_combined_array_data(self.indexing_matrix, rfswitch_state)
         rfswitch_combined = rfswitch_combined[:, np.newaxis]
 
         # Separate CSI by feeds
-        csi_by_feed = espargos.util.separate_feeds(csi_combined, rfswitch_combined)  # (D, B=1, M, N, S, 2)
+        csi_by_feed = espargos.csi_processing.separate_feeds(csi_combined, rfswitch_combined)  # (D, B=1, M, N, S, 2)
 
         if csi_by_feed is None:
             print("Must have measurements for both R and L feeds to compute polarization (is RF switch in random mode?)")
