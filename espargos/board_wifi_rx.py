@@ -203,7 +203,7 @@ class WiFiRx(BoardCapability):
         """Subscribe to decoded CSI messages while preserving sensor metadata."""
 
         return self._subscribe_decoded_sensor_messages(
-            self.board.revision.csi_type_header,
-            self.board.revision.csi_packet_type,
+            csi_packet.CSI_TYPE_HEADER,
+            csi_packet.CSIPacket,
             callback,
         )

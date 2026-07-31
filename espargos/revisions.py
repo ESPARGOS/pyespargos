@@ -3,21 +3,12 @@
 import numpy as np
 
 from . import constants
-from . import csi_packet
 
 
 # Helper module defining board revision-specific constants
 class BoardRevision:
     @property
     def identification(self) -> tuple:
-        raise NotImplementedError
-
-    @property
-    def csi_type_header(self) -> int:
-        raise NotImplementedError
-
-    @property
-    def csi_packet_type(self) -> type:
         raise NotImplementedError
 
     @property
@@ -76,14 +67,6 @@ class BoardRevisionDensiflorus(BoardRevision):
     @property
     def identification(self) -> tuple:
         return ("espargos", "densiflorus")
-
-    @property
-    def csi_type_header(self) -> int:
-        return 0xE4CD0BAC
-
-    @property
-    def csi_packet_type(self) -> type:
-        return csi_packet.CSIPacket
 
     def esp_num_to_row_col(self, esp_num: int) -> tuple:
         row = 1 - esp_num // 4

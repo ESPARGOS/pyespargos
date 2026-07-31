@@ -269,7 +269,7 @@ class Board(object):
             self.logger.error(f"Could not connect to {self.host} to fetch identification information")
             raise TimeoutError
 
-        if not "ESPARGOS-DENSIFLORUS" in identification_raw:
+        if "ESPARGOS" not in identification_raw:
             raise EspargosUnexpectedResponseError(f"Server at {self.host} does not look like an ESPARGOS controller. Check if the host is correct.")
 
         try:

@@ -14,6 +14,9 @@ from . import constants
 from .sensor import RFSwitchState
 from .wifi import FrameControl, SequenceControl
 
+CSI_TYPE_HEADER = 0xE4CD0BAC
+"Logical sensor-message type header of serialized CSI messages"
+
 # Other constants
 HT_COEFFICIENTS_PER_CHANNEL = 57
 "Number of channel coefficients (active subcarriers) per Wi-Fi channel in HT mode (HT-LTF)"
