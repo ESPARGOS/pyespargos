@@ -337,14 +337,13 @@ class Board(object):
         them to callbacks registered with :meth:`subscribe_sensor_messages`.
         Reception continues until :meth:`stop` is called.
 
-        Each board has exactly one sensor stream, shared by all consumers.
-        Calling :meth:`start` while the stream is already running is a no-op,
-        so independent consumers (for example two pools over the same board)
-        may each call it safely. The converse is not true: :meth:`stop` always
-        tears down the shared stream for every consumer. A consumer that does
-        not own the board's lifecycle should detach by removing its
-        subscriptions (e.g. :meth:`.Pool.close`) instead of calling
-        :meth:`stop`.
+        Each board has exactly one sensor stream, shared by all consumers:
+        calling :meth:`start` on an already running stream is a no-op, while
+        :meth:`stop` tears the stream down for everyone and is reserved for
+        the board's lifecycle owner (other consumers detach via their
+        subscriptions, e.g. :meth:`.Pool.close`). If the stream died on its
+        own (``stream_connected`` became False), calling :meth:`start` again
+        reconnects cleanly.
 
         Supported transports:
 
@@ -369,6 +368,12 @@ class Board(object):
             if self.stream_connected:
                 self.logger.debug(f"Sensor stream for {self.get_name()} is already running, ignoring start()")
                 return
+
+            # If a previous stream died on its own, its loop thread has exited
+            # but its transport resources are still allocated; release them
+            # before establishing the new stream.
+            self._join_stream_thread()
+            self._teardown_stream_transport()
 
             for transport in transports:
                 if transport == "uart":
@@ -554,37 +559,61 @@ class Board(object):
         except Exception:
             pass
 
+    def _join_stream_thread(self):
+        """Wait for the stream loop thread to exit, if any.
+
+        Caller must hold the lifecycle lock, with ``stream_connected`` False.
+        """
+        stream_thread = getattr(self, "_stream_thread", None)
+        if stream_thread is not None and stream_thread is not threading.current_thread():
+            stream_thread.join()
+
+    def _teardown_stream_transport(self) -> bool:
+        """Release the transport resources of a previous sensor stream, if any.
+
+        Idempotent. Caller must hold the lifecycle lock, with the stream loop
+        no longer running (stopped, or died silently — which leaves its
+        socket and keepalive thread behind).
+
+        :return: Whether there were transport resources to release.
+        """
+        transport = getattr(self, "_stream_transport", None)
+        if transport is None:
+            return False
+
+        if transport == "udp":
+            if hasattr(self, "_udp_keepalive_stop"):
+                self._udp_keepalive_stop.set()
+                self._udp_keepalive_thread.join()
+            if hasattr(self, "_udp_sock"):
+                self._udp_sock.close()
+            self._disable_udp_stream()
+        elif transport == "uart":
+            if hasattr(self, "_uart_stream_callback"):
+                self._uart_client.remove_stream_callback(self._uart_stream_callback)
+            if self._uart_client is not None:
+                self._uart_client.disable_sensor_stream()
+        # The WebSocket loop closes its connection itself when it exits.
+
+        self._stream_transport = None
+        return True
+
     def stop(self):
         """
         Stop receiving sensor messages from the ESPARGOS controller.
 
         The receiver stops after the current packet has been processed, or
-        after a short transport timeout.
-
-        This tears down the board's single shared sensor stream for every
-        consumer, and is therefore reserved for whoever owns the board's
-        lifecycle; see :meth:`start` for the sharing contract. Calling
-        :meth:`stop` on an already stopped board is a no-op.
+        after a short transport timeout. This affects every consumer of the
+        board's shared stream; see :meth:`start` for the sharing contract.
+        Safe to call on an already stopped or silently died stream.
         """
         with self._stream_lifecycle_lock:
-            if self.stream_connected:
-                self.stream_connected = False
-                if hasattr(self, "_stream_thread"):
-                    self._stream_thread.join()
+            was_connected = self.stream_connected
+            self.stream_connected = False
+            self._join_stream_thread()
+            had_transport = self._teardown_stream_transport()
 
-                if getattr(self, "_stream_transport", None) == "udp":
-                    if hasattr(self, "_udp_keepalive_stop"):
-                        self._udp_keepalive_stop.set()
-                        self._udp_keepalive_thread.join()
-                    if hasattr(self, "_udp_sock"):
-                        self._udp_sock.close()
-                    self._disable_udp_stream()
-                elif getattr(self, "_stream_transport", None) == "uart":
-                    if hasattr(self, "_uart_stream_callback"):
-                        self._uart_client.remove_stream_callback(self._uart_stream_callback)
-                    if self._uart_client is not None:
-                        self._uart_client.disable_sensor_stream()
-
+            if was_connected or had_transport:
                 self.logger.info(f"Stopped sensor stream for {self.get_name()}")
 
     def close(self):
