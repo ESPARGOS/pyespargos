@@ -24,35 +24,46 @@ from . import uart
 from . import wifi
 from . import board_wifi_rx
 from . import board_wifi_tx
-import logging
-import sys
-
-_PUBLIC_MODULES = (
-    array_processing,
-    board,
-    board_wifi_rx,
-    board_wifi_tx,
-    combined_array,
-    constants,
-    csi_backlog,
-    csi_calibration,
-    csi_cluster,
-    csi_compression,
-    csi_packet,
-    csi_pool,
-    csi_processing,
-    delay_estimation,
-    pool,
-    radar,
-    radar_packet,
-    revisions,
-    sensor,
-    sensor_backlog,
-    sensor_calibration,
-    sensor_cluster,
-    uart,
-    wifi,
+from .board import (
+    Board,
+    BoardCapability,
+    BoardControl,
+    EspargosAPIVersionError,
+    EspargosHTTPStatusError,
+    EspargosStreamConnectionError,
+    EspargosUnexpectedResponseError,
+    SensorMessageSubscription,
 )
+from .csi_backlog import CSIBacklog, CSIBacklogFilter, Exclude11bFilter, MACFilter
+from .csi_calibration import CSICalibration
+from .csi_cluster import CSICluster
+from .csi_packet import CSIPacket
+from .csi_pool import CSIPool, CalibrationError
+from .pool import Pool
+from .radar import RadarPoolConfig
+from .radar_packet import RadarTxReportPacket
+from .revisions import BoardRevision, BoardRevisionDensiflorus
+from .sensor import (
+    RFSwitchState,
+    SensorFragment,
+    SensorFragmentHeader,
+    SensorMessage,
+    SensorMessageReassembler,
+    SensorPacket,
+)
+from .sensor_backlog import BacklogField, BacklogFilter, SensorBacklog
+from .sensor_calibration import ClockReferenceScope, SensorCalibration
+from .sensor_cluster import ClusterCollisionError, SensorCluster
+from .wifi import (
+    FrameControl,
+    SequenceControl,
+    WiFiFrameKey,
+    WiFiPhyMode,
+    WiFiPhyRate,
+    WiFiTxPower,
+)
+import logging as _logging
+import sys as _sys
 
 board.Board.register_capability("wifi_rx", board_wifi_rx.WiFiRxCapability)
 board.Board.register_capability("wifi_tx", board_wifi_tx.WiFiTxCapability)
@@ -63,16 +74,16 @@ __description__ = "Python library for working with the ESPARGOS WiFi channel sou
 __uri__ = "http://github.com/ESPARGOS/pyespargos"
 
 
-class _ColorFormatter(logging.Formatter):
+class ColorFormatter(_logging.Formatter):
     """Formatter that adds ANSI colors based on log level."""
 
     RESET = "\033[0m"
     COLORS = {
-        logging.DEBUG: "\033[37m",  # white
-        logging.INFO: "\033[32m",  # green
-        logging.WARNING: "\033[33m",  # yellow
-        logging.ERROR: "\033[31m",  # red
-        logging.CRITICAL: "\033[31m",  # red
+        _logging.DEBUG: "\033[37m",  # white
+        _logging.INFO: "\033[32m",  # green
+        _logging.WARNING: "\033[33m",  # yellow
+        _logging.ERROR: "\033[31m",  # red
+        _logging.CRITICAL: "\033[31m",  # red
     }
 
     def __init__(self, fmt=None, **kwargs):
@@ -89,11 +100,11 @@ class Logger:
     Logger class for pyespargos. This class is a singleton and should be used to modify the logging level of the library.
     """
 
-    _logger = logging.getLogger("pyespargos")
-    _stderr_handler = logging.StreamHandler(sys.stderr)
-    _stderr_handler.setFormatter(_ColorFormatter("[%(name)-20s] %(message)s"))
+    _logger = _logging.getLogger("pyespargos")
+    _stderr_handler = _logging.StreamHandler(_sys.stderr)
+    _stderr_handler.setFormatter(ColorFormatter("[%(name)-20s] %(message)s"))
     _logger.addHandler(_stderr_handler)
-    _logger.setLevel(level=logging.INFO)
+    _logger.setLevel(level=_logging.INFO)
 
     @classmethod
     def get_level(cls):
@@ -108,25 +119,6 @@ class Logger:
         Sets the logging level of the logger.
         """
         cls._logger.setLevel(level=level)
-
-
-def _export_public_module_symbols():
-    """Expose every supported module symbol at the package root."""
-
-    owners = {}
-    exported_symbols = []
-    for module in _PUBLIC_MODULES:
-        for name in module.__all__:
-            if name in owners:
-                raise RuntimeError(f"Public API name {name!r} is exported by both {owners[name]!r} and {module.__name__!r}")
-            owners[name] = module.__name__
-            globals()[name] = getattr(module, name)
-            exported_symbols.append(name)
-    return exported_symbols
-
-
-_PUBLIC_MODULE_NAMES = [module.__name__.rpartition(".")[2] for module in _PUBLIC_MODULES]
-__all__ = ["__version__", "Logger", *_PUBLIC_MODULE_NAMES, *_export_public_module_symbols()]
 
 
 def _load_addons():
@@ -155,11 +147,11 @@ def _load_addons():
     if addons_dir.is_dir():
         for package_init in sorted(addons_dir.glob("*/espargos_*/__init__.py")):
             package_name = package_init.parent.name
-            if package_name in sys.modules:
+            if package_name in _sys.modules:
                 continue
             checkout_dir = str(package_init.parents[1])
-            if checkout_dir not in sys.path:
-                sys.path.insert(0, checkout_dir)
+            if checkout_dir not in _sys.path:
+                _sys.path.insert(0, checkout_dir)
             try:
                 importlib.import_module(package_name)
                 Logger._logger.info(f"Loaded ESPARGOS addon {package_name!r} from {checkout_dir}")
@@ -171,7 +163,7 @@ def _load_addons():
     except Exception:
         addon_entry_points = ()
     for entry_point in addon_entry_points:
-        if entry_point.value.partition(":")[0] in sys.modules:
+        if entry_point.value.partition(":")[0] in _sys.modules:
             continue
         try:
             entry_point.load()

@@ -121,7 +121,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         demo_logger = logging.getLogger("demo")
         if not demo_logger.handlers:
             handler = logging.StreamHandler(sys.stderr)
-            handler.setFormatter(espargos._ColorFormatter("[%(name)-20s] %(message)s"))
+            handler.setFormatter(espargos.ColorFormatter("[%(name)-20s] %(message)s"))
             demo_logger.addHandler(handler)
             demo_logger.setLevel(logging.INFO)
         self.aboutToQuit.connect(self.onAboutToQuit)
