@@ -71,12 +71,12 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
-        self.sensor_count = int(np.prod(self.pool.get_shape()))
+        self.sensor_count = int(np.prod(self.pool.shape))
         self._update_link_indices()
         self.sensorCountChanged.emit()
         self.pool.add_csi_callback(
             self._queueCSI,
-            cb_predicate=lambda cluster: cluster.is_radar() and cluster.has_radar_tx_report() and np.any(cluster.get_completion()),
+            callback_predicate=lambda cluster: cluster.is_radar and cluster.has_radar_tx_report and np.any(cluster.completion),
         )
 
     def onInitComplete(self):
@@ -109,10 +109,10 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
 
     @PyQt6.QtCore.pyqtSlot()
     def applyRadarSchedule(self):
-        if not hasattr(self, "pool") or self.pool.get_calibration() is None:
+        if not hasattr(self, "pool") or self.pool.calibration is None:
             return
 
-        calibration = self.pool.get_calibration()
+        calibration = self.pool.calibration
         requested_start_s = self._get_schedule_ms("start") / 1e3
         min_safe_start_s = max(0.0, -float(np.nanmin(calibration.timing_offsets))) + 1e-6
         effective_start_s = max(requested_start_s, min_safe_start_s)
@@ -127,9 +127,9 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
             t0_by_sensor=t0_by_sensor,
             period_by_sensor=period_by_sensor,
             tx_power=espargos.wifi.WiFiTxPower(int(self.appconfig.get("tx_power"))),
-            tx_phymode=espargos.wifi.WiFiPhyMode(int(self.appconfig.get("tx_phymode"))),
+            tx_phy_mode=espargos.wifi.WiFiPhyMode(int(self.appconfig.get("tx_phymode"))),
             tx_rate=espargos.wifi.WiFiPhyRate(int(self.appconfig.get("tx_rate"))),
-            rfswitch_state=espargos.sensor.RFSwitchState(int(self.appconfig.get("rfswitch_state"))),
+            rf_switch_state=espargos.sensor.RFSwitchState(int(self.appconfig.get("rfswitch_state"))),
         )
         self.pool.set_radar_config(pool_radar_config)
 
@@ -139,12 +139,12 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
             self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
 
     def _subcarrier_frequencies(self) -> np.ndarray:
-        calibration = self.pool.get_calibration()
+        calibration = self.pool.calibration
         if calibration is not None:
             channel_primary = calibration.channel_primary
         else:
-            wificonf = self.pool.get_wificonf()
-            channel_primary = int(wificonf.get("channel-primary", 1))
+            wifi_config = self.pool.get_wifi_config()
+            channel_primary = int(wifi_config.get("channel-primary", 1))
 
         if channel_primary != self._subcarrier_frequency_channel:
             frequencies = espargos.csi_processing.get_frequencies_lltf(channel_primary)
@@ -190,7 +190,7 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
     def _queueCSI(self, clustered_csi: espargos.CSICluster):
         """Keep only the newest pending frame for each transmitting sensor."""
 
-        tx_index = clustered_csi.get_radar_tx_index()
+        tx_index = clustered_csi.radar_tx_index
         if tx_index < 0 or tx_index >= self.sensor_count:
             return
         with self._pending_csi_lock:
@@ -228,15 +228,15 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
                     self.logger.exception("Ignoring a radar CSI frame that could not be processed")
 
     def _deserialize_cluster_csi_lltf(self, clustered_csi, calibration):
-        if not clustered_csi.has_lltf():
+        if not clustered_csi.has_lltf:
             return None
         return calibration.apply_lltf(clustered_csi.deserialize_csi_lltf())
 
     def onCSI(self, clustered_csi: espargos.CSICluster):
-        calibration = self.pool.get_calibration()
+        calibration = self.pool.calibration
         if calibration is None:
             return
-        tx_index = clustered_csi.get_radar_tx_index()
+        tx_index = clustered_csi.radar_tx_index
         if tx_index < 0 or tx_index >= self.sensor_count:
             return
 
@@ -244,14 +244,14 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
         if csi is None:
             return
 
-        completion = np.array(clustered_csi.get_completion().reshape(-1), copy=True)
+        completion = np.array(clustered_csi.completion.reshape(-1), copy=True)
         if tx_index < completion.size:
             completion[tx_index] = False
 
         subcarrier_frequencies = self._subcarrier_frequencies()
         corrected = espargos.radar.correct_radar_csi_tx_timestamps(
             csi[np.newaxis, ...],
-            np.asarray([clustered_csi.get_radar_tx_info().get_hardware_tx_timestamp_ns() / 1e9], dtype=np.float64),
+            np.asarray([clustered_csi.radar_tx_report.get_hardware_tx_timestamp_ns() / 1e9], dtype=np.float64),
             np.asarray([tx_index], dtype=np.int32),
             subcarrier_frequencies,
             calibration.timing_offsets,

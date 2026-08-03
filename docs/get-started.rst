@@ -36,7 +36,7 @@ The following code example receives clustered CSI from one ESPARGOS device:
 
    # Always acquire the legacy long training field (L-LTF), independently of
    # the received WiFi packet format.
-   pool.set_csi_acquire_config({"acquire_csi_force_lltf": True})
+   pool.set_csi_acquisition_config({"acquire_csi_force_lltf": True})
 
    # Start sensor-message reception for all boards in the pool
    # (just one board in this case).
@@ -50,13 +50,13 @@ The following code example receives clustered CSI from one ESPARGOS device:
        # antennas. clustered_csi is an instance of CSICluster.
        def handle_csi(clustered_csi):
            csi_raw = clustered_csi.deserialize_csi_lltf()
-           csi_calibrated = pool.get_calibration().apply_lltf(csi_raw)
+           csi_calibrated = pool.calibration.apply_lltf(csi_raw)
            print("Got channel coefficients with shape:", csi_calibrated.shape)
 
        def complete_lltf(clustered_csi):
-           return clustered_csi.get_completion_all() and clustered_csi.has_lltf()
+           return clustered_csi.is_complete and clustered_csi.has_lltf
 
-       pool.add_csi_callback(handle_csi, cb_predicate=complete_lltf)
+       pool.add_csi_callback(handle_csi, callback_predicate=complete_lltf)
 
        # Main loop; add your break condition here.
        while True:
@@ -100,7 +100,7 @@ The application code can query the backlog whenever it needs recent CSI.
   import time
 
   pool = espargos.CSIPool([espargos.Board("192.168.1.2")])
-  pool.set_csi_acquire_config({"acquire_csi_force_lltf": True})
+  pool.set_csi_acquisition_config({"acquire_csi_force_lltf": True})
   pool.start()
   backlog = None
   try:

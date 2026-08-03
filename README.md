@@ -395,7 +395,7 @@ import espargos
 import time
 
 pool = espargos.CSIPool([espargos.Board("192.168.1.2")])
-pool.set_csi_acquire_config({"acquire_csi_force_lltf": True})
+pool.set_csi_acquisition_config({"acquire_csi_force_lltf": True})
 pool.start()
 backlog = None
 try:
@@ -411,7 +411,7 @@ try:
     # Wait a moment so the backlog can collect some WiFi packets.
     time.sleep(4)
 
-    if backlog.nonempty():
+    if backlog.has_data:
         csi_lltf, rssi = backlog.get_multiple(("lltf", "rssi"))
         print("L-LTF backlog shape:", csi_lltf.shape)
         print("RSSI backlog:", rssi)
@@ -452,10 +452,10 @@ finally:
 ### The Backlog
 * Individual WiFi training fields are short, so single-packet CSI is often noisy. Many applications work on a recent window of packets instead of only the newest packet.
 * `CSIBacklog` keeps the last N CSI clusters in a ringbuffer and lets application code read consistent snapshots with `get()` or `get_multiple()`.
-* Backlog fields are configurable. Current fields include `lltf`, `ht20`, `ht40`, `he20`, `rssi`, `cfo`, `rfswitch_state`, `timestamp`, `host_timestamp`, `mac`, `radar_tx_timestamp` and `radar_tx_index`.
+* Backlog fields are configurable. Current fields include `lltf`, `ht20`, `ht40`, `he20`, `rssi`, `cfo`, `rf_switch_state`, `timestamp`, `host_timestamp`, `mac`, `radar_tx_timestamp` and `radar_tx_index`.
 * CSI fields are stored as complex NumPy arrays with shape `(datapoints, boards, rows, antennas, subcarriers)`. Per-antenna metadata uses the same board/row/antenna layout.
-* By default, `CSIBacklog` applies the pool calibration before storing CSI. Pass `calibrate=False` if you need raw, uncalibrated CSI.
-* Backlog filters such as `MacFilter` and `Exclude11bFilter` can drop packets before they enter the ringbuffer.
+* By default, `CSIBacklog` applies the pool calibration before storing CSI. Pass `apply_calibration=False` if you need raw, uncalibrated CSI, or change the `apply_calibration` property at runtime.
+* Backlog filters such as `MACFilter` and `Exclude11bFilter` can drop packets before they enter the ringbuffer.
 * Utility functions in `espargos/util.py` provide common CSI post-processing helpers, including subcarrier frequency axes, gap interpolation, feed separation, time-domain transforms and AoA/ToA helpers.
 
 ### CSI Clustering
@@ -480,7 +480,7 @@ finally:
 * *pyespargos* supports pools with one or more ESPARGOS boards. A multi-board `CSIPool` clusters packets across all boards and presents CSI in `(boards, rows, antennas, subcarriers)` layout.
 * Board revisions are detected from the controller API, and board-specific calibration trace delays are applied automatically.
 * For combined arrays, pass external sync-cable lengths / velocity factors when creating calibration data so phase offsets caused by the synchronization distribution are compensated.
-* `refgen_boards` can be used when separate ESPARGOS controllers generate calibration packets but are not part of the receive array.
+* `reference_generator_boards` can be used when separate ESPARGOS controllers generate calibration packets but are not part of the receive array.
 * Helpers in `espargos/util.py` can map board data into larger array layouts, and the `combined-array` / `combined-array-calibration` demos show typical workflows.
 
 ### Radar / controlled transmissions

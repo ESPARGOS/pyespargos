@@ -9,6 +9,16 @@ from . import constants
 from . import sensor
 from . import wifi
 
+__all__ = [
+    "FTM_TIMESTAMP_UNIT_S",
+    "RADAR_TIME_SCALE",
+    "RadarPoolConfig",
+    "build_pool_config",
+    "correct_radar_csi_tx_timestamps",
+    "ftm_get_phy_comp",
+    "get_ftm_tx_timestamp_reciprocity_delay_s",
+]
+
 RADAR_TIME_SCALE = 1e6
 FTM_TIMESTAMP_UNIT_S = 1.5625e-9
 
@@ -178,20 +188,20 @@ def _broadcast_to_pool_shape(values, name: str, boards, dtype=None):
     raise ValueError(f"{name} must be a scalar, a (row, column) array, or a (board, row, column) array")
 
 
-def _default_mac_by_controller_antid(board_index: int) -> list[str]:
-    return [f"72:61:64:61:{board_index:02x}:{antid:02x}" for antid in range(constants.ANTENNAS_PER_BOARD)]
+def _default_mac_by_controller_antenna_id(board_index: int) -> list[str]:
+    return [f"72:61:64:61:{board_index:02x}:{antenna_id:02x}" for antenna_id in range(constants.ANTENNAS_PER_BOARD)]
 
 
-def _macs_by_antids(mac_by_sensor, boards) -> list[list[str]]:
+def _macs_by_antenna_ids(mac_by_sensor, boards) -> list[list[str]]:
     board_count = len(boards)
     if mac_by_sensor is None:
-        return [_default_mac_by_controller_antid(board_index) for board_index in range(board_count)]
+        return [_default_mac_by_controller_antenna_id(board_index) for board_index in range(board_count)]
 
     mac_array = np.asarray(mac_by_sensor, dtype=object)
     if mac_array.shape == (constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW):
-        return [[str(mac) for mac in board.revision.sensor_values_to_antid_list(mac_array, name="mac_by_sensor")] for board in boards]
+        return [[str(mac) for mac in board.revision.sensor_values_to_antenna_id_list(mac_array, name="mac_by_sensor")] for board in boards]
     if mac_array.shape == (board_count, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW):
-        return [[str(mac) for mac in board.revision.sensor_values_to_antid_list(mac_array[board_index], name="mac_by_sensor")] for board_index, board in enumerate(boards)]
+        return [[str(mac) for mac in board.revision.sensor_values_to_antenna_id_list(mac_array[board_index], name="mac_by_sensor")] for board_index, board in enumerate(boards)]
 
     raise ValueError("mac_by_sensor must be a (row, column) array or a (board, row, column) array")
 
@@ -202,9 +212,9 @@ def build_pool_config(
     t0_by_sensor,
     period_by_sensor,
     tx_power: wifi.WiFiTxPower,
-    tx_phymode: wifi.WiFiPhyMode,
+    tx_phy_mode: wifi.WiFiPhyMode,
     tx_rate: wifi.WiFiPhyRate,
-    rfswitch_state: sensor.RFSwitchState,
+    rf_switch_state: sensor.RFSwitchState,
     mac_by_sensor=None,
 ) -> RadarPoolConfig:
     """
@@ -226,23 +236,23 @@ def build_pool_config(
     sensor_local_times = calibration.time_to_sensor_time(t0_by_sensor)
     active_by_sensor = _broadcast_to_pool_shape(active_by_sensor, "active_by_sensor", calibration.boards, dtype=bool)
     period_by_sensor = _broadcast_to_pool_shape(period_by_sensor, "period_by_sensor", calibration.boards, dtype=np.float64)
-    mac_by_board = _macs_by_antids(mac_by_sensor, calibration.boards)
+    mac_by_board = _macs_by_antenna_ids(mac_by_sensor, calibration.boards)
 
     board_configs = []
     for board_index, board in enumerate(calibration.boards):
-        start_by_antid = board.revision.sensor_values_to_antid_list(
+        start_by_antenna_id = board.revision.sensor_values_to_antenna_id_list(
             np.rint(sensor_local_times[board_index] * RADAR_TIME_SCALE).astype(int),
             name="t0_by_sensor",
         )
         board_configs.append(
             {
-                "active_by_antid": board.revision.sensor_values_to_antid_list(active_by_sensor[board_index].astype(bool), name="active_by_sensor"),
-                "start_by_antid": start_by_antid,
-                "period_by_antid": board.revision.sensor_values_to_antid_list(np.rint(period_by_sensor[board_index] * RADAR_TIME_SCALE).astype(int), name="period_by_sensor"),
+                "active_by_antid": board.revision.sensor_values_to_antenna_id_list(active_by_sensor[board_index].astype(bool), name="active_by_sensor"),
+                "start_by_antid": start_by_antenna_id,
+                "period_by_antid": board.revision.sensor_values_to_antenna_id_list(np.rint(period_by_sensor[board_index] * RADAR_TIME_SCALE).astype(int), name="period_by_sensor"),
                 "mac_by_antid": mac_by_board[board_index],
-                "rfswitch_state": int(rfswitch_state),
+                "rfswitch_state": int(rf_switch_state),
                 "tx_power": int(tx_power),
-                "tx_phymode": int(tx_phymode),
+                "tx_phymode": int(tx_phy_mode),
                 "tx_rate": int(tx_rate),
             }
         )

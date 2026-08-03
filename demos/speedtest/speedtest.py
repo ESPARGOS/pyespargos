@@ -62,7 +62,7 @@ class EspargosDemoSpeedtest(ESPARGOSCSIApplication):
 
         def predicate(cluster):
             # Minimum age so that we don't count packets that are still being acquired (and thus have incomplete CSI data)
-            return np.sum(cluster.get_completion()) >= min_antennas and cluster.get_age() > 0.5
+            return np.sum(cluster.completion) >= min_antennas and cluster.age > 0.5
 
         return predicate
 
@@ -70,13 +70,13 @@ class EspargosDemoSpeedtest(ESPARGOSCSIApplication):
         if self._callback_handle is None:
             self._callback_handle = self.pool.add_csi_callback(
                 self._on_csi,
-                cb_predicate=self._make_predicate(),
+                callback_predicate=self._make_predicate(),
             )
         else:
             self._callback_handle = self.pool.replace_csi_callback(
                 self._callback_handle,
                 self._on_csi,
-                cb_predicate=self._make_predicate(),
+                callback_predicate=self._make_predicate(),
             )
 
     def _on_csi(self, clustered_csi):
@@ -104,7 +104,7 @@ class EspargosDemoSpeedtest(ESPARGOSCSIApplication):
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def totalAntennas(self):
-        return int(np.prod(self.pool.get_shape()))
+        return int(np.prod(self.pool.shape))
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=minAntennasChanged)
     def minAntennas(self):

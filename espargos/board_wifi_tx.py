@@ -18,6 +18,8 @@ from . import radar_packet
 from . import sensor
 from .board import BoardCapability, SensorMessageSubscription
 
+__all__ = ["WiFiTxCapability"]
+
 
 class WiFiTxCapability(BoardCapability):
     """Scheduled WiFi transmission controls for one board."""
@@ -31,12 +33,12 @@ class WiFiTxCapability(BoardCapability):
         changed by the controller.
         """
 
-        self.board.control.command("set_tx_control", config)
+        self._board.control.command("set_tx_control", config)
 
     def get_config(self) -> dict:
         """Return the low-level per-sensor transmission schedule."""
 
-        return self.board.control.get_json("get_tx_control")
+        return self._board.control.get_json("get_tx_control")
 
     def subscribe_reports(
         self,

@@ -14,6 +14,33 @@ from . import constants
 from . import csi_packet
 from . import sensor
 
+__all__ = [
+    "csi_interp_eigenvec",
+    "csi_interp_eigenvec_per_subcarrier",
+    "csi_interp_iterative",
+    "csi_interp_iterative_by_array",
+    "estimate_phase_time_offsets",
+    "extract_ht20_subcarriers_from_ht40",
+    "extract_lltf_subcarriers_from_ht20",
+    "extract_lltf_subcarriers_from_ht40",
+    "fit_complex_sinusoid",
+    "get_center_frequency",
+    "get_csi_sto_correction_frequencies",
+    "get_frequencies_he20",
+    "get_frequencies_ht20",
+    "get_frequencies_ht40",
+    "get_frequencies_lltf",
+    "interpolate_he20ltf_gaps",
+    "interpolate_ht20ltf_gap",
+    "interpolate_ht40ltf_gap",
+    "interpolate_lltf_gap",
+    "mask_csi_by_feed",
+    "remove_mean_sto",
+    "scale_csi_by_reported_gain",
+    "separate_feeds",
+    "shift_to_firstpeak_sync",
+]
+
 
 def scale_csi_by_reported_gain(csi_data: np.ndarray, rx_gain: np.ndarray, fft_gain: np.ndarray) -> np.ndarray:
     """
@@ -554,41 +581,41 @@ def fit_complex_sinusoid(csi_data: np.ndarray) -> np.ndarray:
     return fitted
 
 
-def mask_csi_by_feed(csidata: np.ndarray, rfswitch_states: np.ndarray, desired_feed: sensor.RFSwitchState):
+def mask_csi_by_feed(csi_data: np.ndarray, rf_switch_states: np.ndarray, desired_feed: sensor.RFSwitchState):
     """
     Mask the CSI data by the RF switch state, i.e., set the CSI data to 0 for all datapoints where the RF switch state is not the desired feed.
     Also applies scaling to the remaining datapoints to account for the fact that only a fraction of the datapoints are kept, so that the overall power level is preserved.
 
-    :param csidata: The CSI data to mask. Complex-valued NumPy array with shape (datapoints, ..., subcarriers), usually (datapoints, arrays, rows, columns, subcarriers).
-    :param rfswitch_states: The RF switch states for each antenna and datapoint. NumPy array with shape (datapoints, ...), usually (datapoints, arrays, rows, columns).
+    :param csi_data: The CSI data to mask. Complex-valued NumPy array with shape (datapoints, ..., subcarriers), usually (datapoints, arrays, rows, columns, subcarriers).
+    :param rf_switch_states: The RF switch states for each antenna and datapoint. NumPy array with shape (datapoints, ...), usually (datapoints, arrays, rows, columns).
     :param desired_feed: The desired RF switch state to keep.
 
     :return: The masked CSI data. Complex-valued NumPy array with the same shape as the input CSI data. Returns None if no datapoints have the desired RF switch state for any antenna.
     """
-    mask = rfswitch_states == desired_feed
+    mask = rf_switch_states == desired_feed
     mask_count = np.sum(mask, axis=0)
-    datapoint_count = csidata.shape[0]
+    datapoint_count = csi_data.shape[0]
     if np.any(mask_count == 0):
         return None
-    return csidata * mask[..., np.newaxis] * datapoint_count / mask_count[np.newaxis, ..., np.newaxis]
+    return csi_data * mask[..., np.newaxis] * datapoint_count / mask_count[np.newaxis, ..., np.newaxis]
 
 
-def separate_feeds(csidata: np.ndarray, rfswitch_state: np.ndarray):
+def separate_feeds(csi_data: np.ndarray, rf_switch_state: np.ndarray):
     """
     Separate the CSI data by antenna feeds (R/L) based on the RF switch states.
     Also takes care of scaling the CSI data for each feed to account for the fact that only a fraction of the datapoints are kept for each feed, so that the overall power level is preserved.
     Missing measurements for a feed (i.e., half of all measurements) are filled with zeros.
 
-    :param csidata: The CSI data to separate. Complex-valued NumPy array with shape (datapoints, ..., subcarriers), usually (datapoints, arrays, rows, columns, subcarriers).
-    :param rfswitch_states: The RF switch states for each antenna and datapoint. NumPy array with shape (datapoints, ...), usually (datapoints, arrays, rows, columns).
+    :param csi_data: The CSI data to separate. Complex-valued NumPy array with shape (datapoints, ..., subcarriers), usually (datapoints, arrays, rows, columns, subcarriers).
+    :param rf_switch_state: The RF switch states for each antenna and datapoint. NumPy array with shape (datapoints, ...), usually (datapoints, arrays, rows, columns).
 
     :return: The separated CSI data. Complex-valued NumPy array with shape (datapoints, ..., subcarriers, 2), where the last dimension corresponds to the R/L feeds. Returns None if no datapoints have the desired RF switch state for any antenna.
     """
-    csi_R = mask_csi_by_feed(csidata, rfswitch_state, sensor.RFSwitchState.SENSOR_RFSWITCH_ANTENNA_R)
-    csi_L = mask_csi_by_feed(csidata, rfswitch_state, sensor.RFSwitchState.SENSOR_RFSWITCH_ANTENNA_L)
+    csi_r = mask_csi_by_feed(csi_data, rf_switch_state, sensor.RFSwitchState.SENSOR_RFSWITCH_ANTENNA_R)
+    csi_l = mask_csi_by_feed(csi_data, rf_switch_state, sensor.RFSwitchState.SENSOR_RFSWITCH_ANTENNA_L)
 
-    if csi_R is None or csi_L is None:
+    if csi_r is None or csi_l is None:
         return None
 
     # Separate CSI by feed using element-wise multiplication (zeros where mask is False)
-    return np.stack([csi_R, csi_L], axis=-1)  # (D, ..., S, 2), usually (D, B, M, N, S, 2)
+    return np.stack([csi_r, csi_l], axis=-1)  # (D, ..., S, 2), usually (D, B, M, N, S, 2)

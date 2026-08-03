@@ -26,6 +26,8 @@ from . import wifi
 from .pool import Pool
 from .sensor_cluster import SensorCluster
 
+__all__ = ["CSIPool", "CalibrationError"]
+
 
 class CalibrationError(RuntimeError):
     """Raised when ESPARGOS calibration cannot collect usable calibration CSI."""
@@ -33,7 +35,7 @@ class CalibrationError(RuntimeError):
 
 # WiFi configuration fields that legitimately differ between boards. Pool-wide
 # reads and writes must leave these board-local calibration settings untouched.
-WIFICONF_PER_BOARD_KEYS = {
+WIFI_CONFIG_PER_BOARD_KEYS = {
     "calib-source",
     "calib-mode",
     "calib-txpower",
@@ -47,50 +49,50 @@ _CACHE_CALIBRATION = "calibration"
 class CSIPool(Pool):
     """Manage Wi-Fi features and assemble CSI for each received Wi-Fi packet."""
 
-    def __init__(self, boards: list[board.Board], ota_cache_timeout=5, refgen_boards=None):
+    def __init__(self, boards: list[board.Board], ota_cache_timeout=5, reference_generator_boards=None):
         """
         Constructor for the CSIPool class.
 
         :param boards: A list of ESPARGOS boards that belong to the pool
         :param ota_cache_timeout: Optional. The timeout in seconds after which over-the-air CSI data is considered stale and discarded
                                   if the cluster is not complete
-        :param refgen_boards: Optional. In some multi-board setups, the calibration signal is provided by (a) separate ESPARGOS device(s)
+        :param reference_generator_boards: Optional. In some multi-board setups, the calibration signal is provided by (a) separate ESPARGOS device(s)
                               that is / are not part of the pool (only controller is used to generate packets, sensors not used).
                               If provided, sends calibration command to these boards, which will then generate the calibration signal
                               during calibration phase.
         """
         super().__init__(boards)
-        self.refgen_boards = refgen_boards if refgen_boards is not None else []
+        self._reference_generator_boards = reference_generator_boards if reference_generator_boards is not None else []
 
-        self.ota_cache_timeout = ota_cache_timeout
-        self.emit_calibration_csi = False
+        self._ota_cache_timeout = ota_cache_timeout
+        self._emit_calibration_csi = False
 
-        for board_num, board_obj in enumerate(self.boards):
+        for board_index, board_obj in enumerate(self.boards):
             wifi_rx = board_obj.wifi_rx
             wifi_tx = board_obj.wifi_tx
             self._subscribe_sensor_messages(
-                board_num,
+                board_index,
                 wifi_rx,
                 wifi_rx.subscribe_csi,
             )
             self._subscribe_sensor_messages(
-                board_num,
+                board_index,
                 wifi_tx,
                 wifi_tx.subscribe_reports,
             )
 
-        self.stored_calibration: csi_calibration.CSICalibration = None
+        self._calibration: csi_calibration.CSICalibration | None = None
 
-    def set_rfswitch(self, state: sensor.RFSwitchState):
+    def set_rf_switch(self, state: sensor.RFSwitchState):
         """
         Set RF switch state for all boards in the pool.
 
         :param state: The RF switch state to set, must be one of :class:`sensor.RFSwitchState`
         """
-        for board in self.boards + self.refgen_boards:
+        for board in self.boards + self._reference_generator_boards:
             board.wifi_rx.set_rf_switch(state)
 
-    def get_rfswitch(self) -> sensor.RFSwitchState:
+    def get_rf_switch(self) -> sensor.RFSwitchState:
         """
         Get RF switch state from the first board in the pool.
 
@@ -135,7 +137,7 @@ class CSIPool(Pool):
             lambda value: [board.wifi_rx.set_mac_filter(value) for board in self.boards],
         )
 
-    def get_csi_acquire_config(self) -> dict:
+    def get_csi_acquisition_config(self) -> dict:
         """
         Return CSI acquire config, reconciling boards when needed.
         """
@@ -146,7 +148,7 @@ class CSIPool(Pool):
             lambda value: [board.wifi_rx.set_csi_acquisition_config(value) for board in self.boards],
         )
 
-    def set_csi_acquire_config(self, config: dict):
+    def set_csi_acquisition_config(self, config: dict):
         """
         Set CSI acquisition configuration on all boards in this pool and sanity-check that all boards
         end up with the same config.
@@ -159,7 +161,7 @@ class CSIPool(Pool):
         """
         for b in self.boards:
             b.wifi_rx.set_csi_acquisition_config(config)
-        _ = self.get_csi_acquire_config()
+        _ = self.get_csi_acquisition_config()
 
     def get_cfo_correction(self) -> dict:
         """
@@ -211,7 +213,7 @@ class CSIPool(Pool):
         per_board_settings = [dict() for _ in self.boards]
         for key, value in settings.items():
             array = np.asarray(value)
-            if array.shape == self.get_shape():
+            if array.shape == self.shape:
                 for board_index in range(len(self.boards)):
                     per_board_settings[board_index][key] = array[board_index]
             else:
@@ -277,67 +279,67 @@ class CSIPool(Pool):
         for b in self.boards:
             b.wifi_tx.set_config(config)
 
-    def get_wificonf(self) -> dict:
+    def get_wifi_config(self) -> dict:
         """
         Return WiFi config, reconciling pool-wide settings when boards disagree.
 
         Board-local calibration fields are excluded from both comparison and
         reconciliation, so each board retains its own values.
         """
-        wificonfs = [b.wifi_rx.get_config() for b in self.boards]
+        wifi_configs = [b.wifi_rx.get_config() for b in self.boards]
         return self._reconcile_across_boards(
-            wificonfs,
+            wifi_configs,
             "WiFi config",
             lambda value: [board.wifi_rx.set_config(value) for board in self.boards],
-            ignore_keys=WIFICONF_PER_BOARD_KEYS,
+            ignore_keys=WIFI_CONFIG_PER_BOARD_KEYS,
         )
 
-    def set_wificonf(self, wificonf: dict):
+    def set_wifi_config(self, wifi_config: dict):
         """
         Set WiFi config on all boards and sanity-check resulting configs match across boards.
 
         This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRxCapability.set_config` for each board.
         For the expected JSON/dict format, refer to that method's documentation.
 
-        Fields listed in :data:`WIFICONF_PER_BOARD_KEYS` are ignored and not
+        Fields listed in :data:`WIFI_CONFIG_PER_BOARD_KEYS` are ignored and not
         propagated because they may legitimately differ between boards. Set
         those directly through :meth:`pyespargos.board_wifi_rx.WiFiRxCapability.set_config`.
 
-        :param wificonf: WiFi configuration dict to apply to all boards.
+        :param wifi_config: WiFi configuration dict to apply to all boards.
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
-        wificonf = {key: value for key, value in wificonf.items() if key not in WIFICONF_PER_BOARD_KEYS}
+        wifi_config = {key: value for key, value in wifi_config.items() if key not in WIFI_CONFIG_PER_BOARD_KEYS}
         for b in self.boards:
-            b.wifi_rx.set_config(wificonf)
-        _ = self.get_wificonf()
+            b.wifi_rx.set_config(wifi_config)
+        _ = self.get_wifi_config()
 
     def reboot(self):
         """
         Trigger a reboot on all boards in the pool.
         """
         super().reboot()
-        for board_obj in self.refgen_boards:
+        for board_obj in self._reference_generator_boards:
             board_obj.reboot()
 
     def add_csi_callback(
         self,
-        cb: Callable[[csi_cluster.CSICluster], None],
-        cb_predicate: Callable[[csi_cluster.CSICluster], bool] = None,
+        callback: Callable[[csi_cluster.CSICluster], None],
+        callback_predicate: Callable[[csi_cluster.CSICluster], bool] = None,
     ):
         """
         Register callback function that is invoked whenever a new CSI cluster is completed.
 
-        :param cb: The function to call, gets an instance of :class:`.csi_cluster.CSICluster`
-        :param cb_predicate: A function with signature :code:`(csi_cluster)` that defines the conditions under which
+        :param callback: The function to call, gets an instance of :class:`.csi_cluster.CSICluster`
+        :param callback_predicate: A function with signature :code:`(csi_cluster)` that defines the conditions under which
             clustered CSI is regarded as completed and thus provided to the callback.
-            If :code:`cb_predicate` returns true, clustered CSI is regarded as completed.
+            If :code:`callback_predicate` returns true, clustered CSI is regarded as completed.
             If no predicate is provided, the default behavior is to trigger the callback when CSI has been received
             from all sensors on all boards. By default, callbacks receive over-the-air/radar CSI only. Enable
-            :meth:`set_emit_calibration_csi` to also emit calibration CSI (from internal reference generators)
+            :attr:`emit_calibration_csi` to also emit calibration CSI (from internal reference generators)
             through this same callback path.
         :return: A callback handle that can be passed to :meth:`remove_csi_callback`
         """
-        return self.add_cluster_callback(cb, cb_predicate)
+        return self.add_cluster_callback(callback, callback_predicate)
 
     def remove_csi_callback(self, callback) -> bool:
         """
@@ -351,36 +353,37 @@ class CSIPool(Pool):
     def replace_csi_callback(
         self,
         callback,
-        cb: Callable[[csi_cluster.CSICluster], None],
-        cb_predicate: Callable[[csi_cluster.CSICluster], bool] = None,
+        callback_function: Callable[[csi_cluster.CSICluster], None],
+        callback_predicate: Callable[[csi_cluster.CSICluster], bool] = None,
     ):
         """Atomically replace a registered CSI callback.
 
         :param callback: Existing handle returned by :meth:`add_csi_callback`
-        :param cb: Replacement callback function
-        :param cb_predicate: Replacement completion predicate
+        :param callback_function: Replacement callback function
+        :param callback_predicate: Replacement completion predicate
         :return: New callback handle
         :raises ValueError: If ``callback`` is no longer registered
         """
 
-        return self.replace_cluster_callback(callback, cb, cb_predicate)
+        return self.replace_cluster_callback(callback, callback_function, callback_predicate)
 
-    def set_emit_calibration_csi(self, enabled: bool):
+    @property
+    def emit_calibration_csi(self) -> bool:
+        """Return whether calibration CSI is emitted through normal callbacks."""
+
+        return self._emit_calibration_csi
+
+    @emit_calibration_csi.setter
+    def emit_calibration_csi(self, enabled: bool):
         """
         Control whether calibration CSI clusters are emitted through normal CSI callbacks.
 
         Calibration clusters remain marked as calibration packets via
-        :meth:`espargos.csi_cluster.CSICluster.is_calib`.
+        :attr:`espargos.csi_cluster.CSICluster.is_calibration`.
         """
-        self.emit_calibration_csi = bool(enabled)
+        self._emit_calibration_csi = bool(enabled)
 
-    def get_emit_calibration_csi(self) -> bool:
-        """
-        Return whether calibration CSI clusters are emitted through normal CSI callbacks.
-        """
-        return self.emit_calibration_csi
-
-    def _clusters_to_calibration(self, board_num=None):
+    def _clusters_to_calibration(self, board_index=None):
         """
         Convert the collected calibration clusters into per-antenna calibration offsets.
 
@@ -388,7 +391,7 @@ class CSIPool(Pool):
         the per-antenna timing and phase offsets from the widest available
         format (a wider measurement band yields more accurate timing offsets).
 
-        :param board_num: If provided, only process calibration clusters for the specified board number
+        :param board_index: If provided, only process calibration clusters for the specified board index
         :return: Tuple of per-antenna timing offsets, phase offsets, the primary channel,
                  and the relative secondary channel position.
         """
@@ -403,17 +406,17 @@ class CSIPool(Pool):
         complete_cluster_timestamps_ht40 = []
         complete_cluster_timestamps = []
 
-        # Read wificonf to determine primary/secondary channel
-        wificonf = self.get_wificonf()
-        channel_primary = wificonf.get("channel-primary", None)
-        channel_secondary = wificonf.get("channel-secondary", None)
+        # Read Wi-Fi configuration to determine primary/secondary channel
+        wifi_config = self.get_wifi_config()
+        channel_primary = wifi_config.get("channel-primary", None)
+        channel_secondary = wifi_config.get("channel-secondary", None)
         channel_secondary = -1 if channel_secondary == 2 else channel_secondary
 
         any_csi_count = 0
         stale_channel_counts: dict[tuple[int | None, int | None], int] = {}
         for cluster in clusters:
-            cluster_channel_primary = cluster.get_primary_channel()
-            cluster_channel_secondary = cluster.get_secondary_channel_relative()
+            cluster_channel_primary = cluster.primary_channel
+            cluster_channel_secondary = cluster.secondary_channel_relative
             if channel_primary != cluster_channel_primary or channel_secondary != cluster_channel_secondary:
                 stale_channel = (
                     cluster_channel_primary,
@@ -422,26 +425,26 @@ class CSIPool(Pool):
                 stale_channel_counts[stale_channel] = stale_channel_counts.get(stale_channel, 0) + 1
                 continue
 
-            completion = cluster.get_completion()[board_num] if board_num is not None else cluster.get_completion()
+            completion = cluster.completion[board_index] if board_index is not None else cluster.completion
             if np.any(completion):
                 any_csi_count = any_csi_count + 1
 
             if np.all(completion):
-                cluster_timestamps = cluster.get_sensor_timestamps()[board_num] if board_num is not None else cluster.get_sensor_timestamps()
+                cluster_timestamps = cluster.sensor_timestamps[board_index] if board_index is not None else cluster.sensor_timestamps
                 complete_cluster_timestamps.append(cluster_timestamps)
-                if cluster.has_lltf():
-                    complete_clusters_lltf.append(cluster.deserialize_csi_lltf()[board_num] if board_num is not None else cluster.deserialize_csi_lltf())
+                if cluster.has_lltf:
+                    complete_clusters_lltf.append(cluster.deserialize_csi_lltf()[board_index] if board_index is not None else cluster.deserialize_csi_lltf())
                     complete_cluster_timestamps_lltf.append(cluster_timestamps)
-                if cluster.has_ht20ltf():
-                    complete_clusters_ht20.append(cluster.deserialize_csi_ht20ltf()[board_num] if board_num is not None else cluster.deserialize_csi_ht20ltf())
+                if cluster.has_ht20ltf:
+                    complete_clusters_ht20.append(cluster.deserialize_csi_ht20ltf()[board_index] if board_index is not None else cluster.deserialize_csi_ht20ltf())
                     complete_cluster_timestamps_ht20.append(cluster_timestamps)
-                if cluster.has_ht40ltf():
-                    complete_clusters_ht40.append(cluster.deserialize_csi_ht40ltf()[board_num] if board_num is not None else cluster.deserialize_csi_ht40ltf())
+                if cluster.has_ht40ltf:
+                    complete_clusters_ht40.append(cluster.deserialize_csi_ht40ltf()[board_index] if board_index is not None else cluster.deserialize_csi_ht40ltf())
                     complete_cluster_timestamps_ht40.append(cluster_timestamps)
 
         if stale_channel_counts:
             stale_channel_summary = ", ".join(f"primary {primary}, secondary {secondary}: {count}" for (primary, secondary), count in stale_channel_counts.items())
-            self.logger.warning(
+            self._logger.warning(
                 "Skipping %d calibration cluster(s) with stale channel settings; " "expected primary %s and secondary %s, observed %s",
                 sum(stale_channel_counts.values()),
                 channel_primary,
@@ -449,13 +452,13 @@ class CSIPool(Pool):
                 stale_channel_summary,
             )
 
-        if board_num is not None:
-            self.logger.info(f"Board {self.boards[board_num].get_name()}: Collected {any_csi_count} calibration clusters:")
+        if board_index is not None:
+            self._logger.info(f"Board {self.boards[board_index].name}: Collected {any_csi_count} calibration clusters:")
         else:
-            self.logger.info(f"Collected {any_csi_count} calibration clusters:")
-        self.logger.info(f"  - {len(complete_clusters_ht40)} complete clusters with HT40-LTF")
-        self.logger.info(f"  - {len(complete_clusters_ht20)} complete clusters with HT20-LTF")
-        self.logger.info(f"  - {len(complete_clusters_lltf)} complete clusters with L-LTF")
+            self._logger.info(f"Collected {any_csi_count} calibration clusters:")
+        self._logger.info(f"  - {len(complete_clusters_ht40)} complete clusters with HT40-LTF")
+        self._logger.info(f"  - {len(complete_clusters_ht20)} complete clusters with HT20-LTF")
+        self._logger.info(f"  - {len(complete_clusters_lltf)} complete clusters with L-LTF")
 
         complete_cluster_count = len(complete_cluster_timestamps)
         format_count = len(complete_clusters_lltf) + len(complete_clusters_ht20) + len(complete_clusters_ht40)
@@ -490,16 +493,16 @@ class CSIPool(Pool):
             if len(format_clusters) > 0:
                 break
 
-        self.logger.info(f"Estimating calibration offsets from {len(format_clusters)} {csi_format} cluster(s)")
+        self._logger.info(f"Estimating calibration offsets from {len(format_clusters)} {csi_format} cluster(s)")
         frequencies, valid = csi_processing.get_csi_sto_correction_frequencies(csi_format, channel_secondary)
 
         # Per-board calibration data has no board axis; add and remove it around the estimation
-        if board_num is not None:
+        if board_index is not None:
             format_clusters = format_clusters[:, np.newaxis]
             format_timestamps = format_timestamps[:, np.newaxis]
 
         timing_offsets, phase_offsets = csi_processing.estimate_phase_time_offsets(format_clusters, format_timestamps, frequencies, valid)
-        if board_num is not None:
+        if board_index is not None:
             timing_offsets, phase_offsets = timing_offsets[0], phase_offsets[0]
 
         return timing_offsets, phase_offsets, channel_primary, channel_secondary
@@ -529,20 +532,20 @@ class CSIPool(Pool):
         :param run_in_thread: If True, the pool handling will be performed in the current thread. Set to False in case the pool is already running in a separate thread (e.g., backlog is already active).
         """
         if per_board and cable_lengths is not None:
-            self.logger.warning("Cable lengths are ignored in per-board calibration mode: cable delays cancel within each board's own reference scope")
+            self._logger.warning("Cable lengths are ignored in per-board calibration mode: cable delays cancel within each board's own reference scope")
 
         self._clear_cluster_cache(_CACHE_CALIBRATION)
 
         # Back up and clear MAC filter
         previous_mac_filter = self.get_mac_filter()
-        previous_rfswitch_state = self.get_rfswitch()
+        previous_rf_switch_state = self.get_rf_switch()
 
         try:
             self.clear_mac_filter()
 
             # Enable calibration mode
-            self.logger.info("Starting calibration")
-            self.set_rfswitch(sensor.RFSwitchState.SENSOR_RFSWITCH_REFERENCE)
+            self._logger.info("Starting calibration")
+            self.set_rf_switch(sensor.RFSwitchState.SENSOR_RFSWITCH_REFERENCE)
 
             # Run calibration for specified duration
             start = time.monotonic()
@@ -554,8 +557,8 @@ class CSIPool(Pool):
                     time.sleep(0.01)
         finally:
             # Disable calibration mode
-            self.logger.info("Finished calibration")
-            self.set_rfswitch(previous_rfswitch_state)
+            self._logger.info("Finished calibration")
+            self.set_rf_switch(previous_rf_switch_state)
             self.set_mac_filter(previous_mac_filter)
             self._clear_cluster_cache(_CACHE_OTA)
 
@@ -570,13 +573,13 @@ class CSIPool(Pool):
             channel_primary = None
             channel_secondary = None
 
-            for board_num in range(len(self.boards)):
+            for board_index in range(len(self.boards)):
                 (
                     board_timing_offsets,
                     board_phase_offsets,
                     board_channel_primary,
                     board_channel_secondary,
-                ) = self._clusters_to_calibration(board_num)
+                ) = self._clusters_to_calibration(board_index)
 
                 if channel_primary is None:
                     channel_primary = board_channel_primary
@@ -590,7 +593,7 @@ class CSIPool(Pool):
             # No cable compensation in per-board mode: each board is calibrated
             # against its own reference, and the distribution cable delay is common
             # to all sensors of a board, so it cancels within the board's scope.
-            self.stored_calibration = csi_calibration.CSICalibration(
+            self._calibration = csi_calibration.CSICalibration(
                 self.boards,
                 channel_primary,
                 channel_secondary,
@@ -602,7 +605,7 @@ class CSIPool(Pool):
         else:
             timing_offsets, phase_offsets, channel_primary, channel_secondary = self._clusters_to_calibration()
 
-            self.stored_calibration = csi_calibration.CSICalibration(
+            self._calibration = csi_calibration.CSICalibration(
                 self.boards,
                 channel_primary,
                 channel_secondary,
@@ -613,29 +616,30 @@ class CSIPool(Pool):
                 board_cable_vfs=cable_velocity_factors,
             )
 
-    def get_calibration(self):
+    @property
+    def calibration(self) -> csi_calibration.CSICalibration | None:
         """
         Get the stored calibration values.
 
         :return: The stored calibration values as a :class:`.csi_calibration.CSICalibration` object
         """
-        return self.stored_calibration
+        return self._calibration
 
     def _get_cluster_cache_name(
         self,
-        board_num: int,
+        board_index: int,
         sensor_message: sensor.SensorMessage,
     ) -> str:
         stream_packet = sensor_message.payload
         if isinstance(stream_packet, csi_packet.CSIPacket):
-            return _CACHE_CALIBRATION if stream_packet.is_calib else _CACHE_OTA
+            return _CACHE_CALIBRATION if stream_packet.is_calibration else _CACHE_OTA
         if isinstance(stream_packet, radar_packet.RadarTxReportPacket):
             return _CACHE_OTA
         raise TypeError(f"Unsupported CSIPool sensor-message payload: {type(stream_packet).__name__}")
 
     def _get_cluster_key(
         self,
-        board_num: int,
+        board_index: int,
         sensor_message: sensor.SensorMessage,
     ) -> wifi.WiFiFrameKey:
         return wifi.WiFiFrameKey.from_packet(sensor_message.payload)
@@ -644,7 +648,7 @@ class CSIPool(Pool):
         self,
         cache_name: str,
         cluster_key: wifi.WiFiFrameKey,
-        board_num: int,
+        board_index: int,
         first_message: sensor.SensorMessage,
     ) -> csi_cluster.CSICluster:
         return csi_cluster.CSICluster(cluster_key, self.board_revisions)
@@ -659,12 +663,12 @@ class CSIPool(Pool):
             raise TypeError(f"CSIPool received unexpected cluster type: {type(sensor_cluster).__name__}")
 
         if cache_name == _CACHE_CALIBRATION:
-            if self.emit_calibration_csi:
+            if self._emit_calibration_csi:
                 self._try_callbacks(sensor_cluster)
             return False
 
         all_callbacks_fired = self._try_callbacks(sensor_cluster)
-        return all_callbacks_fired and np.any(sensor_cluster.get_completion())
+        return all_callbacks_fired and np.any(sensor_cluster.completion)
 
     def _get_cluster_cache_timeout(self, cache_name: str) -> float | None:
-        return self.ota_cache_timeout if cache_name == _CACHE_OTA else None
+        return self._ota_cache_timeout if cache_name == _CACHE_OTA else None

@@ -66,7 +66,7 @@ class EspargosDemoPhasesOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOS
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         if self.appconfig.get("required_antennas") is None:
-            self.appconfig.set({"required_antennas": int(np.prod(self.pool.get_shape()))})
+            self.appconfig.set({"required_antennas": int(np.prod(self.pool.shape))})
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=maxAgeChanged)
@@ -83,11 +83,11 @@ class EspargosDemoPhasesOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOS
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def sensorCount(self):
-        return np.prod(self.pool.get_shape())
+        return np.prod(self.pool.shape)
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def sensorCountPerBoard(self):
-        return int(np.prod(self.pool.get_shape()[1:]))
+        return int(np.prod(self.pool.shape[1:]))
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=requiredAntennasChanged)
     def requiredAntennas(self):
@@ -99,7 +99,7 @@ class EspargosDemoPhasesOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOS
         return str(self.appconfig.get("color_mode"))
 
     def _cluster_predicate(self, cluster):
-        completion = cluster.get_completion()
+        completion = cluster.completion
         return bool(np.sum(completion) >= self.requiredAntennas)
 
     @PyQt6.QtCore.pyqtSlot()

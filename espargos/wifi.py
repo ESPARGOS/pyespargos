@@ -9,6 +9,8 @@ import ctypes
 from dataclasses import dataclass
 from enum import IntEnum
 
+__all__ = ["FrameControl", "SequenceControl", "WiFiFrameKey", "WiFiPhyMode", "WiFiPhyRate", "WiFiTxPower"]
+
 
 class FrameControl(ctypes.LittleEndianStructure):
     """The complete 16-bit IEEE 802.11 Frame Control field."""
@@ -59,9 +61,9 @@ class WiFiFrameKey:
     def from_packet(cls, packet) -> "WiFiFrameKey":
         return cls(
             source_mac=bytes(packet.source_mac),
-            destination_mac=bytes(packet.dest_mac),
-            sequence_number=int(packet.seq_ctrl.seg),
-            fragment_number=int(packet.seq_ctrl.frag),
+            destination_mac=bytes(packet.destination_mac),
+            sequence_number=int(packet.sequence_control.seg),
+            fragment_number=int(packet.sequence_control.frag),
             retry=packet.is_retry,
         )
 

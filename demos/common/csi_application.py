@@ -106,12 +106,12 @@ class ESPARGOSCSIApplication(ESPARGOSApplication):
 
     def _on_pool_calibration_started(self):
         if hasattr(self, "backlog"):
-            self.backlog.calibrate = False
+            self.backlog.apply_calibration = False
             self.backlog.clear()
 
     def _on_pool_calibration_finished(self, success: bool, _error_message: str):
         if hasattr(self, "backlog"):
-            self.backlog.calibrate = bool(success and self.pool.get_calibration() is not None)
+            self.backlog.apply_calibration = bool(success and self.pool.calibration is not None)
             self.backlog.clear()
 
 
@@ -166,8 +166,8 @@ class CSIBacklogMixin:
         self.backlog = espargos.CSIBacklog(
             self.pool,
             fields=initial_fields,
-            cb_predicate=backlog_cb_predicate,
-            calibrate=calibrate,
+            callback_predicate=backlog_cb_predicate,
+            apply_calibration=calibrate,
         )
         self.backlog.start()
 
@@ -194,12 +194,12 @@ class SingleCSIFormatMixin:
             return
 
         preamble_format = self.csiconfig.get("preamble_format")
-        fields = set(self.backlog.get_fields())
+        fields = set(self.backlog.fields)
         if preamble_format == "auto":
             fields.update(self.CSI_FORMATS)
         elif preamble_format in self.CSI_FORMATS:
             fields.add(preamble_format)
-        self.backlog.set_fields(fields)
+        self.backlog.fields = fields
 
     def _configured_preamble_format(self, default: str = "lltf") -> str:
         preamble_format = self.csiconfig.get("preamble_format")
@@ -242,7 +242,7 @@ class SingleCSIFormatMixin:
         :return: CSI array if no additional keys, tuple of (csi, *additional) if keys specified,
                  tuple of (format, csi, *additional) if return_format is true, or None if unavailable.
         """
-        if not hasattr(self, "backlog") or not self.backlog.nonempty():
+        if not hasattr(self, "backlog") or not self.backlog.has_data:
             return None
 
         csi_key = self._resolve_backlog_preamble_format(allow_incomplete=allow_incomplete)

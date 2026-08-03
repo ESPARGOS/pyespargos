@@ -65,14 +65,14 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
         self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
         self.pool.calibrate(duration=2, per_board=False, run_in_thread=True)
-        self._residuals_us = np.full(np.prod(self.pool.get_shape()), np.nan, dtype=np.float64)
+        self._residuals_us = np.full(np.prod(self.pool.shape), np.nan, dtype=np.float64)
         self._residual_std_us = np.full_like(self._residuals_us, np.nan, dtype=np.float64)
         self._reset_tx_rx_timestamp_table()
         self.sensorCountChanged.emit()
         self.txRxTimestampTableChanged.emit()
         self.pool.add_csi_callback(
             self._on_csi_cluster,
-            cb_predicate=lambda cluster: cluster.has_radar_tx_report() and np.sum(cluster.get_completion()) >= np.prod(cluster.get_completion().shape) - 1,
+            callback_predicate=lambda cluster: cluster.has_radar_tx_report and np.sum(cluster.completion) >= np.prod(cluster.completion.shape) - 1,
         )
         self.pooldrawer.calibrationStarted.connect(self._on_calibration_started)
         self.pooldrawer.calibrationFinished.connect(self._on_calibration_finished)
@@ -136,10 +136,10 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
 
     def _build_schedule_lookup(self, pool_radar_config: espargos.radar.RadarPoolConfig):
         schedule_by_source_mac = {}
-        calibration = self.pool.get_calibration()
+        calibration = self.pool.calibration
         for board_index, (board_obj, board_config) in enumerate(zip(self.pool.boards, pool_radar_config.board_configs)):
             for antid, mac in enumerate(board_config["mac_by_antid"]):
-                row, col = board_obj.revision.antid_to_row_col(antid)
+                row, col = board_obj.revision.antenna_id_to_row_col(antid)
                 reference_start_s = board_config["start_by_antid"][antid] / espargos.radar.RADAR_TIME_SCALE - calibration.timing_offsets[board_index, row, col]
                 schedule_by_source_mac[self._normalize_mac(mac)] = {
                     "board_index": board_index,
@@ -151,7 +151,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=sensorCountChanged)
     def sensorCount(self):
-        return int(np.prod(self.pool.get_shape())) if hasattr(self, "pool") else 8
+        return int(np.prod(self.pool.shape)) if hasattr(self, "pool") else 8
 
     @PyQt6.QtCore.pyqtProperty(list, constant=False, notify=radarResidualsChanged)
     def radarResidualTexts(self):
@@ -191,7 +191,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
             self.statusTextChanged.emit()
             return
 
-        calibration = self.pool.get_calibration()
+        calibration = self.pool.calibration
         if calibration is None:
             self._status_text = "Calibration required before radar schedule can be applied"
             self.statusTextChanged.emit()
@@ -215,9 +215,9 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
                 t0_by_sensor=t0_by_sensor,
                 period_by_sensor=period_by_sensor,
                 tx_power=espargos.wifi.WiFiTxPower(int(self.appconfig.get("tx_power"))),
-                tx_phymode=espargos.wifi.WiFiPhyMode(int(self.appconfig.get("tx_phymode"))),
+                tx_phy_mode=espargos.wifi.WiFiPhyMode(int(self.appconfig.get("tx_phymode"))),
                 tx_rate=espargos.wifi.WiFiPhyRate(int(self.appconfig.get("tx_rate"))),
-                rfswitch_state=espargos.sensor.RFSwitchState(int(self.appconfig.get("rfswitch_state"))),
+                rf_switch_state=espargos.sensor.RFSwitchState(int(self.appconfig.get("rfswitch_state"))),
             )
             self.pool.set_radar_config(pool_radar_config)
         except Exception as exc:
@@ -239,18 +239,18 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
             self.statusTextChanged.emit()
 
     def _on_csi_cluster(self, csi_cluster: espargos.CSICluster):
-        if not csi_cluster.is_radar():
+        if not csi_cluster.is_radar:
             return
-        if not csi_cluster.has_radar_tx_report():
+        if not csi_cluster.has_radar_tx_report:
             return
 
-        schedule = self._radar_schedule_by_source_mac.get(self._normalize_mac(csi_cluster.get_source_mac()))
+        schedule = self._radar_schedule_by_source_mac.get(self._normalize_mac(csi_cluster.source_mac))
         if schedule is None:
             return
 
-        calibration = self.pool.get_calibration()
-        timestamps = csi_cluster.get_sensor_timestamps()
-        self._update_tx_rx_timestamp_table(schedule, csi_cluster.get_radar_tx_info(), timestamps)
+        calibration = self.pool.calibration
+        timestamps = csi_cluster.sensor_timestamps
+        self._update_tx_rx_timestamp_table(schedule, csi_cluster.radar_tx_report, timestamps)
         reference_timestamps = timestamps - calibration.timing_offsets
 
         expected_reference_time = np.full_like(reference_timestamps, schedule["reference_start_s"], dtype=np.float64)
@@ -310,7 +310,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
         return board_index * espargos.constants.ANTENNAS_PER_BOARD + row * espargos.constants.ANTENNAS_PER_ROW + col
 
     def _tx_flat_index_from_schedule(self, schedule: dict) -> int:
-        row, col = self.pool.boards[schedule["board_index"]].revision.antid_to_row_col(schedule["antid"])
+        row, col = self.pool.boards[schedule["board_index"]].revision.antenna_id_to_row_col(schedule["antid"])
         return self._sensor_flat_index(schedule["board_index"], row, col)
 
     def _update_tx_rx_timestamp_table(self, schedule: dict, tx_report, rx_timestamps_s: np.ndarray):
@@ -322,7 +322,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
         self.logger.info(
             f"radar tx timestamp raw: tx_sensor={tx_index} "
             f"source_mac={self._normalize_mac(bytes(tx_report.source_mac).hex())} "
-            f"seq={tx_report.seq_ctrl.seg} "
+            f"seq={tx_report.sequence_control.seg} "
             f"slot={tx_report.descriptor_slot} "
             f"reg0=0x{tx_report.timestamp_reg0:08x} "
             f"reg1=0x{tx_report.timestamp_reg1:08x} "

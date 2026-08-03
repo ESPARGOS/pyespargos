@@ -91,7 +91,7 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
         cfg_out: dict = {}
 
         # CSI acquire config -> UI fields
-        csi_cfg = self.pool.get_csi_acquire_config()
+        csi_cfg = self.pool.get_csi_acquisition_config()
         if isinstance(csi_cfg, dict) and "acquire_csi_force_lltf" in csi_cfg:
             cfg_out["acquire_lltf_force"] = bool(csi_cfg["acquire_csi_force_lltf"])
         if isinstance(csi_cfg, dict) and "compress_csi" in csi_cfg:
@@ -129,11 +129,11 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
             cfg_out["gain"] = gain_cfg
 
         # RF switch config -> UI fields
-        rf = self.pool.get_rfswitch()
+        rf = self.pool.get_rf_switch()
         cfg_out["rf_switch"] = int(rf.value)
 
         # Pool-local reference CSI stream option -> UI fields
-        cfg_out["show_reference"] = self.pool.get_emit_calibration_csi()
+        cfg_out["show_reference"] = self.pool.emit_calibration_csi
 
         # MAC filter -> UI fields
         mf = self.pool.get_mac_filter()
@@ -144,7 +144,7 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
             }
 
         # WiFi config -> channel fields
-        wc = self.pool.get_wificonf()
+        wc = self.pool.get_wifi_config()
         if isinstance(wc, dict):
             if "channel-primary" in wc:
                 cfg_out["channel"] = int(wc["channel-primary"])
@@ -171,23 +171,23 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
 
                 # WiFi channels
                 if "channel" in delta or "secondary_channel" in delta:
-                    wc = self.pool.get_wificonf()
+                    wc = self.pool.get_wifi_config()
                     if not isinstance(wc, dict):
-                        raise RuntimeError("pool.get_wificonf() returned non-dict")
+                        raise RuntimeError("pool.get_wifi_config() returned non-dict")
                     wc = dict(wc)
                     if "channel" in delta:
                         wc["channel-primary"] = int(delta["channel"])
                     if "secondary_channel" in delta:
                         wc["channel-secondary"] = int(delta["secondary_channel"])
-                    self.pool.set_wificonf(wc)
+                    self.pool.set_wifi_config(wc)
 
                 # RF switch
                 if "rf_switch" in delta:
-                    self.pool.set_rfswitch(espargos.sensor.RFSwitchState(int(delta["rf_switch"])))
+                    self.pool.set_rf_switch(espargos.sensor.RFSwitchState(int(delta["rf_switch"])))
 
                 # Pool-local reference CSI stream option
                 if "show_reference" in delta:
-                    self.pool.set_emit_calibration_csi(bool(delta["show_reference"]))
+                    self.pool.emit_calibration_csi = bool(delta["show_reference"])
 
                 # CSI acquire config
                 if "acquire_lltf_force" in delta or "compress_csi" in delta or "lltf_8bit_mode" in delta:
@@ -198,7 +198,7 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
                         cfg["compress_csi"] = bool(int(delta["compress_csi"]))
                     if "lltf_8bit_mode" in delta:
                         cfg["lltf_8bit_mode"] = bool(int(delta["lltf_8bit_mode"]))
-                    self.pool.set_csi_acquire_config(cfg)
+                    self.pool.set_csi_acquisition_config(cfg)
 
                 # Gains (unified: "automatic" controls both rx_gain and fft_scale)
                 if "gain" in delta:

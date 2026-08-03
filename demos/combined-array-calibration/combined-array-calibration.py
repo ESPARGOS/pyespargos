@@ -83,8 +83,8 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
 
         # Calculate sensor counts
         boardwise = self.appconfig.get("boardwise")
-        self._sensor_count = self.pool.get_shape()[0] if boardwise else int(np.prod(self.pool.get_shape()))
-        self._sensor_count_per_board = 1 if boardwise else int(np.prod(self.pool.get_shape()[1:]))
+        self._sensor_count = self.pool.shape[0] if boardwise else int(np.prod(self.pool.shape))
+        self._sensor_count_per_board = 1 if boardwise else int(np.prod(self.pool.shape[1:]))
         self.sensorCountChanged.emit()
 
     def exec(self):
@@ -93,8 +93,8 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
     def onConfigUpdate(self, newcfg):
         if "boardwise" in newcfg:
             # Recalculate sensor counts
-            self._sensor_count = self.pool.get_shape()[0] if newcfg["boardwise"] else int(np.prod(self.pool.get_shape()))
-            self._sensor_count_per_board = 1 if newcfg["boardwise"] else int(np.prod(self.pool.get_shape()[1:]))
+            self._sensor_count = self.pool.shape[0] if newcfg["boardwise"] else int(np.prod(self.pool.shape))
+            self._sensor_count_per_board = 1 if newcfg["boardwise"] else int(np.prod(self.pool.shape[1:]))
             self.sensorCountChanged.emit()
 
         if "color_by_sensor_index" in newcfg:
@@ -118,39 +118,39 @@ class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMi
     def onCSI(self, clustered_csi):
         preamble_format = self._configured_preamble_format()
 
-        assert self.pool.get_calibration() is not None
+        assert self.pool.calibration is not None
 
         # Deserialize CSI based on preamble format
         if preamble_format == "lltf":
-            if not clustered_csi.has_lltf():
+            if not clustered_csi.has_lltf:
                 self.logger.warning("Received CSI without LLTF data; skipping calibration update.")
                 return
             csi = clustered_csi.deserialize_csi_lltf()
-            csi = self.pool.get_calibration().apply_lltf(csi)
+            csi = self.pool.calibration.apply_lltf(csi)
             espargos.csi_processing.remove_mean_sto(csi)
             espargos.csi_processing.interpolate_lltf_gap(csi)
         elif preamble_format == "ht20":
-            if not clustered_csi.has_ht20ltf():
+            if not clustered_csi.has_ht20ltf:
                 self.logger.warning("Received CSI without HT20-LTF data; skipping calibration update.")
                 return
             csi = clustered_csi.deserialize_csi_ht20ltf()
-            csi = self.pool.get_calibration().apply_ht20(csi)
+            csi = self.pool.calibration.apply_ht20(csi)
             espargos.csi_processing.remove_mean_sto(csi)
             espargos.csi_processing.interpolate_ht20ltf_gap(csi)
         elif preamble_format == "ht40":
-            if not clustered_csi.has_ht40ltf():
+            if not clustered_csi.has_ht40ltf:
                 self.logger.warning("Received CSI without HT40-LTF data; skipping calibration update.")
                 return
             csi = clustered_csi.deserialize_csi_ht40ltf()
-            csi = self.pool.get_calibration().apply_ht40(csi)
+            csi = self.pool.calibration.apply_ht40(csi)
             espargos.csi_processing.remove_mean_sto(csi)
             espargos.csi_processing.interpolate_ht40ltf_gap(csi)
         elif preamble_format == "he20":
-            if not clustered_csi.has_he20ltf():
+            if not clustered_csi.has_he20ltf:
                 self.logger.warning("Received CSI without HE20-LTF data; skipping calibration update.")
                 return
             csi = clustered_csi.deserialize_csi_he20ltf()
-            csi = self.pool.get_calibration().apply_he20(csi)
+            csi = self.pool.calibration.apply_he20(csi)
             espargos.csi_processing.remove_mean_sto(csi)
             espargos.csi_processing.interpolate_he20ltf_gaps(csi)
 

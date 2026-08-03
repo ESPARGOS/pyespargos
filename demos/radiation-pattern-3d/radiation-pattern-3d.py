@@ -177,10 +177,10 @@ class EspargosDemoRadiationPattern3D(CSIBacklogMixin, CombinedArrayMixin, Single
         return placements
 
     def _cb_predicate(self, cluster):
-        csi_completion_state = cluster.get_completion()
+        csi_completion_state = cluster.completion
         timeout_condition = False
         if self.args.csi_completion_timeout > 0:
-            timeout_condition = np.sum(csi_completion_state) >= 2 and cluster.get_age() > self.args.csi_completion_timeout
+            timeout_condition = np.sum(csi_completion_state) >= 2 and cluster.age > self.args.csi_completion_timeout
 
         return np.all(csi_completion_state) or timeout_condition
 
@@ -193,7 +193,7 @@ class EspargosDemoRadiationPattern3D(CSIBacklogMixin, CombinedArrayMixin, Single
         pol_mode = self.appconfig.get("polarization_mode")
 
         if pol_mode == "incorporate":
-            result = self.get_backlog_csi("rx_gain", "fft_gain", "rfswitch_state", allow_incomplete=True)
+            result = self.get_backlog_csi("rx_gain", "fft_gain", "rf_switch_state", allow_incomplete=True)
             if result is None:
                 return
             csi_backlog, rx_gain_backlog, fft_gain_backlog, rfswitch_state_backlog = result

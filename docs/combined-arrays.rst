@@ -132,7 +132,7 @@ To obtain phase-coherent CSI data from the combined arrays, you can use the foll
     espargos.Board("192.168.1.4"),
     espargos.Board("192.168.1.5")
   ])
-  pool.set_csi_acquire_config({"acquire_csi_force_lltf": True})
+  pool.set_csi_acquisition_config({"acquire_csi_force_lltf": True})
   pool.start()
   pool.calibrate(
       duration=2,

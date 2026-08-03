@@ -63,7 +63,7 @@ class EspargosDemoTDOAOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSCS
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=averageChanged)
     def sensorCount(self):
-        return np.prod(self.pool.get_shape()) if not self.appconfig.get("average") else self.pool.get_shape()[0]
+        return np.prod(self.pool.shape) if not self.appconfig.get("average") else self.pool.shape[0]
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
@@ -78,7 +78,7 @@ class EspargosDemoTDOAOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSCS
         if algorithm == "sensor_timestamp":
             _, sensor_timestamp_backlog, _ = result
             latest_sensor_timestamps = sensor_timestamp_backlog[-1]
-            calibration = self.pool.get_calibration()
+            calibration = self.pool.calibration
             if calibration is None:
                 return
             corrected_sensor_timestamps = latest_sensor_timestamps - calibration.timing_offsets

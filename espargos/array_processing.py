@@ -8,6 +8,8 @@ caller-provided covariance matrix. Independent of any measurement format.
 
 import numpy as np
 
+__all__ = ["music_spectrum", "mvdr_spectrum", "steering_vectors_2d"]
+
 
 def steering_vectors_2d(n_rows, n_columns, resolution_azimuth, resolution_elevation):
     """Return a rectangular-array steering grid."""

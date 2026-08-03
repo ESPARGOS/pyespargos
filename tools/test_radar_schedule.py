@@ -18,11 +18,11 @@ def normalize_mac(mac: str) -> str:
 
 
 def build_schedule_lookup(pool: espargos.CSIPool, pool_radar_config: espargos.radar.RadarPoolConfig):
-    calibration = pool.get_calibration()
+    calibration = pool.calibration
     schedule_by_source_mac = {}
     for board_index, (board_obj, board_config) in enumerate(zip(pool.boards, pool_radar_config.board_configs)):
         for antid, mac in enumerate(board_config["mac_by_antid"]):
-            row, col = board_obj.revision.antid_to_row_col(antid)
+            row, col = board_obj.revision.antenna_id_to_row_col(antid)
             reference_start_s = board_config["start_by_antid"][antid] / espargos.radar.RADAR_TIME_SCALE - calibration.timing_offsets[board_index, row, col]
             schedule_by_source_mac[normalize_mac(mac)] = {
                 "board_index": board_index,
@@ -47,7 +47,7 @@ def main():
     collected = []
 
     def on_cluster(csi_cluster: espargos.CSICluster):
-        if csi_cluster.is_radar():
+        if csi_cluster.is_radar:
             collected.append(csi_cluster)
 
     try:
@@ -55,7 +55,7 @@ def main():
         pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
         pool.calibrate(duration=2, per_board=False, run_in_thread=True)
 
-        calibration = pool.get_calibration()
+        calibration = pool.calibration
         if calibration is None:
             raise RuntimeError("Calibration did not produce a CSICalibration object")
 
@@ -74,16 +74,16 @@ def main():
             t0_by_sensor=t0_by_sensor,
             period_by_sensor=period_by_sensor,
             tx_power=espargos.wifi.WiFiTxPower(int(current_radar_config["tx_power"])),
-            tx_phymode=espargos.wifi.WiFiPhyMode(int(current_radar_config["tx_phymode"])),
+            tx_phy_mode=espargos.wifi.WiFiPhyMode(int(current_radar_config["tx_phymode"])),
             tx_rate=espargos.wifi.WiFiPhyRate(int(current_radar_config["tx_rate"])),
-            rfswitch_state=espargos.sensor.RFSwitchState(int(current_radar_config["rfswitch_state"])),
+            rf_switch_state=espargos.sensor.RFSwitchState(int(current_radar_config["rfswitch_state"])),
         )
         schedule_by_source_mac = build_schedule_lookup(pool, pool_radar_config)
         pool.set_radar_config(pool_radar_config)
 
         pool.add_csi_callback(
             on_cluster,
-            cb_predicate=lambda cluster: np.sum(cluster.get_completion()) >= np.prod(cluster.get_completion().shape) - 1,
+            callback_predicate=lambda cluster: np.sum(cluster.completion) >= np.prod(cluster.completion.shape) - 1,
         )
 
         end_time = time.time() + args.duration
@@ -97,11 +97,11 @@ def main():
         packet_offsets_us = []
         packet_records = []
         for csi_cluster in collected:
-            schedule = schedule_by_source_mac.get(normalize_mac(csi_cluster.get_source_mac()))
+            schedule = schedule_by_source_mac.get(normalize_mac(csi_cluster.source_mac))
             if schedule is None:
                 continue
 
-            timestamps = csi_cluster.get_sensor_timestamps()
+            timestamps = csi_cluster.sensor_timestamps
             reference_timestamps = timestamps - calibration.timing_offsets
             cycle_indices = np.rint((reference_timestamps - schedule["reference_start_s"]) / schedule["period_s"])
             cycle_index = int(np.rint(np.nanmedian(cycle_indices)))

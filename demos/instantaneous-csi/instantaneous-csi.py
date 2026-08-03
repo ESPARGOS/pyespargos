@@ -82,12 +82,12 @@ class EspargosDemoInstantaneousCSI(CSIBacklogMixin, SingleCSIFormatMixin, ESPARG
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         if self.appconfig.get("required_antennas") is None:
-            self.appconfig.set({"required_antennas": int(np.prod(self.pool.get_shape()))})
+            self.appconfig.set({"required_antennas": int(np.prod(self.pool.shape))})
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def sensorCount(self):
-        return np.prod(self.pool.get_shape())
+        return np.prod(self.pool.shape)
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=requiredAntennasChanged)
     def requiredAntennas(self):
@@ -95,7 +95,7 @@ class EspargosDemoInstantaneousCSI(CSIBacklogMixin, SingleCSIFormatMixin, ESPARG
         return int(self.sensorCount if configured is None else configured)
 
     def _cluster_predicate(self, cluster):
-        completion = cluster.get_completion()
+        completion = cluster.completion
         return bool(np.sum(completion) >= self.requiredAntennas)
 
     @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=displayModeChanged)
@@ -149,7 +149,7 @@ class EspargosDemoInstantaneousCSI(CSIBacklogMixin, SingleCSIFormatMixin, ESPARG
     # list parameters contain PyQt6.QtCharts.QLineSeries / QScatterSeries
     @PyQt6.QtCore.pyqtSlot(list, list, PyQt6.QtCharts.QValueAxis, PyQt6.QtCharts.QValueAxis)
     def updateCSI(self, powerSeries, phaseSeries, subcarrierAxis, axis):
-        if (result := self.get_backlog_csi("rx_gain", "fft_gain", "rfswitch_state", "lltf_8bit_mode", allow_incomplete=True, return_format=True)) is None:
+        if (result := self.get_backlog_csi("rx_gain", "fft_gain", "rf_switch_state", "lltf_8bit_mode", allow_incomplete=True, return_format=True)) is None:
             return
 
         csi_key, csi_backlog, rx_gain_backlog, fft_gain_backlog, rfswitch_state, lltf_8bit_mode_backlog = result

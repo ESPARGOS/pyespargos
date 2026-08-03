@@ -1,15 +1,19 @@
 #!/usr/bin/env python
 
 import numpy as np
+from abc import ABC, abstractmethod
 
 from . import constants
 
-
 # Helper module defining board revision-specific constants
-class BoardRevision:
+__all__ = ["BoardRevision", "BoardRevisionDensiflorus"]
+
+
+class BoardRevision(ABC):
     @property
+    @abstractmethod
     def identification(self) -> tuple:
-        raise NotImplementedError
+        """Return the controller identification tuple for this revision."""
 
     @property
     def calib_trace_delays(self) -> list:
@@ -18,43 +22,48 @@ class BoardRevision:
         group_velocity = constants.SPEED_OF_LIGHT / effective_dielectric_constant**0.5
         return self._calib_trace_lengths / group_velocity
 
+    @abstractmethod
     def esp_num_to_row_col(self, esp_num: int) -> tuple:
         """Convert ESP number to (row, column) on the board"""
-        raise NotImplementedError
 
-    def antid_to_row_col(self, antid: int) -> tuple:
+    def antenna_id_to_row_col(self, antenna_id: int) -> tuple:
         """Convert firmware antenna id to (row, column) on this board revision."""
-        return self.esp_num_to_row_col(self.antid_to_esp_num[antid])
+        return self.esp_num_to_row_col(self._antenna_id_to_esp_num[antenna_id])
 
-    def sensor_values_to_antid_list(self, values, name: str = "values") -> list:
+    def sensor_values_to_antenna_id_list(self, values, name: str = "values") -> list:
         """Convert a board-local (row, column) array to firmware antenna-id order."""
         array = np.asarray(values)
         expected_shape = (constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
         if array.shape != expected_shape:
             raise ValueError(f"{name} must use (row, column) shape {expected_shape}, got {array.shape}")
 
-        values_by_antid = []
-        for antid in range(constants.ANTENNAS_PER_BOARD):
-            row, col = self.antid_to_row_col(antid)
+        values_by_antenna_id = []
+        for antenna_id in range(constants.ANTENNAS_PER_BOARD):
+            row, col = self.antenna_id_to_row_col(antenna_id)
             value = array[row, col]
-            values_by_antid.append(value.item() if hasattr(value, "item") else value)
-        return values_by_antid
+            values_by_antenna_id.append(value.item() if hasattr(value, "item") else value)
+        return values_by_antenna_id
+
+    @property
+    @abstractmethod
+    def _antenna_id_to_esp_num(self) -> dict:
+        """Map firmware antenna IDs to ESP indices."""
 
     # Private, (potentially) revision-specific properties
     @property
+    @abstractmethod
     def _calib_trace_dielectric_constant(self) -> float:
         """Dielectric constant of the PCB material"""
-        return NotImplementedError
 
     @property
+    @abstractmethod
     def _calib_trace_lengths(self) -> list:
         """Lengths of the calibration traces on the PCB [in m]"""
-        return NotImplementedError
 
     @property
+    @abstractmethod
     def _calib_trace_width(self) -> float:
         """Width of the calibration trace [in mm]"""
-        return NotImplementedError
 
     @property
     def _calib_trace_height(self) -> float:
@@ -74,7 +83,7 @@ class BoardRevisionDensiflorus(BoardRevision):
         return (row, col)
 
     @property
-    def antid_to_esp_num(self) -> dict:
+    def _antenna_id_to_esp_num(self) -> dict:
         return {
             0: 3,  # Sensor 0 -> ESP 0
             1: 2,  # Sensor 1 -> ESP 1
@@ -109,4 +118,4 @@ class BoardRevisionDensiflorus(BoardRevision):
         return 0.119
 
 
-all_revisions = [BoardRevisionDensiflorus()]
+_ALL_REVISIONS = (BoardRevisionDensiflorus(),)

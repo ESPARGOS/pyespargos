@@ -35,15 +35,15 @@ class CSIBacklogSettings(PyQt6.QtCore.QObject):
     def _read_config(self):
         self.cfgman.set(
             {
-                "size": self.backlog.get_size(),
+                "size": self.backlog.size,
                 "fields": {
-                    "ht20": "ht20" in self.backlog.get_fields(),
-                    "ht40": "ht40" in self.backlog.get_fields(),
-                    "he20": "he20" in self.backlog.get_fields(),
-                    "lltf": "lltf" in self.backlog.get_fields(),
+                    "ht20": "ht20" in self.backlog.fields,
+                    "ht40": "ht40" in self.backlog.fields,
+                    "he20": "he20" in self.backlog.fields,
+                    "lltf": "lltf" in self.backlog.fields,
                 },
                 "filters": {
-                    "exclude_11b": self.exclude_11b_filter in self.backlog.get_filters(),
+                    "exclude_11b": self.exclude_11b_filter in self.backlog.filters,
                 },
             }
         )
@@ -55,16 +55,16 @@ class CSIBacklogSettings(PyQt6.QtCore.QObject):
             return
 
         if "size" in newcfg:
-            self.backlog.set_size(newcfg["size"])
+            self.backlog.size = newcfg["size"]
 
         if "fields" in newcfg:
-            new_fields = copy.deepcopy(self.backlog.get_fields())
+            new_fields = copy.deepcopy(self.backlog.fields)
             for field, enabled in newcfg["fields"].items():
                 if enabled and field not in new_fields:
                     new_fields.add(field)
                 elif not enabled and field in new_fields:
                     new_fields.remove(field)
-            self.backlog.set_fields(new_fields)
+            self.backlog.fields = new_fields
 
         if "filters" in newcfg:
             filters_cfg = newcfg["filters"]

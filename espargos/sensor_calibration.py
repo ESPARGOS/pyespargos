@@ -26,6 +26,8 @@ import numpy as np
 
 from . import constants
 
+__all__ = ["ClockReferenceScope", "SensorCalibration", "compute_reference_path_delays"]
+
 
 class ClockReferenceScope(StrEnum):
     """Describe whether sensor clocks share one reference across the pool."""
@@ -119,7 +121,7 @@ class SensorCalibration:
         clock_scope: ClockReferenceScope | str = ClockReferenceScope.POOL,
         reference_path_delays: np.ndarray | None = None,
     ):
-        self.logger = logging.getLogger("pyespargos.calibration")
+        self._logger = logging.getLogger("pyespargos.calibration")
 
         self.sensor_shape = tuple(sensor_shape)
         if len(self.sensor_shape) != 3:

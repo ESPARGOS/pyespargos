@@ -152,7 +152,7 @@ class EspargosDemoStochasticFading(CSIBacklogMixin, CombinedArrayMixin, SingleCS
         self._update_fit_parameters()
 
     def _mark_backlog_as_seen(self):
-        if not hasattr(self, "backlog") or not self.backlog.nonempty():
+        if not hasattr(self, "backlog") or not self.backlog.has_data:
             self._last_processed_timestamp = -np.inf
             return
 
@@ -176,14 +176,14 @@ class EspargosDemoStochasticFading(CSIBacklogMixin, CombinedArrayMixin, SingleCS
         self.sampleProgressChanged.emit()
 
     def _partial_cluster_predicate(self, cluster):
-        completion = cluster.get_completion()
+        completion = cluster.completion
         timeout_condition = False
         if self.args.csi_completion_timeout > 0:
-            timeout_condition = np.sum(completion) >= 2 and cluster.get_age() > self.args.csi_completion_timeout
+            timeout_condition = np.sum(completion) >= 2 and cluster.age > self.args.csi_completion_timeout
         return bool(np.all(completion) or timeout_condition)
 
     def _get_partial_backlog_csi(self, *additional_keys: str, remove_global_sto=True, return_format=False):
-        if not hasattr(self, "backlog") or not self.backlog.nonempty():
+        if not hasattr(self, "backlog") or not self.backlog.has_data:
             return None
 
         csi_key = self._resolve_backlog_preamble_format(allow_incomplete=True)

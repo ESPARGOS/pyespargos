@@ -14,6 +14,15 @@ import serial.tools.list_ports
 
 from . import sensor
 
+__all__ = [
+    "UARTClient",
+    "UARTControlResponse",
+    "UARTProtocolError",
+    "UARTTimeoutError",
+    "is_uart_host",
+    "parse_uart_host",
+]
+
 UART_PROTOCOL_VERSION = 1
 
 FRAME_TYPE_HELLO_REQ = 0x01
@@ -172,7 +181,7 @@ class UARTControlResponse:
 
 class UARTClient:
     def __init__(self, host: str, *, timeout: float = DEFAULT_TIMEOUT):
-        self.logger = logging.getLogger("pyespargos.uart")
+        self._logger = logging.getLogger("pyespargos.uart")
         self.timeout = timeout
 
         self.device, params = parse_uart_host(host)
@@ -215,7 +224,7 @@ class UARTClient:
         except (UARTProtocolError, UARTTimeoutError, serial.SerialException):
             self._activate_transport_mode()
 
-        self.logger.info(f"Connected to ESPARGOS UART on {self.device}")
+        self._logger.info(f"Connected to ESPARGOS UART on {self.device}")
         self._connected = True
         self._start_keepalive_thread()
 
@@ -424,7 +433,7 @@ class UARTClient:
             try:
                 self._send_keepalive()
             except Exception as exc:
-                self.logger.debug(f"Stopping UART keepalive for {self.device}: {exc}")
+                self._logger.debug(f"Stopping UART keepalive for {self.device}: {exc}")
                 break
 
     def _open_serial(self, baudrate: int) -> serial.Serial:
@@ -457,7 +466,7 @@ class UARTClient:
         try:
             attrs = termios.tcgetattr(ser.fileno())
         except Exception as exc:
-            self.logger.debug(f"Could not read termios state for {self.device}: {exc}")
+            self._logger.debug(f"Could not read termios state for {self.device}: {exc}")
             return
 
         attrs[2] |= termios.CLOCAL
@@ -467,7 +476,7 @@ class UARTClient:
         try:
             termios.tcsetattr(ser.fileno(), termios.TCSANOW, attrs)
         except Exception as exc:
-            self.logger.debug(f"Could not update termios state for {self.device}: {exc}")
+            self._logger.debug(f"Could not update termios state for {self.device}: {exc}")
 
     def _apply_modem_idle_state(self, ser: serial.Serial):
         ser.dtr, ser.rts = self._modem_idle_state
@@ -484,7 +493,7 @@ class UARTClient:
         portinfo = self._matching_port_info()
         if portinfo is not None and portinfo.pid in USB_UART_BAUDRATES:
             baudrate = USB_UART_BAUDRATES[portinfo.pid]
-            self.logger.debug(f"Using {baudrate} baud for USB-UART adapter PID 0x{portinfo.pid:04x}")
+            self._logger.debug(f"Using {baudrate} baud for USB-UART adapter PID 0x{portinfo.pid:04x}")
             return baudrate
         return DEFAULT_UART_BAUDRATE
 
@@ -507,7 +516,7 @@ class UARTClient:
         try:
             current = open(latency_path, "r", encoding="ascii").read().strip()
         except OSError as exc:
-            self.logger.debug(f"Could not read UART latency timer for {self.device}: {exc}")
+            self._logger.debug(f"Could not read UART latency timer for {self.device}: {exc}")
             return
 
         if current == str(self.latency_timer_ms):
@@ -518,12 +527,12 @@ class UARTClient:
                 f.write(str(self.latency_timer_ms))
         except OSError as exc:
             if exc.errno not in (errno.EACCES, errno.EROFS, errno.EPERM):
-                self.logger.debug(f"Could not set UART latency timer for {self.device}: {exc}")
+                self._logger.debug(f"Could not set UART latency timer for {self.device}: {exc}")
             return
 
         self._latency_timer_restore_path = latency_path
         self._latency_timer_restore_value = current
-        self.logger.info(f"Set UART latency timer for {self.device} to {self.latency_timer_ms} ms")
+        self._logger.info(f"Set UART latency timer for {self.device} to {self.latency_timer_ms} ms")
 
     def _restore_latency_timer(self):
         if self._latency_timer_restore_path is None or self._latency_timer_restore_value is None:
@@ -553,7 +562,7 @@ class UARTClient:
                 try:
                     return _parse_frame(raw_frame)
                 except UARTProtocolError as exc:
-                    self.logger.debug(f"Ignoring invalid UART frame while resynchronizing: {exc}")
+                    self._logger.debug(f"Ignoring invalid UART frame while resynchronizing: {exc}")
                     continue
 
             remaining = end_time - time.monotonic()
@@ -570,7 +579,7 @@ class UARTClient:
             try:
                 frame_type, request_id, payload = self._read_one_frame(timeout=0.2)
             except serial.SerialException as exc:
-                self.logger.error(f"UART read error on {self.device}: {exc}")
+                self._logger.error(f"UART read error on {self.device}: {exc}")
                 break
             if frame_type is None:
                 continue
@@ -596,7 +605,7 @@ class UARTClient:
                 callback(text)
             return
 
-        self.logger.debug(f"Ignoring UART frame type 0x{frame_type:02x}")
+        self._logger.debug(f"Ignoring UART frame type 0x{frame_type:02x}")
 
 
 def validate_sensor_stream_payload(payload: bytes, revision) -> bool:

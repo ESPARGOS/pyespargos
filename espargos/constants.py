@@ -2,6 +2,22 @@
 
 import numpy as np
 
+__all__ = [
+    "ANTENNAS_PER_BOARD",
+    "ANTENNAS_PER_ROW",
+    "ANTENNA_JONES_CROSSPOL_MATRIX",
+    "ANTENNA_JONES_MATRIX",
+    "ANTENNA_JONES_MATRIX_SIMPLE",
+    "ANTENNA_SEPARATION",
+    "FFT_GAIN_DB_PER_UNIT",
+    "ROWS_PER_BOARD",
+    "RX_GAIN_DB_PER_UNIT",
+    "SPEED_OF_LIGHT",
+    "WIFI_CHANNEL1_FREQUENCY",
+    "WIFI_CHANNEL_SPACING",
+    "WIFI_SUBCARRIER_SPACING",
+]
+
 ANTENNAS_PER_ROW = 4
 "Number of antennas per row / per SPI controller on the board"
 

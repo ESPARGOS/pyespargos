@@ -15,6 +15,17 @@ from . import revisions
 from . import sensor
 from . import uart
 
+__all__ = [
+    "Board",
+    "BoardCapability",
+    "BoardControl",
+    "EspargosAPIVersionError",
+    "EspargosHTTPStatusError",
+    "EspargosStreamConnectionError",
+    "EspargosUnexpectedResponseError",
+    "SensorMessageSubscription",
+]
+
 # Port used by the controller as the source port for UDP sensor packets
 STREAM_CONTROLLER_SRC_PORT = 53330
 WEBSOCKET_STREAM_PATHS = ("stream", "csi")
@@ -97,7 +108,7 @@ class BoardControl:
         try:
             return json.loads(response)
         except (json.JSONDecodeError, TypeError):
-            self._board.logger.error(f"Invalid response: {response}")
+            self._board._logger.error(f"Invalid response: {response}")
             raise EspargosUnexpectedResponseError(str(response))
 
     def post_json(self, path: str, payload: Any) -> str:
@@ -115,7 +126,7 @@ class BoardControl:
 
         response = self.fetch(path) if payload is None else self.post_json(path, payload)
         if response != expected_response:
-            self._board.logger.error(f"Invalid response: {response}")
+            self._board._logger.error(f"Invalid response: {response}")
             raise EspargosUnexpectedResponseError(str(response))
         return response
 
@@ -130,7 +141,7 @@ class BoardCapability:
     """
 
     def __init__(self, board: Board):
-        self.board = board
+        self._board = board
         self._subscriptions: list[SensorMessageSubscription] = []
         self._subscriptions_lock = threading.Lock()
 
@@ -146,11 +157,11 @@ class BoardCapability:
             try:
                 decoded_message = sensor.decode_sensor_message(message, decoder)
             except (AssertionError, ValueError) as exc:
-                self.board.logger.debug(f"Ignoring malformed sensor message: {exc}")
+                self._board._logger.debug(f"Ignoring malformed sensor message: {exc}")
                 return
             callback(decoded_message)
 
-        subscription = self.board.subscribe_sensor_messages(
+        subscription = self._board.subscribe_sensor_messages(
             type_header,
             decode_and_dispatch,
         )
@@ -165,7 +176,7 @@ class BoardCapability:
             subscriptions = self._subscriptions
             self._subscriptions = []
         for subscription in subscriptions:
-            self.board.unsubscribe_sensor_messages(subscription)
+            self._board.unsubscribe_sensor_messages(subscription)
 
     def unsubscribe(self, subscription: SensorMessageSubscription) -> bool:
         """Remove one subscription previously returned by this capability."""
@@ -175,7 +186,7 @@ class BoardCapability:
                 self._subscriptions.remove(subscription)
             except ValueError:
                 return False
-        return self.board.unsubscribe_sensor_messages(subscription)
+        return self._board.unsubscribe_sensor_messages(subscription)
 
 
 class Board(object):
@@ -250,7 +261,7 @@ class Board(object):
         :raises TimeoutError: If the connection to the ESPARGOS controller times out
         :raises EspargosUnexpectedResponseError: If the server at the given host is not an ESPARGOS controller or the request was invalid
         """
-        self.logger = logging.getLogger("pyespargos.board")
+        self._logger = logging.getLogger("pyespargos.board")
 
         self.host = host
         self.control = BoardControl(self)
@@ -266,7 +277,7 @@ class Board(object):
         try:
             identification_raw = self.control.fetch("identify")
         except TimeoutError:
-            self.logger.error(f"Could not connect to {self.host} to fetch identification information")
+            self._logger.error(f"Could not connect to {self.host} to fetch identification information")
             raise TimeoutError
 
         if "ESPARGOS" not in identification_raw:
@@ -279,7 +290,7 @@ class Board(object):
             except (json.JSONDecodeError, TypeError):
                 raise EspargosUnexpectedResponseError(f"Server at {self.host} did not provide valid API information. Check if the host is correct and the server is running ESPARGOS firmware.")
         except TimeoutError:
-            self.logger.error(f"Could not connect to {self.host} to fetch API information")
+            self._logger.error(f"Could not connect to {self.host} to fetch API information")
             raise TimeoutError
         except EspargosHTTPStatusError:
             raise EspargosAPIVersionError(f"ESPARGOS controller at {self.host} did not provide API version information. " f"This version of pyespargos only supports API major version {SUPPORTED_API_MAJOR}. " "Please update the controller firmware.")
@@ -301,7 +312,7 @@ class Board(object):
         self.revision = None
         device = api_info.get("device", "")
         revision_name = api_info.get("revision", "")
-        for rev in revisions.all_revisions:
+        for rev in revisions._ALL_REVISIONS:
             if (device, revision_name) == rev.identification:
                 self.revision = rev
                 break
@@ -312,21 +323,28 @@ class Board(object):
         self.netconf = self.control.get_json("get_netconf")
         self.ip_info = self.control.get_json("get_ip_info")
 
-        self.logger.info(f"Identified ESPARGOS at {self.ip_info['ip']} as {self.get_name()}")
+        self._logger.info(f"Identified ESPARGOS at {self.ip_info['ip']} as {self.name}")
 
-        self.stream_connected = False
+        self._stream_connected = False
         self._stream_lifecycle_lock = threading.Lock()
-        self._sensor_message_reassembler = sensor.SensorMessageReassembler(logger=self.logger)
+        self._sensor_message_reassembler = sensor.SensorMessageReassembler(logger=self._logger)
         self._sensor_message_subscriptions: dict[int, list[SensorMessageSubscription]] = {}
         self._sensor_message_subscriptions_lock = threading.Lock()
 
-    def get_name(self):
+    @property
+    def name(self):
         """
         Returns the hostname of the ESPARGOS controller as configured in the web interface.
 
         :return: The hostname of the ESPARGOS controller
         """
         return self.netconf["hostname"]
+
+    @property
+    def is_stream_connected(self) -> bool:
+        """Return whether a sensor-stream transport is currently connected."""
+
+        return self._stream_connected
 
     def start(self, transports=None):
         """
@@ -365,8 +383,8 @@ class Board(object):
             transports = ["udp", "websocket"]
 
         with self._stream_lifecycle_lock:
-            if self.stream_connected:
-                self.logger.debug(f"Sensor stream for {self.get_name()} is already running, ignoring start()")
+            if self._stream_connected:
+                self._logger.debug(f"Sensor stream for {self.name} is already running, ignoring start()")
                 return
 
             # If a previous stream died on its own, its loop thread has exited
@@ -381,21 +399,21 @@ class Board(object):
                     if uart_error is None:
                         return
 
-                    self.logger.warning(f"UART sensor stream failed for {self.get_name()}: {uart_error}")
+                    self._logger.warning(f"UART sensor stream failed for {self.name}: {uart_error}")
                 elif transport == "udp":
                     udp_error = self._try_start_udp()
                     if udp_error is None:
                         return
 
-                    self.logger.warning(f"UDP sensor stream failed for {self.get_name()}: {udp_error}")
+                    self._logger.warning(f"UDP sensor stream failed for {self.name}: {udp_error}")
                 elif transport == "websocket":
                     ws_error = self._try_start_websocket()
                     if ws_error is None:
                         return
 
-                    self.logger.warning(f"WebSocket sensor stream failed for {self.get_name()}: {ws_error}")
+                    self._logger.warning(f"WebSocket sensor stream failed for {self.name}: {ws_error}")
                 else:
-                    self.logger.error(f"Unknown transport {transport} specified for {self.get_name()}, skipping")
+                    self._logger.error(f"Unknown transport {transport} specified for {self.name}, skipping")
 
         raise EspargosStreamConnectionError(f"Could not establish sensor stream to {self.host} via any of the enabled transports, tried transports: {transports}")
 
@@ -403,7 +421,7 @@ class Board(object):
         if self._uart_client is None:
             return f"Host {self.host!r} is not a UART host"
 
-        self.logger.info(f"Trying UART sensor stream for {self.get_name()}")
+        self._logger.info(f"Trying UART sensor stream for {self.name}")
 
         def _callback(payload: bytes):
             self._stream_handle_message(payload)
@@ -417,8 +435,8 @@ class Board(object):
             return f"Could not enable UART sensor stream: {e}"
 
         self._stream_transport = "uart"
-        self.stream_connected = True
-        self.logger.info(f"Started UART sensor stream for {self.get_name()} on {self.host}")
+        self._stream_connected = True
+        self._logger.info(f"Started UART sensor stream for {self.name} on {self.host}")
         return None
 
     def _try_start_udp(self) -> str | None:
@@ -426,7 +444,7 @@ class Board(object):
         Try to start the sensor stream via UDP.
         Returns None on success, or an error message string on failure.
         """
-        self.logger.info(f"Trying UDP sensor stream for {self.get_name()}")
+        self._logger.info(f"Trying UDP sensor stream for {self.name}")
 
         # Resolve remote endpoint first so we can create a socket with the right family
         try:
@@ -463,7 +481,7 @@ class Board(object):
         try:
             udp_sock.sendto(b"", udp_remote_addr)
         except OSError as e:
-            self.logger.warning(f"Could not send firewall-punch packet: {e}")
+            self._logger.warning(f"Could not send firewall-punch packet: {e}")
 
         # Tell the server to start streaming to us via UDP
         udp_control_error = self._enable_udp_stream(local_port)
@@ -493,7 +511,7 @@ class Board(object):
         self._udp_sock = udp_sock
         self._udp_remote_addr = udp_remote_addr
         self._stream_transport = "udp"
-        self.stream_connected = True
+        self._stream_connected = True
         self._stream_thread = threading.Thread(target=self._stream_loop_udp)
         self._stream_thread.start()
 
@@ -502,7 +520,7 @@ class Board(object):
         self._udp_keepalive_thread = threading.Thread(target=self._udp_keepalive_loop, daemon=True)
         self._udp_keepalive_thread.start()
 
-        self.logger.info(f"Started UDP sensor stream for {self.get_name()} on local port {local_port}")
+        self._logger.info(f"Started UDP sensor stream for {self.name} on local port {local_port}")
         return None
 
     def _enable_udp_stream(self, local_port: int) -> str | None:
@@ -529,7 +547,7 @@ class Board(object):
         return "; ".join(errors)
 
     def _try_start_websocket_path(self, path: str) -> str | None:
-        self.logger.info(f"Trying WebSocket sensor stream for {self.get_name()} via /{path}")
+        self._logger.info(f"Trying WebSocket sensor stream for {self.name} via /{path}")
 
         self._stream_ready_event = threading.Event()
         self._stream_error = None
@@ -539,16 +557,16 @@ class Board(object):
         self._stream_thread.start()
 
         if not self._stream_ready_event.wait(timeout=3):
-            self.stream_connected = False
+            self._stream_connected = False
             self._stream_thread.join()
             return "Connection was not established within 3 seconds"
 
         if self._stream_error is not None:
-            self.stream_connected = False
+            self._stream_connected = False
             self._stream_thread.join()
             return str(self._stream_error)
 
-        self.logger.info(f"Started WebSocket sensor stream for {self.get_name()} via /{path}")
+        self._logger.info(f"Started WebSocket sensor stream for {self.name} via /{path}")
         return None
 
     def _disable_udp_stream(self):
@@ -608,13 +626,13 @@ class Board(object):
         Safe to call on an already stopped or silently died stream.
         """
         with self._stream_lifecycle_lock:
-            was_connected = self.stream_connected
-            self.stream_connected = False
+            was_connected = self._stream_connected
+            self._stream_connected = False
             self._join_stream_thread()
             had_transport = self._teardown_stream_transport()
 
             if was_connected or had_transport:
-                self.logger.info(f"Stopped sensor stream for {self.get_name()}")
+                self._logger.info(f"Stopped sensor stream for {self.name}")
 
     def close(self):
         """
@@ -706,7 +724,7 @@ class Board(object):
         try:
             sensor_packet = sensor.SensorPacket.from_bytes(message)
         except ValueError as exc:
-            self.logger.debug(f"Ignoring malformed sensor packet: {exc}")
+            self._logger.debug(f"Ignoring malformed sensor packet: {exc}")
             return
 
         completed_messages = self._sensor_message_reassembler.push(sensor_packet)
@@ -715,7 +733,7 @@ class Board(object):
             try:
                 type_header = sensor.get_sensor_message_type_header(message)
             except ValueError:
-                self.logger.debug("Ignoring sensor message without a logical type header")
+                self._logger.debug("Ignoring sensor message without a logical type header")
                 continue
 
             with self._sensor_message_subscriptions_lock:
@@ -727,7 +745,7 @@ class Board(object):
                 try:
                     subscription.callback(message)
                 except Exception:
-                    self.logger.exception(f"Sensor-message callback failed for type 0x{type_header:08x}")
+                    self._logger.exception(f"Sensor-message callback failed for type 0x{type_header:08x}")
 
     def _udp_keepalive_loop(self):
         """Periodically send empty UDP packets to the controller to keep the firewall hole open."""
@@ -740,7 +758,7 @@ class Board(object):
     def _stream_loop_udp(self):
         self._udp_sock.settimeout(0.2)
         timeout_total = 0
-        while self.stream_connected:
+        while self._stream_connected:
             try:
                 data, addr = self._udp_sock.recvfrom(65535)
                 timeout_total = 0
@@ -748,13 +766,13 @@ class Board(object):
             except socket.timeout:
                 timeout_total += 0.2
             except OSError as e:
-                self.logger.error(f"Board {self.host} has error in UDP socket: {e}")
-                self.stream_connected = False
+                self._logger.error(f"Board {self.host} has error in UDP socket: {e}")
+                self._stream_connected = False
                 break
 
             if timeout_total > self._stream_timeout:
-                self.logger.warning("UDP timeout, disconnecting")
-                self.stream_connected = False
+                self._logger.warning("UDP timeout, disconnecting")
+                self._stream_connected = False
 
     def _stream_loop_websocket(self, path: str):
         try:
@@ -769,12 +787,12 @@ class Board(object):
             return
 
         with ws as websocket:
-            self.stream_connected = True
+            self._stream_connected = True
             self._stream_ready_event.set()
 
             timeout_total = 0
             timeout_once = 0.2
-            while self.stream_connected:
+            while self._stream_connected:
                 try:
                     message = websocket.recv(timeout_once)
                     if message == STREAM_MAGIC:
@@ -785,13 +803,13 @@ class Board(object):
                 except TimeoutError:
                     timeout_total = timeout_total + timeout_once
                 except Exception as e:
-                    self.logger.error(f"Board {self.host} has error in websocket: {e}")
-                    self.stream_connected = False
+                    self._logger.error(f"Board {self.host} has error in websocket: {e}")
+                    self._stream_connected = False
                     break
 
                 if timeout_total > self._stream_timeout:
-                    self.logger.warning("WebSocket timeout, disconnecting")
-                    self.stream_connected = False
+                    self._logger.warning("WebSocket timeout, disconnecting")
+                    self._stream_connected = False
 
     def _fetch(self, path: str, data: str | bytes | None = None) -> str:
         method = "GET" if data is None else "POST"
@@ -807,7 +825,7 @@ class Board(object):
         try:
             res = conn.getresponse()
         except TimeoutError:
-            self.logger.error(f"Timeout in HTTP request for {self.host}/{path}")
+            self._logger.error(f"Timeout in HTTP request for {self.host}/{path}")
             raise TimeoutError
 
         if res.status != 200:
@@ -817,4 +835,4 @@ class Board(object):
         return res.read().decode("utf-8")
 
     def _handle_uart_log(self, message: str):
-        self.logger.info(f"[device] {message.rstrip()}")
+        self._logger.info(f"[device] {message.rstrip()}")

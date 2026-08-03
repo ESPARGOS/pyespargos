@@ -56,6 +56,19 @@ from dataclasses import dataclass, replace
 from enum import IntEnum
 from typing import Callable, Generic, Iterable, TypeVar
 
+__all__ = [
+    "RFSwitchState",
+    "SENSOR_PACKET_TYPE_HEADER",
+    "SensorFragment",
+    "SensorFragmentHeader",
+    "SensorMessage",
+    "SensorMessageReassembler",
+    "SensorPacket",
+    "decode_sensor_message",
+    "get_sensor_message_type_header",
+    "uid_to_antenna_id",
+]
+
 SENSOR_PACKET_TYPE_HEADER = 0xDECAFBAD
 SENSOR_PACKET_TERMINATOR_UID = 0
 SENSOR_UID_ANTENNA_SHIFT = 29
@@ -173,15 +186,15 @@ class SensorPacket:
             raise ValueError("Sensor packet contains fragments from multiple sensors")
 
 
-PayloadT = TypeVar("PayloadT")
-DecodedT = TypeVar("DecodedT")
+_PayloadT = TypeVar("_PayloadT")
+_DecodedT = TypeVar("_DecodedT")
 
 
 @dataclass(frozen=True)
-class SensorMessage(Generic[PayloadT]):
+class SensorMessage(Generic[_PayloadT]):
     uid: int
     antenna_id: int
-    payload: PayloadT
+    payload: _PayloadT
 
 
 class SensorMessageReassembler:
@@ -189,7 +202,7 @@ class SensorMessageReassembler:
 
     def __init__(self, timeout_s: float = 5.0, logger=None):
         self.timeout_s = timeout_s
-        self.logger = logger
+        self._logger = logger
         self._entries = {}
 
     def clear(self):
@@ -215,8 +228,8 @@ class SensorMessageReassembler:
         for fragment in fragments:
             uid = int(fragment.uid)
             if fragment.total_fragments <= 0 or fragment.fragment_index >= fragment.total_fragments:
-                if self.logger is not None:
-                    self.logger.debug(f"Ignoring invalid sensor fragment index " f"{fragment.fragment_index}/{fragment.total_fragments} for uid {uid}")
+                if self._logger is not None:
+                    self._logger.debug(f"Ignoring invalid sensor fragment index " f"{fragment.fragment_index}/{fragment.total_fragments} for uid {uid}")
                 self._entries.pop(uid, None)
                 continue
 
@@ -259,8 +272,8 @@ def get_sensor_message_type_header(message: SensorMessage[bytes]) -> int:
 
 def decode_sensor_message(
     message: SensorMessage[bytes],
-    decoder: Callable[[bytes], DecodedT],
-) -> SensorMessage[DecodedT]:
+    decoder: Callable[[bytes], _DecodedT],
+) -> SensorMessage[_DecodedT]:
     """Decode a reassembled message while preserving its transport metadata."""
 
     return replace(message, payload=decoder(message.payload))

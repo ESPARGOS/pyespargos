@@ -21,6 +21,14 @@ import numpy as np
 from . import csi_packet
 from . import csi_processing
 
+__all__ = [
+    "CompressedRxControl",
+    "decode_compressed_he20",
+    "decode_compressed_ht20",
+    "decode_compressed_ht40",
+    "decode_compressed_lltf",
+]
+
 COMPRESSED_LLTF_FFT_SIZE = 64
 COMPRESSED_HT20_FFT_SIZE = 64
 COMPRESSED_HT40_FFT_SIZE = 128
@@ -74,12 +82,12 @@ assert ctypes.sizeof(CompressedRxControl) == 24
 COMPRESSED_RX_CTRL_MIN_SIZE = 22
 
 
-def build_rx_ctrl_v3_from_compressed(compact_raw: bytes) -> bytes:
+def _build_rx_ctrl_v3_from_compressed(compact_raw: bytes) -> bytes:
     compact_buf = bytes(compact_raw)
     if len(compact_buf) < ctypes.sizeof(CompressedRxControl):
         compact_buf += bytes(ctypes.sizeof(CompressedRxControl) - len(compact_buf))
     compact = CompressedRxControl(compact_buf)
-    ctrl = csi_packet.wifi_pkt_rx_ctrl_v3_t(bytes(ctypes.sizeof(csi_packet.wifi_pkt_rx_ctrl_v3_t)))
+    ctrl = csi_packet.WiFiPacketRxControlV3(bytes(ctypes.sizeof(csi_packet.WiFiPacketRxControlV3)))
     ctrl.rssi = int(compact.rssi)
     ctrl.rate = int(compact.rate)
     ctrl.sig_mode = int(compact.sig_mode)

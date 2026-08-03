@@ -19,6 +19,11 @@ import binascii
 from .sensor import RFSwitchState
 from .wifi import SequenceControl
 
+__all__ = [
+    "RADAR_TX_REPORT_TYPE_HEADER",
+    "RadarTxReportPacket",
+]
+
 RADAR_TX_REPORT_TYPE_HEADER = 0x52545852
 
 RADAR_TX_REPORT_TLV_TYPE_FRAME_META = 1
@@ -43,12 +48,12 @@ class RadarTxReportPacket:
             raise ValueError("Unexpected radar TX report type header")
 
         self.source_mac = bytes(6)
-        self.dest_mac = bytes(6)
-        self.seq_ctrl = SequenceControl(b"\x00\x00")
+        self.destination_mac = bytes(6)
+        self.sequence_control = SequenceControl(b"\x00\x00")
         self.frame_len = 0
         self.software_enqueue_timestamp_us = 0
         self.tx_count = 0
-        self.rfswitch_state = RFSwitchState.SENSOR_RFSWITCH_UNKNOWN
+        self.rf_switch_state = RFSwitchState.SENSOR_RFSWITCH_UNKNOWN
         self.tx_power = -1
         self.flags = 0
         self.tx_status = 0
@@ -83,8 +88,8 @@ class RadarTxReportPacket:
                 if tlv_len < 16:
                     raise ValueError("Invalid radar TX report frame meta TLV")
                 self.source_mac = bytes(value[0:6])
-                self.dest_mac = bytes(value[6:12])
-                self.seq_ctrl = SequenceControl(value[12:14])
+                self.destination_mac = bytes(value[6:12])
+                self.sequence_control = SequenceControl(value[12:14])
                 self.frame_len = int.from_bytes(value[14:16], byteorder="little")
             elif tlv_type == RADAR_TX_REPORT_TLV_TYPE_TIMING_META:
                 if tlv_len < 8:
@@ -94,7 +99,7 @@ class RadarTxReportPacket:
                 if tlv_len < 8:
                     raise ValueError("Invalid radar TX report radar meta TLV")
                 self.tx_count = int.from_bytes(value[0:4], byteorder="little")
-                self.rfswitch_state = value[4]
+                self.rf_switch_state = value[4]
                 self.tx_power = value[5]
             elif tlv_type == RADAR_TX_REPORT_TLV_TYPE_TX_META:
                 if tlv_len < 8:

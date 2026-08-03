@@ -72,7 +72,7 @@ class EspargosDemoCFOViewer(CSIBacklogMixin, ESPARGOSCSIApplication):
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
-        if not hasattr(self, "backlog") or not self.backlog.nonempty():
+        if not hasattr(self, "backlog") or not self.backlog.has_data:
             return
 
         cfo_backlog, timestamp_backlog = self.backlog.get_multiple(("cfo", "host_timestamp"))
@@ -96,14 +96,14 @@ class EspargosDemoCFOViewer(CSIBacklogMixin, ESPARGOSCSIApplication):
         min_antennas = self._effective_min_antennas()
 
         def predicate(cluster):
-            return np.sum(cluster.get_completion()) >= min_antennas
+            return np.sum(cluster.completion) >= min_antennas
 
         return predicate
 
     def _effective_min_antennas(self):
         min_antennas = self.appconfig.get("min_antennas")
         if min_antennas is None:
-            return int(np.prod(self.pool.get_shape()))
+            return int(np.prod(self.pool.shape))
         return int(min_antennas)
 
     def _register_backlog_callback(self):
@@ -118,7 +118,7 @@ class EspargosDemoCFOViewer(CSIBacklogMixin, ESPARGOSCSIApplication):
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def sensorCount(self):
-        return np.prod(self.pool.get_shape())
+        return np.prod(self.pool.shape)
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=minAntennasChanged)
     def minAntennas(self):

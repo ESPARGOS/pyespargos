@@ -26,6 +26,8 @@ from . import constants
 from . import revisions
 from . import sensor
 
+__all__ = ["ClusterCollisionError", "SensorCluster"]
+
 
 class ClusterCollisionError(RuntimeError):
     """Raised when a cluster already contains different data for a message."""
@@ -36,39 +38,48 @@ class SensorCluster(ABC):
 
     def __init__(self, board_revisions: Sequence[revisions.BoardRevision]):
         self.board_revisions = tuple(board_revisions)
-        self.shape = (
+        self._shape = (
             len(self.board_revisions),
             constants.ROWS_PER_BOARD,
             constants.ANTENNAS_PER_ROW,
         )
-        self._completion = np.full(self.shape, False, dtype=np.bool_)
+        self._completion = np.full(self._shape, False, dtype=np.bool_)
         self._created_at = time.monotonic()
 
-    def get_sensor_position(self, board_num: int, antenna_id: int) -> tuple[int, int, int]:
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        """Return the logical ``(board, row, column)`` sensor-array shape."""
+
+        return self._shape
+
+    def get_sensor_position(self, board_index: int, antenna_id: int) -> tuple[int, int, int]:
         """Map a firmware antenna ID to ``(board, row, column)``."""
 
-        row, column = self.board_revisions[board_num].antid_to_row_col(antenna_id)
-        return board_num, row, column
+        row, column = self.board_revisions[board_index].antenna_id_to_row_col(antenna_id)
+        return board_index, row, column
 
-    def get_completion(self) -> np.ndarray:
+    @property
+    def completion(self) -> np.ndarray:
         """Return which ``(board, row, column)`` positions supplied data."""
 
         return self._completion
 
-    def get_completion_all(self) -> bool:
+    @property
+    def is_complete(self) -> bool:
         """Return whether every sensor supplied its part of the measurement."""
 
         return bool(np.all(self._completion))
 
-    def get_age(self) -> float:
+    @property
+    def age(self) -> float:
         """Return the approximate cluster age in seconds."""
 
         return time.monotonic() - self._created_at
 
-    def _mark_sensor_complete(self, board_num: int, antenna_id: int) -> None:
+    def _mark_sensor_complete(self, board_index: int, antenna_id: int) -> None:
         """Mark the observation data for one sensor as complete."""
 
-        self._mark_sensor_position_complete(self.get_sensor_position(board_num, antenna_id))
+        self._mark_sensor_position_complete(self.get_sensor_position(board_index, antenna_id))
 
     def _mark_sensor_position_complete(
         self,
@@ -79,7 +90,7 @@ class SensorCluster(ABC):
         self._completion[sensor_position] = True
 
     @abstractmethod
-    def add_message(self, board_num: int, sensor_message: sensor.SensorMessage) -> bool:
+    def add_message(self, board_index: int, sensor_message: sensor.SensorMessage) -> bool:
         """Add one sensor message.
 
         Return ``True`` if the cluster changed, ``False`` for an exact

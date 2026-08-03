@@ -30,6 +30,8 @@ from . import constants
 from . import sensor
 from .sensor_cluster import ClusterCollisionError, SensorCluster
 
+__all__ = ["Pool"]
+
 _DEFAULT_RUN_TIMEOUT = 0.005
 _PROCESSING_RUN_TIMEOUT = 0.5
 _RUN_BATCH_BOUNDARY = object()
@@ -41,33 +43,33 @@ class _ClusterCallback(object):
 
     def __init__(
         self,
-        cb: Callable[[SensorCluster], None],
-        cb_predicate: Callable[[SensorCluster], bool] = None,
+        callback: Callable[[SensorCluster], None],
+        callback_predicate: Callable[[SensorCluster], bool] = None,
     ):
         # By default, emit a cluster once every sensor has contributed to it
-        self.cb_predicate = cb_predicate
-        self.cb = cb
+        self._callback_predicate = callback_predicate
+        self._callback = callback
 
         # Track fired state per cluster object
-        self.fired = WeakKeyDictionary()
+        self._fired = WeakKeyDictionary()
 
-    def try_call(self, cluster_obj: SensorCluster):
+    def _try_call(self, cluster_obj: SensorCluster):
         # Check if callback has already been fired for this cluster object
-        if self.fired.get(cluster_obj, False):
+        if self._fired.get(cluster_obj, False):
             return True
 
         # Check if callback needs to be called: Use predicate function if defined, otherwise call if cluster is complete
         callback_required = False
-        if self.cb_predicate is not None:
-            callback_required = self.cb_predicate(cluster_obj)
+        if self._callback_predicate is not None:
+            callback_required = self._callback_predicate(cluster_obj)
         else:
-            callback_required = cluster_obj.get_completion_all()
+            callback_required = cluster_obj.is_complete
 
         if callback_required:
-            self.cb(cluster_obj)
+            self._callback(cluster_obj)
 
             # Mark as fired for this cluster object
-            self.fired[cluster_obj] = True
+            self._fired[cluster_obj] = True
             return True
 
         return False
@@ -86,7 +88,7 @@ class Pool(ABC):
 
     def __init__(self, boards: list[board.Board]):
         module_name = type(self).__module__.rsplit(".", maxsplit=1)[-1]
-        self.logger = logging.getLogger(f"pyespargos.{module_name}")
+        self._logger = logging.getLogger(f"pyespargos.{module_name}")
         self.boards = list(boards)
         self.board_revisions = tuple(board_obj.revision for board_obj in self.boards)
 
@@ -103,18 +105,18 @@ class Pool(ABC):
         self._processing_lock = threading.Lock()
         self._processing = False
 
-        self.logger.info(f"Created new {type(self).__name__} with {len(self.boards)} board(s)")
+        self._logger.info(f"Created new {type(self).__name__} with {len(self.boards)} board(s)")
 
     def _subscribe_sensor_messages(
         self,
-        board_num: int,
+        board_index: int,
         capability: board.BoardCapability,
         subscribe: Callable[[Callable[[sensor.SensorMessage], None]], board.SensorMessageSubscription],
     ) -> None:
         """Subscribe one decoded message type and enqueue it for this pool."""
 
         def enqueue(sensor_message: sensor.SensorMessage):
-            self._input_queue.put_nowait((board_num, sensor_message))
+            self._input_queue.put_nowait((board_index, sensor_message))
 
         subscription = subscribe(enqueue)
         self._sensor_message_subscriptions.append((capability, subscription))
@@ -171,7 +173,7 @@ class Pool(ABC):
                 daemon=True,
             )
             self._processing_thread.start()
-            self.logger.info(f"Started {type(self).__name__} processing thread")
+            self._logger.info(f"Started {type(self).__name__} processing thread")
 
     def stop_processing(self):
         """Stop the pool-processing worker, if running."""
@@ -189,27 +191,27 @@ class Pool(ABC):
 
     def add_cluster_callback(
         self,
-        cb: Callable[[SensorCluster], None],
-        cb_predicate: Callable[[SensorCluster], bool] = None,
+        callback: Callable[[SensorCluster], None],
+        callback_predicate: Callable[[SensorCluster], bool] = None,
     ) -> _ClusterCallback:
         """Register a callback invoked when a sensor cluster is completed.
 
-        Completion is decided by ``cb_predicate``; without a predicate, a
+        Completion is decided by ``callback_predicate``; without a predicate, a
         cluster is emitted once every sensor has contributed to it. Each
         callback fires at most once per cluster. The registry only stores the
         callbacks: the pool subclass decides from :meth:`_on_cluster_updated`
         which updated clusters are offered to them via :meth:`_try_callbacks`.
 
-        :param cb: The function to call, gets the completed :class:`.SensorCluster`
-        :param cb_predicate: A function with signature :code:`(sensor_cluster)` that defines the conditions under which
+        :param callback: The function to call, gets the completed :class:`.SensorCluster`
+        :param callback_predicate: A function with signature :code:`(sensor_cluster)` that defines the conditions under which
             a cluster is regarded as completed and thus provided to the callback.
         :return: A callback handle that can be passed to :meth:`remove_cluster_callback`
         """
 
-        callback = _ClusterCallback(cb, cb_predicate)
+        callback_handle = _ClusterCallback(callback, callback_predicate)
         with self._cluster_callbacks_lock:
-            self._cluster_callbacks.append(callback)
-        return callback
+            self._cluster_callbacks.append(callback_handle)
+        return callback_handle
 
     def remove_cluster_callback(self, callback: _ClusterCallback) -> bool:
         """Remove a callback previously returned by :meth:`add_cluster_callback`.
@@ -228,19 +230,19 @@ class Pool(ABC):
     def replace_cluster_callback(
         self,
         callback: _ClusterCallback,
-        cb: Callable[[SensorCluster], None],
-        cb_predicate: Callable[[SensorCluster], bool] = None,
+        callback_function: Callable[[SensorCluster], None],
+        callback_predicate: Callable[[SensorCluster], bool] = None,
     ) -> _ClusterCallback:
         """Atomically replace a registered cluster callback.
 
         :param callback: Existing handle returned by :meth:`add_cluster_callback`
-        :param cb: Replacement callback function
-        :param cb_predicate: Replacement completion predicate
+        :param callback_function: Replacement callback function
+        :param callback_predicate: Replacement completion predicate
         :return: New callback handle
         :raises ValueError: If ``callback`` is no longer registered
         """
 
-        replacement = _ClusterCallback(cb, cb_predicate)
+        replacement = _ClusterCallback(callback_function, callback_predicate)
         with self._cluster_callbacks_lock:
             try:
                 index = self._cluster_callbacks.index(callback)
@@ -255,8 +257,8 @@ class Pool(ABC):
         all_callbacks_fired = True
         with self._cluster_callbacks_lock:
             callbacks = tuple(self._cluster_callbacks)
-        for cb in callbacks:
-            callback_fired = cb.try_call(cluster_obj)
+        for callback in callbacks:
+            callback_fired = callback._try_call(cluster_obj)
             all_callbacks_fired = callback_fired and all_callbacks_fired
         return all_callbacks_fired
 
@@ -266,7 +268,8 @@ class Pool(ABC):
         for board_obj in self.boards:
             board_obj.reboot()
 
-    def get_shape(self) -> tuple[int, int, int]:
+    @property
+    def shape(self) -> tuple[int, int, int]:
         """Return the logical ``(board, row, column)`` sensor-array shape."""
 
         return (
@@ -317,8 +320,8 @@ class Pool(ABC):
             # subclass's completion checks run only once, without repeatedly
             # hashing potentially structured cluster keys.
             updated_clusters: dict[int, tuple[str, Hashable, SensorCluster]] = {}
-            for board_num, sensor_message in messages:
-                updated = self._add_sensor_message(board_num, sensor_message)
+            for board_index, sensor_message in messages:
+                updated = self._add_sensor_message(board_index, sensor_message)
                 if updated is not None:
                     cache_name, cluster_key, sensor_cluster = updated
                     updated_clusters[id(sensor_cluster)] = updated
@@ -334,11 +337,11 @@ class Pool(ABC):
 
     def _add_sensor_message(
         self,
-        board_num: int,
+        board_index: int,
         sensor_message: sensor.SensorMessage,
     ) -> tuple[str, Hashable, SensorCluster] | None:
-        cache_name = self._get_cluster_cache_name(board_num, sensor_message)
-        cluster_key = self._get_cluster_key(board_num, sensor_message)
+        cache_name = self._get_cluster_cache_name(board_index, sensor_message)
+        cluster_key = self._get_cluster_key(board_index, sensor_message)
 
         collision = None
         with self._cluster_lock:
@@ -348,13 +351,13 @@ class Pool(ABC):
                 sensor_cluster = self._create_cluster(
                     cache_name,
                     cluster_key,
-                    board_num,
+                    board_index,
                     sensor_message,
                 )
                 cache[cluster_key] = sensor_cluster
 
             try:
-                changed = sensor_cluster.add_message(board_num, sensor_message)
+                changed = sensor_cluster.add_message(board_index, sensor_message)
             except ClusterCollisionError as error:
                 collision = error
 
@@ -392,7 +395,7 @@ class Pool(ABC):
                 cache = self._cluster_caches.get(cache_name)
                 if not cache:
                     continue
-                expired_keys = [cluster_key for cluster_key, sensor_cluster in cache.items() if sensor_cluster.get_age() > timeout]
+                expired_keys = [cluster_key for cluster_key, sensor_cluster in cache.items() if sensor_cluster.age > timeout]
                 for cluster_key in expired_keys:
                     expired.append((cache_name, cluster_key, cache.pop(cluster_key)))
 
@@ -426,7 +429,7 @@ class Pool(ABC):
         if self._last_cluster_collision_warning is not None and now - self._last_cluster_collision_warning < _CLUSTER_COLLISION_WARNING_INTERVAL:
             return
 
-        self.logger.warning(
+        self._logger.warning(
             "Cluster-key collision in cache %r for %r: %s; dropping the incoming "
             "message and retaining the existing cluster. This can happen when a "
             "transmitter does not advance its sequence number as intended. "
@@ -486,18 +489,18 @@ class Pool(ABC):
             apply_value = {key: value for key, value in apply_value.items() if key not in ignore_keys}
 
         target = "board 0's value" if reset_value is None else "a safe default"
-        self.logger.warning(f"{what}: boards disagree (board 0 != board(s) {mismatched}); resetting all boards to {target}.")
+        self._logger.warning(f"{what}: boards disagree (board 0 != board(s) {mismatched}); resetting all boards to {target}.")
         try:
             apply(apply_value)
         except Exception as error:
-            self.logger.warning(f"{what}: could not reset boards to a consistent value ({error}); using board 0's value.")
+            self._logger.warning(f"{what}: could not reset boards to a consistent value ({error}); using board 0's value.")
             return values[0]
         return chosen
 
     @abstractmethod
     def _get_cluster_cache_name(
         self,
-        board_num: int,
+        board_index: int,
         sensor_message: sensor.SensorMessage,
     ) -> str:
         """Return the named cache that should receive a message."""
@@ -505,7 +508,7 @@ class Pool(ABC):
     @abstractmethod
     def _get_cluster_key(
         self,
-        board_num: int,
+        board_index: int,
         sensor_message: sensor.SensorMessage,
     ) -> Hashable:
         """Return the logical-observation key for a message."""
@@ -515,7 +518,7 @@ class Pool(ABC):
         self,
         cache_name: str,
         cluster_key: Hashable,
-        board_num: int,
+        board_index: int,
         first_message: sensor.SensorMessage,
     ) -> SensorCluster:
         """Create a cluster for a previously unseen key."""

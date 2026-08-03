@@ -34,6 +34,8 @@ import threading
 
 import numpy as np
 
+__all__ = ["BacklogField", "BacklogFilter", "SensorBacklog"]
+
 
 @dataclass(frozen=True)
 class BacklogField:
@@ -74,33 +76,33 @@ class SensorBacklog:
         size: int = 100,
         logger: logging.Logger | None = None,
     ):
-        self.logger = logger or logging.getLogger("pyespargos.sensor_backlog")
-        self.sensor_shape = tuple(sensor_shape)
-        if len(self.sensor_shape) != 3 or any(dimension < 0 for dimension in self.sensor_shape):
+        self._logger = logger or logging.getLogger("pyespargos.sensor_backlog")
+        self._sensor_shape = tuple(sensor_shape)
+        if len(self._sensor_shape) != 3 or any(dimension < 0 for dimension in self._sensor_shape):
             raise ValueError("sensor_shape must contain three non-negative dimensions")
 
-        self.field_specs = dict(field_specs)
-        if not self.field_specs:
+        self._field_specs = dict(field_specs)
+        if not self._field_specs:
             raise ValueError("field_specs must not be empty")
-        for name, spec in self.field_specs.items():
+        for name, spec in self._field_specs.items():
             if not isinstance(name, str) or not name:
                 raise ValueError("backlog field names must be non-empty strings")
             if not isinstance(spec, BacklogField):
                 raise TypeError(f"field specification for {name!r} must be a BacklogField")
 
-        self.storage_mutex = threading.Lock()
+        self._storage_lock = threading.Lock()
         self._callbacks_lock = threading.Lock()
-        self.callbacks: list[Callable[[], None]] = []
-        self.filter_mutex = threading.Lock()
-        self.filters: list[BacklogFilter] = []
-        self.storage: dict[str, np.ndarray] = {}
-        self.fields: set[str] = set()
-        self.size = 0
-        self.head = 0
-        self.latest: int | None = None
-        self.filllevel = 0
+        self._callbacks: list[Callable[[], None]] = []
+        self._filters_lock = threading.Lock()
+        self._filters: list[BacklogFilter] = []
+        self._storage: dict[str, np.ndarray] = {}
+        self._fields: set[str] = set()
+        self._size = 0
+        self._head = 0
+        self._latest: int | None = None
+        self._fill_level = 0
 
-        selected_fields = set(self.field_specs) if fields is None else set(fields)
+        selected_fields = set(self._field_specs) if fields is None else set(fields)
         self._initialize_storage(size=size, fields=selected_fields)
 
     def _validate_size(self, size: int) -> int:
@@ -110,7 +112,7 @@ class SensorBacklog:
 
     def _validate_fields(self, fields) -> set[str]:
         selected_fields = set(fields)
-        unknown_fields = selected_fields - self.field_specs.keys()
+        unknown_fields = selected_fields - self._field_specs.keys()
         if unknown_fields:
             unknown = ", ".join(sorted(unknown_fields))
             raise ValueError(f"Unknown backlog field(s): {unknown}")
@@ -118,47 +120,47 @@ class SensorBacklog:
 
     def _field_shape(self, spec: BacklogField) -> tuple[int, ...]:
         value_shape = tuple(spec.shape)
-        return self.sensor_shape + value_shape if spec.per_sensor else value_shape
+        return self._sensor_shape + value_shape if spec.per_sensor else value_shape
 
     def _allocate_field(self, spec: BacklogField) -> np.ndarray:
         return np.full(
-            (self.size,) + self._field_shape(spec),
+            (self._size,) + self._field_shape(spec),
             fill_value=spec.fill_value,
             dtype=np.dtype(spec.dtype),
         )
 
     def _read_unlocked(self, key: str) -> np.ndarray:
-        storage = self.storage[key]
-        if self.filllevel == 0:
+        storage = self._storage[key]
+        if self._fill_level == 0:
             return storage[:0]
 
-        first = (self.head - self.filllevel) % self.size
-        if first < self.head:
-            return storage[first : self.head]
-        return np.concatenate((storage[first:], storage[: self.head]), axis=0)
+        first = (self._head - self._fill_level) % self._size
+        if first < self._head:
+            return storage[first : self._head]
+        return np.concatenate((storage[first:], storage[: self._head]), axis=0)
 
     def _initialize_storage(self, size=None, fields=None) -> None:
         """Reallocate storage while preserving the newest existing datapoints."""
 
-        with self.storage_mutex:
-            old_filllevel = self.filllevel
-            old_values = {key: np.array(self._read_unlocked(key), copy=True) for key in self.fields}
+        with self._storage_lock:
+            old_fill_level = self._fill_level
+            old_values = {key: np.array(self._read_unlocked(key), copy=True) for key in self._fields}
 
             if size is not None:
-                self.size = self._validate_size(size)
+                self._size = self._validate_size(size)
             if fields is not None:
-                self.fields = self._validate_fields(fields)
+                self._fields = self._validate_fields(fields)
 
-            keep_count = min(old_filllevel, self.size)
-            self.storage = {key: self._allocate_field(self.field_specs[key]) for key in self.fields}
+            keep_count = min(old_fill_level, self._size)
+            self._storage = {key: self._allocate_field(self._field_specs[key]) for key in self._fields}
 
             for key, values in old_values.items():
-                if key in self.storage and keep_count:
-                    self.storage[key][:keep_count] = values[-keep_count:]
+                if key in self._storage and keep_count:
+                    self._storage[key][:keep_count] = values[-keep_count:]
 
-            self.filllevel = keep_count
-            self.head = keep_count % self.size
-            self.latest = keep_count - 1 if keep_count else None
+            self._fill_level = keep_count
+            self._head = keep_count % self._size
+            self._latest = keep_count - 1 if keep_count else None
 
     def append_datapoint(self, values: Mapping[str, Any]) -> None:
         """Atomically append one datapoint.
@@ -167,25 +169,25 @@ class SensorBacklog:
         ignored, and enabled fields not supplied are reset to their fill value.
         """
 
-        unknown_fields = set(values) - self.field_specs.keys()
+        unknown_fields = set(values) - self._field_specs.keys()
         if unknown_fields:
             unknown = ", ".join(sorted(unknown_fields))
             raise ValueError(f"Unknown backlog field(s): {unknown}")
 
-        with self.storage_mutex:
-            destination = self.head
-            for key in self.fields:
-                self.storage[key][destination] = self.field_specs[key].fill_value
+        with self._storage_lock:
+            destination = self._head
+            for key in self._fields:
+                self._storage[key][destination] = self._field_specs[key].fill_value
             for key, value in values.items():
-                if key in self.fields:
-                    self.storage[key][destination] = value
+                if key in self._fields:
+                    self._storage[key][destination] = value
 
-            self.latest = destination
-            self.head = (destination + 1) % self.size
-            self.filllevel = min(self.filllevel + 1, self.size)
+            self._latest = destination
+            self._head = (destination + 1) % self._size
+            self._fill_level = min(self._fill_level + 1, self._size)
 
         with self._callbacks_lock:
-            callbacks = tuple(self.callbacks)
+            callbacks = tuple(self._callbacks)
         for callback in callbacks:
             callback()
 
@@ -195,7 +197,7 @@ class SensorBacklog:
         if not callable(callback):
             raise TypeError("callback must be callable")
         with self._callbacks_lock:
-            self.callbacks.append(callback)
+            self._callbacks.append(callback)
         return callback
 
     def remove_update_callback(self, callback: Callable[[], None]) -> bool:
@@ -203,7 +205,7 @@ class SensorBacklog:
 
         with self._callbacks_lock:
             try:
-                self.callbacks.remove(callback)
+                self._callbacks.remove(callback)
                 return True
             except ValueError:
                 return False
@@ -213,71 +215,72 @@ class SensorBacklog:
 
         if not isinstance(backlog_filter, BacklogFilter):
             raise TypeError("backlog_filter must be an instance of BacklogFilter")
-        with self.filter_mutex:
-            if backlog_filter not in self.filters:
-                self.filters.append(backlog_filter)
+        with self._filters_lock:
+            if backlog_filter not in self._filters:
+                self._filters.append(backlog_filter)
 
     def remove_filter(self, backlog_filter: BacklogFilter) -> None:
         """Remove a measurement filter."""
 
-        with self.filter_mutex:
-            if backlog_filter in self.filters:
-                self.filters.remove(backlog_filter)
+        with self._filters_lock:
+            if backlog_filter in self._filters:
+                self._filters.remove(backlog_filter)
 
     def clear_filters(self) -> None:
         """Remove all measurement filters."""
 
-        with self.filter_mutex:
-            self.filters.clear()
+        with self._filters_lock:
+            self._filters.clear()
 
-    def get_filters(self) -> list[BacklogFilter]:
+    @property
+    def filters(self) -> list[BacklogFilter]:
         """Return the currently active measurement filters."""
 
-        with self.filter_mutex:
-            return list(self.filters)
+        with self._filters_lock:
+            return list(self._filters)
 
     def _passes_filters(self, measurement) -> bool:
         """Return whether a completed measurement passes every active filter."""
 
-        with self.filter_mutex:
-            filters = tuple(self.filters)
+        with self._filters_lock:
+            filters = tuple(self._filters)
         return all(backlog_filter.matches(measurement) for backlog_filter in filters)
 
     def get(self, key: str) -> np.ndarray:
         """Return one field for all stored datapoints, oldest first."""
 
-        if key not in self.fields:
+        if key not in self._fields:
             raise ValueError(f"Requested key {key!r} not in backlog fields")
-        with self.storage_mutex:
+        with self._storage_lock:
             return np.array(self._read_unlocked(key), copy=True)
 
     def get_multiple(self, keys) -> tuple[np.ndarray, ...]:
         """Return several fields from one consistent backlog snapshot."""
 
         keys = tuple(keys)
-        missing = [key for key in keys if key not in self.fields]
+        missing = [key for key in keys if key not in self._fields]
         if missing:
             raise ValueError(f"Requested key {missing[0]!r} not in backlog fields")
-        with self.storage_mutex:
+        with self._storage_lock:
             return tuple(np.array(self._read_unlocked(key), copy=True) for key in keys)
 
     def get_latest(self, key: str):
         """Return the latest stored value for a field, or ``None``."""
 
-        if key not in self.fields:
+        if key not in self._fields:
             raise ValueError(f"Requested key {key!r} not in backlog fields")
-        with self.storage_mutex:
-            if self.latest is None:
+        with self._storage_lock:
+            if self._latest is None:
                 return None
-            return np.array(self.storage[key][self.latest], copy=True)
+            return np.array(self._storage[key][self._latest], copy=True)
 
     def clear(self) -> None:
         """Discard every stored datapoint."""
 
-        with self.storage_mutex:
-            self.head = 0
-            self.latest = None
-            self.filllevel = 0
+        with self._storage_lock:
+            self._head = 0
+            self._latest = None
+            self._fill_level = 0
 
     def count_valid_datapoints(
         self,
@@ -294,30 +297,35 @@ class SensorBacklog:
         valid = np.any(finite, axis=1) if allow_incomplete else np.all(finite, axis=1)
         return int(np.count_nonzero(valid))
 
-    def nonempty(self) -> bool:
+    @property
+    def has_data(self) -> bool:
         """Return whether the backlog contains at least one datapoint."""
 
-        with self.storage_mutex:
-            return self.latest is not None
+        with self._storage_lock:
+            return self._latest is not None
 
-    def get_size(self) -> int:
+    @property
+    def size(self) -> int:
         """Return the ring-buffer capacity."""
 
-        with self.storage_mutex:
-            return self.size
+        with self._storage_lock:
+            return self._size
 
-    def set_size(self, new_size: int) -> None:
+    @size.setter
+    def size(self, new_size: int) -> None:
         """Resize the ring buffer, preserving its newest datapoints."""
 
         self._initialize_storage(size=new_size)
 
-    def get_fields(self) -> set[str]:
+    @property
+    def fields(self) -> set[str]:
         """Return the enabled field names."""
 
-        with self.storage_mutex:
-            return set(self.fields)
+        with self._storage_lock:
+            return set(self._fields)
 
-    def set_fields(self, new_fields) -> None:
+    @fields.setter
+    def fields(self, new_fields) -> None:
         """Enable a new field set while preserving the current timeline."""
 
         self._initialize_storage(fields=new_fields)

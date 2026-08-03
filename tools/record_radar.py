@@ -26,12 +26,12 @@ timestamp_records = []
 tx_timestamp_records = []
 csi_lltf_records = []
 
-calibration = pool.get_calibration()
+calibration = pool.calibration
 if calibration is not None:
     channel_primary = calibration.channel_primary
 else:
-    wificonf = pool.get_wificonf()
-    channel_primary = int(wificonf.get("channel-primary", 1))
+    wifi_config = pool.get_wifi_config()
+    channel_primary = int(wifi_config.get("channel-primary", 1))
 
 frequencies = espargos.csi_processing.get_frequencies_lltf(channel_primary)
 center = espargos.csi_processing.get_center_frequency(channel_primary)
@@ -42,10 +42,10 @@ fft_gain_records = []
 
 
 def collect_gain_settings(cluster: espargos.CSICluster):
-    print(f"RX gain: {np.nanmean(cluster.get_rx_gain()):.1f}, FFT gain: {np.nanmean(cluster.get_fft_gain()):.1f}", end="\r")
+    print(f"RX gain: {np.nanmean(cluster.rx_gain):.1f}, FFT gain: {np.nanmean(cluster.fft_gain):.1f}", end="\r")
 
-    rx_gain_records.append(cluster.get_rx_gain())
-    fft_gain_records.append(cluster.get_fft_gain())
+    rx_gain_records.append(cluster.rx_gain)
+    fft_gain_records.append(cluster.fft_gain)
 
 
 def on_new_csi(cluster: espargos.CSICluster):
@@ -55,20 +55,20 @@ def on_new_csi(cluster: espargos.CSICluster):
     print(f"Collected {csi_count} packets with CSI at rate {csi_count / (time.monotonic() - start_time):.2f} pkt/s", end="\r")
 
     csi_lltf = cluster.deserialize_csi_lltf()
-    csi_lltf = pool.get_calibration().apply_lltf(csi_lltf)
+    csi_lltf = pool.calibration.apply_lltf(csi_lltf)
 
-    tx_timestamp_s = cluster.get_radar_tx_info().get_hardware_tx_timestamp_ns() / 1e9
+    tx_timestamp_s = cluster.radar_tx_report.get_hardware_tx_timestamp_ns() / 1e9
     corrected = espargos.radar.correct_radar_csi_tx_timestamps(
-        csi_lltf[np.newaxis, ...], np.asarray([tx_timestamp_s], dtype=np.float64), np.asarray([cluster.get_radar_tx_index()], dtype=np.int32), subcarrier_frequencies, calibration.timing_offsets, tx_timestamp_offset_s=1085e-9
+        csi_lltf[np.newaxis, ...], np.asarray([tx_timestamp_s], dtype=np.float64), np.asarray([cluster.radar_tx_index], dtype=np.int32), subcarrier_frequencies, calibration.timing_offsets, tx_timestamp_offset_s=1085e-9
     )[0]
 
-    timestamp_records.append(cluster.get_sensor_timestamps())
+    timestamp_records.append(cluster.sensor_timestamps)
     tx_timestamp_records.append(tx_timestamp_s)
     csi_lltf_records.append(corrected)
 
 
 def radar_cb_predicate(cluster: espargos.CSICluster):
-    return np.sum(cluster.get_completion()) == 7 and cluster.is_radar() and cluster.has_radar_tx_report()
+    return np.sum(cluster.completion) == 7 and cluster.is_radar and cluster.has_radar_tx_report
 
 
 try:
@@ -81,7 +81,7 @@ try:
     pool.start()
     pool.calibrate(per_board=False, duration=2)
 
-    calibration = pool.get_calibration()
+    calibration = pool.calibration
     min_safe_start_s = max(0.0, -float(np.nanmin(calibration.timing_offsets))) + 1e-6
     active_by_sensor = np.zeros((espargos.constants.ROWS_PER_BOARD, espargos.constants.ANTENNAS_PER_ROW), dtype=bool)
     active_by_sensor[0, 2] = True
@@ -97,7 +97,7 @@ try:
     )
 
     pool.set_radar_config(radar_config)
-    collect_gain_callback = pool.add_csi_callback(collect_gain_settings, cb_predicate=radar_cb_predicate)
+    collect_gain_callback = pool.add_csi_callback(collect_gain_settings, callback_predicate=radar_cb_predicate)
     gain_calib_start_time = time.monotonic()
     while time.monotonic() < gain_calib_start_time + args.gain_calib_duration:
         pool.run()
@@ -130,14 +130,14 @@ try:
     )
 
     # Wait for gain settings to take effect
-    dump_csi = pool.add_csi_callback(lambda cluster: None, cb_predicate=radar_cb_predicate)
+    dump_csi = pool.add_csi_callback(lambda cluster: None, callback_predicate=radar_cb_predicate)
     dump_start_time = time.monotonic()
     while time.monotonic() < dump_start_time + 0.5:
         pool.run()
     pool.remove_csi_callback(dump_csi)
 
     # Start main capture loop with CSI callback
-    pool.add_csi_callback(on_new_csi, cb_predicate=radar_cb_predicate)
+    pool.add_csi_callback(on_new_csi, callback_predicate=radar_cb_predicate)
 
     start_time = time.monotonic()
     while time.monotonic() < start_time + args.duration:

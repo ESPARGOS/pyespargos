@@ -14,6 +14,20 @@ from . import constants
 from .sensor import RFSwitchState
 from .wifi import FrameControl, SequenceControl
 
+__all__ = [
+    "CSI_TYPE_HEADER",
+    "CSIPacket",
+    "HE20_COEFFICIENTS_PER_CHANNEL",
+    "HT40_GAP_SUBCARRIERS",
+    "HT_COEFFICIENTS_PER_CHANNEL",
+    "LEGACY_COEFFICIENTS_PER_CHANNEL",
+    "WiFiPacketRxControlV3",
+    "WiFiRxBasebandFormat",
+    "WiFiSignalMode",
+    "get_csi_format_subcarrier_count",
+    "get_csi_format_subcarrier_indices",
+]
+
 CSI_TYPE_HEADER = 0xE4CD0BAC
 "Logical sensor-message type header of serialized CSI messages"
 
@@ -75,7 +89,7 @@ def get_csi_format_subcarrier_indices(preamble_format: str) -> np.ndarray:
 #####################################################
 #       Enums used by multiple PHY versions         #
 #####################################################
-class wifi_rx_bb_format_t(IntEnum):
+class WiFiRxBasebandFormat(IntEnum):
     RX_BB_FORMAT_11B = 0
     RX_BB_FORMAT_11G = 1
     RX_BB_FORMAT_11A = 1  # Same value as 11G
@@ -87,7 +101,7 @@ class wifi_rx_bb_format_t(IntEnum):
     RX_BB_FORMAT_HE_TB = 7
 
 
-class wifi_sig_mode_t(IntEnum):
+class WiFiSignalMode(IntEnum):
     SIG_MODE_LEGACY = 0
     SIG_MODE_HT = 1
     SIG_MODE_HE = 2
@@ -97,7 +111,7 @@ class wifi_sig_mode_t(IntEnum):
 ########################################################################
 # C Structures for Espressif PHY version 3 (e.g., ESP32-C5, ESP32-C61) #
 ########################################################################
-class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
+class WiFiPacketRxControlV3(ctypes.LittleEndianStructure):
     """
     A ctypes structure representing the `wifi_pkt_rx_ctrl_t` as provided by the ESP32.
     See the related `esp-idf code <https://github.com/espressif/esp-idf/blob/master/components/esp_wifi/include/esp_wifi_he_types.h>`_ for details.
@@ -184,21 +198,64 @@ class wifi_pkt_rx_ctrl_v3_t(ctypes.LittleEndianStructure):
     def __init__(self, buf=None):
         pass
 
+    @staticmethod
+    def _byte_to_signed(value: int) -> int:
+        """Interpret an unsigned byte as a two's-complement value."""
 
-assert ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t) == 64
+        value = int(value) & 0xFF
+        return value - 0x100 if value & 0x80 else value
+
+    @staticmethod
+    def _signed15(value: int) -> int:
+        """Interpret the lower 15 bits as a signed two's-complement value."""
+
+        value = int(value) & 0x7FFF
+        return value - 0x8000 if value & 0x4000 else value
+
+    @property
+    def rssi_signed(self) -> int:
+        """RSSI interpreted as a signed value."""
+
+        return self._byte_to_signed(self.rssi)
+
+    @property
+    def noise_floor_signed(self) -> int:
+        """Noise floor interpreted as a signed value."""
+
+        return self._byte_to_signed(self.noise_floor)
+
+    @property
+    def rx_gain_signed(self) -> int:
+        """RX gain interpreted as a signed value."""
+
+        return self._byte_to_signed(self.rx_gain)
+
+    @property
+    def fft_gain_signed(self) -> int:
+        """FFT gain interpreted as a signed value."""
+
+        return self._byte_to_signed(self.fft_gain)
+
+    @property
+    def cfo(self) -> float:
+        """Carrier frequency offset in Hz.
+
+        This conversion was reverse engineered from ``librftest.a``
+        (``bb_common.o``) and ``libphy.a`` (``phy_feature.o``).
+        """
+
+        if self.sig_mode == WiFiSignalMode.SIG_MODE_LEGACY:
+            rate_index = self.rate
+        else:
+            rate_index = (self.sig_mode << 4) + (self.he_siga1 & 0x7F)
+
+        if rate_index < 8:
+            return float(self._signed15(self.cfo_low_rate) / -48) * 25000 * 5 / 128
+
+        return float((self._signed15(self.cfo_high_rate) * -5) / 128) * 25000 * 5 / 128
 
 
-def gain_byte_to_signed(value: int) -> int:
-    """
-    Interpret an 8-bit gain value reported in ``rx_ctrl`` as signed.
-
-    The hardware stores gain fields as bytes. RX gain normally lives in the
-    positive gain-table range, while FFT gain can be negative and is therefore
-    reported in two's-complement form.
-    """
-    value = int(value)
-    value &= 0xFF
-    return value - 0x100 if value & 0x80 else value
+assert ctypes.sizeof(WiFiPacketRxControlV3) == 64
 
 
 class CSIPacket:
@@ -215,15 +272,15 @@ class CSIPacket:
         self._raw = raw
         self.type_header = int.from_bytes(raw[0:4], byteorder="little")
         self.source_mac = bytes(6)
-        self.dest_mac = bytes(6)
-        self.seq_ctrl = SequenceControl(b"\x00\x00")
+        self.destination_mac = bytes(6)
+        self.sequence_control = SequenceControl(b"\x00\x00")
         self.frame_flags = 0
         self.frame_ctrl = FrameControl(b"\x00\x00")
         self.timestamp = 0
         self.global_timestamp_us = 0
         self.acquire_flags = 0
         self.acquire_val_scale_cfg = 0
-        self.rfswitch_state = RFSwitchState.SENSOR_RFSWITCH_UNKNOWN
+        self.rf_switch_state = RFSwitchState.SENSOR_RFSWITCH_UNKNOWN
         self.gain_table_entry_raw = bytes(12)
         self.gain_table_entry_valid = False
         self.rx_ctrl = bytes()
@@ -254,8 +311,8 @@ class CSIPacket:
                 if tlv_len < 16:
                     raise ValueError("Invalid frame meta TLV")
                 self.source_mac = bytes(value[0:6])
-                self.dest_mac = bytes(value[6:12])
-                self.seq_ctrl = SequenceControl(value[12:14])
+                self.destination_mac = bytes(value[6:12])
+                self.sequence_control = SequenceControl(value[12:14])
                 self.frame_flags = int.from_bytes(value[14:16], byteorder="little")
                 if tlv_len >= 18:
                     self.frame_ctrl = FrameControl(value[16:18])
@@ -268,7 +325,7 @@ class CSIPacket:
                     raise ValueError("Invalid acquire meta TLV")
                 self.acquire_flags = int.from_bytes(value[0:2], byteorder="little")
                 self.acquire_val_scale_cfg = value[2]
-                self.rfswitch_state = value[3]
+                self.rf_switch_state = value[3]
             elif tlv_type == SERIALIZED_CSI_TLV_TYPE_GAIN_TABLE_ENTRY:
                 if tlv_len < 12:
                     raise ValueError("Invalid gain table entry TLV")
@@ -276,13 +333,13 @@ class CSIPacket:
                 self.gain_table_entry_valid = True
             elif tlv_type == SERIALIZED_CSI_TLV_TYPE_RX_CTRL_RAW:
                 self.rx_ctrl = bytes(value)
-                if len(self.rx_ctrl) >= ctypes.sizeof(wifi_pkt_rx_ctrl_v3_t):
-                    self.timestamp = wifi_pkt_rx_ctrl_v3_t(self.rx_ctrl).timestamp
+                if len(self.rx_ctrl) >= ctypes.sizeof(WiFiPacketRxControlV3):
+                    self.timestamp = WiFiPacketRxControlV3(self.rx_ctrl).timestamp
             elif tlv_type == SERIALIZED_CSI_TLV_TYPE_RX_CTRL_COMPRESSED:
                 if tlv_len < csi_compression.COMPRESSED_RX_CTRL_MIN_SIZE:
                     raise ValueError("Invalid compressed RX CTRL TLV")
-                self.rx_ctrl = csi_compression.build_rx_ctrl_v3_from_compressed(bytes(value[: ctypes.sizeof(csi_compression.CompressedRxControl)]))
-                self.timestamp = wifi_pkt_rx_ctrl_v3_t(self.rx_ctrl).timestamp
+                self.rx_ctrl = csi_compression._build_rx_ctrl_v3_from_compressed(bytes(value[: ctypes.sizeof(csi_compression.CompressedRxControl)]))
+                self.timestamp = WiFiPacketRxControlV3(self.rx_ctrl).timestamp
             elif tlv_type == SERIALIZED_CSI_TLV_TYPE_CSI_RAW:
                 self._raw_csi_tlv = bytes(value)
                 self._raw_csi_padded_len = tlv_len
@@ -312,7 +369,7 @@ class CSIPacket:
             if self._is_compressed:
                 logical_csi_len = min(1 + csi_compression.COMPRESSED_TAP_COUNT * 4, self._raw_csi_padded_len)
             else:
-                logical_csi_len = min(wifi_pkt_rx_ctrl_v3_t(self.rx_ctrl).rx_channel_estimate_len, self._raw_csi_padded_len)
+                logical_csi_len = min(WiFiPacketRxControlV3(self.rx_ctrl).rx_channel_estimate_len, self._raw_csi_padded_len)
 
             self.buf = self._raw_csi_tlv[:logical_csi_len]
             self.csi_len = logical_csi_len
@@ -325,7 +382,7 @@ class CSIPacket:
         return bool(self.frame_flags & SERIALIZED_CSI_TLV_FRAME_FLAG_IS_RADAR)
 
     @property
-    def is_calib(self):
+    def is_calibration(self):
         return bool(self.frame_flags & SERIALIZED_CSI_TLV_FRAME_FLAG_IS_CALIB)
 
     @property
@@ -352,41 +409,15 @@ class CSIPacket:
     def is_compressed(self):
         return self._is_compressed
 
+    def _decode_lltf8(self) -> np.ndarray:
+        """Decode signed 8-bit complex pairs from this packet's CSI payload."""
 
-def unpack_lltf8_values(buf, pair_count):
-    values = np.frombuffer(buf[: pair_count * 2], dtype=np.int8).astype(np.float32).view(np.complex64)
-    return -1.0j * np.conj(values)
+        values = np.frombuffer(self.buf[: LEGACY_COEFFICIENTS_PER_CHANNEL * 2], dtype=np.int8).astype(np.float32).view(np.complex64)
+        return -1.0j * np.conj(values)
 
+    def _decode_lltf12(self, value_count: int) -> np.ndarray:
+        """Decode packed signed 12-bit values from this packet's CSI payload."""
 
-def unpack_lltf12_values(buf, value_count: int) -> np.ndarray:
-    raw = np.frombuffer(buf[: value_count * 2], dtype=np.uint8)
-    words = (raw[0::2].astype(np.uint16) | (raw[1::2].astype(np.uint16) << 8)).astype(np.uint16)
-    return (((words.astype(np.int16) << 4) >> 4)).astype(np.int16)
-
-
-def _extract_signed15(x: int) -> int:
-    x &= 0x7FFF
-    return x - 0x8000 if (x & 0x4000) else x
-
-
-def get_cfo_from_rx_ctrl(rx_ctrl) -> int:
-    """
-    Compute the CFO value (in Hz) from a `wifi_pkt_rx_ctrl_v3_t` byte buffer.
-
-    This was reverse engineered from librftest.a (bb_common.o) and libphy.a (phy_feature.o).
-
-    Espressif's RX metadata exposes two CFO fields. The low-rate field is used
-    when the derived ``rate_index`` is below 8 (802.11b); otherwise the high-rate
-    field is used (802.11g/n/ax).
-    """
-    ctrl = rx_ctrl if isinstance(rx_ctrl, wifi_pkt_rx_ctrl_v3_t) else wifi_pkt_rx_ctrl_v3_t(rx_ctrl)
-
-    if ctrl.sig_mode == wifi_sig_mode_t.SIG_MODE_LEGACY:
-        rate_index = ctrl.rate
-    else:
-        rate_index = (ctrl.sig_mode << 4) + (ctrl.he_siga1 & 0x7F)
-
-    if rate_index < 8:
-        return float(_extract_signed15(ctrl.cfo_low_rate) / -48) * 25000 * 5 / 128
-
-    return float((_extract_signed15(ctrl.cfo_high_rate) * -5) / 128) * 25000 * 5 / 128
+        raw = np.frombuffer(self.buf[: value_count * 2], dtype=np.uint8)
+        words = (raw[0::2].astype(np.uint16) | (raw[1::2].astype(np.uint16) << 8)).astype(np.uint16)
+        return (((words.astype(np.int16) << 4) >> 4)).astype(np.int16)

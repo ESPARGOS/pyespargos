@@ -20,6 +20,8 @@ from . import constants
 from . import csi_processing
 from .sensor_calibration import ClockReferenceScope, SensorCalibration, compute_reference_path_delays
 
+__all__ = ["CSICalibration"]
+
 
 class CSICalibration(SensorCalibration):
     def __init__(
@@ -98,7 +100,7 @@ class CSICalibration(SensorCalibration):
             reference_path_delays=reference_path_delays,
         )
 
-        self.logger = logging.getLogger("espargos.calib")
+        self._logger = logging.getLogger("espargos.calib")
         self._calibration_cache_by_format: dict[str, np.ndarray] = {}
 
     def _format_frequencies(self, csi_format: str) -> np.ndarray:
@@ -117,7 +119,7 @@ class CSICalibration(SensorCalibration):
         correction = self._calibration_cache_by_format.get(csi_format)
         if correction is None:
             if np.isnan(self.timing_offsets).any() or np.isnan(self.phase_offsets).any():
-                self.logger.warning("Calibration offsets contain NaN, missing calibration data?")
+                self._logger.warning("Calibration offsets contain NaN, missing calibration data?")
 
             correction = self.phase_time_correction(self._format_frequencies(csi_format))
             self._calibration_cache_by_format[csi_format] = correction

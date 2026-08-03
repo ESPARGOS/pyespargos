@@ -57,7 +57,7 @@ class EspargosDemoPolarization(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFor
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
-        if (result := self.get_backlog_csi("rx_gain", "fft_gain", "rfswitch_state")) is None:
+        if (result := self.get_backlog_csi("rx_gain", "fft_gain", "rf_switch_state")) is None:
             return
 
         csi_backlog, rx_gain_backlog, fft_gain_backlog, rfswitch_state = result

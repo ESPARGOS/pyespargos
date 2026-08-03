@@ -106,7 +106,7 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
             "fft_gain",
             "host_timestamp",
             "mac",
-            "rfswitch_state",
+            "rf_switch_state",
             allow_incomplete=True,
             remove_global_sto=False,
             return_format=True,
@@ -336,10 +336,10 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
         self.overlay.publish_spatial_spectrum(self.beamspace_power, beam_frequency_space)
 
     def _cb_predicate(self, cluster):
-        csi_completion_state = cluster.get_completion()
+        csi_completion_state = cluster.completion
         timeout_condition = False
         if self.args.csi_completion_timeout > 0:
-            timeout_condition = np.sum(csi_completion_state) >= 2 and cluster.get_age() > self.args.csi_completion_timeout
+            timeout_condition = np.sum(csi_completion_state) >= 2 and cluster.age > self.args.csi_completion_timeout
 
         return np.all(csi_completion_state) or timeout_condition
 
