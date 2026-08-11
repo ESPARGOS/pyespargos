@@ -26,6 +26,8 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
         "acquire_lltf_force": False,
         "lltf_8bit_mode": False,
         "compress_csi": False,
+        "cfo_compensation": True,
+        "gain_phase_compensation": True,
         "gain": {
             "automatic": True,
             "rx_gain_value": 32,
@@ -60,11 +62,12 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
         # * Otherwise, read current Pool config from devices and set UI accordingly (devices are authoritative).
         # Apply later
         def apply_initial_config():
+            current_config = self._read_config_from_pool()
+            self.cfgman.set(current_config)
             if force_config:
                 self.cfgman.forceConfigAppApplied.connect(self.initComplete)
-                self.cfgman.force(force_config)
+                self.cfgman.force(copy.deepcopy(force_config))
             else:
-                self.cfgman.set(self._read_config_from_pool())
                 self.initComplete.emit()
 
         PyQt6.QtCore.QTimer.singleShot(0, apply_initial_config)
@@ -89,6 +92,11 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
         Returns a partial config dict (does not include purely-UI fields).
         """
         cfg_out: dict = {}
+        cfg_out["gain_phase_compensation"] = self.pool.gain_phase_compensation
+
+        cfo = self.pool.get_cfo_correction()
+        if isinstance(cfo, dict):
+            cfg_out["cfo_compensation"] = bool(cfo.get("auto", False))
 
         # CSI acquire config -> UI fields
         csi_cfg = self.pool.get_csi_acquisition_config()
@@ -188,6 +196,14 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
                 # Pool-local reference CSI stream option
                 if "show_reference" in delta:
                     self.pool.emit_calibration_csi = bool(delta["show_reference"])
+
+                if "cfo_compensation" in delta:
+                    enabled = bool(delta["cfo_compensation"])
+                    self.pool.set_cfo_correction(enabled, 0)
+
+                if "gain_phase_compensation" in delta:
+                    enabled = bool(delta["gain_phase_compensation"])
+                    self.pool.gain_phase_compensation = enabled
 
                 # CSI acquire config
                 if "acquire_lltf_force" in delta or "compress_csi" in delta or "lltf_8bit_mode" in delta:

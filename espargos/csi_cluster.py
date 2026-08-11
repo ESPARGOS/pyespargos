@@ -10,6 +10,7 @@ import numpy as np
 from . import revisions
 from . import constants
 from . import csi_compression
+from . import gain_phase_calibration
 from . import csi_packet
 from . import radar_packet
 from . import sensor
@@ -40,6 +41,7 @@ class CSICluster(SensorCluster):
         self,
         frame_key: wifi.WiFiFrameKey,
         board_revisions: list[revisions.BoardRevision],
+        gain_phase_compensation: bool = False,
     ):
         """
         Constructor for the CSICluster class.
@@ -52,6 +54,7 @@ class CSICluster(SensorCluster):
         :param board_revisions: The ESPARGOS board revisions in the pool
         """
         super().__init__(board_revisions)
+        self._gain_phase_enabled = bool(gain_phase_compensation)
         self.frame_key = frame_key
         self.source_mac = frame_key.source_mac.hex()
         self.destination_mac = frame_key.destination_mac.hex()
@@ -75,6 +78,13 @@ class CSICluster(SensorCluster):
         self._lltf_8bit_mode = np.full(self.shape, fill_value=False, dtype=np.bool_)
         self._gain_table_entry_raw = np.zeros(self.shape + (12,), dtype=np.uint8)
         self._gain_table_entry_valid = np.full(self.shape, fill_value=False)
+
+    def _compensate_gain_phase(self, values):
+        if not self._gain_phase_enabled:
+            return values
+        values = np.array(values, copy=True)
+        values[~self.completion] = np.nan
+        return gain_phase_calibration.apply(values, self.rx_gain)
 
     def get_csi_packet(self, board_index: int, esp_num: int) -> csi_packet.CSIPacket | None:
         """Return the CSI packet already stored for one sensor, if any."""
@@ -269,7 +279,7 @@ class CSICluster(SensorCluster):
         sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
         csi_lltf = np.einsum("bras,bras->bras", csi_lltf, sto_delay_correction)
 
-        return csi_lltf
+        return self._compensate_gain_phase(csi_lltf)
 
     def deserialize_csi_ht20ltf(self):
         """
@@ -313,7 +323,7 @@ class CSICluster(SensorCluster):
         # 128 bit delay is overkill here, CSI is only 2x32 bit, product would be 2x128 bit
         sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
         csi_ht20 = np.einsum("bras,bras->bras", csi_ht20, sto_delay_correction)
-        return csi_ht20
+        return self._compensate_gain_phase(csi_ht20)
 
     def deserialize_csi_ht40ltf(self):
         """
@@ -361,7 +371,7 @@ class CSICluster(SensorCluster):
         sto_delay_correction = np.exp(-1.0j * 2 * np.pi * delay[:, :, :, np.newaxis] * constants.WIFI_SUBCARRIER_SPACING * subcarrier_range)
         csi_ht40 = np.einsum("bras,bras->bras", csi_ht40, sto_delay_correction)
 
-        return csi_ht40
+        return self._compensate_gain_phase(csi_ht40)
 
     def deserialize_csi_he20ltf(self):
         """
@@ -393,7 +403,7 @@ class CSICluster(SensorCluster):
         sto_delay_correction = np.exp(-1.0j * 2 * np.pi * (delay + he20_fractional_delay)[:, :, :, np.newaxis] * (constants.WIFI_SUBCARRIER_SPACING / 4.0) * subcarrier_range)
         csi_he20 = np.einsum("bras,bras->bras", csi_he20, sto_delay_correction)
         csi_he20[..., 121:124] = 0.0
-        return csi_he20
+        return self._compensate_gain_phase(csi_he20)
 
     @property
     def has_lltf(self) -> bool:

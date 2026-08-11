@@ -412,7 +412,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
     def initializing(self):
         return not self.ready
 
-    @PyQt6.QtCore.pyqtProperty(object, constant=False, notify=initComplete)
+    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=initComplete)
     def hasBacklog(self):
         return hasattr(self, "backlog")
 

@@ -237,6 +237,32 @@ Drawer {
 				ToolTip.text: "Compress CSI in firmware by converting it to a sparser time-domain representation before transport. This reduces bandwidth, but the received CSI is no longer the raw frequency-domain estimate."
 			}
 
+			// Section: Corrections
+			Label { Layout.columnSpan: 2; text: "Corrections"; color: "#9fb3c8" }
+			Label { text: "CFO corr."; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: cfoCompensationSwitch
+				property string configKey: "cfo_compensation"
+				property string configProp: "checked"
+				Component.onCompleted: poolConfigManager.register(this)
+				onCheckedChanged: poolConfigManager.onControlChanged(this)
+				checked: true
+				ToolTip.visible: root.tooltipsEnabled && hovered
+				ToolTip.text: "Automatically compensate receiver carrier-frequency offset. Off forces zero CFO correction for radar mode, where transmitter and receiver share a frequency reference and the offset is zero."
+			}
+
+			Label { text: "Gain phase"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: gainPhaseCompensationSwitch
+				property string configKey: "gain_phase_compensation"
+				property string configProp: "checked"
+				Component.onCompleted: poolConfigManager.register(this)
+				onCheckedChanged: poolConfigManager.onControlChanged(this)
+				checked: true
+				ToolTip.visible: root.tooltipsEnabled && hovered
+				ToolTip.text: "Compensate deterministic phase jumps when AGC crosses analog gain-element boundaries."
+			}
+
 			// Section: Gain
 			Label { Layout.columnSpan: 2; text: "Gain"; color: "#9fb3c8" }
 			Label { text: "Automatic"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }

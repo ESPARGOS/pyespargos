@@ -49,7 +49,13 @@ _CACHE_CALIBRATION = "calibration"
 class CSIPool(Pool):
     """Manage Wi-Fi features and assemble CSI for each received Wi-Fi packet."""
 
-    def __init__(self, boards: list[board.Board], ota_cache_timeout=5, reference_generator_boards=None):
+    def __init__(
+        self,
+        boards: list[board.Board],
+        ota_cache_timeout=5,
+        reference_generator_boards=None,
+        gain_phase_compensation=True,
+    ):
         """
         Constructor for the CSIPool class.
 
@@ -60,12 +66,24 @@ class CSIPool(Pool):
                               that is / are not part of the pool (only controller is used to generate packets, sensors not used).
                               If provided, sends calibration command to these boards, which will then generate the calibration signal
                               during calibration phase.
+        :param gain_phase_compensation: Whether to correct the deterministic
+                                        phase jumps caused when AGC switches
+                                        analog gain elements. When enabled
+                                        (the default), each sensor's reported
+                                        gain-table index selects a fixed,
+                                        hardware-characterized phase correction
+                                        that is applied whenever CSI is
+                                        deserialized. The correction rotates
+                                        phase without changing amplitude;
+                                        disabling it returns CSI without this
+                                        additional rotation.
         """
         super().__init__(boards)
         self._reference_generator_boards = reference_generator_boards if reference_generator_boards is not None else []
 
         self._ota_cache_timeout = ota_cache_timeout
         self._emit_calibration_csi = False
+        self._gain_phase_enabled = bool(gain_phase_compensation)
 
         for board_index, board_obj in enumerate(self.boards):
             wifi_rx = board_obj.wifi_rx
@@ -383,6 +401,23 @@ class CSIPool(Pool):
         """
         self._emit_calibration_csi = bool(enabled)
 
+    @property
+    def gain_phase_compensation(self) -> bool:
+        """Whether deserialized CSI is corrected for gain-element phase jumps."""
+
+        return self._gain_phase_enabled
+
+    @gain_phase_compensation.setter
+    def gain_phase_compensation(self, enabled: bool):
+        """Enable or disable gain-element phase correction for new CSI."""
+
+        enabled = bool(enabled)
+        if enabled == self._gain_phase_enabled:
+            return
+        self._gain_phase_enabled = enabled
+        self._clear_cluster_cache(_CACHE_OTA)
+        self._clear_cluster_cache(_CACHE_CALIBRATION)
+
     def _clusters_to_calibration(self, board_index=None):
         """
         Convert the collected calibration clusters into per-antenna calibration offsets.
@@ -651,7 +686,11 @@ class CSIPool(Pool):
         board_index: int,
         first_message: sensor.SensorMessage,
     ) -> csi_cluster.CSICluster:
-        return csi_cluster.CSICluster(cluster_key, self.board_revisions)
+        return csi_cluster.CSICluster(
+            cluster_key,
+            self.board_revisions,
+            gain_phase_compensation=self._gain_phase_enabled,
+        )
 
     def _on_cluster_updated(
         self,

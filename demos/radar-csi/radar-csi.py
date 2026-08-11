@@ -24,7 +24,7 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
         "period_ms": 16.0,
         "start_ms": 10.0,
         "slot_ms": 10.0,
-        "tx_power": 34,
+        "tx_power": 66,
         "tx_phymode": 2,
         "tx_rate": 11,
         "rfswitch_state": 2,

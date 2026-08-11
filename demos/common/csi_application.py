@@ -70,7 +70,10 @@ class ESPARGOSCSIApplication(ESPARGOSApplication):
         context.setContextProperty("csiconfig", self.csiconfig)
 
     def _create_pool(self, boards: list) -> espargos.CSIPool:
-        return espargos.CSIPool(boards)
+        return espargos.CSIPool(
+            boards,
+            gain_phase_compensation=bool(self.get_initial_config("pool", "gain_phase_compensation", default=True)),
+        )
 
     def _create_pool_drawer(self):
         pool_cfg = self.get_explicit_initial_config("pool", default={})

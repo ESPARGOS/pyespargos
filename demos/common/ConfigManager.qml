@@ -70,6 +70,7 @@ Item {
 
 	function register(ctrl) {
 		if (!ctrl || !ctrl.configKey || !ctrl.configProp) return
+		if (controls.indexOf(ctrl) !== -1) return
 		controls.push(ctrl)
 		if (_hasPath(cache, ctrl.configKey)) setControl(ctrl, _getPath(cache, ctrl.configKey))
 	}
@@ -106,6 +107,9 @@ Item {
 		// If control update was triggered by backend, ignore it
 		if (_suppressChanges) return
 		if (!ctrl || !ctrl.configKey || !ctrl.configProp) return
+		// Property-change handlers may fire while a QML control is still being
+		// constructed. Only registered controls can represent user input.
+		if (controls.indexOf(ctrl) === -1) return
 		let raw = ctrl[ctrl.configProp]
 		let val = ctrl.encode ? ctrl.encode(raw) : raw
 		_setPath(cache, ctrl.configKey, val)

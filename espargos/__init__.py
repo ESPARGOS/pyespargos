@@ -20,6 +20,7 @@ from . import delay_estimation
 from . import pool
 from . import revisions
 from . import sensor_calibration
+from . import gain_phase_calibration
 from . import uart
 from . import wifi
 from . import board_wifi_rx
