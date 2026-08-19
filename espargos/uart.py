@@ -7,7 +7,9 @@ import queue
 import struct
 import threading
 import time
-import termios
+
+if os.name == "posix":
+    import termios
 
 import serial
 import serial.tools.list_ports
