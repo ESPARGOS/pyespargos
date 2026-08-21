@@ -237,9 +237,7 @@ class CSIBacklog(SensorBacklog):
         calibration = self._pool.calibration if self._apply_calibration else None
         if self._apply_calibration and calibration is None:
             if not self._missing_calibration_warned:
-                self._logger.warning(
-                    "Skipping CSI backlog datapoints while calibration is enabled but the pool has no calibration"
-                )
+                self._logger.warning("Skipping CSI backlog datapoints while calibration is enabled but the pool has no calibration")
                 self._missing_calibration_warned = True
             return
         self._missing_calibration_warned = False

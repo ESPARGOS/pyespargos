@@ -693,10 +693,7 @@ class CSIPool(Pool):
         """Whether calibration provides one clock domain for this pool."""
 
         calibration = self._calibration
-        return calibration is not None and (
-            len(self.boards) == 1
-            or calibration.clock_scope == ClockReferenceScope.POOL
-        )
+        return calibration is not None and (len(self.boards) == 1 or calibration.clock_scope == ClockReferenceScope.POOL)
 
     def _invalidate_association_timebase(self, reason: str, *, warn: bool = True) -> None:
         """Invalidate calibration and discard timestamp-associated clusters."""
@@ -728,9 +725,7 @@ class CSIPool(Pool):
         timestamp_us = int(stream_packet.global_timestamp_us)
         previous = self._association_last_timestamp_us.get(sensor_id)
         if previous is not None and timestamp_us + 1_000_000 < previous:
-            self._invalidate_association_timebase(
-                f"sensor {board_index}/{sensor_message.antenna_id} timestamp restarted"
-            )
+            self._invalidate_association_timebase(f"sensor {board_index}/{sensor_message.antenna_id} timestamp restarted")
         latest = self._association_last_timestamp_us.get(sensor_id)
         if latest is None or timestamp_us > latest:
             self._association_last_timestamp_us[sensor_id] = timestamp_us
@@ -746,11 +741,7 @@ class CSIPool(Pool):
         stream_packet = sensor_message.payload
         signature = csi_association.FrameSignature.from_packet(stream_packet)
         calibration = self._calibration
-        calibration_matches = (
-            self.timestamp_association_available
-            and signature.channel == calibration.channel_primary
-            and signature.secondary_channel_relative == calibration.channel_secondary_relative
-        )
+        calibration_matches = self.timestamp_association_available and signature.channel == calibration.channel_primary and signature.secondary_channel_relative == calibration.channel_secondary_relative
         if not calibration_matches:
             if csi_association.is_control_frame(stream_packet):
                 self._association_stats["dropped_without_calibration"] += 1

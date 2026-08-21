@@ -387,11 +387,7 @@ class CSIPacket:
         """
 
         rx_ctrl = WiFiPacketRxControlV3(self.rx_ctrl)
-        return (
-            int(self.global_timestamp_us) * 1000
-            - 20_800
-            + int(rx_ctrl.rxstart_time_cyc) * 12.5
-        )
+        return int(self.global_timestamp_us) * 1000 - 20_800 + int(rx_ctrl.rxstart_time_cyc) * 12.5
 
     @property
     def is_radar(self):
