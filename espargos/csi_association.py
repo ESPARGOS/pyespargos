@@ -22,14 +22,14 @@ An observation matches a cluster's first observation only when:
 1. their signatures are exactly equal;
 2. they use the same timestamp policy; and
 3. when timestamps are required, they belong to the same calibration epoch and
-   differ by no more than 100 ns.
+   differ by no more than 1 us.
 
 Without usable timestamp association, ordinary data frames fall back to
 signature-only matching. Control frames do not, because their signatures are
 not sufficiently unique, so they are dropped instead.
 
-The approximate 100 ns comparison lives in :meth:`FrameIdentity.match`, not in
-Python equality. "Within 100 ns" is not transitive and therefore cannot safely
+The approximate 1 us comparison lives in :meth:`FrameIdentity.match`, not in
+Python equality. "Within 1 us" is not transitive and therefore cannot safely
 define hashing or ``__eq__``.
 """
 
@@ -50,7 +50,7 @@ __all__ = [
 ]
 
 CONTROL_FRAME_TYPE = 1
-FRAME_TIMESTAMP_TOLERANCE_NS = 100
+FRAME_TIMESTAMP_TOLERANCE_NS = 1_000
 
 
 def is_control_frame(packet: csi_packet.CSIPacket) -> bool:
