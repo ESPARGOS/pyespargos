@@ -105,17 +105,18 @@ Item {
 	}
 	function onControlChanged(ctrl) {
 		// If control update was triggered by backend, ignore it
-		if (_suppressChanges) return
-		if (!ctrl || !ctrl.configKey || !ctrl.configProp) return
+		if (_suppressChanges) return false
+		if (!ctrl || !ctrl.configKey || !ctrl.configProp) return false
 		// Property-change handlers may fire while a QML control is still being
 		// constructed. Only registered controls can represent user input.
-		if (controls.indexOf(ctrl) === -1) return
+		if (controls.indexOf(ctrl) === -1) return false
 		let raw = ctrl[ctrl.configProp]
 		let val = ctrl.encode ? ctrl.encode(raw) : raw
 		_setPath(cache, ctrl.configKey, val)
 		let delta = {}
 		_setPath(delta, ctrl.configKey, val)
 		_setConfigJson(JSON.stringify(delta))
+		return true
 	}
 	function applyConfig(obj) {
 		cache = obj || {}

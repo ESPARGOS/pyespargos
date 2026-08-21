@@ -162,6 +162,7 @@ class CSIBacklog(SensorBacklog):
     ):
         self._pool = pool
         self._apply_calibration = bool(apply_calibration)
+        self._missing_calibration_warned = False
         self._callback_handle = None
 
         super().__init__(
@@ -184,6 +185,8 @@ class CSIBacklog(SensorBacklog):
         """Enable or disable calibration of newly received CSI."""
 
         self._apply_calibration = bool(enabled)
+        if not self._apply_calibration:
+            self._missing_calibration_warned = False
 
     def set_callback_predicate(self, callback_predicate=None) -> None:
         """Replace the CSI completion predicate used by this backlog."""
@@ -208,6 +211,7 @@ class CSIBacklog(SensorBacklog):
         available_property,
         deserialize_method,
         calibration_method,
+        calibration,
         values,
     ) -> None:
         if field not in enabled_fields:
@@ -220,10 +224,7 @@ class CSIBacklog(SensorBacklog):
             return
 
         csi = getattr(clustered_csi, deserialize_method)()
-        if self._apply_calibration:
-            calibration = self._pool.calibration
-            if calibration is None:
-                raise RuntimeError("CSI calibration is enabled but the pool has no calibration")
+        if calibration is not None:
             csi = getattr(calibration, calibration_method)(csi)
         values[field] = csi
 
@@ -232,6 +233,16 @@ class CSIBacklog(SensorBacklog):
 
         if not self._passes_filters(clustered_csi):
             return
+
+        calibration = self._pool.calibration if self._apply_calibration else None
+        if self._apply_calibration and calibration is None:
+            if not self._missing_calibration_warned:
+                self._logger.warning(
+                    "Skipping CSI backlog datapoints while calibration is enabled but the pool has no calibration"
+                )
+                self._missing_calibration_warned = True
+            return
+        self._missing_calibration_warned = False
 
         fields = self.fields
         values = {}
@@ -248,6 +259,7 @@ class CSIBacklog(SensorBacklog):
             "has_lltf",
             "deserialize_csi_lltf",
             "apply_lltf",
+            calibration,
             values,
         )
         self._deserialize_csi_field(
@@ -257,6 +269,7 @@ class CSIBacklog(SensorBacklog):
             "has_ht20ltf",
             "deserialize_csi_ht20ltf",
             "apply_ht20",
+            calibration,
             values,
         )
         self._deserialize_csi_field(
@@ -266,6 +279,7 @@ class CSIBacklog(SensorBacklog):
             "has_ht40ltf",
             "deserialize_csi_ht40ltf",
             "apply_ht40",
+            calibration,
             values,
         )
         self._deserialize_csi_field(
@@ -275,6 +289,7 @@ class CSIBacklog(SensorBacklog):
             "has_he20ltf",
             "deserialize_csi_he20ltf",
             "apply_he20",
+            calibration,
             values,
         )
 

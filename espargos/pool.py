@@ -342,10 +342,21 @@ class Pool(ABC):
     ) -> tuple[str, Hashable, SensorCluster] | None:
         cache_name = self._get_cluster_cache_name(board_index, sensor_message)
         cluster_key = self._get_cluster_key(board_index, sensor_message)
+        if cluster_key is None:
+            return None
 
         collision = None
         with self._cluster_lock:
             cache = self._cluster_caches.setdefault(cache_name, {})
+            cluster_key = self._resolve_cluster_key(
+                cache_name,
+                cluster_key,
+                cache,
+                board_index,
+                sensor_message,
+            )
+            if cluster_key is None:
+                return None
             sensor_cluster = cache.get(cluster_key)
             if sensor_cluster is None:
                 sensor_cluster = self._create_cluster(
@@ -510,8 +521,26 @@ class Pool(ABC):
         self,
         board_index: int,
         sensor_message: sensor.SensorMessage,
-    ) -> Hashable:
-        """Return the logical-observation key for a message."""
+    ) -> Hashable | None:
+        """Return the logical-observation key, or ``None`` to drop a message."""
+
+    def _resolve_cluster_key(
+        self,
+        cache_name: str,
+        proposed_key: Hashable,
+        cache: dict[Hashable, SensorCluster],
+        board_index: int,
+        sensor_message: sensor.SensorMessage,
+    ) -> Hashable | None:
+        """Resolve a proposed key against the cache while holding its lock.
+
+        Exact-key clustering uses the proposed key unchanged.  Subclasses may
+        override this to select among several open instances of a repeatable
+        signature, as CSI control-frame timestamp association does.  Returning
+        ``None`` conservatively drops an ambiguous observation.
+        """
+
+        return proposed_key
 
     @abstractmethod
     def _create_cluster(

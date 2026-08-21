@@ -377,6 +377,22 @@ class CSIPacket:
     def __bytes__(self):
         return self._raw
 
+    def get_hardware_rx_timestamp_ns(self) -> float:
+        """Return the sensor-local Wi-Fi sampling timestamp in nanoseconds.
+
+        The microsecond timestamp is latched 20.8 microseconds after the
+        sampling start. ``rxstart_time_cyc`` supplies the remaining offset in
+        80 MHz clock cycles. CSI-derived fractional timing is deliberately not
+        part of this hardware timestamp.
+        """
+
+        rx_ctrl = WiFiPacketRxControlV3(self.rx_ctrl)
+        return (
+            int(self.global_timestamp_us) * 1000
+            - 20_800
+            + int(rx_ctrl.rxstart_time_cyc) * 12.5
+        )
+
     @property
     def is_radar(self):
         return bool(self.frame_flags & SERIALIZED_CSI_TLV_FRAME_FLAG_IS_RADAR)

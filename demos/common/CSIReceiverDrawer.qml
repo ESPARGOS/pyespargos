@@ -94,8 +94,8 @@ Drawer {
 				property var decode: function(v) { return Math.max(0, Math.min(12, parseInt(v||1)-1)) }
 				Component.onCompleted: poolConfigManager.register(this)
 				onCurrentIndexChanged: {
-					calibButton.needCalibration = true
-					poolConfigManager.onControlChanged(this)
+					if (poolConfigManager.onControlChanged(this))
+						calibButton.needCalibration = true
 				}
 				implicitWidth: 180
 				model: [ "1 (2.412 GHz)", "2 (2.417 GHz)", "3 (2.422 GHz)", "4 (2.427 GHz)", "5 (2.432 GHz)", "6 (2.437 GHz)", "7 (2.442 GHz)", "8 (2.447 GHz)", "9 (2.452 GHz)", "10 (2.457 GHz)", "11 (2.462 GHz)", "12 (2.467 GHz)", "13 (2.472 GHz)" ]
@@ -112,8 +112,8 @@ Drawer {
 				property var decode: function(v) { return Math.max(0, Math.min(3, parseInt(v||0))) }
 				Component.onCompleted: poolConfigManager.register(this)
 				onCurrentIndexChanged: {
-					calibButton.needCalibration = true
-					poolConfigManager.onControlChanged(this)
+					if (poolConfigManager.onControlChanged(this))
+						calibButton.needCalibration = true
 				}
 				implicitWidth: 180
 				model: [ "None", "Above", "Below" ]
@@ -138,8 +138,9 @@ Drawer {
 				}
 				property bool needCalibration: false
 
-				// Button should have red border when calibration is needed
-				Material.foreground: needCalibration ? "#ff4d4d" : "white"
+				// Make the complete action visually urgent after a channel change.
+				Material.background: needCalibration ? "#7f1d1d" : root.Material.background
+				Material.foreground: "#ffffff"
 			}
 
 			ProgressBar {

@@ -42,6 +42,7 @@ class CSICluster(SensorCluster):
         frame_key: wifi.WiFiFrameKey,
         board_revisions: list[revisions.BoardRevision],
         gain_phase_compensation: bool = False,
+        frame_identity=None,
     ):
         """
         Constructor for the CSICluster class.
@@ -56,6 +57,7 @@ class CSICluster(SensorCluster):
         super().__init__(board_revisions)
         self._gain_phase_enabled = bool(gain_phase_compensation)
         self.frame_key = frame_key
+        self.frame_identity = frame_identity if frame_identity is not None else frame_key
         self.source_mac = frame_key.source_mac.hex()
         self.destination_mac = frame_key.destination_mac.hex()
         self.sequence_control = wifi.SequenceControl(b"\x00\x00")
@@ -573,7 +575,7 @@ class CSICluster(SensorCluster):
         sensor_timestamps = np.full(self.shape, np.nan, dtype=np.float64)
 
         def append_sensor_timestamp(b, r, a, serialized_csi):
-            timestamp_ns = np.float64(self._nanosecond_timestamp(serialized_csi))
+            timestamp_ns = np.float64(serialized_csi.get_hardware_rx_timestamp_ns())
             sensor_timestamps[b, r, a] = np.float64(timestamp_ns) / 1e9
 
         self._foreach_complete_sensor(append_sensor_timestamp)
@@ -685,18 +687,6 @@ class CSICluster(SensorCluster):
                         return serialized_csi
 
         return None
-
-    def _nanosecond_timestamp(self, serialized_csi):
-        rxstart_time_cyc = csi_packet.WiFiPacketRxControlV3(serialized_csi.rx_ctrl).rxstart_time_cyc
-
-        hw_latched_timestamp_ns = serialized_csi.global_timestamp_us * 1000
-
-        # "official" formula by Espressif:
-        # timestamp_ns = np.float128(serialized_csi.timestamp * 1000 + ((rxstart_time_cyc * 12500) // 1000) + ((rxstart_time_cyc_dec * 1562) // 1000) - 20800)
-        # Formula that is probably more accurate:
-        CYC_PERIOD_NS = 1 / 80e6 * 1e9
-        HW_TIMESTAMP_LAG_NS = 20800
-        return hw_latched_timestamp_ns - HW_TIMESTAMP_LAG_NS + rxstart_time_cyc * CYC_PERIOD_NS
 
     def _get_he20_fractional_timestamp_offsets(self):
         fractional_offsets = np.full(self.shape, np.nan, dtype=np.float64)

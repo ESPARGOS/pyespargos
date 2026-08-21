@@ -4,6 +4,7 @@ from . import board
 from . import constants
 from . import csi_compression
 from . import csi_calibration
+from . import csi_association
 from . import csi_backlog
 from . import csi_packet
 from . import csi_cluster
@@ -38,6 +39,7 @@ from .board import (
 from .csi_backlog import CSIBacklog, CSIBacklogFilter, Exclude11bFilter, MACFilter
 from .csi_calibration import CSICalibration
 from .csi_cluster import CSICluster
+from .csi_association import FrameIdentity, FrameIdentityMatch, FrameSignature
 from .csi_packet import CSIPacket
 from .csi_pool import CSIPool, CalibrationError
 from .pool import Pool
