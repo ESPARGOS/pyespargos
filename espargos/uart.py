@@ -45,6 +45,7 @@ RPC_METHOD_POST = 1
 DEFAULT_UART_BAUDRATE = 3000000
 FT231XQ_UART_BAUDRATE = 2000000
 CP2102C_UART_BAUDRATE = 3000000
+CP2102N_UART_BAUDRATE = 3000000
 DEFAULT_BOOT_BAUDRATE = 115200
 DEFAULT_TIMEOUT = 5.0
 DEFAULT_READ_TIMEOUT = 0.001
@@ -54,12 +55,14 @@ DEFAULT_KEEPALIVE_INTERVAL = 1.0
 DEFAULT_MODEM_IDLE_DTR = False
 DEFAULT_MODEM_IDLE_RTS = False
 USB_UART_BAUDRATES = {
-    0x6015: FT231XQ_UART_BAUDRATE,  # FTDI FT231XQ USB UART
-    0xEA64: CP2102C_UART_BAUDRATE,  # SiLabs CP2102C USB to UART Bridge Controller
+    (0x0403, 0x6015): FT231XQ_UART_BAUDRATE,  # FTDI FT231XQ USB UART
+    (0x10C4, 0xEA60): CP2102N_UART_BAUDRATE,  # SiLabs CP2102N USB to UART Bridge Controller
+    (0x10C4, 0xEA64): CP2102C_UART_BAUDRATE,  # SiLabs CP2102C USB to UART Bridge Controller
 }
 NO_RESET_MODEM_STATES = {
-    0x6015: (True, True),  # FTDI FT231X USB UART
-    0xEA64: (True, True),  # SiLabs CP2102C USB to UART Bridge Controller
+    (0x0403, 0x6015): (True, True),  # FTDI FT231X USB UART
+    (0x10C4, 0xEA60): (True, True),  # SiLabs CP2102N USB to UART Bridge Controller
+    (0x10C4, 0xEA64): (True, True),  # SiLabs CP2102C USB to UART Bridge Controller
 }
 
 
@@ -493,18 +496,25 @@ class UARTClient:
 
     def _detect_default_baudrate(self) -> int:
         portinfo = self._matching_port_info()
-        if portinfo is not None and portinfo.pid in USB_UART_BAUDRATES:
-            baudrate = USB_UART_BAUDRATES[portinfo.pid]
-            self._logger.debug(f"Using {baudrate} baud for USB-UART adapter PID 0x{portinfo.pid:04x}")
+        adapter_id = self._adapter_id(portinfo)
+        if adapter_id in USB_UART_BAUDRATES:
+            baudrate = USB_UART_BAUDRATES[adapter_id]
+            self._logger.debug(f"Using {baudrate} baud for USB-UART adapter VID:PID {adapter_id[0]:04x}:{adapter_id[1]:04x}")
             return baudrate
         return DEFAULT_UART_BAUDRATE
 
     def _detect_modem_idle_state(self) -> tuple[bool, bool]:
         portinfo = self._matching_port_info()
-        if portinfo is not None:
-            if portinfo.pid in NO_RESET_MODEM_STATES:
-                return NO_RESET_MODEM_STATES[portinfo.pid]
+        adapter_id = self._adapter_id(portinfo)
+        if adapter_id in NO_RESET_MODEM_STATES:
+            return NO_RESET_MODEM_STATES[adapter_id]
         return DEFAULT_MODEM_IDLE_DTR, DEFAULT_MODEM_IDLE_RTS
+
+    @staticmethod
+    def _adapter_id(portinfo) -> tuple[int, int] | None:
+        if portinfo is None or portinfo.vid is None or portinfo.pid is None:
+            return None
+        return portinfo.vid, portinfo.pid
 
     def _apply_low_latency_tuning(self):
         if os.name != "posix":
