@@ -8,6 +8,7 @@ import threading
 import logging
 import socket
 import json
+import queue
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -30,6 +31,9 @@ __all__ = [
 STREAM_CONTROLLER_SRC_PORT = 53330
 WEBSOCKET_STREAM_PATHS = ("stream", "csi")
 UDP_STREAM_CONTROL_PATHS = ("stream_udp", "csi_udp")
+# Sensor transport frames are at most about 4 KiB. This absorbs a few seconds
+# without allowing an unbounded Python backlog.
+STREAM_DISPATCH_QUEUE_PACKETS = 4096
 
 
 class EspargosHTTPStatusError(Exception):
@@ -275,15 +279,6 @@ class Board(object):
             self._uart_client.add_log_callback(self._handle_uart_log)
             self._uart_client.connect()
         try:
-            identification_raw = self.control.fetch("identify")
-        except TimeoutError:
-            self._logger.error(f"Could not connect to {self.host} to fetch identification information")
-            raise TimeoutError
-
-        if "ESPARGOS" not in identification_raw:
-            raise EspargosUnexpectedResponseError(f"Server at {self.host} does not look like an ESPARGOS controller. Check if the host is correct.")
-
-        try:
             api_info_raw = self.control.fetch("api_info")
             try:
                 api_info = json.loads(api_info_raw)
@@ -390,8 +385,13 @@ class Board(object):
             # If a previous stream died on its own, its loop thread has exited
             # but its transport resources are still allocated; release them
             # before establishing the new stream.
-            self._join_stream_thread()
-            self._teardown_stream_transport()
+            self._cleanup_stream_session()
+
+            # Parsing, fragment reassembly and subscriber callbacks are common
+            # to every transport. Keep them off the UDP/WebSocket/UART receive
+            # path so a short Python scheduling or callback pause does not stop
+            # the transport from accepting an otherwise complete burst.
+            self._start_stream_dispatch()
 
             for transport in transports:
                 if transport == "uart":
@@ -415,6 +415,8 @@ class Board(object):
                 else:
                     self._logger.error(f"Unknown transport {transport} specified for {self.name}, skipping")
 
+            self._cleanup_stream_session()
+
         raise EspargosStreamConnectionError(f"Could not establish sensor stream to {self.host} via any of the enabled transports, tried transports: {transports}")
 
     def _try_start_uart(self) -> str | None:
@@ -424,18 +426,20 @@ class Board(object):
         self._logger.info(f"Trying UART sensor stream for {self.name}")
 
         def _callback(payload: bytes):
-            self._stream_handle_message(payload)
+            self._enqueue_stream_message(payload)
 
         self._uart_stream_callback = _callback
         self._uart_client.add_stream_callback(self._uart_stream_callback)
+        self._stream_transport = "uart"
+        self._stream_connected = True
         try:
             self._uart_client.enable_sensor_stream()
         except Exception as e:
+            self._stream_connected = False
+            self._stream_transport = None
             self._uart_client.remove_stream_callback(self._uart_stream_callback)
             return f"Could not enable UART sensor stream: {e}"
 
-        self._stream_transport = "uart"
-        self._stream_connected = True
         self._logger.info(f"Started UART sensor stream for {self.name} on {self.host}")
         return None
 
@@ -578,13 +582,63 @@ class Board(object):
             pass
 
     def _join_stream_thread(self):
-        """Wait for the stream loop thread to exit, if any.
+        """Wait for the stream transport reader to exit, if any.
 
         Caller must hold the lifecycle lock, with ``stream_connected`` False.
         """
         stream_thread = getattr(self, "_stream_thread", None)
         if stream_thread is not None and stream_thread is not threading.current_thread():
             stream_thread.join()
+            self._stream_thread = None
+
+    def _start_stream_dispatch(self):
+        """Start one transport-independent message dispatcher."""
+
+        self._stream_dispatch_queue = queue.Queue(maxsize=STREAM_DISPATCH_QUEUE_PACKETS)
+        self._stream_dispatch_sentinel = object()
+        self._stream_dispatch_thread = threading.Thread(
+            target=self._stream_dispatch_loop,
+            args=(self._stream_dispatch_queue, self._stream_dispatch_sentinel),
+            name=f"espargos-stream-dispatch-{self.host}",
+            daemon=True,
+        )
+        self._stream_dispatch_thread.start()
+
+    def _enqueue_stream_message(self, message) -> bool:
+        """Queue one transport frame, failing the stream rather than dropping."""
+
+        dispatch_queue = getattr(self, "_stream_dispatch_queue", None)
+        if dispatch_queue is None or not self._stream_connected:
+            return False
+        try:
+            dispatch_queue.put_nowait(message)
+            return True
+        except queue.Full:
+            self._logger.error("Sensor stream dispatch queue full, disconnecting instead of " "silently dropping transport frames")
+            self._stream_connected = False
+            return False
+
+    def _stream_dispatch_loop(self, dispatch_queue, sentinel):
+        while True:
+            message = dispatch_queue.get()
+            if message is sentinel:
+                return
+            self._stream_handle_message(message)
+
+    def _stop_stream_dispatch(self):
+        """Drain accepted frames and stop the current session's dispatcher."""
+
+        dispatch_queue = getattr(self, "_stream_dispatch_queue", None)
+        dispatch_thread = getattr(self, "_stream_dispatch_thread", None)
+        sentinel = getattr(self, "_stream_dispatch_sentinel", None)
+        if dispatch_queue is None or dispatch_thread is None:
+            return
+        dispatch_queue.put(sentinel)
+        if dispatch_thread is not threading.current_thread():
+            dispatch_thread.join()
+        self._stream_dispatch_queue = None
+        self._stream_dispatch_thread = None
+        self._stream_dispatch_sentinel = None
 
     def _teardown_stream_transport(self) -> bool:
         """Release the transport resources of a previous sensor stream, if any.
@@ -616,6 +670,14 @@ class Board(object):
         self._stream_transport = None
         return True
 
+    def _cleanup_stream_session(self) -> bool:
+        """Stop a transport producer, then drain its shared dispatcher."""
+
+        self._join_stream_thread()
+        had_transport = self._teardown_stream_transport()
+        self._stop_stream_dispatch()
+        return had_transport
+
     def stop(self):
         """
         Stop receiving sensor messages from the ESPARGOS controller.
@@ -628,8 +690,7 @@ class Board(object):
         with self._stream_lifecycle_lock:
             was_connected = self._stream_connected
             self._stream_connected = False
-            self._join_stream_thread()
-            had_transport = self._teardown_stream_transport()
+            had_transport = self._cleanup_stream_session()
 
             if was_connected or had_transport:
                 self._logger.info(f"Stopped sensor stream for {self.name}")
@@ -672,8 +733,9 @@ class Board(object):
         The callback receives a complete, reassembled
         :class:`sensor.SensorMessage` whose payload is still raw ``bytes``.
         Parsing belongs to the consumer, keeping message-specific knowledge out
-        of the board transport. Callbacks run on the stream thread and must
-        therefore return quickly without performing blocking or expensive work.
+        of the board transport. Callbacks run serially on the board's dispatch
+        thread; they should return promptly so its bounded burst buffer does not
+        fill.
 
         :param type_header: Four-byte logical message type as an integer.
         :param callback: Callable accepting a raw, reassembled
@@ -762,7 +824,8 @@ class Board(object):
             try:
                 data, addr = self._udp_sock.recvfrom(65535)
                 timeout_total = 0
-                self._stream_handle_message(data)
+                if not self._enqueue_stream_message(data):
+                    break
             except socket.timeout:
                 timeout_total += 0.2
             except OSError as e:
@@ -799,7 +862,8 @@ class Board(object):
                         # WebSocket connections do not need the UDP handshake.
                         continue
                     timeout_total = 0
-                    self._stream_handle_message(message)
+                    if not self._enqueue_stream_message(message):
+                        break
                 except TimeoutError:
                     timeout_total = timeout_total + timeout_once
                 except Exception as e:
