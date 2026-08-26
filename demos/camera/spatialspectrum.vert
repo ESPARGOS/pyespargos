@@ -22,24 +22,36 @@ layout(std140, binding = 0) uniform buf {
 	float elevationCorrection;
 };
 
-// Converts cartesian coordinates of the camera projection into a pair of azimuth and elevation angle (in radians).
-vec2 cameraPixelToAngles(vec2 projection) {
-	return atan(2 * (projection - 0.5) * tan(radians(fov) / 2));
-	//return (projection - 0.5) * radians(fov);
+// Converts normalized camera coordinates into a unit-length ray in camera space.
+vec3 cameraPixelToDirection(vec2 projection) {
+	vec2 slopes = 2.0 * (projection - 0.5) * tan(radians(fov) / 2.0);
+	return normalize(vec3(slopes, 1.0));
 }
 
-// Converts azimuth and elevation angles (in radians) into FFT beamspace coordinates (ranging from -0.5 to 0.5).
-vec2 anglesToFFTBeamspace(vec2 angles) {
-	return 0.5 * vec2(cos(angles.y) * sin(angles.x), sin(angles.y));
+vec3 rotateElevation(vec3 direction, float angle) {
+	float c = cos(angle);
+	float s = sin(angle);
+	return vec3(direction.x, c * direction.y + s * direction.z, -s * direction.y + c * direction.z);
+}
+
+vec3 rotateAzimuth(vec3 direction, float angle) {
+	float c = cos(angle);
+	float s = sin(angle);
+	return vec3(c * direction.x + s * direction.z, direction.y, -s * direction.x + c * direction.z);
+}
+
+// Converts a camera-space direction into FFT beamspace coordinates (ranging from -0.5 to 0.5).
+vec2 directionToFFTBeamspace(vec3 direction) {
+	return 0.5 * direction.xy;
 }
 
 void main() {
 	vec2 coord = vec2(flipOverlay == 1 ? 1.0 - qt_MultiTexCoord0.x : qt_MultiTexCoord0.x, qt_MultiTexCoord0.y);
 
-	vec2 angles = cameraPixelToAngles(coord);
-	angles.x += radians(azimuthCorrection);
-	angles.y += radians(elevationCorrection);
-	vec2 textureCoords = rawBeamspace == 1 ? coord : (anglesToFFTBeamspace(angles) + 0.5);	
+	vec3 direction = cameraPixelToDirection(coord);
+	direction = rotateElevation(direction, radians(elevationCorrection));
+	direction = rotateAzimuth(direction, radians(azimuthCorrection));
+	vec2 textureCoords = rawBeamspace == 1 ? coord : (directionToFFTBeamspace(direction) + 0.5);
 
 	beamspaceColor = texture(spatialSpectrumCanvasSource, textureCoords);
 	beamspacePolarization = texture(polarizationCanvasSource, textureCoords);

@@ -17,32 +17,47 @@ layout(std140, binding = 0) uniform buf {
 	float time;
 	int polarizationVisible;
 	float gridSpacing;
+	float azimuthCorrection;
+	float elevationCorrection;
 };
 
 // Constants for polarization mode
 float pol_oscillation_freq = 2.0;  // Frequency of polarization oscillation
 float pointRadius = gridSpacing / 8.0;           // Radius of the polarization points in pixels
 
-// Converts azimuth and elevation angles (in radians) back into camera projection coordinates.
-vec2 anglesToCameraPixel(vec2 angles) {
-	vec2 halfFov = radians(fov) / 2;
-	return 0.5 + 0.5 * tan(angles) / tan(halfFov);
+vec3 rotateElevation(vec3 direction, float angle) {
+	float c = cos(angle);
+	float s = sin(angle);
+	return vec3(direction.x, c * direction.y + s * direction.z, -s * direction.y + c * direction.z);
 }
 
-// Converts FFT beamspace coordinates (ranging from -0.5 to 0.5) back into azimuth/elevation angles (radians).
-vec2 FFTBeamspaceToAngles(vec2 beamspace) {
-	vec2 b = 2.0 * beamspace;
-	float sinEl = clamp(b.y, -1.0, 1.0);
-	float el = asin(sinEl);
-	float cosEl = max(cos(el), 1e-6);
-	float sinAz = clamp(b.x / cosEl, -1.0, 1.0);
-	float az = asin(sinAz);
-	return vec2(az, el);
+vec3 rotateAzimuth(vec3 direction, float angle) {
+	float c = cos(angle);
+	float s = sin(angle);
+	return vec3(c * direction.x + s * direction.z, direction.y, -s * direction.x + c * direction.z);
+}
+
+// Converts FFT beamspace coordinates (ranging from -0.5 to 0.5) into normalized camera coordinates.
+vec2 FFTBeamspaceToCameraPixel(vec2 beamspace) {
+	vec2 directionXY = 2.0 * beamspace;
+	float xySquared = dot(directionXY, directionXY);
+	if (xySquared >= 1.0)
+		return vec2(-1.0);
+
+	vec3 direction = vec3(directionXY, sqrt(max(1.0 - xySquared, 0.0)));
+	// Undo the array-to-camera alignment rotations in reverse order.
+	direction = rotateAzimuth(direction, -radians(azimuthCorrection));
+	direction = rotateElevation(direction, -radians(elevationCorrection));
+	if (direction.z <= 1e-6)
+		return vec2(-1.0);
+
+	vec2 slopes = direction.xy / direction.z;
+	return 0.5 + 0.5 * slopes / tan(radians(fov) / 2.0);
 }
 
 void main() {
 	vec2 sourceCoord = vec2(flipCamera == 1 ? qt_TexCoord0.x : 1 - qt_TexCoord0.x, qt_TexCoord0.y);
-	vec2 sourceCoordBeamspace = anglesToCameraPixel(FFTBeamspaceToAngles(sourceCoord - 0.5));
+	vec2 sourceCoordBeamspace = FFTBeamspaceToCameraPixel(sourceCoord - 0.5);
 
 	vec4 s = texture(cameraImage, rawBeamspace == 1 ? sourceCoordBeamspace : sourceCoord);
 
