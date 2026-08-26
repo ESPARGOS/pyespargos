@@ -16,13 +16,15 @@ class CameraView(PyQt6.QtCore.QObject):
     """
 
     enabledChanged = PyQt6.QtCore.pyqtSignal()
-    flipChanged = PyQt6.QtCore.pyqtSignal()
+    flipCameraChanged = PyQt6.QtCore.pyqtSignal()
+    flipOverlayChanged = PyQt6.QtCore.pyqtSignal()
     fovAzimuthChanged = PyQt6.QtCore.pyqtSignal()
     fovElevationChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
         "enable": True,
-        "flip": False,
+        "flip_camera": False,
+        "flip_overlay": False,
         "format": None,
         "device": None,
         "fov_azimuth": 72,
@@ -77,8 +79,10 @@ class CameraView(PyQt6.QtCore.QObject):
             self.video_camera.setDevice(camera_cfg.get("device"))
         if self.enabled and self.video_camera is not None and "format" in camera_cfg:
             self.video_camera.setFormat(camera_cfg.get("format"))
-        if "flip" in camera_cfg:
-            self.flipChanged.emit()
+        if "flip_camera" in camera_cfg:
+            self.flipCameraChanged.emit()
+        if "flip_overlay" in camera_cfg:
+            self.flipOverlayChanged.emit()
         if "fov_azimuth" in camera_cfg:
             self.fovAzimuthChanged.emit()
         if "fov_elevation" in camera_cfg:
@@ -88,9 +92,13 @@ class CameraView(PyQt6.QtCore.QObject):
     def enabled(self):
         return bool(self.appconfig.get("camera", "enable"))
 
-    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=flipChanged)
-    def flip(self):
-        return bool(self.appconfig.get("camera", "flip"))
+    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=flipCameraChanged)
+    def flipCamera(self):
+        return bool(self.appconfig.get("camera", "flip_camera"))
+
+    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=flipOverlayChanged)
+    def flipOverlay(self):
+        return bool(self.appconfig.get("camera", "flip_overlay"))
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=fovAzimuthChanged)
     def fovAzimuth(self):

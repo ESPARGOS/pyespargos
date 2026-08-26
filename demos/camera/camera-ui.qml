@@ -90,17 +90,31 @@ Common.ESPARGOSApplication {
 				}
 			}
 
-			Label { text: "Flip"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Label { text: "Flip camera"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {
-				id: cameraFlip
-				property string configKey: "camera.flip"
+				id: flipCamera
+				property string configKey: "camera.flip_camera"
 				property string configProp: "checked"
 				Component.onCompleted: appDrawer.configManager.register(this)
 				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
 				implicitWidth: 80
 				checked: false
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
+				ToolTip.text: "Flip the camera image horizontally."
 			}
 
+			Label { text: "Flip overlay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: flipOverlay
+				property string configKey: "camera.flip_overlay"
+				property string configProp: "checked"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 80
+				checked: false
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
+				ToolTip.text: "Flip the spatial overlay horizontally."
+			}
 			Label { Layout.columnSpan: 2; text: "Receiver"; color: "#9fb3c8" }
 			Label { text: "MAC List"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {

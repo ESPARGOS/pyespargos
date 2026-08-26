@@ -12,7 +12,8 @@ layout(std140, binding = 0) uniform buf {
     float qt_Opacity;
 
 	int rawBeamspace;
-	int flip;
+	int flipCamera;
+	int flipOverlay;
 	vec2 fov;
 	float time;
 	int polarizationVisible;
@@ -33,7 +34,7 @@ vec2 anglesToFFTBeamspace(vec2 angles) {
 }
 
 void main() {
-	vec2 coord = vec2(flip == 1 ? 1.0 - qt_MultiTexCoord0.x : qt_MultiTexCoord0.x, qt_MultiTexCoord0.y);
+	vec2 coord = vec2(flipOverlay == 1 ? 1.0 - qt_MultiTexCoord0.x : qt_MultiTexCoord0.x, qt_MultiTexCoord0.y);
 
 	vec2 angles = cameraPixelToAngles(coord);
 	angles.x += radians(azimuthCorrection);

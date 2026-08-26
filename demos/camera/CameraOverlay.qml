@@ -91,7 +91,8 @@ Rectangle {
 		vertexShader: "spatialspectrum_vert.qsb"
 
 		property bool rawBeamspace: overlayModel.visualizationSpace === "beamspace"
-		property bool flip: CameraView.flip
+		property bool flipCamera: CameraView.flipCamera
+		property bool flipOverlay: CameraView.flipOverlay
 		property vector2d fov: Qt.vector2d(CameraView.fovAzimuth, CameraView.fovElevation)
 		property real time: 0
 		NumberAnimation on time {

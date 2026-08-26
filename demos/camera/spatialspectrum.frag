@@ -11,7 +11,8 @@ layout(std140, binding = 0) uniform buf {
     float qt_Opacity;
 
 	int rawBeamspace;
-	int flip;
+	int flipCamera;
+	int flipOverlay;
 	vec2 fov;
 	float time;
 	int polarizationVisible;
@@ -40,7 +41,7 @@ vec2 FFTBeamspaceToAngles(vec2 beamspace) {
 }
 
 void main() {
-	vec2 sourceCoord = vec2(flip == 1 ? qt_TexCoord0.x : 1 - qt_TexCoord0.x, qt_TexCoord0.y);
+	vec2 sourceCoord = vec2(flipCamera == 1 ? qt_TexCoord0.x : 1 - qt_TexCoord0.x, qt_TexCoord0.y);
 	vec2 sourceCoordBeamspace = anglesToCameraPixel(FFTBeamspaceToAngles(sourceCoord - 0.5));
 
 	vec4 s = texture(cameraImage, rawBeamspace == 1 ? sourceCoordBeamspace : sourceCoord);
