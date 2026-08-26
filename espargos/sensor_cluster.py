@@ -76,6 +76,16 @@ class SensorCluster(ABC):
 
         return time.monotonic() - self._created_at
 
+    def _restart_age(self) -> None:
+        """Start a fresh bounded retention interval for this cluster.
+
+        Pools use this only when an expiry hook deliberately keeps a cluster
+        addressable for one more timeout interval (for example, while a
+        transport replay fills missing sensor positions).
+        """
+
+        self._created_at = time.monotonic()
+
     def _mark_sensor_complete(self, board_index: int, antenna_id: int) -> None:
         """Mark the observation data for one sensor as complete."""
 

@@ -408,12 +408,25 @@ class Pool(ABC):
                     continue
                 expired_keys = [cluster_key for cluster_key, sensor_cluster in cache.items() if sensor_cluster.age > timeout]
                 for cluster_key in expired_keys:
-                    expired.append((cache_name, cluster_key, cache.pop(cluster_key)))
+                    expired.append((cache_name, cluster_key, cache[cluster_key]))
 
         # Notify outside the cluster lock: the hook may offer the cluster to
-        # consumer callbacks, which are free to call back into the pool.
+        # consumer callbacks, which are free to call back into the pool. Most
+        # clusters are then evicted. A subclass may retain the same object for
+        # one fresh timeout interval when late transport repair must add to it.
         for cache_name, cluster_key, sensor_cluster in expired:
-            self._on_cluster_expired(cache_name, cluster_key, sensor_cluster)
+            retain = self._on_cluster_expired(
+                cache_name, cluster_key, sensor_cluster
+            )
+            if retain:
+                with self._cluster_lock:
+                    cache = self._cluster_caches.get(cache_name)
+                    if cache is not None and cache.get(cluster_key) is sensor_cluster:
+                        sensor_cluster._restart_age()
+            else:
+                self._remove_cluster_if_current(
+                    cache_name, cluster_key, sensor_cluster
+                )
 
     def _clear_cluster_cache(self, cache_name: str) -> None:
         """Clear a named cache if it exists."""
@@ -571,13 +584,16 @@ class Pool(ABC):
         cache_name: str,
         cluster_key: Hashable,
         sensor_cluster: SensorCluster,
-    ) -> None:
-        """A cluster timed out before completing and was evicted from its cache.
+    ) -> bool:
+        """Handle a cluster that reached its cache timeout.
 
         The default silently discards stale incomplete measurements. A
-        subclass whose consumers also want partial measurements (every sensor
-        that reported by the deadline, missing ones absent) can override this
-        and offer the evicted cluster to its callbacks via
-        :meth:`_try_callbacks`. Runs on the :meth:`run` caller's thread, like
-        ordinary completion callbacks.
+        subclass whose consumers also want partial measurements can override
+        this and offer the cluster to callbacks via :meth:`_try_callbacks`.
+        Return true to retain the same object for one fresh timeout interval,
+        allowing a bounded late repair to add missing positions; false/None
+        evicts it. Runs on the :meth:`run` caller's thread, like ordinary
+        completion callbacks.
         """
+
+        return False
