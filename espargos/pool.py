@@ -415,18 +415,14 @@ class Pool(ABC):
         # clusters are then evicted. A subclass may retain the same object for
         # one fresh timeout interval when late transport repair must add to it.
         for cache_name, cluster_key, sensor_cluster in expired:
-            retain = self._on_cluster_expired(
-                cache_name, cluster_key, sensor_cluster
-            )
+            retain = self._on_cluster_expired(cache_name, cluster_key, sensor_cluster)
             if retain:
                 with self._cluster_lock:
                     cache = self._cluster_caches.get(cache_name)
                     if cache is not None and cache.get(cluster_key) is sensor_cluster:
                         sensor_cluster._restart_age()
             else:
-                self._remove_cluster_if_current(
-                    cache_name, cluster_key, sensor_cluster
-                )
+                self._remove_cluster_if_current(cache_name, cluster_key, sensor_cluster)
 
     def _clear_cluster_cache(self, cache_name: str) -> None:
         """Clear a named cache if it exists."""
