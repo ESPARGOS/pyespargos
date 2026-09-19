@@ -81,6 +81,9 @@ class CSIPool(Pool):
                                         additional rotation.
         """
         super().__init__(boards)
+        # Matching timestamps within FRAME_TIMESTAMP_TOLERANCE_NS is not transitive, so it cannot define dictionary-key equality.
+        # Group candidates by exact Wi-Fi frame key, then check signatures and timestamp tolerance within that group.
+        self._association_index: dict[str, dict[wifi.WiFiFrameKey, set[wifi.WiFiFrameKey | csi_association.FrameIdentity]]] = {}
         self._reference_generator_boards = reference_generator_boards if reference_generator_boards is not None else []
 
         self._ota_cache_timeout = ota_cache_timeout
@@ -704,10 +707,10 @@ class CSIPool(Pool):
         self._association_last_timestamp_us.clear()
         with self._cluster_lock:
             cache = self._cluster_caches.get(_CACHE_OTA)
-            if cache is not None:
-                for key in tuple(cache):
-                    if isinstance(key, csi_association.FrameIdentity) and key.timestamp_required:
-                        cache.pop(key, None)
+            timestamp_clusters = [(key, cluster) for key, cluster in cache.items() if isinstance(key, csi_association.FrameIdentity) and key.timestamp_required] if cache is not None else []
+        # Removing directly from the cache would leave stale keys in the candidate index.
+        for key, cluster in timestamp_clusters:
+            self._remove_cluster_if_current(_CACHE_OTA, key, cluster)
         if had_calibration and warn:
             self._logger.warning("Timestamp-based frame association disabled: %s; run calibration again", reason)
 
@@ -792,6 +795,20 @@ class CSIPool(Pool):
             return self._frame_identity(board_index, sensor_message)
         return wifi.WiFiFrameKey.from_packet(stream_packet)
 
+    def _on_cluster_cached(self, cache_name, cluster_key, sensor_cluster):
+        index = self._association_index.setdefault(cache_name, {})
+        index.setdefault(sensor_cluster.frame_key, set()).add(cluster_key)
+
+    def _on_cluster_removed(self, cache_name, cluster_key, sensor_cluster):
+        index = self._association_index[cache_name]
+        keys = index[sensor_cluster.frame_key]
+        keys.remove(cluster_key)
+        if not keys:
+            del index[sensor_cluster.frame_key]
+
+    def _on_cluster_cache_cleared(self, cache_name):
+        self._association_index.pop(cache_name, None)
+
     def _resolve_cluster_key(
         self,
         cache_name,
@@ -801,32 +818,29 @@ class CSIPool(Pool):
         sensor_message,
     ):
         candidates = []
-        for existing_key, cluster in cache.items():
+        is_csi = isinstance(proposed_key, csi_association.FrameIdentity)
+        frame_key = proposed_key.frame_key if is_csi else proposed_key
+        index = self._association_index.get(cache_name, {})
+
+        for existing_key in index.get(frame_key, ()):
+            cluster = cache[existing_key]
             match = None
-            if isinstance(proposed_key, csi_association.FrameIdentity):
+            if is_csi:
                 anchor = cluster.frame_identity
                 if isinstance(anchor, csi_association.FrameIdentity):
                     match = anchor.match(proposed_key)
-                elif existing_key == proposed_key.frame_key:
-                    # A radar TX report may have created the cluster before its
-                    # first CSI observation. It provides no RX timestamp, so it
-                    # can only be attached when its conventional frame key is
-                    # unique; the first CSI then becomes the timestamp anchor.
+                else:
+                    # A cluster created from a radar report has no RX timestamp until CSI arrives.
                     match = csi_association.FrameIdentityMatch(None)
             elif isinstance(existing_key, csi_association.FrameIdentity):
-                # Radar TX reports are auxiliary observations without an RX
-                # timestamp. Attach one only to a unique matching CSI cluster.
-                if existing_key.frame_key == proposed_key:
-                    match = csi_association.FrameIdentityMatch(None)
-            else:
-                continue
-
+                # Radar reports have no RX timestamp, so require a unique matching CSI cluster.
+                match = csi_association.FrameIdentityMatch(None)
             if match is None:
                 continue
             position = cluster.get_sensor_position(board_index, sensor_message.antenna_id)
-            if isinstance(sensor_message.payload, csi_packet.CSIPacket) and cluster.completion[position]:
+            if is_csi and cluster.completion[position]:
                 continue
-            if isinstance(sensor_message.payload, radar_packet.RadarTxReportPacket) and cluster.has_radar_tx_report:
+            if not is_csi and cluster.has_radar_tx_report:
                 continue
             candidates.append((match, existing_key, cluster))
 
@@ -835,7 +849,7 @@ class CSIPool(Pool):
             return None
         if len(candidates) == 1:
             match, existing_key, cluster = candidates[0]
-            if isinstance(proposed_key, csi_association.FrameIdentity) and not isinstance(cluster.frame_identity, csi_association.FrameIdentity):
+            if is_csi and not isinstance(cluster.frame_identity, csi_association.FrameIdentity):
                 cluster.frame_identity = proposed_key
             self._association_stats["observations_matched"] += 1
             if match.timestamp_residual_ns is not None:
@@ -846,7 +860,7 @@ class CSIPool(Pool):
             return existing_key
 
         if proposed_key in cache:
-            if isinstance(proposed_key, csi_association.FrameIdentity) and proposed_key.timestamp_required:
+            if is_csi and proposed_key.timestamp_required:
                 self._association_stats["dropped_ambiguous"] += 1
                 return None
             return proposed_key

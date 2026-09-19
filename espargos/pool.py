@@ -366,6 +366,7 @@ class Pool(ABC):
                     sensor_message,
                 )
                 cache[cluster_key] = sensor_cluster
+                self._on_cluster_cached(cache_name, cluster_key, sensor_cluster)
 
             try:
                 changed = sensor_cluster.add_message(board_index, sensor_message)
@@ -389,6 +390,7 @@ class Pool(ABC):
             cache = self._cluster_caches.get(cache_name)
             if cache is not None and cache.get(cluster_key) is sensor_cluster:
                 cache.pop(cluster_key)
+                self._on_cluster_removed(cache_name, cluster_key, sensor_cluster)
 
     def _expire_cluster_caches(self) -> None:
         with self._cluster_lock:
@@ -431,6 +433,7 @@ class Pool(ABC):
             cache = self._cluster_caches.get(cache_name)
             if cache is not None:
                 cache.clear()
+                self._on_cluster_cache_cleared(cache_name)
 
     def _get_cluster_cache_snapshot(self, cache_name: str) -> list[SensorCluster]:
         """Return a stable list of clusters currently in a named cache."""
@@ -550,6 +553,25 @@ class Pool(ABC):
         """
 
         return proposed_key
+
+    def _on_cluster_cached(
+        self,
+        cache_name: str,
+        cluster_key: Hashable,
+        sensor_cluster: SensorCluster,
+    ) -> None:
+        """Called after a cluster is inserted, with the cache lock held."""
+
+    def _on_cluster_removed(
+        self,
+        cache_name: str,
+        cluster_key: Hashable,
+        sensor_cluster: SensorCluster,
+    ) -> None:
+        """Called after a cluster is removed, with the cache lock held."""
+
+    def _on_cluster_cache_cleared(self, cache_name: str) -> None:
+        """Called after a cache is cleared, with the cache lock held."""
 
     @abstractmethod
     def _create_cluster(
