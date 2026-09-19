@@ -95,12 +95,12 @@ Rectangle {
 		property bool flipOverlay: CameraView.flipOverlay
 		property vector2d fov: Qt.vector2d(CameraView.fovAzimuth, CameraView.fovElevation)
 		property real time: 0
-		NumberAnimation on time {
-			from: 0
-			to: 6.283185307
-			duration: 500
-			loops: Animation.Infinite
-			running: true
+		FrameAnimation {
+			running: spatialSpectrumShader.polarizationVisible && overlayModel.polarizationSpeed > 0
+			// Integrate the current speed each frame so changes apply immediately
+			// without restarting the phase. The shader doubles this angle.
+			onTriggered: spatialSpectrumShader.time = (spatialSpectrumShader.time
+				+ Math.PI * overlayModel.polarizationSpeed * frameTime) % (2 * Math.PI)
 		}
 		property bool polarizationVisible: overlayModel.polarizationVisible
 		property real gridSpacing: overlayModel.gridSpacing

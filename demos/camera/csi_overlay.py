@@ -17,6 +17,7 @@ class CSIOverlay(PyQt6.QtCore.QObject):
     visualizationSpaceChanged = PyQt6.QtCore.pyqtSignal()
     polarizationVisibleChanged = PyQt6.QtCore.pyqtSignal()
     gridSpacingChanged = PyQt6.QtCore.pyqtSignal()
+    polarizationSpeedChanged = PyQt6.QtCore.pyqtSignal()
     resolutionAzimuthChanged = PyQt6.QtCore.pyqtSignal()
     resolutionElevationChanged = PyQt6.QtCore.pyqtSignal()
     macListEnabledChanged = PyQt6.QtCore.pyqtSignal()
@@ -140,6 +141,8 @@ class CSIOverlay(PyQt6.QtCore.QObject):
                 self.polarizationVisibleChanged.emit()
             if "grid_spacing" in beamformer_cfg:
                 self.gridSpacingChanged.emit()
+            if "polarization_speed" in beamformer_cfg:
+                self.polarizationSpeedChanged.emit()
             if "resolution_azimuth" in beamformer_cfg:
                 self.resolutionAzimuthChanged.emit()
             if "resolution_elevation" in beamformer_cfg:
@@ -193,6 +196,10 @@ class CSIOverlay(PyQt6.QtCore.QObject):
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=gridSpacingChanged)
     def gridSpacing(self):
         return float(self.appconfig.get("beamformer", "grid_spacing"))
+
+    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=polarizationSpeedChanged)
+    def polarizationSpeed(self):
+        return float(self.appconfig.get("beamformer", "polarization_speed"))
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=azimuthCorrectionChanged)
     def azimuth_correction(self):

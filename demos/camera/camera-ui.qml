@@ -332,10 +332,29 @@ Common.ESPARGOSApplication {
 				implicitWidth: 210
 				Component.onCompleted: appDrawer.configManager.register(this)
 				onValueChanged: appDrawer.configManager.onControlChanged(this)
-				value: 24
+				value: 64
 				visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show"
 				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "Grid spacing for polarization dots in pixels. Current value: " + value.toFixed(0)
+			}
+
+			Label { text: "Phasor Speed"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show" }
+			Slider {
+				id: polarizationSpeed
+				property string configKey: "beamformer.polarization_speed"
+				property string configProp: "value"
+				property var encode: function(v) { return v }
+				property var decode: function(v) { return Number(v) }
+				from: 0.0
+				to: 8.0
+				stepSize: 0.25
+				implicitWidth: 210
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				value: 4.0
+				visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show"
+				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
+				ToolTip.text: value === 0.0 ? "Paused" : "Electric-field phasor speed: " + value.toFixed(2) + " Hz"
 			}
 
 			Label { text: "Max Delay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && colorizeDelay.currentIndex === 1 }
