@@ -62,6 +62,7 @@ The following demos are provided in the `demos` folder of this repository:
 
 | Demo | Description |
 |------|-------------|
+| `iq-signal-analyzer` | Display synchronized raw IQ as power/phase waterfalls, I/Q traces, constellations, and spectra. Supports Interval, Accumulate, and Signal capture; see [usage](demos/iq-signal-analyzer/README.md). |
 | `music-spectrum` | Use the [MUSIC algorithm](https://en.wikipedia.org/wiki/MUSIC_(algorithm)) to display a spatial (angular) spectrum. Demonstrates angle of arrival (AoA) estimation. |
 | `phases-over-space` | Show the average received phase for each ESPARGOS antenna. |
 | `instantaneous-csi` | Plot the current frequency-domain or time-domain transfer function of the measured channel. |

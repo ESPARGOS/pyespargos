@@ -65,11 +65,34 @@ from .wifi import (
     WiFiPhyRate,
     WiFiTxPower,
 )
+from . import board_iq
+from .board_iq import IQCapability
+from .iq_backlog import IQBacklog, IQBacklogFilter
+from .iq_cluster import CHUNK_SAMPLES, IQCluster
+from .iq_accum_cluster import IQAccumCluster
+from .iq_packet import (
+    IQ_ACCUM_TYPE_HEADER,
+    IQ_CHUNK_TYPE_HEADER,
+    IQ_CHUNK_SAMPLE_WORDS,
+    IQ_CHUNK_FLAG_SIGNAL_CAPTURE,
+    IQ_CHUNK_FLAG_SIGNAL_FIRST,
+    IQ_CHUNK_FLAG_SIGNAL_LAST,
+    IQAccumPacket,
+    IQChunkPacket,
+)
+from .iq_signal_capture import (
+    IQ_SIGNAL_BANK_CHUNKS,
+    IQ_SIGNAL_MAX_CAPTURE_CHUNKS,
+    IQSignalAssembler,
+    IQSignalCapture,
+)
+from .iq_pool import DECIM_TO_FS, SENSOR_COUNT, IQCalibrationError, IQPool, iq_receiver_config
 import logging as _logging
 import sys as _sys
 
 board.Board.register_capability("wifi_rx", board_wifi_rx.WiFiRxCapability)
 board.Board.register_capability("wifi_tx", board_wifi_tx.WiFiTxCapability)
+board.Board.register_capability("iq", board_iq.IQCapability)
 
 __version__ = "0.1.1"
 __title__ = "pyespargos"
@@ -150,6 +173,9 @@ def _load_addons():
     if addons_dir.is_dir():
         for package_init in sorted(addons_dir.glob("*/espargos_*/__init__.py")):
             package_name = package_init.parent.name
+            # IQ is built in; ignore obsolete addon checkouts on upgrade.
+            if package_name == "espargos_iqsampling":
+                continue
             if package_name in _sys.modules:
                 continue
             checkout_dir = str(package_init.parents[1])
@@ -166,7 +192,10 @@ def _load_addons():
     except Exception:
         addon_entry_points = ()
     for entry_point in addon_entry_points:
-        if entry_point.value.partition(":")[0] in _sys.modules:
+        package_name = entry_point.value.partition(":")[0]
+        if package_name == "espargos_iqsampling":
+            continue
+        if package_name in _sys.modules:
             continue
         try:
             entry_point.load()
