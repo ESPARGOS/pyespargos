@@ -10,8 +10,8 @@ Table of contents
    :maxdepth: 2
 
    ESPARGOS Website <https://www.espargos.net>
-   iq-sampling
    get-started
    combined-arrays
+   iq-sampling
    application-framework
    source/modules
