@@ -2,10 +2,9 @@
 
 """Reference CW tone planning: frequency reach, high-band placement, sweeps.
 
-The controller's reference tone generator has two regimes (all measured on
-hardware, 2026-07-07):
+The controller's reference tone generator has two regimes:
 
-- up to ~2497 MHz the exact WiFi-channel tone API places the tone with kHz
+- from 2310 to 2497 MHz the exact tone API places the tone with kHz
   resolution (``set_reftx_tone``);
 - above that, a forced-VCO-cap path reaches ~2680 MHz (``set_reftx_tone_freq``
   with an explicit ``cap``): the VCO free-runs, its frequency set by the coarse
@@ -28,11 +27,10 @@ __all__ = [
     "tone_sweep_steps",
 ]
 
-# Reference tone generator reach (controller ESP32 RFPLL), MEASURED on hardware
-# 2026-07-07 with the sensors as receivers: VCO locks ~2397..2497 MHz. The
-# chan_offset knob saturates near +-13 MHz (channels are stepped for wider
-# coverage; channels >= 15 wedge the PHY, capping the ceiling at ch14+offset).
-TONE_MIN_HZ = 2398e6
+# Exact-tone range of the controller ESP32 RFPLL, verified on hardware
+# 2026-09-30. Below 2412 MHz the controller tunes the PLL directly, avoiding
+# the WiFi channel-offset overflow that previously limited the lower range.
+TONE_MIN_HZ = 2310e6
 TONE_MAX_HZ = 2497e6
 
 # High-band reference tone: forced-VCO-cap -> measured tone frequency (MHz).
@@ -118,11 +116,16 @@ def highband_cap_for_freq(freq_hz):
 def tone_sweep_steps(center_hz, fs, spacing_hz=4e6):
     """Sweep plan hopping the reference tone across the captured band
     [center - 0.45 fs, center + 0.45 fs]: the low band (<= 2497 MHz) uses the
-    exact WiFi-channel tones (kHz-resolution placement, so narrow bands at low
+    exact tones (kHz-resolution placement, so narrow bands at low
     sample rates still get distinct tones), above that the forced-VCO-cap
     tones — mixed automatically when the band straddles 2497. Returns a list
     of steps for :meth:`espargos.iq_pool.IQPool.apply_tone_step`:
     ("freq", f_khz) or ("cap", cap)."""
+    # The calibration fit searches delays in [-16, 16) samples. Uniform
+    # tones repeat the same phase signature every fs / spacing samples;
+    # keep that period above the full search width, including grid rounding.
+    # A single board can also have offsets near the search limits.
+    spacing_hz = min(spacing_hz, fs / 40)
     lo, hi = center_hz - 0.45 * fs, center_hz + 0.45 * fs
     steps = []
     f_lo, f_hi = max(lo, TONE_MIN_HZ), min(hi, TONE_MAX_HZ)

@@ -1193,13 +1193,9 @@ class IQPool(Pool):
         self._calibration_restore_config = {k: previous[k] for k in ("rf_switch",) if k in previous}
         self._calibration_restore_config["receivers"] = previous["receivers"]
 
-        # Tone spacing: multi-board arrays get <= fs/32 (the delay-alias
-        # period of the (tau, phi) fit is fs/spacing, kept >= 32 samples —
-        # comfortably beyond the +-16-sample search window even with the
-        # cross-board offset on top of the engine offsets); a single board's
-        # offsets stay within a couple of samples, so its sweep can afford the
-        # coarser 4 MHz grid.
-        spacing = 4e6 if board_count == 1 else min(2.5e6, fs / 32)
+        # The planner limits spacing to keep delay aliases outside the
+        # full fit search window, for single boards as well as larger arrays.
+        spacing = 2.5e6
         steps = iq_tone.tone_sweep_steps(center_hz, fs, spacing_hz=spacing)
 
         # The per-tone dwell adapts to the chunk rate the CURRENT trigger

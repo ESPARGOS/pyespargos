@@ -92,10 +92,10 @@ GridLayout {
 		enabled: enableSwitch.checked
 		// locale "C": accept "2437.25" with a dot decimal separator regardless
 		// of system locale (parseFloat in apply() only understands the dot)
-		validator: DoubleValidator { bottom: 2397; top: 2680; decimals: 3; notation: DoubleValidator.StandardNotation; locale: "C" }
+		validator: DoubleValidator { bottom: 2310; top: 2680; decimals: 3; notation: DoubleValidator.StandardNotation; locale: "C" }
 		onEditingFinished: reftx.apply()
 		ToolTip.visible: hovered
-		ToolTip.text: "2397–2497 MHz: exact, continuous (kHz resolution, e.g. 2437.25). 2497–2634 MHz: deterministic (hardcoded VCO-cap table, ~±2.4 MHz). 2634–2680 MHz: approximate (topmost VCO band drifts ±10+ MHz with temperature — read exact off the waterfall; nudging still moves it monotonically)."
+		ToolTip.text: "2310–2497 MHz: exact, continuous (kHz resolution, e.g. 2437.25). 2497–2634 MHz: deterministic (hardcoded VCO-cap table, ~±2.4 MHz). 2634–2680 MHz: approximate (topmost VCO band drifts ±10+ MHz with temperature — read exact off the waterfall; nudging still moves it monotonically)."
 	}
 
 	Label { text: "TX attenuation"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
