@@ -70,6 +70,7 @@ def pool_complex_to_width(z, w):
 
 
 class EspargosSignalAnalyzer(ESPARGOSIQApplication):
+    waterfallFrameReady = PyQt6.QtCore.pyqtSignal()
     displayModeChanged = PyQt6.QtCore.pyqtSignal()
     traceSampleCountChanged = PyQt6.QtCore.pyqtSignal()
 
@@ -138,6 +139,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
                 p.clear()
             if mode in ("time", "constellation", "spectrum"):
                 self._publish_sample_windows({})
+            self.waterfallFrameReady.emit()
             self.displayModeChanged.emit()
 
     def _set_fft_size(self, n):
@@ -151,6 +153,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         for p in self.providers:
             p.clear()
         self._publish_sample_windows({})
+        self.waterfallFrameReady.emit()
         self.traceSampleCountChanged.emit()
 
     @PyQt6.QtCore.pyqtSlot(int)
@@ -162,6 +165,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         self.display_width = w
         for p in self.providers:
             p.resize(w)
+        self.waterfallFrameReady.emit()
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def sensorCount(self):
@@ -209,6 +213,8 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
             p.clear()
         if self.display_mode in ("time", "constellation", "spectrum"):
             self._publish_sample_windows({})
+
+        self.waterfallFrameReady.emit()
 
     # ---- rendering ----
 
@@ -366,8 +372,15 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         return sets
 
     def _render(self):
+        # Include processing time in the 25-Hz frame budget. Sleeping a full
+        # interval after rendering made the scroll speed depend on FFT/copy
+        # cost. QML refreshes only when this worker publishes a complete frame.
+        next_frame = time.monotonic()
         while self.render_running:
-            time.sleep(1 / 20)
+            time.sleep(max(0.0, next_frame - time.monotonic()))
+            if not self.render_running:
+                break
+            next_frame = time.monotonic() + 1 / 25
             try:
                 sets = self._drain_sets()
                 if not sets:
@@ -412,6 +425,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         if mode in ("time", "constellation", "spectrum"):
             self._render_sample_blocks(ready, B)
             return
+        rows = [[] for _ in range(SENSOR_COUNT)]
         for b in ready:
             block = self.block_acc.pop(b, None)
             self.block_time.pop(b, None)
@@ -435,8 +449,14 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
                         row = self._placeholder_row()
                 else:
                     row = self._power_row(specs[antid]) if antid in specs else self._placeholder_row()
-                self.providers[antid].add_rows(row[np.newaxis, :])
-                self.rows_rendered[antid] += 1
+                rows[antid].append(row)
+        # Shift each waterfall once per display frame, not once per FFT row.
+        # At FFT=256 this avoids hundreds of full-image copies per second.
+        if rows[0]:
+            for antid in range(SENSOR_COUNT):
+                self.providers[antid].add_rows(np.asarray(rows[antid]))
+                self.rows_rendered[antid] += len(rows[antid])
+            self.waterfallFrameReady.emit()
 
     def _render_sample_blocks(self, ready, B):
         """Chart display at fft_size above one chunk: all sensors show the SAME
