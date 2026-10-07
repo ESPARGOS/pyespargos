@@ -908,4 +908,11 @@ class CSIPool(Pool):
         return all_callbacks_fired and np.any(sensor_cluster.completion)
 
     def _get_cluster_cache_timeout(self, cache_name: str) -> float | None:
-        return self._ota_cache_timeout if cache_name == _CACHE_OTA else None
+        return self._ota_cache_timeout
+
+    def _on_cluster_expired(self, cache_name, cluster_key, sensor_cluster) -> bool:
+        # Complete calibration clusters feed calibrate() and stay. A stale
+        # incomplete one must go: sequence numbers wrap every 4096 packets,
+        # and the next reference packet with the same number would complete
+        # it with observations taken 41 s apart.
+        return cache_name == _CACHE_CALIBRATION and sensor_cluster.is_complete
