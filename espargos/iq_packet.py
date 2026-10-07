@@ -169,7 +169,7 @@ class IQAccumPacket:
             fire_hi,
             self.sync_info,
         ) = (int(x) for x in hdr)
-        if not 1 <= self.vector_chunks <= 16:
+        if not 1 <= self.vector_chunks <= 4:
             raise ValueError("Invalid accumulation vector length")
         if self.vector_chunk_index >= self.vector_chunks:
             raise ValueError("Invalid accumulation vector section index")
