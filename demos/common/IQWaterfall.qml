@@ -37,7 +37,7 @@ Rectangle {
 		source: root.model ? "image://" + root.providerName + "/frame?" + root.model.waterfallGeneration : ""
 	}
 
-	Text {
+	Item {
 		id: frequencyLabels
 		anchors.left: parent.left
 		anchors.right: parent.right
@@ -45,10 +45,21 @@ Rectangle {
 		anchors.leftMargin: 7
 		anchors.rightMargin: 7
 		anchors.bottomMargin: 4
-		text: root.model ? root.model.frequencyLowMhz.toFixed(1) + " MHz                                                        " + root.model.frequencyHighMhz.toFixed(1) + " MHz" : ""
-		color: "#d8e2eb"
-		font.pixelSize: 10
-		horizontalAlignment: Text.AlignHCenter
-		elide: Text.ElideMiddle
+		height: lowLabel.implicitHeight
+
+		Text {
+			id: lowLabel
+			anchors.left: parent.left
+			text: root.model ? root.model.frequencyLowMhz.toFixed(1) + " MHz" : ""
+			color: "#d8e2eb"
+			font.pixelSize: 10
+		}
+
+		Text {
+			anchors.right: parent.right
+			text: root.model ? root.model.frequencyHighMhz.toFixed(1) + " MHz" : ""
+			color: "#d8e2eb"
+			font.pixelSize: 10
+		}
 	}
 }

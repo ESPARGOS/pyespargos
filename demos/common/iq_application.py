@@ -14,6 +14,7 @@ sync, reference tone, calibration); this module only adds the Qt layer:
 
 import json
 import logging
+import signal
 import threading
 
 import numpy as np
@@ -235,6 +236,16 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
     create an :class:`IQController` (once the pool exists, e.g. on
     ``initComplete``) and expose it to QML for the shared IQ drawer.
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Ctrl+C must take the regular shutdown path, which returns the array
+        # to WiFi mode. Python only notices the signal while it executes, hence
+        # the idle timer.
+        signal.signal(signal.SIGINT, lambda *_: self.quit())
+        self._interrupt_timer = PyQt6.QtCore.QTimer(self)
+        self._interrupt_timer.timeout.connect(lambda: None)
+        self._interrupt_timer.start(200)
 
     def _create_pool(self, boards: list) -> IQPool:
         return IQPool(boards)
