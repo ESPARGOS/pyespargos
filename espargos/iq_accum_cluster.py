@@ -44,6 +44,7 @@ class IQAccumCluster(SensorCluster):
         self._coverage_hashes = np.zeros(section_shape, dtype=np.uint32)
         self._flags = np.zeros(section_shape, dtype=np.uint32)
         self._deadline_aborts = np.zeros(section_shape, dtype=np.uint32)
+        self._fire_time_ns = np.zeros(self.shape, dtype=np.uint64)
         self._section_completion = np.zeros(section_shape, dtype=np.bool_)
 
     def add_message(self, board_index, sensor_message):
@@ -87,6 +88,7 @@ class IQAccumCluster(SensorCluster):
         self._coverage_hashes[slot] = int(payload.coverage_hash)
         self._flags[slot] = int(payload.flags)
         self._deadline_aborts[slot] = int(payload.deadline_aborts)
+        self._fire_time_ns[position] = int(payload.fire_time_ns)
         self._section_completion[slot] = True
         if np.all(self._section_completion[position]):
             self._mark_sensor_position_complete(position)
@@ -121,6 +123,10 @@ class IQAccumCluster(SensorCluster):
         """Cumulative sensor-side source-stage misses at this section."""
 
         return self._deadline_aborts
+
+    @property
+    def fire_time_ns(self) -> np.ndarray:
+        return self._fire_time_ns
 
     @property
     def section_completion(self):

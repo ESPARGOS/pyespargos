@@ -183,6 +183,8 @@ class IQPool(Pool):
         # place its corrections on an absolute frequency grid)
         self._calibration_sample_rate = None
         self._calibration_center_frequency = None
+        self._calibration_epoch = None
+        self._calibrating = False
 
         for board_index, board_obj in enumerate(self.boards):
             iq = board_obj.iq
@@ -1037,6 +1039,12 @@ class IQPool(Pool):
         return self._calibration
 
     @property
+    def calibrating(self) -> bool:
+        """Whether :meth:`calibrate` is running: the array then receives the
+        reference tone instead of its antennas."""
+        return self._calibrating
+
+    @property
     def calibration_sample_rate(self) -> float | None:
         """Sample rate at which the stored calibration was measured."""
 
@@ -1047,6 +1055,18 @@ class IQPool(Pool):
         """Center frequency at which the stored calibration was measured."""
 
         return self._calibration_center_frequency
+
+    def calibration_applies_to(self, source) -> bool:
+        """Whether the stored calibration was measured in the capture epoch of
+        ``source`` (an :class:`.IQCluster`, :class:`.IQAccumCluster` or
+        :class:`.IQSignalCapture`).
+
+        Every re-fire of the sensors' sample engines (a sync, a retune or a
+        sample-rate change) re-rolls the per-sensor sample alignment and
+        thereby invalidates the fine calibration. The sensors stamp each chunk
+        with the fire time of its epoch, which makes a stale calibration
+        detectable."""
+        return self._calibration is not None and self._calibration_epoch == np.asarray(source.fire_time_ns, dtype=np.uint64).tobytes()
 
     def cal_correction(self, fft_size=CHUNK_SAMPLES):
         """Per-bin correction vectors synthesized from the stored calibration
@@ -1060,15 +1080,18 @@ class IQPool(Pool):
         bin_frequencies = self._calibration_center_frequency + (np.arange(fft_size) - fft_size // 2) / fft_size * self._calibration_sample_rate
         return self._calibration.phase_time_correction(bin_frequencies)
 
-    def collect_complete_clusters(self, seconds, min_peak=10):
+    def collect_complete_clusters(self, seconds, min_peak=10, epochs=None):
         """Collect complete clusters for a dwell window via a temporary
         callback (any concurrently running consumers are unaffected). Returns
         ``[(chunk_index, iq array (boards, rows, columns, samples)), ...]``
-        filtered to a minimum per-sensor AC amplitude."""
+        filtered to a minimum per-sensor AC amplitude. The capture epochs of
+        the collected clusters are added to the set ``epochs`` if given."""
         collected = []
 
         def cb(cluster):
             collected.append((cluster.chunk_index, cluster.iq))
+            if epochs is not None:
+                epochs.add(cluster.fire_time_ns.tobytes())
 
         handle = self.add_iq_callback(cb)
         time.sleep(seconds)
@@ -1131,26 +1154,28 @@ class IQPool(Pool):
         :class:`IQCalibrationError` on failure."""
         self.start_processing()
         last_error = None
-        for attempt in range(attempts):
-            try:
-                self._calibrate_once(
-                    center_hz=center_hz,
-                    rx_gain=rx_gain,
-                    sync_first=attempt > 0,
-                    cable_lengths=cable_lengths,
-                    cable_velocity_factors=cable_velocity_factors,
-                )
-                if restore:
-                    self._restore_after_calibration()
-                return self._calibration
-            except IQCalibrationError as error:
-                last_error = error
-                self._calibration = None
-                retrying = attempt + 1 < attempts
-                self._logger.warning(f"calibration attempt {attempt + 1} failed: {error}" + (", retrying with fresh sync" if retrying else ""))
-        if restore:
-            self._restore_after_calibration()
-        raise last_error
+        self._calibrating = True
+        try:
+            for attempt in range(attempts):
+                try:
+                    self._calibrate_once(
+                        center_hz=center_hz,
+                        rx_gain=rx_gain,
+                        sync_first=attempt > 0,
+                        cable_lengths=cable_lengths,
+                        cable_velocity_factors=cable_velocity_factors,
+                    )
+                    return self._calibration
+                except IQCalibrationError as error:
+                    last_error = error
+                    self._calibration = None
+                    retrying = attempt + 1 < attempts
+                    self._logger.warning(f"calibration attempt {attempt + 1} failed: {error}" + (", retrying with fresh sync" if retrying else ""))
+            raise last_error
+        finally:
+            if restore:
+                self._restore_after_calibration()
+            self._calibrating = False
 
     def _restore_after_calibration(self):
         if getattr(self, "_calibration_restore_config", None):
@@ -1222,6 +1247,7 @@ class IQPool(Pool):
 
         H = np.zeros((n, flat_count, flat_count), np.complex128)
         snapshots = 0
+        epochs = set()
         try:
             self.apply_config(calibration_config)
             time.sleep(0.7)
@@ -1234,7 +1260,7 @@ class IQPool(Pool):
                 except Exception:
                     continue
                 time.sleep(0.05)
-                for _idx, iq in self.collect_complete_clusters(dwell, min_peak=10):
+                for _idx, iq in self.collect_complete_clusters(dwell, min_peak=10, epochs=epochs):
                     # one flat (boards*8)-sensor array snapshot; the tone
                     # dominates its bin (rank-1 array signature) while
                     # uncorrelated per-antenna noise averages out
@@ -1247,6 +1273,8 @@ class IQPool(Pool):
 
             if snapshots < 8:
                 raise IQCalibrationError(f"only {snapshots} complete array snapshots collected (trigger rate too low or not firing on the reference tone?)")
+            if len(epochs) != 1:
+                raise IQCalibrationError("the sensors re-fired during the sweep (capture configuration changed?)")
 
             # Reference sensor: board 0, firmware antenna id 0.
             ref_row, ref_col = self.boards[0].revision.antenna_id_to_row_col(0)
@@ -1297,6 +1325,7 @@ class IQPool(Pool):
             )
 
             self._calibration = calibration
+            self._calibration_epoch = epochs.pop()
             self._calibration_sample_rate = fs
             self._calibration_center_frequency = float(center_hz)
             tau_rel = tau_samples - tau_samples[ref_flat]

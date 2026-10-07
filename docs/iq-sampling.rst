@@ -33,8 +33,10 @@ Capture lifecycle
 anchors, and restores boards that were already in IQ mode. ``enter_iq_mode()``
 waits for every sensor to report a fresh synchronized grid start. Fine timing
 and phase calibration is a separate ``pool.calibrate()`` operation; it sweeps
-the reference tone and stores a generic ``SensorCalibration``. Recalibrate
-after resynchronizing if fine phase accuracy matters.
+the reference tone and stores a generic ``SensorCalibration``. The calibration
+holds for one capture epoch: a resynchronization, a retune or a sample-rate
+change restarts the sensors' sample engines and invalidates it. ``pool.calibration_applies_to(cluster)`` tells
+whether a cluster or capture was recorded in the calibrated epoch.
 
 Capture types
 -------------
