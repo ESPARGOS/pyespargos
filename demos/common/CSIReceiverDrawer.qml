@@ -240,16 +240,67 @@ Drawer {
 
 			// Section: Corrections
 			Label { Layout.columnSpan: 2; text: "Corrections"; color: "#9fb3c8" }
-			Label { text: "CFO corr."; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Switch {
-				id: cfoCompensationSwitch
+			Label { text: "CFO correct."; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			ComboBox {
+				id: cfoMode
 				property string configKey: "cfo_compensation"
-				property string configProp: "checked"
+				property string configProp: "currentIndex"
+				property var encode: function(v) { return v === 0 }
+				property var decode: function(v) { return v ? 0 : 1 }
 				Component.onCompleted: poolConfigManager.register(this)
-				onCheckedChanged: poolConfigManager.onControlChanged(this)
-				checked: true
+				onActivated: poolConfigManager.onControlChanged(this)
+				model: [ "Auto", "Manual" ]
+				currentIndex: 0
+				function isUserActive() { return pressed || popup.visible }
 				ToolTip.visible: root.tooltipsEnabled && hovered
-				ToolTip.text: "Automatically compensate receiver carrier-frequency offset. Off forces zero CFO correction for radar mode, where transmitter and receiver share a frequency reference and the offset is zero."
+				ToolTip.text: "Auto estimates CFO for each packet. Manual uses the fixed value below; use 0 Hz for shared-clock reference or radar packets."
+			}
+			Label { text: "Manual CFO (Hz)"; color: "#ffffff"; Layout.alignment: Qt.AlignRight }
+			SpinBox {
+				id: cfoValue
+				// Store hardware steps in increasing Hz order (the negative of NRXFOE).
+				readonly property real hzPerStep: 80000000 / Math.pow(2, 20)
+				property string configKey: "cfo_value_hz"
+				property string configProp: "value"
+				property var encode: function(v) { return v * hzPerStep }
+				property var decode: function(v) { return -Math.round(-Number(v) / hzPerStep) }
+				Component.onCompleted: poolConfigManager.register(this)
+				onValueModified: poolConfigManager.onControlChanged(this)
+				from: -4095
+				to: 4096
+				stepSize: 1
+				value: 0
+				editable: true
+				enabled: cfoMode.currentIndex === 1
+				textFromValue: function(value, locale) { return (value * hzPerStep).toFixed(1) }
+				valueFromText: function(text, locale) { return -Math.round(-Number(text) / hzPerStep) }
+				validator: DoubleValidator {
+					bottom: Number(cfoValue.textFromValue(cfoValue.from))
+					top: Number(cfoValue.textFromValue(cfoValue.to))
+					decimals: 1
+					notation: DoubleValidator.StandardNotation
+					locale: "C"
+				}
+				implicitWidth: 180
+				leftPadding: 8
+				rightPadding: 28
+				up.indicator: Rectangle {
+					x: parent.width - width
+					y: 0
+					width: 24
+					height: parent.height / 2
+					color: cfoValue.up.pressed ? "#555555" : cfoValue.up.hovered ? "#444444" : "transparent"
+					Text { anchors.centerIn: parent; text: "▴"; color: cfoValue.enabled && cfoValue.value < cfoValue.to ? "white" : "#666666" }
+				}
+				down.indicator: Rectangle {
+					x: parent.width - width
+					y: parent.height / 2
+					width: 24
+					height: parent.height / 2
+					color: cfoValue.down.pressed ? "#555555" : cfoValue.down.hovered ? "#444444" : "transparent"
+					Text { anchors.centerIn: parent; text: "▾"; color: cfoValue.enabled && cfoValue.value > cfoValue.from ? "white" : "#666666" }
+				}
+				function isUserActive() { return activeFocus || up.pressed || down.pressed }
 			}
 
 			Label { text: "Gain phase"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }

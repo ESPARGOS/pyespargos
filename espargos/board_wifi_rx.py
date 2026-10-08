@@ -18,6 +18,7 @@ from typing import Callable
 
 import numpy as np
 
+from . import cfo
 from . import csi_packet
 from . import sensor
 from .board import (
@@ -148,7 +149,8 @@ class WiFiRxCapability(BoardCapability):
         """Configure automatic or fixed receiver frequency-offset correction.
 
         A fixed ``value`` is the signed 13-bit NRXFOE ``reg_foe_force`` field
-        and must be in the range -4096 through 4095.
+        and must be in the range -4096 through 4095. For Hz, use
+        :meth:`set_cfo_correction_hz`.
         """
 
         self._board.control.command(
@@ -160,6 +162,21 @@ class WiFiRxCapability(BoardCapability):
         """Return the receiver frequency-offset correction configuration."""
 
         return self._board.control.get_json("get_cfo_correction")
+
+    def set_cfo_correction_hz(self, auto: bool, value_hz: float = 0):
+        """Select automatic CFO correction or a fixed CFO in Hz.
+
+        Use the sign of received packet ``rx_ctrl.cfo`` values. Manual 0 Hz
+        disables correction for shared-clock reference/radar transmitters.
+        Values are rounded to the nearest hardware step (about 76.3 Hz).
+        Invalid or out-of-range values raise :class:`ValueError`.
+        """
+        self.set_cfo_correction(auto, cfo.correction_hz_to_raw(value_hz))
+
+    def get_cfo_correction_hz(self) -> dict:
+        """Return ``auto`` and the quantized ``value_hz`` stored by the receiver."""
+        config = self.get_cfo_correction()
+        return {"auto": config["auto"], "value_hz": cfo.correction_raw_to_hz(config["value"])}
 
     def _gain_value_for_controller(self, key: str, values):
         if isinstance(values, (str, bytes)):

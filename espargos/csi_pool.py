@@ -14,6 +14,7 @@ from typing import Callable
 import numpy as np
 import time
 
+from . import cfo
 from . import csi_calibration
 from . import csi_association
 from . import board
@@ -216,6 +217,18 @@ class CSIPool(Pool):
         for b in self.boards:
             b.wifi_rx.set_cfo_correction(auto, value)
         _ = self.get_cfo_correction()
+
+    def set_cfo_correction_hz(self, auto: bool, value_hz: float = 0):
+        """Configure automatic or fixed CFO in Hz on every board.
+
+        See :meth:`espargos.board_wifi_rx.WiFiRxCapability.set_cfo_correction_hz`.
+        """
+        self.set_cfo_correction(auto, cfo.correction_hz_to_raw(value_hz))
+
+    def get_cfo_correction_hz(self) -> dict:
+        """Return reconciled ``auto`` and quantized ``value_hz`` settings."""
+        config = self.get_cfo_correction()
+        return {"auto": config["auto"], "value_hz": cfo.correction_raw_to_hz(config["value"])}
 
     def get_gain_settings(self) -> dict:
         """

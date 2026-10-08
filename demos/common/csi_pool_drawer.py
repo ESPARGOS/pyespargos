@@ -27,6 +27,7 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
         "lltf_8bit_mode": False,
         "compress_csi": False,
         "cfo_compensation": True,
+        "cfo_value_hz": 0.0,
         "gain_phase_compensation": True,
         "gain": {
             "automatic": True,
@@ -94,9 +95,10 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
         cfg_out: dict = {}
         cfg_out["gain_phase_compensation"] = self.pool.gain_phase_compensation
 
-        cfo = self.pool.get_cfo_correction()
+        cfo = self.pool.get_cfo_correction_hz()
         if isinstance(cfo, dict):
             cfg_out["cfo_compensation"] = bool(cfo.get("auto", False))
+            cfg_out["cfo_value_hz"] = float(cfo.get("value_hz", 0))
 
         # CSI acquire config -> UI fields
         csi_cfg = self.pool.get_csi_acquisition_config()
@@ -197,9 +199,12 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
                 if "show_reference" in delta:
                     self.pool.emit_calibration_csi = bool(delta["show_reference"])
 
-                if "cfo_compensation" in delta:
-                    enabled = bool(delta["cfo_compensation"])
-                    self.pool.set_cfo_correction(enabled, 0)
+                if "cfo_compensation" in delta or "cfo_value_hz" in delta:
+                    current = self.pool.get_cfo_correction_hz()
+                    self.pool.set_cfo_correction_hz(
+                        bool(delta.get("cfo_compensation", current["auto"])),
+                        float(delta.get("cfo_value_hz", current["value_hz"])),
+                    )
 
                 if "gain_phase_compensation" in delta:
                     enabled = bool(delta["gain_phase_compensation"])
