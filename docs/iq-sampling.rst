@@ -1,10 +1,10 @@
 IQ sampling
 ===========
 
-ESPARGOS can capture raw complex (I/Q) samples, synchronized across its antennas
-and boards. This uses an undocumented debug path in the ESP32 modem that
-bypasses WiFi packet processing. Read about our discovery in the
-`ESP32 SDR write-up <https://espargos.net/espsdr/>`_.
+ESPARGOS can capture raw complex (I/Q) samples, synchronized across its
+antennas and boards. This uses an undocumented debug path in the ESP32 modem
+that bypasses WiFi packet processing. Read about our discovery in the `ESP32
+SDR write-up <https://espargos.net/espsdr/>`_.
 
 Before you start
 ----------------
@@ -14,7 +14,8 @@ sensor firmware. The example below uses ``192.168.1.2``. Replace it with your
 board's address.
 
 Start with one board and its internal reference source. For multiple boards,
-you also need a shared clock and reference connection. See :doc:`combined-arrays`.
+you also need a shared clock and reference connection. See
+:doc:`combined-arrays`.
 
 Receive your first samples
 --------------------------
@@ -68,26 +69,26 @@ that is ``(1, 2, 4, 256)``.
    consecutive chunks from the same capture burst. Four chunks give you 1024
    samples per antenna.
 
-Both ``IQPool`` and ``CSIPool`` support background processing.
-Here, ``pool.start_processing()`` starts a thread that calls
-``pool.run()`` for you. Do not also call ``run()`` from your own loop while
-that thread is running.
+Both ``IQPool`` and ``CSIPool`` support background processing. Here,
+``pool.start_processing()`` starts a thread that calls ``pool.run()`` for you.
+Do not also call ``run()`` from your own loop while that thread is running.
 
 How Calibration Works
 ---------------------
 
 ``pool.sync()`` sends a broadband reference signal to all receivers through the
-board's (or multi-board) reference network. It uses this common signal to align the samples in
-time and measure the phase and delay differences between antennas. The results
-are stored in ``pool.calibration``. The example above reads raw samples, while
-the signal analyzer can apply the calibration to its phase display.
+board's (or multi-board) reference network. It uses this common signal to align
+the samples in time and measure the phase and delay differences between
+antennas. The results are stored in ``pool.calibration``. The example above
+reads raw samples, while the signal analyzer can apply the calibration to its
+phase display.
 
 After calibration, your receiver settings are restored and the reference is
-switched off. Run ``sync()`` again after changing the frequency or sample rate (decimation).
-Calibration accepts the receiver tuning range, 2310–2640 MHz, and has been tested
-up to 2640 MHz. At 2310 MHz, reference synchronization failed on the test array.
-The web interface has an **RX Sync** button, but its calibration is not shared
-with Python.
+switched off. Run ``sync()`` again after changing the frequency or sample rate
+(decimation). Calibration accepts the receiver tuning range, 2310-2640 MHz, and
+has been tested up to 2640 MHz. At 2310 MHz, reference synchronization failed
+on the test array. The web interface has an **RX Sync** button, but its
+calibration is not shared with Python.
 
 The Trigger Modes
 -----------------
@@ -102,14 +103,14 @@ signal inspection. The example above captures four 256-sample chunks every
 16384 chunks, with no offset. Receive the samples with ``add_iq_callback()``.
 
 **Accumulate** averages repeated waveforms to make a weak repeating signal
-easier to see. ``{"mode": "accumulate", "vector_chunks": 4,
-"interval_chunks": 32768, "offset_chunks": 0}`` selects four-chunk vectors
-and an output interval of 32768 chunks. Use ``add_accumulation_callback()``
-to receive the averages.
+easier to see. ``{"mode": "accumulate", "vector_chunks": 4, "interval_chunks":
+32768, "offset_chunks": 0}`` selects four-chunk vectors and an output interval
+of 32768 chunks. Use ``add_accumulation_callback()`` to receive the averages.
 
-**Signal** waits for a signal to cross a threshold, then captures the same event
-across all eight antennas. This is useful for short bursts such as WiFi traffic.
-Use ``add_signal_capture_callback()`` with a single board. For example:
+**Signal** waits for a signal to cross a threshold, then captures the same
+event across all eight antennas. This is useful for short bursts such as WiFi
+traffic. Use ``add_signal_capture_callback()`` with a single board. For
+example:
 
 .. code-block:: python
 
