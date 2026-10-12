@@ -3,26 +3,10 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 
-/**
- * Reusable controls for the controller's reference CW tone generator (REFTX),
- * driven over the IQController tone slots. Lets a demo enable/disable a continuous
- * carrier on the reference distribution network and set its frequency and TX
- * amplitude — useful as a known signal for the phase-calibration path and for
- * manually probing the array response.
- *
- * The tone is exact and continuous up to ~2497 MHz (the WiFi-channel tone API);
- * above that a forced-VCO-cap path reaches ~2680 MHz. High-band tones free-run
- * (not XTAL-locked); placement uses hardcoded measured lookup tables — instant,
- * ~±2.4 MHz up to 2634 MHz, approximate (±10+ MHz thermal drift) above, where
- * the exact frequency is read off the waterfall. To receive the tone, set the
- * RF switch to "Reference".
- *
- * Usage inside a Common.AppDrawer / IQRxDrawer column:
- *
- *     Common.ReftxToneSettings { controller: iqcontrol; Layout.fillWidth: true }
- */
+/* Manual CW/noise reference controls; synchronization always uses noise. */
 GridLayout {
 	id: reftx
+	enabled: controller && !controller.referenceBusy
 	columns: 2
 	columnSpacing: 16
 	rowSpacing: 10
@@ -30,25 +14,26 @@ GridLayout {
 	// IQController backend (context property provided by the application)
 	property var controller: null
 	property bool _loading: true
-	readonly property bool highBand: freqField.text.length > 0 && parseFloat(freqField.text) > 2497
+	readonly property bool highBand: modeSelect.currentIndex === 1 && parseFloat(freqField.text) > 2497
 
 	function apply() {
 		if (_loading || !controller)
 			return
-		// cbw arg is unused now (high band uses the deterministic cap driver)
-		controller.tone_apply(enableSwitch.checked,
-		                    parseFloat(freqField.text) || 2437,
-		                    attenSlider.value, 0)
+		if (modeSelect.currentIndex === 2 && parseFloat(freqField.text) > 2640)
+			freqField.text = "2640"
+		controller.reference_apply(["off", "cw", "iq"][modeSelect.currentIndex],
+		                          parseFloat(freqField.text) || 2437, attenSlider.value)
 	}
 
 	function loadFromController() {
-		if (!controller)
+		if (!controller || controller.referenceBusy)
 			return
 		_loading = true
 		try {
 			var t = JSON.parse(controller.tone_get_json())
-			enableSwitch.checked = !!t.enable
-			if (t.enable && t.freq_khz > 0)
+			modeSelect.currentIndex = Math.max(0, ["off", "cw", "iq"].indexOf(t.mode))
+			if (t.backoff_qdb !== undefined && t.mode !== "off") attenSlider.value = t.backoff_qdb / 4
+			if (t.freq_khz > 0)
 				// kHz resolution, trailing zeros trimmed ("2437", "2437.25")
 				freqField.text = Number((t.freq_khz / 1000).toFixed(3)).toString()
 		} catch (e) {
@@ -70,18 +55,17 @@ GridLayout {
 
 	Label {
 		Layout.columnSpan: 2
-		text: "Reference CW Tone"
+		text: "Reference Signal"
 		color: "#9fb3c8"
 		topPadding: 8
 	}
 
-	Label { text: "Enable"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-	Switch {
-		id: enableSwitch
-		checked: false
-		onToggled: reftx.apply()
-		ToolTip.visible: hovered
-		ToolTip.text: "Transmit a continuous carrier on the reference distribution network. Set the RF switch to Reference to receive it. Suppresses reference packet TX while on."
+	Label { text: "Signal"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+	ComboBox {
+		id: modeSelect
+		objectName: "referenceModeSelector"
+		model: ["Off", "CW", "Noise (36 MHz)"]
+		onActivated: reftx.apply()
 	}
 
 	Label { text: "Frequency (MHz)"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -89,13 +73,13 @@ GridLayout {
 		id: freqField
 		text: "2437"
 		implicitWidth: 210
-		enabled: enableSwitch.checked
+		enabled: modeSelect.currentIndex !== 0
 		// locale "C": accept "2437.25" with a dot decimal separator regardless
 		// of system locale (parseFloat in apply() only understands the dot)
-		validator: DoubleValidator { bottom: 2310; top: 2680; decimals: 3; notation: DoubleValidator.StandardNotation; locale: "C" }
+		validator: DoubleValidator { bottom: 2310; top: modeSelect.currentIndex === 2 ? 2640 : 2680; decimals: 3; notation: DoubleValidator.StandardNotation; locale: "C" }
 		onEditingFinished: reftx.apply()
 		ToolTip.visible: hovered
-		ToolTip.text: "2310–2497 MHz: exact, continuous (kHz resolution, e.g. 2437.25). 2497–2634 MHz: deterministic (hardcoded VCO-cap table, ~±2.4 MHz). 2634–2680 MHz: approximate (topmost VCO band drifts ±10+ MHz with temperature — read exact off the waterfall; nudging still moves it monotonically)."
+		ToolTip.text: modeSelect.currentIndex === 2 ? "Broadband reference noise, centered at 2310–2640 MHz." : "2310–2497 MHz: exact, continuous (kHz resolution, e.g. 2437.25). 2497–2634 MHz: deterministic (hardcoded VCO-cap table, ~±2.4 MHz). 2634–2680 MHz: approximate (topmost VCO band drifts ±10+ MHz with temperature — read exact off the waterfall; nudging still moves it monotonically)."
 	}
 
 	Label { text: "TX attenuation"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -103,14 +87,14 @@ GridLayout {
 		spacing: 14
 		Slider {
 			id: attenSlider
-			from: 0; to: 20; stepSize: 1; value: 6
+			from: 0; to: 20; stepSize: 0.25; value: 7.5
 			implicitWidth: 160
-			enabled: enableSwitch.checked
+			enabled: modeSelect.currentIndex !== 0
 			onPressedChanged: if (!pressed) reftx.apply()
 		}
 		Label {
-			text: Math.round(attenSlider.value) + " dB"
-			color: enableSwitch.checked ? "#ffffff" : "#808080"
+			text: Number(attenSlider.value.toFixed(2)) + " dB"
+			color: modeSelect.currentIndex !== 0 ? "#ffffff" : "#808080"
 		}
 	}
 

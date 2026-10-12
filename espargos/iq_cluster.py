@@ -2,7 +2,7 @@
 
 """Assemble IQ chunks with the same synchronized index into one array snapshot.
 
-After timestamp-anchored sync (:mod:`espargos.iq_sync`), ordinary
+After broadband reference sync (:meth:`espargos.IQPool.sync`), ordinary
 raw-IQ chunks use their common ``source_chunk_index`` as the association key.
 Signal chunks use ``(config_generation, capture_id, capture_chunk_offset)``
 because that tuple names the array-wide wired-BOOT event even when a sensor's
@@ -58,6 +58,7 @@ class IQCluster(SensorCluster):
         self._fire_time_ns = np.zeros(self.shape, dtype=np.uint64)
         self._dropped_chunks = np.zeros(self.shape, dtype=np.uint32)
         self._source_chunk_index = np.zeros(self.shape, dtype=np.uint32)
+        self._chunk_counter = np.zeros(self.shape, dtype=np.uint32)
         self._capture_id = np.full(self.shape, 0xFFFFFFFF, dtype=np.uint32)
         self._capture_chunk_offset = np.full(self.shape, 0xFFFFFFFF, dtype=np.uint32)
         self._capture_chunk_count = np.zeros(self.shape, dtype=np.uint32)
@@ -90,6 +91,7 @@ class IQCluster(SensorCluster):
         self._fire_time_ns[position] = int(getattr(payload, "fire_time_ns", 0))
         self._dropped_chunks[position] = int(getattr(payload, "dropped_chunks", 0))
         self._source_chunk_index[position] = int(getattr(payload, "source_chunk_index", 0))
+        self._chunk_counter[position] = int(payload.chunk_counter)
         self._capture_id[position] = int(getattr(payload, "capture_id", 0xFFFFFFFF))
         self._capture_chunk_offset[position] = int(getattr(payload, "capture_chunk_offset", 0xFFFFFFFF))
         self._capture_chunk_count[position] = int(getattr(payload, "capture_chunk_count", 0))
@@ -101,6 +103,16 @@ class IQCluster(SensorCluster):
         """Return the ``(board, row, column, sample)`` snapshot (NaN where missing)."""
 
         return self._iq
+
+    @property
+    def grid_origin_ns(self) -> np.ndarray:
+        """Local CPU time of grid sample zero, including measured fire latency.
+
+        The 24-bit grid index is unambiguous within one wrap of a new sync.
+        This permits comparing capture starts at different sample rates.
+        """
+        base = (self._source_chunk_index.astype(np.int64) - self._chunk_counter) & 0xFFFFFF
+        return self._fire_time_ns.astype(np.int64) - np.rint(base * 256e9 / self._sample_rate_hz).astype(np.int64)
 
     @property
     def host_timestamp(self) -> float:

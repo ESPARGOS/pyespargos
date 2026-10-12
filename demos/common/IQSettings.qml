@@ -25,6 +25,7 @@ import QtQuick.Layouts
  */
 GridLayout {
 	id: iqsettings
+	enabled: controller && !controller.referenceBusy
 	columns: 2
 	columnSpacing: 16
 	rowSpacing: 10
@@ -34,22 +35,24 @@ GridLayout {
 
 	property bool _loading: true
 
-	// Trigger configuration words per UI mode. Firmware mode IDs are 0 for
-	// interval, 3 for accumulation and 4 for array-wide wired-OR Signal.
-	// Interval default: burst 4 / period 4096 = ~305 chunks/s per sensor at decim 1,
-	// just inside the measured ~385 chunks/s SPI uplink share — beyond it, each
-	// sensor drops a different random subset and index-matched (8/8) sets vanish.
+	// Named trigger fields, matching the controller HTTP API.
 	property var triggerModes: [
-		{ name: "Interval", mode: 0, fields: [
-			{l: "Period", v: "4096"}, {l: "Offset", v: "0"}, {l: "Burst", v: "4"}
+		{ name: "Interval", mode: "interval", fields: [
+			{k: "interval_chunks", l: "Interval chunks", v: "16384"},
+			{k: "offset_chunks", l: "Offset chunks", v: "0"},
+			{k: "burst_chunks", l: "Burst chunks", v: "4"}
 		]},
-		{ name: "Accumulate", mode: 3, fields: [
-			{l: "Vector chunks", v: "4"}, {l: "Stream interval", v: "32768"},
-			{l: "Offset", v: "0"}
+		{ name: "Accumulate", mode: "accumulate", fields: [
+			{k: "vector_chunks", l: "Vector chunks", v: "4"},
+			{k: "interval_chunks", l: "Interval chunks", v: "32768"},
+			{k: "offset_chunks", l: "Offset chunks", v: "0"}
 		]},
-		{ name: "Signal", mode: 4, fields: [
-			{l: "Threshold", v: "64"}, {l: "Trigger sensors", v: "0xff"},
-			{l: "Holdoff ms", v: "1"}, {l: "Capture chunks (56–112)", v: "56"}
+		{ name: "Signal", mode: "signal", fields: [
+			{k: "threshold", l: "Threshold", v: "64"},
+			{k: "antennas", l: "Trigger antennas", v: "0,1,2,3,4,5,6,7"},
+			{k: "holdoff_ms", l: "Holdoff ms", v: "300"},
+			{k: "capture_chunks", l: "Capture chunks (56–112)", v: "56"},
+			{k: "quiet_threshold", l: "Quiet threshold", v: "0"}
 		]}
 	]
 	property var triggerValues: triggerModes[0].fields.map(d => d.v)
@@ -62,20 +65,15 @@ GridLayout {
 		return 0
 	}
 
-	function parseTriggerValue(text) {
-		var stringValue = String(text).trim()
-		var value = stringValue.toLowerCase().startsWith("0x")
-			? parseInt(stringValue.slice(2), 16) : parseInt(stringValue, 10)
-		return isNaN(value) ? 0 : value
-	}
-
 	function collectConfig() {
-		var triggerConfig = triggerValues.map(parseTriggerValue)
 		var selectedTrigger = triggerModes[triggerCombo.currentIndex]
-		if (selectedTrigger.mode === 3)
-			triggerConfig.push(0) // reserved accumulation word
-		if (selectedTrigger.mode === 4)
-			triggerConfig[3] = Math.max(56, Math.min(112, triggerConfig[3]))
+		var trigger = {mode: selectedTrigger.mode}
+		selectedTrigger.fields.forEach(function(field, index) {
+			var value = String(triggerValues[index]).trim()
+			trigger[field.k] = field.k === "antennas"
+				? (value === "" ? [] : value.split(",").map(v => Number(v.trim())))
+				: Number(value)
+		})
 		return {
 			"rf_freq_hz": Math.round(parseFloat(freqField.text) * 1e6),
 			"adc_decimation": parseInt(decimationCombo.currentValue),
@@ -83,8 +81,7 @@ GridLayout {
 			"filter_bw_mhz": lpfSwitch.checked ? Math.round(lpfBwSlider.value) : 0,
 			"gain_mode": agcSwitch.checked ? 0 : 1,
 			"rx_gain": Math.round(rxGainSlider.value),
-			"trigger_mode": selectedTrigger.mode,
-			"trigger_config": triggerConfig,
+			"trigger": trigger,
 			"rf_switch": rfSwitchCombo.currentIndex
 		}
 	}
@@ -96,7 +93,7 @@ GridLayout {
 	}
 
 	function loadFromController() {
-		if (!controller)
+		if (!controller || controller.referenceBusy)
 			return
 		_loading = true
 		try {
@@ -120,12 +117,13 @@ GridLayout {
 				agcSwitch.checked = rx.gain_mode === "auto"
 			if (rx.rx_gain !== undefined)
 				rxGainSlider.value = Math.min(Math.max(rx.rx_gain, rxGainSlider.from), rxGainSlider.to)
-			if (cfg.trigger_mode !== undefined && Array.isArray(cfg.trigger_config)) {
-				triggerCombo.currentIndex = triggerModeIndex(cfg.trigger_mode)
+			if (cfg.trigger !== undefined) {
+				triggerCombo.currentIndex = triggerModeIndex(cfg.trigger.mode)
 				var defs = triggerModes[triggerCombo.currentIndex].fields
 				var vals = []
 				for (var i = 0; i < defs.length; ++i) {
-					var w = cfg.trigger_config[i]
+					var w = cfg.trigger[defs[i].k]
+					if (Array.isArray(w)) w = w.join(",")
 					vals.push("" + (w !== undefined ? w : defs[i].v))
 				}
 				triggerValues = vals
@@ -138,23 +136,25 @@ GridLayout {
 	}
 
 	Component.onCompleted: loadFromController()
+	Connections {
+		target: iqsettings.controller
+		function onReferenceBusyChanged() {
+			if (!iqsettings.controller.referenceBusy) iqsettings.loadFromController()
+		}
+	}
 
 	Label { Layout.columnSpan: 2; text: "IQ Capture"; color: "#9fb3c8" }
 
-	Label { text: "Time sync"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 	Button {
-		text: "Sync"
+		objectName: "syncCalibrationButton"
+		Layout.columnSpan: 2
+		Layout.fillWidth: true
+		text: "Sync + Calibration"
+		Material.background: !controller || controller.syncNeeded ? "#c53d3d" : "#227b3d"
+		Material.foreground: "#ffffff"
 		onClicked: if (controller) controller.sync_async()
 		ToolTip.visible: hovered
-		ToolTip.text: "Coarse array-wide time sync: anchors all sensors' IQ chunk grids to one WiFi reference packet (round-trips through WiFi mode, a few seconds). Runs automatically at application startup — re-run only to recover a lost grid alignment. Invalidates the fine calibration."
-	}
-
-	Label { text: "Calibration"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-	Button {
-		text: "Calibrate"
-		onClicked: if (controller) controller.calibrate_auto_async()
-		ToolTip.visible: hovered
-		ToolTip.text: "Fine time/phase calibration vs sensor 0 on the EXISTING coarse sync: RF switch to Reference, quick CW sweep across the band (channel tones and/or forced-VCO-cap tones), complex-domain phase+delay fit, restore. A few seconds; the waterfall stays live. Valid until the next sync or retune."
+		ToolTip.text: "Synchronize and calibrate all sensors using broadband REF at fixed gain and transmit power, verify the result, then restore receive settings."
 	}
 
 	Label { Layout.columnSpan: 2; text: "Corrections"; color: "#9fb3c8" }

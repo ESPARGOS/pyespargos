@@ -24,7 +24,8 @@ from demos.common.espargos_application import ESPARGOSApplication
 
 from espargos import iq_tone
 from espargos.iq_cluster import CHUNK_SAMPLES
-from espargos.iq_pool import IQCalibrationError, IQPool, iq_receiver_config
+from espargos.iq_packet import DECIM_TO_FS
+from espargos.iq_pool import IQPool, iq_receiver_config
 
 __all__ = ["ESPARGOSIQApplication", "IQController"]
 
@@ -40,9 +41,12 @@ class IQController(PyQt6.QtCore.QObject):
 
     # Tone state changed OUTSIDE the GUI tone controls (sync/calibration
     # disable the tone); GUI reloads its switch/fields from the controller.
+    configChanged = PyQt6.QtCore.pyqtSignal(object)
     toneChanged = PyQt6.QtCore.pyqtSignal()
     calibrationChanged = PyQt6.QtCore.pyqtSignal()
     gainPhaseCompensationChanged = PyQt6.QtCore.pyqtSignal()
+    referenceBusyChanged = PyQt6.QtCore.pyqtSignal()
+    syncNeededChanged = PyQt6.QtCore.pyqtSignal()
 
     def __init__(
         self,
@@ -65,22 +69,78 @@ class IQController(PyQt6.QtCore.QObject):
         # reference-tone control: coalescing worker so the controller RPC never
         # blocks the GUI thread and rapid slider/field edits collapse to the last
         self._tone_state_lock = threading.Lock()
+        self._reference_io_lock = threading.Lock()
         self._tone_pending = None
         self._tone_busy = False
+        self._reference_busy = False
+        self._sync_needed = True
+        self.pool.add_iq_callback(self._observe_capture)
+        self.pool.add_accumulation_callback(self._observe_capture)
+
+    @PyQt6.QtCore.pyqtProperty(bool, notify=referenceBusyChanged)
+    def referenceBusy(self):
+        return self._reference_busy
+
+    @PyQt6.QtCore.pyqtProperty(bool, notify=syncNeededChanged)
+    def syncNeeded(self):
+        return self._sync_needed
+
+    def _set_sync_needed(self, needed):
+        if self._sync_needed != needed:
+            self._sync_needed = needed
+            self.syncNeededChanged.emit()
+
+    def _observe_capture(self, capture):
+        if not self._reference_busy and not self.pool.calibration_applies_to(capture):
+            self._set_sync_needed(True)
+
+    def _check_calibration_config(self, config):
+        center = self.pool.calibration_center_frequency
+        rate = self.pool.calibration_sample_rate
+        frequencies = [r.get("rf_freq_hz", center) for r in config.get("receivers", [])]
+        frequencies.append(config.get("rf_freq_hz", center))
+        if self.pool.calibration is None or any(f != center for f in frequencies) or DECIM_TO_FS.get(config.get("adc_decimation"), rate) != rate:
+            self._set_sync_needed(True)
+
+    def _begin_reference(self):
+        if self._reference_busy:
+            return False
+        self._reference_busy = True
+        self._set_sync_needed(True)
+        with self._tone_state_lock:
+            self._tone_pending = None
+        self.referenceBusyChanged.emit()
+        return True
+
+    def _end_reference(self, succeeded):
+        self._correction_cache = {}
+        self._set_sync_needed(not succeeded)
+        self._reference_busy = False
+        self.calibrationChanged.emit()
+        self.toneChanged.emit()
+        self.referenceBusyChanged.emit()
 
     # ---- capture configuration ----
 
     @PyQt6.QtCore.pyqtSlot(str)
     def apply_config_json(self, config_json):
+        if self._reference_busy:
+            return
         try:
-            self.pool.apply_config(json.loads(config_json))
+            config = json.loads(config_json)
+            self.pool.apply_config(config)
+            self._check_calibration_config(config)
+            self.configChanged.emit(config)
         except Exception as e:
             self.logger.error(f"set_iq_control failed: {e}")
 
     @PyQt6.QtCore.pyqtSlot(result=str)
     def get_config_json(self):
         try:
-            return json.dumps(self.pool.get_config())
+            config = self.pool.get_config()
+            self._check_calibration_config(config)
+            self.configChanged.emit(config)
+            return json.dumps(config)
         except Exception as e:
             self.logger.error(f"get_iq_control failed: {e}")
             return "{}"
@@ -97,49 +157,23 @@ class IQController(PyQt6.QtCore.QObject):
         self.pool.gain_phase_compensation = enabled
         self.gainPhaseCompensationChanged.emit()
 
-    # ---- coarse time sync ----
+    # ---- combined synchronization and calibration ----
 
     @PyQt6.QtCore.pyqtSlot()
     def sync_async(self):
-        def run():
-            try:
-                self.pool.sync()
-            except Exception as e:
-                self.logger.error(f"time sync failed: {e}")
-            finally:
-                self.toneChanged.emit()  # sync switches the reference tone off
-
-        threading.Thread(target=run, daemon=True).start()
-
-    # ---- fine time/phase calibration ----
-
-    @PyQt6.QtCore.pyqtSlot()
-    def calibrate_auto_async(self):
-        """Run the pool's model-free broadband calibration at the current
-        center frequency on a worker thread (any center works: the reference
-        is swept across the captured band, WiFi-channel tones <= 2497 MHz and
-        forced-VCO-cap tones above)."""
+        if not self._begin_reference():
+            return
 
         def run():
+            succeeded = False
             try:
-                center = int(iq_receiver_config(self.pool.get_config()).get("rf_freq_hz", 2437000000))
-            except Exception:
-                center = 2437000000
-            board_count = len(self.pool.boards)
-            if board_count == 1:
-                self.logger.info(f"calibrating (broadband, model-free) at {center/1e6:.0f} MHz")
-            else:
-                self.logger.info(f"calibrating coherent array ({board_count} boards) at {center/1e6:.0f} MHz")
-            try:
-                self.pool.calibrate(center_hz=center, **self._calibration_kwargs)
-            except IQCalibrationError as e:
-                self.logger.error(f"calibration failed: {e}")
+                with self._reference_io_lock:
+                    self.pool.sync(**self._calibration_kwargs)
+                    succeeded = True
             except Exception as e:
-                self.logger.error(f"calibration error: {e}")
+                self.logger.error(f"sync/calibration failed: {e}")
             finally:
-                self._correction_cache = {}
-                self.calibrationChanged.emit()
-                self.toneChanged.emit()  # the sweep switches the tone off
+                self._end_reference(succeeded)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -171,16 +205,15 @@ class IQController(PyQt6.QtCore.QObject):
 
     # ---- reference tone ----
 
-    @PyQt6.QtCore.pyqtSlot(bool, float, float, int)
-    def tone_apply(self, enable, freq_mhz, atten_db, cbw):
-        """Drive the master's reference CW tone from the GUI. NON-BLOCKING: the
-        request is handed to a worker thread and only the LATEST request is
-        acted on (rapid slider/field edits coalesce), so the GUI never stalls
-        on the controller RPC or the high-band cap placement. atten_db 0..20
-        is TX attenuation (backoff). Up to TONE_MAX_HZ the exact WiFi-channel
-        path is used; above it the deterministic forced-VCO-cap path."""
+    @PyQt6.QtCore.pyqtSlot(str, float, float)
+    def reference_apply(self, mode, freq_mhz, atten_db):
+        """Queue the latest Off/CW/noise request without blocking the GUI."""
+        if mode not in ("off", "cw", "iq"):
+            raise ValueError("Unknown reference mode")
+        if self._reference_busy:
+            return
         with self._tone_state_lock:
-            self._tone_pending = (bool(enable), float(freq_mhz), float(atten_db))
+            self._tone_pending = (mode, float(freq_mhz), float(atten_db))
             if self._tone_busy:
                 return  # in-flight worker will pick up the latest
             self._tone_busy = True
@@ -195,18 +228,27 @@ class IQController(PyQt6.QtCore.QObject):
                     self._tone_busy = False
                     return
             try:
-                self._apply_tone_request(*request)
+                # Finish an in-flight tone write before reference acquisition;
+                # discard queued edits once Sync or Calibrate has been clicked.
+                with self._reference_io_lock:
+                    if not self._reference_busy:
+                        self._apply_tone_request(*request)
             except Exception as e:
-                self.logger.error(f"tone control failed: {e}")
+                self.logger.error(f"reference control failed: {e}")
+            finally:
+                self.toneChanged.emit()
 
-    def _apply_tone_request(self, enable, freq_mhz, atten_db):
-        if not enable:
+    def _apply_tone_request(self, mode, freq_mhz, atten_db):
+        if mode == "off":
             self.pool.set_reference_tone(enable=False)
-            self.toneChanged.emit()
             return
         backoff = int(round(max(0.0, min(atten_db, 20.0)) * 4))
         freq_hz = freq_mhz * 1e6
-        if freq_hz <= iq_tone.TONE_MAX_HZ:
+        if mode == "iq":
+            if not 2310e6 <= freq_hz <= 2640e6:
+                raise ValueError("Reference noise requires 2310–2640 MHz")
+            self.pool.master_board.iq.set_reference("iq", freq_hz, backoff)
+        elif freq_hz <= iq_tone.TONE_MAX_HZ:
             self.pool.set_reference_tone(freq_hz, backoff_qdb=backoff)
         else:
             cap, f_expected, approximate = self.pool.place_highband_tone(freq_hz, backoff_qdb=backoff)
@@ -220,7 +262,7 @@ class IQController(PyQt6.QtCore.QObject):
         try:
             return json.dumps(self.pool.get_reference_tone())
         except Exception as e:
-            self.logger.error(f"get_reftx_tone failed: {e}")
+            self.logger.error(f"get_reference failed: {e}")
             return "{}"
 
 
@@ -251,10 +293,8 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
         return IQPool(boards)
 
     def _calibrate_pool(self, calibrate: bool, additional_calibrate_args: dict) -> bool:
-        # No start-up calibration: the IQ fine calibration is user-triggered
-        # (drawer "Calibrate" button) since it is only valid within one sync
-        # epoch anyway. Start the chunk-processing worker instead, so cluster
-        # callbacks run from here on.
+        # IQ synchronization includes calibration. The demo starts that
+        # operation through the same controller used by the Sync button.
         self.pool.start_processing()
         return True
 

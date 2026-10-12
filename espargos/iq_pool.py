@@ -16,13 +16,11 @@ Beyond the data plane, the pool manages the whole IQ-mode lifecycle, like
 
 - capture configuration fan-out (``set_iq_control``) with the compact
   array-wide receiver-field translation;
-- array-wide coarse time sync (one WiFi reference packet timestamped by all
-  sensors anchors all chunk grids, :meth:`sync`);
 - reference CW tone control, routed to the master board (the only transmitter
   that reaches the shared reference distribution network);
-- model-free fine time/phase calibration (:meth:`calibrate`): the reference
-  tone is swept across the captured band, the per-bin antenna covariance is
-  accumulated over complete clusters, and a per-sensor (tau, phi) complex fit
+- combined synchronization and time/phase calibration (:meth:`sync`): the
+  broadband onset aligns the grids, then illuminates the captured band;
+  coherent cross-spectra and a per-sensor (tau, phi) complex fit
   yields a generic :class:`espargos.SensorCalibration` — the same calibration
   model the CSI stack uses, with the reference-path (PCB trace) delays
   compensated by the calibration class itself.
@@ -43,11 +41,11 @@ from espargos import constants
 from espargos.pool import Pool
 from espargos.sensor_calibration import SensorCalibration, compute_reference_path_delays
 
-from . import iq_sync
+from . import iq_reference
 from . import iq_tone
 from .iq_accum_cluster import IQAccumCluster
 from .iq_cluster import CHUNK_SAMPLES, IQCluster
-from .iq_packet import IQAccumPacket
+from .iq_packet import DECIM_TO_FS, IQAccumPacket
 from .iq_signal_capture import IQSignalAssembler
 
 __all__ = ["DECIM_TO_FS", "IQCalibrationError", "IQPool", "SENSOR_COUNT", "iq_receiver_config"]
@@ -63,8 +61,6 @@ _SIGNAL_WATCHDOG_QUIET_SECONDS = 5.0
 
 SENSOR_COUNT = 8
 
-# adc_decimation -> complex sample rate (matches adc_dump_sample_cycles in fw)
-DECIM_TO_FS = {1: 80e6, 2: 40e6, 4: 20e6, 6: 10e6, 8: 8e6, 10: 4e6}
 _CALIBRATION_MAX_RESIDUAL_RAD = 0.30
 _SIGNAL_EPOCH_MISMATCH_RECOVERY_THRESHOLD = 3
 
@@ -75,29 +71,6 @@ def iq_receiver_config(config, antenna_id=0):
         if int(receiver.get("antid", -1)) == int(antenna_id):
             return receiver
     raise ValueError(f"IQ config has no receiver entry for antenna {antenna_id}")
-
-
-def _remove_reference_path_term(correction, reference_path_delays, frequency_hz):
-    """Adapt an OTA correction vector for a cabled reference measurement."""
-
-    return np.asarray(correction) * np.exp(2j * np.pi * np.asarray(reference_path_delays) * float(frequency_hz))
-
-
-def _within_board_phase_residuals(spectra, correction, board_references):
-    """Return corrected sensor phases relative to antenna 0 of each board."""
-
-    spectra = np.asarray(spectra)
-    correction = np.asarray(correction)
-    board_count, rows, columns = spectra.shape[1:]
-    residuals = np.zeros((board_count, rows, columns))
-    for board_index, ref_row, ref_col in board_references:
-        reference = spectra[:, board_index, ref_row, ref_col]
-        for row in range(rows):
-            for col in range(columns):
-                cross = np.sum(spectra[:, board_index, row, col] * np.conj(reference))
-                corr = correction[board_index, row, col] * np.conj(correction[board_index, ref_row, ref_col])
-                residuals[board_index, row, col] = float(np.angle(cross * corr))
-    return residuals
 
 
 class IQCalibrationError(RuntimeError):
@@ -156,7 +129,6 @@ class IQPool(Pool):
         self._unwrap_lock = threading.Lock()
         self._unwrap_epoch = 0
         self._unwrap_last = None
-        self._last_chunk_monotonic = None
 
         # BOOT can occasionally reach one sensor just after its bank boundary,
         # putting that sensor one whole bank ahead for an event. The assembler
@@ -185,6 +157,8 @@ class IQPool(Pool):
         self._calibration_center_frequency = None
         self._calibration_epoch = None
         self._calibrating = False
+        self._reference_lock = threading.Lock()
+        self._reference_sequence = time.monotonic_ns() & 0xFFFFFFFF
 
         for board_index, board_obj in enumerate(self.boards):
             iq = board_obj.iq
@@ -356,8 +330,8 @@ class IQPool(Pool):
             try:
                 if get_config is not None:
                     config = get_config()
-                    trigger_config = config.get("trigger_config") or [0, 0]
-                    if config.get("mode") != "iq" or config.get("trigger_mode") != 4 or len(trigger_config) < 2 or not trigger_config[1]:
+                    trigger = config.get("trigger", {})
+                    if config.get("mode") != "iq" or trigger.get("mode") != "signal" or not trigger.get("antennas"):
                         self._logger.info(
                             "Signal rearm (%s) skipped: array no longer in Signal mode",
                             context,
@@ -415,12 +389,12 @@ class IQPool(Pool):
             config = self.boards[0].iq.get_config()
         except Exception:
             return
-        trigger_config = config.get("trigger_config") or [0, 0, 0]
-        if config.get("mode") != "iq" or config.get("trigger_mode") != 4 or len(trigger_config) < 3 or not trigger_config[1]:
+        trigger = config.get("trigger", {})
+        if config.get("mode") != "iq" or trigger.get("mode") != "signal" or not trigger.get("antennas"):
             # No longer in Signal mode: disarm until Signal traffic returns.
             self._signal_last_signal_monotonic = None
             return
-        if quiet < trigger_config[2] / 1000.0 + _SIGNAL_WATCHDOG_QUIET_SECONDS:
+        if quiet < trigger["holdoff_ms"] / 1000.0 + _SIGNAL_WATCHDOG_QUIET_SECONDS:
             return  # a long configured holdoff is legitimate dead time
         if not config.get("boot_released", False):
             return  # controller-held start barrier in progress
@@ -568,13 +542,25 @@ class IQPool(Pool):
             return (1 << 128) | (int(board_index) << 96) | (int(payload.config_generation) << 64) | (int(payload.capture_id) << 32) | int(payload.capture_chunk_offset)
         raw = int(payload.source_chunk_index) & 0x00FFFFFF
         with self._unwrap_lock:
-            # A drop by more than half the 24-bit range is a wrap (or a sync
-            # re-fire counter reset) -> next epoch.
-            if self._unwrap_last is not None and raw + (1 << 23) < self._unwrap_last:
-                self._unwrap_epoch += 1
-            self._unwrap_last = raw
-            self._last_chunk_monotonic = time.monotonic()
-            return (self._unwrap_epoch << 24) + raw
+            # Different sensors can straddle a wrap in arrival order. Keep
+            # the newest index as the reference; a delayed pre-wrap packet
+            # belongs to the previous epoch and must not cause another wrap.
+            if self._unwrap_last is None:
+                self._unwrap_last = raw
+            newest = (self._unwrap_epoch << 24) + self._unwrap_last
+            delta = (raw - self._unwrap_last + (1 << 23)) % (1 << 24) - (1 << 23)
+            index = newest + delta
+            if index > newest:
+                self._unwrap_epoch, self._unwrap_last = divmod(index, 1 << 24)
+            return index
+
+    def _resolve_cluster_key(self, cache_name, proposed_key, cache, board_index, sensor_message):
+        if cache_name == _CACHE_CHUNKS:
+            payload = sensor_message.payload
+            # A rate change or a new grid can reuse an index while old data
+            # is still in transport. Keep those observations separate.
+            return (payload.sync_info & 0xFFFF, payload.sample_rate_hz, proposed_key)
+        return proposed_key
 
     def _create_cluster(self, cache_name, cluster_key, board_index, first_message) -> IQCluster:
         if cache_name == _CACHE_ACCUMULATIONS:
@@ -584,7 +570,7 @@ class IQPool(Pool):
                 gain_phase_compensation=self._gain_phase_enabled,
             )
         return IQCluster(
-            cluster_key,
+            cluster_key[-1] if cache_name == _CACHE_CHUNKS else cluster_key,
             self.board_revisions,
             gain_phase_compensation=self._gain_phase_enabled,
         )
@@ -663,36 +649,10 @@ class IQPool(Pool):
         except Exception as e:
             self._logger.warning(f"could not restore WiFi mode: {e}")
 
-    def enter_iq_mode(self, timeout=25.0):
-        """Enter IQ mode and wait for every sensor's fresh grid fire.
-
-        This is the counterpart to :meth:`restore_wifi` for applications that
-        acquire timestamp anchors while the array is still in WiFi mode.  It
-        prevents the UI from reporting readiness while sensors are still in
-        the provisional, unsynchronised IQ start-up epoch.
-        """
-
-        baselines = [None] * len(self.boards)
-        baseline_deadline = time.monotonic() + min(float(timeout), 10.0)
-        while any(baseline is None for baseline in baselines) and time.monotonic() < baseline_deadline:
-            for index, board in enumerate(self.boards):
-                if baselines[index] is not None:
-                    continue
-                try:
-                    baselines[index] = self._sensor_sync_state(board)
-                except Exception:
-                    pass
-            if any(baseline is None for baseline in baselines):
-                time.sleep(0.1)
-        incomplete = [self.boards[index].host for index, baseline in enumerate(baselines) if baseline is None]
-        if incomplete:
-            raise RuntimeError("incomplete sensor diagnostics before entering IQ mode: " + ", ".join(incomplete))
-        self.apply_config({"mode": "iq"})
-        self._wait_for_fresh_iq_sync(
-            baselines,
-            [True] * len(self.boards),
-            timeout=float(timeout),
-        )
+    def enter_iq_mode(self, timeout=3.0):
+        """Enter and synchronize IQ sampling; an already running grid is kept."""
+        if any(board.iq.get_config()["mode"] != "iq" for board in self.boards):
+            self.sync(timeout=timeout)
 
     def _fanout(self, fn, only=None):
         """Run fn(board) on all (or selected) boards concurrently; returns the
@@ -739,31 +699,7 @@ class IQPool(Pool):
         """Reference CW tone on the cabled distribution network (master
         controller ESP32). While active, reference packet TX is suppressed;
         disabling restores the packet-TX WiFi state."""
-        payload = {"enable": bool(enable), "backoff_qdb": int(backoff_qdb)}
-        if enable:
-            payload["freq_khz"] = int(round(freq_hz / 1e3))
-        try:
-            self.master_board.iq.set_reftx_tone(payload)
-        except espargos.EspargosHTTPStatusError as error:
-            # The controller rejects tone ENABLING outside IQ mode (and clears
-            # the tone itself when entering WiFi mode). Disabling an
-            # (impossible) tone in WiFi mode is a no-op, not an error.
-            if enable or error.status != 409:
-                raise
-
-    def set_reference_tone_freq(self, freq_hz, cbw, enable=True, backoff_qdb=30, cap=None):
-        """Forced high-band reference tone (above the WiFi grid, via the
-        sub-channel-table divider path). With cap=None the VCO cap auto-cal runs
-        (non-deterministic up high). With cap in 0..255 the VCO coarse cap is
-        FORCED — the tone is then DETERMINISTIC (see
-        :data:`.iq_tone.HIGHBAND_CAP_FREQ_MHZ`). The controller releases the
-        override when the tone is disabled (so WiFi/CSI is unaffected)."""
-        payload = {"enable": bool(enable), "backoff_qdb": int(backoff_qdb), "cbw": int(cbw)}
-        if enable:
-            payload["freq_khz"] = int(round(freq_hz / 1e3))
-            if cap is not None:
-                payload["cap"] = int(cap)
-        self.master_board.iq.set_reftx_tone_freq(payload)
+        self.master_board.iq.set_reference("cw" if enable else "off", freq_hz, backoff_qdb)
 
     def place_highband_tone(self, freq_hz, backoff_qdb=30):
         """Place the forced-cap high-band tone at freq_hz — instant, from the
@@ -771,267 +707,12 @@ class IQPool(Pool):
         ``(cap, expected_freq_mhz, approximate)``; in the approximate zone the
         tone wanders thermally (read the exact frequency off a spectrum)."""
         cap, f_expected, approximate = iq_tone.highband_cap_for_freq(freq_hz)
-        self.set_reference_tone_freq(iq_tone.HIGHBAND_TONE_CODE_HZ, iq_tone.HIGHBAND_TONE_CBW, backoff_qdb=backoff_qdb, cap=cap)
+        self.master_board.iq.set_reference("cw", iq_tone.HIGHBAND_TONE_CODE_HZ, backoff_qdb, {"cbw": iq_tone.HIGHBAND_TONE_CBW, "cap": cap})
         return cap, f_expected, approximate
-
-    def apply_tone_step(self, step):
-        """Key one step of a :func:`.iq_tone.tone_sweep_steps` plan:
-        ("freq", f_khz) via the exact WiFi-channel path, ("cap", cap) via the
-        forced-VCO-cap path."""
-        if step[0] == "cap":
-            self.set_reference_tone_freq(iq_tone.HIGHBAND_TONE_CODE_HZ, iq_tone.HIGHBAND_TONE_CBW, cap=step[1])
-        else:
-            self.set_reference_tone(step[1] * 1e3)
 
     def get_reference_tone(self) -> dict:
         """Return the master controller's reference tone generator state."""
-        return self.master_board.iq.get_reftx_tone()
-
-    # ---- array-wide coarse time sync ----
-
-    @staticmethod
-    def _sensor_sync_state(board_obj):
-        """Return ``antid -> (uptime_ms, timed_sync_count)`` for a board.
-
-        The controller refreshes these in-band sensor counters about twice a
-        second.  Requiring all antenna IDs prevents a temporarily incomplete
-        version-info snapshot from being mistaken for sensor readiness.
-        """
-        sensors = board_obj.control.get_json("get_sensor_debug").get("sensors", [])
-        state = {int(sensor["antid"]): (int(sensor["uptime_ms"]), int(sensor["iq_timed_syncs"])) for sensor in sensors if "antid" in sensor and "uptime_ms" in sensor and "iq_timed_syncs" in sensor}
-        return state if set(state) == set(range(SENSOR_COUNT)) else None
-
-    @staticmethod
-    def _sensor_wifi_state(board_obj):
-        """Return ``antid -> (uptime_ms, promiscuous_rx_count)``.
-
-        A freshly increased receive counter proves that the sensor has really
-        entered WiFi mode. This matters because the shared controller stream
-        may still contain CSI queued before a mode transition; using such a
-        stale packet as a time anchor produces a foreign/future MAC-time epoch
-        and makes the following IQ grid fire fail closed.
-        """
-        sensors = board_obj.control.get_json("get_sensor_debug").get("sensors", [])
-        state = {int(sensor["antid"]): (int(sensor["uptime_ms"]), int(sensor["wifi_promisc_cb"])) for sensor in sensors if "antid" in sensor and "uptime_ms" in sensor and "wifi_promisc_cb" in sensor}
-        return state if set(state) == set(range(SENSOR_COUNT)) else None
-
-    def _wait_for_fresh_wifi_rx(self, baselines, only, timeout):
-        """Wait until every selected sensor reports post-transition WiFi RX."""
-        selected_sensors = {(board_index, antenna_id) for board_index, selected in enumerate(only) if selected for antenna_id in range(SENSOR_COUNT)}
-        pending = set(selected_sensors)
-        deadline = time.monotonic() + float(timeout)
-        while time.monotonic() < deadline:
-            pending = set(selected_sensors)
-            for board_index, selected in enumerate(only):
-                if not selected:
-                    continue
-                try:
-                    current = self._sensor_wifi_state(self.boards[board_index])
-                except Exception:
-                    continue
-                if current is None:
-                    continue
-                baseline = baselines[board_index]
-                for antenna_id in range(SENSOR_COUNT):
-                    uptime, count = current[antenna_id]
-                    old_uptime, old_count = baseline[antenna_id]
-                    ready = count != old_count if uptime >= old_uptime else count != 0
-                    if ready:
-                        pending.discard((board_index, antenna_id))
-            if not pending:
-                return
-            time.sleep(0.1)
-        names = [f"{self.boards[board_index].host}/ant{antenna_id}" for board_index, antenna_id in sorted(pending)]
-        raise RuntimeError("timed out waiting for fresh WiFi receive activity after mode " "transition: " + ", ".join(names))
-
-    def _wait_for_fresh_iq_sync(self, baselines, only, timeout, stability_time=0.5):
-        """Wait for a fresh grid fire that remains valid on every sensor."""
-        selected_sensors = {(board_index, antenna_id) for board_index, selected in enumerate(only) if selected for antenna_id in range(SENSOR_COUNT)}
-        pending = set(selected_sensors)
-        deadline = time.monotonic() + float(timeout)
-        last_errors = {}
-        stable_since = None
-        while time.monotonic() < deadline:
-            pending = set(selected_sensors)
-            for board_index, selected in enumerate(only):
-                if not selected:
-                    continue
-                try:
-                    current = self._sensor_sync_state(self.boards[board_index])
-                except Exception as error:
-                    last_errors[board_index] = error
-                    continue
-                if current is None:
-                    continue
-                baseline = baselines[board_index]
-                for antenna_id in range(SENSOR_COUNT):
-                    uptime, count = current[antenna_id]
-                    old_uptime, old_count = baseline[antenna_id]
-                    # A normal IQ re-entry advances the counter.  If a sensor
-                    # rebooted during the transition, its counter restarted;
-                    # the first nonzero grid fire is the equivalent proof.
-                    if uptime >= old_uptime:
-                        delta = (count - old_count) & 0xFFFFFFFF
-                        # A reset count must not look like progress when an
-                        # in-band uptime snapshot has not yet reflected the
-                        # reset. True increments (including wrap) are in the
-                        # forward half of the uint32 sequence space.
-                        ready = 0 < delta < 0x80000000
-                    else:
-                        ready = count != 0
-                    if ready:
-                        pending.discard((board_index, antenna_id))
-            if not pending:
-                now = time.monotonic()
-                if stable_since is None:
-                    stable_since = now
-                if now - stable_since >= float(stability_time):
-                    return
-            else:
-                # A sensor that fires and then reboots must re-qualify. The
-                # old implementation removed it permanently on the first
-                # observed counter edge and could return while it was already
-                # back at uptime~0 with no synchronized grid.
-                stable_since = None
-            time.sleep(0.1)
-        if not pending:
-            pending = set(selected_sensors)
-            last_errors[-1] = RuntimeError("fresh grid fire did not remain stable long enough")
-        if pending:
-            names = [f"{self.boards[board_index].host}/ant{antenna_id}" for board_index, antenna_id in sorted(pending)]
-            detail = "; ".join((f"{self.boards[index].host}: {error}" if index >= 0 else str(error)) for index, error in sorted(last_errors.items()))
-            suffix = f" ({detail})" if detail else ""
-            raise RuntimeError("timed out waiting for sensors to re-enter synchronized IQ mode: " + ", ".join(names) + suffix)
-
-    def sync(self, timeout=15.0, iq_ready_timeout=25.0):
-        """Array-wide coarse time sync: ONE reference packet (master REFTX ->
-        star splitter -> every sensor of every board) is timestamped by all
-        sensors, and per-board anchors derived from that same packet are
-        posted to every controller — all chunk grids (and grid indices) then
-        coincide array-wide. Anchor timestamps come from WiFi reference
-        packets, so boards in IQ mode round-trip through WiFi mode and
-        re-enter IQ afterwards (the sensors (re-)fire on the anchored grid at
-        IQ entry). The call returns only after every sensor has reported that
-        fresh grid fire; ``iq_ready_timeout`` bounds that second wait.
-        Blocking (a few seconds); raises on failure. NOTE: a
-        re-sync re-rolls the small engine-start offsets, so re-calibrate
-        afterwards if fine phase accuracy matters."""
-        # A leftover reference CW tone (controller-side state, e.g. from an
-        # aborted calibration sweep) suppresses the very reference packets the
-        # anchor acquisition waits for. A tone is never legitimate during
-        # acquisition, so unconditionally switch it off.
-        self.set_reference_tone(enable=False)
-
-        was_iq = []
-        for board_obj in self.boards:
-            was_iq.append(str(board_obj.iq.get_config().get("mode", "")).lower() == "iq")
-        wifi_baselines = [None] * len(self.boards)
-        for board_index, selected in enumerate(was_iq):
-            if not selected:
-                continue
-            # A full eight-sensor diagnostic sweep can take several seconds
-            # immediately after a simultaneous reboot/OTA. This is readiness,
-            # not acquisition latency, so wait long enough for the last SPI
-            # slot rather than spuriously failing a valid mode switch.
-            baseline_deadline = time.monotonic() + 10.0
-            while wifi_baselines[board_index] is None and time.monotonic() < baseline_deadline:
-                try:
-                    wifi_baselines[board_index] = self._sensor_wifi_state(self.boards[board_index])
-                except Exception:
-                    pass
-                if wifi_baselines[board_index] is None:
-                    time.sleep(0.1)
-            if wifi_baselines[board_index] is None:
-                raise RuntimeError(f"incomplete sensor diagnostics before WiFi transition " f"on {self.boards[board_index].host}")
-        baselines = [None] * len(self.boards)
-        try:
-            if any(was_iq):
-                self._logger.info("sync: switching array to WiFi mode (anchors come from WiFi reference packets)")
-            errors = self._fanout(lambda board_obj: board_obj.iq.set_config({"mode": "wifi"}), only=was_iq)
-            if any(errors):
-                raise RuntimeError(f"WiFi-mode round-trip failed: {[str(e) for e in errors if e]}")
-            if any(was_iq):
-                self._logger.info("sync: waiting for fresh WiFi receive activity on every " "sensor")
-                self._wait_for_fresh_wifi_rx(wifi_baselines, was_iq, timeout=min(float(timeout), 15.0))
-            # Transient pool: the anchor acquisition needs the clustered-CSI
-            # view of the stream; close() detaches its subscriptions again
-            # afterwards (the boards' shared streams keep running).
-            pool = espargos.CSIPool(self.boards)
-            try:
-                anchors, seqs = iq_sync.post_sync_anchors(pool, self.boards, timeout=timeout, log=self._logger.info)
-            finally:
-                pool.close()
-        finally:
-            # ALWAYS return to IQ mode, also when no anchor packet was caught:
-            # leaving the array in WiFi mode would silently stop the whole IQ
-            # pipeline of the calling application.
-            if any(was_iq):
-                self._logger.info("sync: re-entering IQ mode")
-            for board_index, selected in enumerate(was_iq):
-                if not selected:
-                    continue
-                baseline_deadline = time.monotonic() + 10.0
-                while baselines[board_index] is None and time.monotonic() < baseline_deadline:
-                    try:
-                        baselines[board_index] = self._sensor_sync_state(self.boards[board_index])
-                    except Exception:
-                        pass
-                    if baselines[board_index] is None:
-                        time.sleep(0.1)
-                if baselines[board_index] is None:
-                    raise RuntimeError(f"incomplete sensor diagnostics before IQ re-entry on " f"{self.boards[board_index].host}")
-            reentry_errors = [None] * len(self.boards)
-            for attempt in range(3):
-                reentry_errors = self._fanout(
-                    lambda board_obj: board_obj.iq.set_config({"mode": "iq"}),
-                    only=was_iq,
-                )
-                if not any(reentry_errors):
-                    break
-                failed = [f"{self.boards[index].host}: {error}" for index, error in enumerate(reentry_errors) if error is not None]
-                self._logger.warning(f"IQ re-entry attempt {attempt + 1}/3 failed: " + "; ".join(failed))
-                if attempt != 2:
-                    time.sleep(0.5)
-            if any(reentry_errors):
-                failed = [f"{self.boards[index].host}: {error}" for index, error in enumerate(reentry_errors) if error is not None]
-                raise RuntimeError("IQ re-entry failed on " + "; ".join(failed))
-            if any(was_iq):
-                self._wait_for_fresh_iq_sync(baselines, was_iq, timeout=iq_ready_timeout)
-        self.clear_chunks()
-        self._logger.info(f"array-wide anchored time sync posted ({len(self.boards)} board(s), sync_seq {seqs})")
-        return seqs
-
-    # ---- stream resilience ----
-
-    def reconnect(self):
-        """Restart the board transports after a silently died stream (the
-        stream loop exits on prolonged data gaps; Board.start() reconnects
-        cleanly)."""
-        self._logger.info("reconnecting boards after stream death")
-        for board_obj in self.boards:
-            try:
-                board_obj.stop()
-            except Exception:
-                pass
-            try:
-                board_obj.start()
-            except Exception as e:
-                self._logger.warning(f"board restart failed for {board_obj.host}: {e}")
-
-    def ensure_stream_alive(self, tries=3):
-        """Check that IQ chunks are flowing (requires the processing worker or
-        an external :meth:`run` driver); reconnect the boards if not."""
-        for _ in range(tries):
-            with self._unwrap_lock:
-                self._last_chunk_monotonic = None
-            time.sleep(3)
-            with self._unwrap_lock:
-                if self._last_chunk_monotonic is not None:
-                    return True
-            self.reconnect()
-        return False
-
-    # ---- fine time/phase calibration ----
+        return self.master_board.iq.get_reference()
 
     @property
     def calibration(self) -> SensorCalibration | None:
@@ -1040,8 +721,7 @@ class IQPool(Pool):
 
     @property
     def calibrating(self) -> bool:
-        """Whether :meth:`calibrate` is running: the array then receives the
-        reference tone instead of its antennas."""
+        """Whether synchronization or calibration is using the broadband REF path."""
         return self._calibrating
 
     @property
@@ -1080,421 +760,63 @@ class IQPool(Pool):
         bin_frequencies = self._calibration_center_frequency + (np.arange(fft_size) - fft_size // 2) / fft_size * self._calibration_sample_rate
         return self._calibration.phase_time_correction(bin_frequencies)
 
-    def collect_complete_clusters(self, seconds, min_peak=10, epochs=None):
-        """Collect complete clusters for a dwell window via a temporary
-        callback (any concurrently running consumers are unaffected). Returns
-        ``[(chunk_index, iq array (boards, rows, columns, samples)), ...]``
-        filtered to a minimum per-sensor AC amplitude. The capture epochs of
-        the collected clusters are added to the set ``epochs`` if given."""
-        collected = []
+    def sync(self, center_hz=None, rx_gain=35, attempts=5, cable_lengths=None, cable_velocity_factors=None, timeout=3.0, iq_ready_timeout=3.0):
+        """Synchronize and calibrate from one broadband REF session.
 
-        def cb(cluster):
-            collected.append((cluster.chunk_index, cluster.iq))
-            if epochs is not None:
-                epochs.add(cluster.fire_time_ns.tobytes())
-
-        handle = self.add_iq_callback(cb)
-        time.sleep(seconds)
-        self.remove_iq_callback(handle)
-        out = []
-        for chunk_index, iq in collected:
-            ac = iq - np.mean(iq, axis=-1, keepdims=True)
-            if float(np.min(np.max(np.abs(ac), axis=-1))) >= min_peak:
-                out.append((chunk_index, iq))
-        return out
-
-    def calibrate(
-        self,
-        center_hz=None,
-        rx_gain=40,
-        restore=True,
-        attempts=2,
-        cable_lengths=None,
-        cable_velocity_factors=None,
-    ):
-        """Model-free fine time/phase calibration of the whole (possibly
-        multi-board) array — works at ANY center frequency with ANY reference
-        waveform. The sensors are coarsely time-synced, so at each FFT bin the
-        array snapshot is x_a(f) = h_a(f)·s(f): the unknown (noisy/drifting)
-        source s(f) is a common scalar that cancels in the cross-spectrum
-        z_a(f) = <x_a x_ref*> ∝ h_a h_ref*. Sweeping the master's reference
-        tone across the captured band illuminates every bin; a single
-        2-parameter complex fit exp(j(phi + 2 pi f tau)) per sensor (tau
-        maximizes the magnitude-weighted coherence, phi is the residual
-        angle) then gives the per-sensor offsets — no unwrapping, no per-tone
-        frequency measurement, robust on every sensor.
-
-        The result is stored as a generic :class:`espargos.SensorCalibration`
-        (timing offset + phase offset per sensor, reference-path trace delays
-        compensated by the calibration model). Fresh two-tone probes validate
-        every sensor and, on multi-board arrays, the cross-board links; a wrong
-        result is never stored silently.
-
-        The capture configuration is not disturbed apart from the RF switch
-        and a fixed manual gain (both restored afterwards): trigger and
-        decimation settings stay exactly as configured — the per-tone dwell
-        adapts to the chunk rate they produce, so a live display keeps
-        scrolling at its normal rate during the sweep.
-
-        Calibration RELIES ON the existing coarse time sync (:meth:`sync` —
-        enforced at application startup; sync and calibration are separate
-        user actions) and does not refresh it, with two exceptions where a
-        fresh sync is unavoidable: an explicit retune (calibrating at a
-        different center re-rolls the sample alignment) and the retry after a
-        FAILED attempt (a stuck sync epoch is the common failure cause, and
-        retrying inside it could never succeed).
-
-        ``cable_lengths`` and ``cable_velocity_factors`` describe the
-        per-board reference-signal distribution cables. When supplied, their
-        delays are included in the reference-path model so that the resulting
-        correction applies to over-the-air measurements.
-
-        Blocking (a few seconds) — run from a worker thread; requires chunk
-        processing (:meth:`start_processing` is called implicitly). Raises
-        :class:`IQCalibrationError` on failure."""
-        self.start_processing()
-        last_error = None
-        self._calibrating = True
-        try:
+        Acquire a common sample grid, fit phase/delay, validate on fresh data,
+        then restore receive settings and publish the calibration atomically.
+        """
+        t0 = time.monotonic()
+        if attempts < 1:
+            raise ValueError("attempts must be positive")
+        row, col = self.boards[0].revision.antenna_id_to_row_col(0)
+        ref = row * 4 + col
+        with iq_reference.reference_session(self, center_hz, rx_gain) as (center, fs):
+            self._calibration = None
             for attempt in range(attempts):
                 try:
-                    self._calibrate_once(
-                        center_hz=center_hz,
-                        rx_gain=rx_gain,
-                        sync_first=attempt > 0,
-                        cable_lengths=cable_lengths,
-                        cable_velocity_factors=cable_velocity_factors,
-                    )
-                    return self._calibration
-                except IQCalibrationError as error:
-                    last_error = error
-                    self._calibration = None
-                    retrying = attempt + 1 < attempts
-                    self._logger.warning(f"calibration attempt {attempt + 1} failed: {error}" + (", retrying with fresh sync" if retrying else ""))
-            raise last_error
-        finally:
-            if restore:
-                self._restore_after_calibration()
-            self._calibrating = False
-
-    def _restore_after_calibration(self):
-        if getattr(self, "_calibration_restore_config", None):
-            try:
-                self.apply_config(self._calibration_restore_config)
-            except Exception as e:
-                self._logger.warning(f"could not restore pre-calibration config: {e}")
-
-    def _calibrate_once(
-        self,
-        center_hz=None,
-        rx_gain=40,
-        sync_first=False,
-        cable_lengths=None,
-        cable_velocity_factors=None,
-    ):
-        t_start = time.time()
-        board_count = len(self.boards)
-        flat_count = board_count * SENSOR_COUNT
-        n = CHUNK_SAMPLES
-        window = np.hanning(n).astype(np.complex64)
-
-        previous = self.get_config()
-        previous_rx = iq_receiver_config(previous)
-        if center_hz is None:
-            center_hz = int(previous_rx.get("rf_freq_hz", 2437000000))
-        retunes = int(center_hz) != int(previous_rx.get("rf_freq_hz", 0))
-        fs = DECIM_TO_FS.get(int(previous.get("adc_decimation", 1)), 80e6)
-
-        # The capture configuration is left ALONE apart from the RF switch and
-        # a fixed manual gain (the measured tone operating point; AGC would
-        # pump on the strong cabled tone): trigger and decimation stay as the
-        # user configured them, so a live display keeps its familiar rate
-        # during the sweep. Both overridden fields are alignment-safe and
-        # restored afterwards; a retune only happens if a different center is
-        # requested explicitly (and breaks the alignment, hence the sync).
-        calibration_config = {"mode": "iq", "rf_switch": 1, "gain_mode": 1, "rx_gain": rx_gain}
-        if retunes:
-            calibration_config["rf_freq_hz"] = int(center_hz)
-        self._calibration_restore_config = {k: previous[k] for k in ("rf_switch",) if k in previous}
-        self._calibration_restore_config["receivers"] = previous["receivers"]
-
-        # The planner limits spacing to keep delay aliases outside the
-        # full fit search window, for single boards as well as larger arrays.
-        spacing = 2.5e6
-        steps = iq_tone.tone_sweep_steps(center_hz, fs, spacing_hz=spacing)
-
-        # The per-tone dwell adapts to the chunk rate the CURRENT trigger
-        # settings produce (interval trigger: fs/256 * burst/period), so each
-        # tone yields a handful of complete snapshots whatever the rate. For
-        # the event-based trigger modes the rate is signal-dependent and
-        # unpredictable; a fixed dwell + the minimum-snapshot check below
-        # have to do.
-        chunk_rate = None
-        if int(previous.get("trigger_mode", 0)) == 0:
-            trigger_config = list(previous.get("trigger_config") or [])
-            period = int(trigger_config[0]) if len(trigger_config) >= 1 else 0
-            burst = int(trigger_config[2]) if len(trigger_config) >= 3 else 1
-            if period > 0 and burst > 0:
-                chunk_rate = fs / CHUNK_SAMPLES * burst / period
-        # Four snapshots per tone proved too optimistic in live camera use:
-        # an unlucky short dwell can fit a convincing but wrong delay slope,
-        # which corrupts every downstream beamformer.  Keep enough independent
-        # chunks for the fit itself; the fresh probe below then validates the
-        # result on data that did not participate in the fit.
-        min_dwell, snapshots_per_tone = (0.16, 8.0) if board_count == 1 else (0.20, 10.0)
-        dwell = 0.25 if chunk_rate is None else min(1.0, max(min_dwell, snapshots_per_tone / max(chunk_rate, 1e-3)))
-        self._logger.info(f"calibration sweep: {len(steps)} tones, dwell {dwell:.2f} s" + (f" ({chunk_rate:.0f} chunks/s at current trigger settings)" if chunk_rate is not None else " (non-interval trigger, rate unknown)"))
-
-        H = np.zeros((n, flat_count, flat_count), np.complex128)
-        snapshots = 0
-        epochs = set()
-        try:
-            self.apply_config(calibration_config)
-            time.sleep(0.7)
-            if sync_first or retunes:  # a retune always needs a fresh sync
-                self.sync()
-                time.sleep(1.0)
-            for step in steps:
-                try:
-                    self.apply_tone_step(step)
-                except Exception:
-                    continue
-                time.sleep(0.05)
-                for _idx, iq in self.collect_complete_clusters(dwell, min_peak=10, epochs=epochs):
-                    # one flat (boards*8)-sensor array snapshot; the tone
-                    # dominates its bin (rank-1 array signature) while
-                    # uncorrelated per-antenna noise averages out
-                    X = iq.reshape(flat_count, n)
-                    X = X - np.mean(X, axis=-1, keepdims=True)
-                    F = np.fft.fftshift(np.fft.fft(X * window, axis=-1), axes=-1)  # (flat, n)
-                    H += np.einsum("as,bs->sab", F, np.conj(F))
-                    snapshots += 1
-            self.set_reference_tone(enable=False)
-
-            if snapshots < 8:
-                raise IQCalibrationError(f"only {snapshots} complete array snapshots collected (trigger rate too low or not firing on the reference tone?)")
-            if len(epochs) != 1:
-                raise IQCalibrationError("the sensors re-fired during the sweep (capture configuration changed?)")
-
-            # Reference sensor: board 0, firmware antenna id 0.
-            ref_row, ref_col = self.boards[0].revision.antenna_id_to_row_col(0)
-            ref_flat = ref_row * constants.ANTENNAS_PER_ROW + ref_col
-
-            f = (np.arange(n) - n // 2) / n
-            H00 = np.real(np.einsum("sii->si", H)[:, ref_flat])
-            trust = (H00 / (np.median(H00[H00 > 0]) + 1e-12)) > 3.0
-            trust[n // 2 - 1 : n // 2 + 2] = False  # DC / LO leakage never trusted
-            if trust.sum() < 6:
-                raise IQCalibrationError(f"only {int(trust.sum())} illuminated bins")
-            ff = f[trust]
-            taus = np.arange(-16.0, 16.0, 0.01)  # covers worst coarse-sync skew
-            basis = np.exp(-2j * np.pi * np.outer(ff, taus))  # (n_trust, n_tau)
-
-            tau_samples = np.zeros(flat_count)
-            phi = np.zeros(flat_count)
-            fit_coherence = np.ones(flat_count)
-            for a in range(flat_count):
-                if a == ref_flat:
-                    continue
-                z = H[trust, a, ref_flat]  # complex, mag-weighted
-                coherence = np.abs(z @ basis)  # (n_tau,)
-                best = int(np.argmax(coherence))
-                tau_samples[a] = float(taus[best])
-                fit_coherence[a] = float(coherence[best] / (np.sum(np.abs(z)) + 1e-24))
-                phi[a] = float(np.angle(np.sum(z * np.exp(-2j * np.pi * ff * tau_samples[a]))))
-
-            # The fitted response of a sensor sampling LATE by dt has phase
-            # slope -2 pi f dt, i.e. tau_samples = -dt*fs — flip the sign so
-            # timing_offsets carry the CSI-calibration meaning (positive =
-            # sensor runs late). The reference-path delays (PCB traces and,
-            # when configured, board-distribution cables) stay IN the fitted
-            # values; SensorCalibration compensates them on the absolute
-            # frequency grid, exactly like the WiFi calibration.
-            sensor_shape = (board_count, constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
+                    seqs = iq_reference.acquire_grid(self, center, timeout)
+                    training = iq_reference.collect(self, count=32, timeout=iq_ready_timeout, seqs=seqs)
+                    tau, phi, quality = iq_reference.fit(training, ref)
+                    validation = iq_reference.collect(self, count=32, timeout=iq_ready_timeout, seqs=seqs)
+                    tau2, phi2, _ = iq_reference.fit(validation, ref)
+                    if not np.array_equal(training[0].fire_time_ns, validation[0].fire_time_ns):
+                        raise IQCalibrationError("Capture epoch changed during calibration")
+                    residual = np.abs(np.angle(np.exp(1j * (phi2 - phi)))) + np.pi * np.abs(tau2 - tau) * (36e6 / 80e6)
+                    if residual.max() > _CALIBRATION_MAX_RESIDUAL_RAD:
+                        raise IQCalibrationError(f"Broadband validation residual {residual.max():.3f} rad")
+                    break
+                except RuntimeError as error:
+                    if attempt + 1 == attempts:
+                        raise IQCalibrationError(str(error)) from error
+                    self._logger.info("Acquiring a fresh broadband grid: %s", error)
+            timing = tau / 80e6
+            epoch = training[0].fire_time_ns.tobytes()
+            if fs != 80e6:
+                # The ADC subsamples without anti-alias filtering. Measure
+                # the full reference band at 80 MS/s, then transfer the delay
+                # using the measured starts of the two capture epochs.
+                self.apply_config({"adc_decimation": {rate: decimation for decimation, rate in DECIM_TO_FS.items()}[fs], "trigger": {"mode": "interval", "interval_chunks": max(128, 2 ** round(np.log2(fs / 256 / 100))), "burst_chunks": 4}})
+                self.clear_chunks()
+                target = iq_reference.collect(self, count=4, seqs=seqs)[0]
+                timing = iq_reference.transfer_delay(timing, training[0].grid_origin_ns, target.grid_origin_ns, ref)
+                epoch = target.fire_time_ns.tobytes()
+            shape = (len(self.boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
             calibration = SensorCalibration(
-                sensor_shape=sensor_shape,
-                timing_offsets=(-tau_samples / fs).reshape(sensor_shape),
-                phase_offsets=phi.reshape(sensor_shape),
-                phase_reference_frequency=float(center_hz),
+                sensor_shape=shape,
+                timing_offsets=(-timing).reshape(shape),
+                phase_offsets=phi.reshape(shape),
+                phase_reference_frequency=center,
                 clock_scope=espargos.ClockReferenceScope.POOL,
-                reference_path_delays=compute_reference_path_delays(
-                    self.boards,
-                    board_cable_lengths=cable_lengths,
-                    board_cable_vfs=cable_velocity_factors,
-                ),
+                reference_path_delays=compute_reference_path_delays(self.boards, board_cable_lengths=cable_lengths, board_cable_vfs=cable_velocity_factors),
             )
+        # Publish only after validation AND restoration succeeded.
+        self._calibration = calibration
+        self._calibration_epoch = epoch
+        self._calibration_sample_rate = fs
+        self._calibration_center_frequency = center
+        self._logger.info("Broadband calibration verified: coherence %.3f, residual %.3f rad, %.3f s", quality.min(), residual.max(), time.monotonic() - t0)
+        return calibration
 
-            self._calibration = calibration
-            self._calibration_epoch = epochs.pop()
-            self._calibration_sample_rate = fs
-            self._calibration_center_frequency = float(center_hz)
-            tau_rel = tau_samples - tau_samples[ref_flat]
-            self._logger.info(
-                f"calibration fitted in {time.time()-t_start:.1f} s: {snapshots} snapshots, "
-                f"{int(trust.sum())}/{n} bins, tau {np.min(tau_rel):+.2f}..{np.max(tau_rel):+.2f} smp, "
-                f"fit coherence {np.min(fit_coherence):.3f}..{np.max(fit_coherence):.3f}"
-            )
-
-            # Validate EVERY sensor against fresh reference-tone snapshots.
-            # Applying the calibration with its OTA-only trace compensation
-            # removed must flatten a cabled probe within each board.  This
-            # catches the intermittent plausible-looking but wrong fit that
-            # otherwise breaks FFT, MUSIC, and any other spatial processor in
-            # exactly the same way.
-            sensor_residuals = self._probe_sensor_residuals(center_hz, fs, dwell)
-            if sensor_residuals is None:
-                raise IQCalibrationError("self-check probe tone not measurable")
-            worst_sensor_residual = max(abs(value) for residuals in sensor_residuals.values() for value in residuals.reshape(-1))
-            for f_probe, residuals in sensor_residuals.items():
-                self._logger.info(f"self-check @{f_probe/1e6:.0f} MHz: corrected within-board residuals {np.array2string(residuals, precision=3, suppress_small=True)} rad")
-            if worst_sensor_residual > _CALIBRATION_MAX_RESIDUAL_RAD:
-                raise IQCalibrationError(f"self-check worst within-board residual {worst_sensor_residual:+.3f} rad")
-
-            # Fresh two-tone probe self-check on the cross-board links (the
-            # within-board math is the proven single-board estimator; the
-            # links are what can silently go wrong). A delay error scales with
-            # frequency, a phase error is flat — two tones discriminate both.
-            if board_count > 1:
-                residuals = self._probe_link_residuals(center_hz, fs, dwell)
-                if residuals is None:
-                    raise IQCalibrationError("self-check probe tone not measurable")
-                worst = max(abs(r) for by_board in residuals.values() for r in by_board[1:])
-                for f_probe, by_board in residuals.items():
-                    self._logger.info(f"self-check @{f_probe/1e6:.0f} MHz: corrected cross-board residuals {['%+.3f' % r for r in by_board[1:]]} rad")
-                if worst > 0.3:
-                    raise IQCalibrationError(f"self-check worst residual {worst:+.3f} rad")
-            self._logger.info(f"calibration OK ({time.time()-t_start:.1f} s total)")
-        except IQCalibrationError:
-            self._calibration = None
-            raise
-        finally:
-            try:
-                self.set_reference_tone(enable=False)
-            except Exception:
-                pass
-
-    def _probe_sensor_residuals(self, center_hz, fs, dwell):
-        """Validate the stored calibration on every sensor using fresh tones.
-
-        The calibration correction is intended for over-the-air data and
-        therefore compensates the PCB reference-trace delays.  A probe still
-        travelling through those traces is flattened by removing that
-        trace-only term from the correction.  Residual phase is measured
-        relative to firmware antenna 0 independently on each board, so any
-        unmodelled board-distribution cable delay cancels.
-        """
-
-        n = CHUNK_SAMPLES
-        window = np.hanning(n).astype(np.complex64)
-        correction = self.cal_correction(n)
-        if correction is None:
-            return None
-        reference_delays = compute_reference_path_delays(self.boards)
-        lo, hi = center_hz - 0.4 * fs, center_hz + 0.4 * fs
-        f_lo, f_hi = max(lo, iq_tone.TONE_MIN_HZ), min(hi, iq_tone.TONE_MAX_HZ)
-        if f_hi <= f_lo:
-            return None
-
-        board_references = []
-        for board_index, board_obj in enumerate(self.boards):
-            row, col = board_obj.revision.antenna_id_to_row_col(0)
-            board_references.append((board_index, row, col))
-
-        out = {}
-        try:
-            for fraction in (0.27, 0.73):
-                f_probe = f_lo + fraction * (f_hi - f_lo)
-                self.set_reference_tone(f_probe)
-                time.sleep(0.2)
-                collected = self.collect_complete_clusters(max(0.4, 2 * dwell), min_peak=10)
-                if len(collected) < 4:
-                    return None
-
-                accumulated = np.zeros(n)
-                spectra = []
-                for _idx, iq in collected:
-                    x = iq - np.mean(iq, axis=-1, keepdims=True)
-                    F = np.fft.fftshift(np.fft.fft(x * window, axis=-1), axes=-1)
-                    spectra.append(F)
-                    ref_board, ref_row, ref_col = board_references[0]
-                    accumulated += np.abs(F[ref_board, ref_row, ref_col])
-                accumulated[n // 2 - 2 : n // 2 + 3] = 0
-                k = int(np.argmax(accumulated))
-                if accumulated[k] < 8 * np.median(accumulated[accumulated > 0]):
-                    return None
-
-                actual_frequency = center_hz + (k - n // 2) / n * fs
-                # Remove SensorCalibration's OTA-only trace term so a cabled
-                # probe should become zero-phase within each board.
-                cabled_correction = _remove_reference_path_term(correction[..., k], reference_delays, actual_frequency)
-                residuals = _within_board_phase_residuals(np.stack([F[..., k] for F in spectra]), cabled_correction, board_references)
-                out[actual_frequency] = residuals
-        finally:
-            try:
-                self.set_reference_tone(enable=False)
-            except Exception:
-                pass
-        return out
-
-    def _probe_link_residuals(self, center_hz, fs, dwell):
-        """Key two fresh probe tones and measure the CALIBRATED cross-board
-        phase (board b vs board 0, at each board's firmware-antenna-0
-        position) at each. The OTA-only reference-path compensation is removed
-        before evaluating the cabled probe, so the corrected residuals must be
-        ~0 even when boards use different distribution cables. Returns
-        {f_probe_hz: [residual_b rad]} or None if a probe was not
-        measurable."""
-        n = CHUNK_SAMPLES
-        board_count = len(self.boards)
-        window = np.hanning(n).astype(np.complex64)
-        lo, hi = center_hz - 0.4 * fs, center_hz + 0.4 * fs
-        f_lo, f_hi = max(lo, iq_tone.TONE_MIN_HZ), min(hi, iq_tone.TONE_MAX_HZ)
-        if f_hi <= f_lo:
-            # band entirely above the WiFi-channel tone reach (rare; high-band
-            # centers) — no deterministic probe frequency available
-            return None
-        ant0_positions = [self.boards[b].revision.antenna_id_to_row_col(0) for b in range(board_count)]
-        correction = self.cal_correction(n)
-        out = {}
-        try:
-            for frac in (0.3, 0.75):
-                f_probe = f_lo + frac * (f_hi - f_lo)
-                self.set_reference_tone(f_probe)
-                time.sleep(0.2)
-                # the probe needs a handful of clusters at the untouched
-                # trigger rate: reuse the sweep's rate-adapted dwell, widened
-                collected = self.collect_complete_clusters(max(0.3, 2 * dwell), min_peak=10)
-                if len(collected) < 4:
-                    return None
-                accumulated = np.zeros(n)
-                spectra = []  # per collected cluster: (board_count, n) at the antenna-0 positions
-                for _idx, iq in collected:
-                    x = np.stack([iq[b][ant0_positions[b]] for b in range(board_count)])
-                    x = x - np.mean(x, axis=-1, keepdims=True)
-                    F = np.fft.fftshift(np.fft.fft(x * window, axis=-1), axes=-1)
-                    spectra.append(F)
-                    accumulated += np.abs(F[0])
-                accumulated[n // 2 - 2 : n // 2 + 3] = 0
-                k = int(np.argmax(accumulated))
-                if accumulated[k] < 8 * np.median(accumulated[accumulated > 0]):
-                    return None
-                actual_frequency = center_hz + (k - n // 2) / n * fs
-                cabled_correction = _remove_reference_path_term(
-                    correction[..., k],
-                    self._calibration.reference_path_delays,
-                    actual_frequency,
-                )
-                residuals = [0.0]
-                for b in range(1, board_count):
-                    row, col = ant0_positions[b]
-                    row0, col0 = ant0_positions[0]
-                    corr = cabled_correction[b, row, col] * np.conj(cabled_correction[0, row0, col0])
-                    cross = np.sum([F[b, k] * np.conj(F[0, k]) for F in spectra])
-                    residuals.append(float(np.angle(cross * corr)))
-                out[actual_frequency] = residuals
-        finally:
-            try:
-                self.set_reference_tone(enable=False)
-            except Exception:
-                pass
-        return out
+    # Both names run the same operation; there is no separate coarse-only path.
+    calibrate = sync

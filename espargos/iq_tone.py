@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 
-"""Reference CW tone planning: frequency reach, high-band placement, sweeps.
+"""Reference CW tone planning: frequency reach and high-band placement.
 
 The controller's reference tone generator has two regimes:
 
 - from 2310 to 2497 MHz the exact tone API places the tone with kHz
-  resolution (``set_reftx_tone``);
-- above that, a forced-VCO-cap path reaches ~2680 MHz (``set_reftx_tone_freq``
+  resolution (``set_reference("cw", ...)``);
+- above that, a forced-VCO-cap path reaches ~2680 MHz (``set_reference(..., cw_tuning=...)``
   with an explicit ``cap``): the VCO free-runs, its frequency set by the coarse
   cap in ~4.7 MHz steps, reproducible to ~1 MHz within the accurate table.
 
@@ -24,7 +24,6 @@ __all__ = [
     "TONE_MAX_HZ",
     "TONE_MIN_HZ",
     "highband_cap_for_freq",
-    "tone_sweep_steps",
 ]
 
 # Exact-tone range of the controller ESP32 RFPLL, verified on hardware
@@ -111,32 +110,3 @@ def highband_cap_for_freq(freq_hz):
         return cap, HIGHBAND_CAP_FREQ_MHZ[cap], False
     cap = min(HIGHBAND_CAP_FREQ_EDGE_MHZ, key=lambda c: abs(HIGHBAND_CAP_FREQ_EDGE_MHZ[c] - target))
     return cap, HIGHBAND_CAP_FREQ_EDGE_MHZ[cap], True
-
-
-def tone_sweep_steps(center_hz, fs, spacing_hz=4e6):
-    """Sweep plan hopping the reference tone across the captured band
-    [center - 0.45 fs, center + 0.45 fs]: the low band (<= 2497 MHz) uses the
-    exact tones (kHz-resolution placement, so narrow bands at low
-    sample rates still get distinct tones), above that the forced-VCO-cap
-    tones — mixed automatically when the band straddles 2497. Returns a list
-    of steps for :meth:`espargos.iq_pool.IQPool.apply_tone_step`:
-    ("freq", f_khz) or ("cap", cap)."""
-    # The calibration fit searches delays in [-16, 16) samples. Uniform
-    # tones repeat the same phase signature every fs / spacing samples;
-    # keep that period above the full search width, including grid rounding.
-    # A single board can also have offsets near the search limits.
-    spacing_hz = min(spacing_hz, fs / 40)
-    lo, hi = center_hz - 0.45 * fs, center_hz + 0.45 * fs
-    steps = []
-    f_lo, f_hi = max(lo, TONE_MIN_HZ), min(hi, TONE_MAX_HZ)
-    if f_hi > f_lo:
-        margin = min(1e6, 0.05 * fs)
-        n_low = max(4, int(round((f_hi - f_lo) / spacing_hz)))
-        steps += [("freq", int(round(f / 1e3))) for f in np.linspace(f_lo + margin, f_hi - margin, n_low)]
-    steps += [("cap", cap) for cap, fmhz in HIGHBAND_CAP_FREQ_MHZ.items() if lo <= fmhz * 1e6 <= hi]
-    if hi > max(HIGHBAND_CAP_FREQ_MHZ.values()) * 1e6:
-        # the topmost VCO cap band (caps 39..46) wanders thermally, but for
-        # calibration ANY clean tone illuminates bins — where it lands is
-        # measured implicitly by the per-bin covariance
-        steps += [("cap", cap) for cap in range(39, 47)]
-    return steps

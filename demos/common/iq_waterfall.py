@@ -104,25 +104,29 @@ class WaterfallImageProvider(PyQt6.QtQuick.QQuickImageProvider):
     def requestImage(self, image_id, requested_size):
         del image_id, requested_size
         with self.lock:
-            buffer = np.ascontiguousarray(self.data)
-        image = PyQt6.QtGui.QImage(
-            buffer.data,
-            buffer.shape[1],
-            buffer.shape[0],
-            PyQt6.QtGui.QImage.Format.Format_RGBA8888,
-        ).copy()
+            # QImage initially borrows the array; take its owned snapshot
+            # before releasing the lock so a producer cannot tear the image.
+            image = PyQt6.QtGui.QImage(
+                self.data.data,
+                self.data.shape[1],
+                self.data.shape[0],
+                PyQt6.QtGui.QImage.Format.Format_RGBA8888,
+            ).copy()
         return image, image.size()
 
     def add_rows(self, rows: np.ndarray):
+        """Append chronological rows, displaying the newest row at the top."""
         rows = np.asarray(rows, dtype=np.uint8)
         if rows.ndim == 2:
             rows = rows[np.newaxis, ...]
         count = min(rows.shape[0], self.height)
+        if count == 0:
+            return
         with self.lock:
             if rows.shape[1:] != self.data.shape[1:]:
                 return  # resize raced the producer; discard this update
             self.data[count:, :, :] = self.data[:-count, :, :]
-            self.data[:count, :, :] = rows[-count:]
+            self.data[:count, :, :] = rows[-count:][::-1]
 
     def add_power_db(self, values_db: np.ndarray, vmin: float = DB_MIN, vmax: float = DB_MAX):
         self.add_rows(power_db_row(values_db, self.width, vmin=vmin, vmax=vmax))

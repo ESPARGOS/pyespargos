@@ -83,8 +83,9 @@ class SensorMessageSubscription:
 # Magic bytes sent by the controller to confirm a valid sensor stream
 STREAM_MAGIC = bytes([0xE5, 0xA7, 0x60, 0x00])
 
-# Only this major API version is supported
-SUPPORTED_API_MAJOR = 3
+# Supported controller API major versions (inclusive).
+SUPPORTED_API_MAJOR_MIN = 3
+SUPPORTED_API_MAJOR_MAX = 4
 
 
 class BoardControl:
@@ -288,7 +289,9 @@ class Board(object):
             self._logger.error(f"Could not connect to {self.host} to fetch API information")
             raise TimeoutError
         except EspargosHTTPStatusError:
-            raise EspargosAPIVersionError(f"ESPARGOS controller at {self.host} did not provide API version information. " f"This version of pyespargos only supports API major version {SUPPORTED_API_MAJOR}. " "Please update the controller firmware.")
+            raise EspargosAPIVersionError(
+                f"ESPARGOS controller at {self.host} did not provide API version information. " f"This version of pyespargos supports API major versions {SUPPORTED_API_MAJOR_MIN}–{SUPPORTED_API_MAJOR_MAX}. " "Please update the controller firmware."
+            )
 
         if "api-major" not in api_info or "api-minor" not in api_info:
             raise EspargosUnexpectedResponseError(f"Server at {self.host} did not provide API version information in api_info response.")
@@ -296,10 +299,11 @@ class Board(object):
         api_major = api_info["api-major"]
         api_minor = api_info.get("api-minor", 0)
 
-        if api_major != SUPPORTED_API_MAJOR:
+        if not SUPPORTED_API_MAJOR_MIN <= api_major <= SUPPORTED_API_MAJOR_MAX:
             raise EspargosAPIVersionError(
                 f"ESPARGOS controller at {self.host} runs API version {api_major}.{api_minor}, "
-                f"but this version of pyespargos only supports API major version {SUPPORTED_API_MAJOR}. " + ("Please update pyespargos." if api_major > SUPPORTED_API_MAJOR else "Please update the controller firmware.")
+                f"but this version of pyespargos supports CSI with API majors {SUPPORTED_API_MAJOR_MIN}–{SUPPORTED_API_MAJOR_MAX} and IQ with major 4. "
+                + ("Please update pyespargos." if api_major > SUPPORTED_API_MAJOR_MAX else "Please update the controller firmware.")
             )
 
         self.api_version = (api_major, api_minor)

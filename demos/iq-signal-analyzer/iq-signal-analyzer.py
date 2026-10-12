@@ -22,7 +22,7 @@ the drawer UI (IQSettings.qml).
 With several comma-separated hosts (a coherent multi-board setup, e.g. the
 Aperture Kit) a tab bar selects which board's sensors are displayed — every
 cluster spans all boards, so the tab switch just changes which slice is
-rendered; config, sync (array-wide, REFTX-packet-anchored) and calibration
+rendered; config, broadband synchronization and calibration
 (global, via the master's reference tone) always apply to the whole array.
 
 Usage: iq-signal-analyzer.py <controller-host>[,<controller-host>,...]
@@ -51,6 +51,7 @@ from espargos import CHUNK_SAMPLES, DECIM_TO_FS, IQAccumCluster, SENSOR_COUNT
 from demos.common.iq_application import ESPARGOSIQApplication
 from demos.common.iq_waterfall import WaterfallImageProvider, power_db_row
 
+DISPLAY_SETTLE_SECONDS = 0.2
 WATERFALL_HEIGHT = 300
 ADC_FULL_SCALE = 512.0
 DB_MIN, DB_MAX = -90.0, 0.0
@@ -60,16 +61,17 @@ PHASE_MAPPER = matplotlib.cm.ScalarMappable(norm=matplotlib.colors.Normalize(vmi
 
 def pool_complex_to_width(z, w):
     """Reduce/expand a complex spectrum to w pixels by coherent averaging."""
-    n = len(z)
+    n = z.shape[-1]
     if w == n:
         return z
     if w < n:
         edges = (np.arange(w) * n) // w
-        return np.add.reduceat(z, edges)
-    return z[(np.arange(w) * n) // w]
+        return np.add.reduceat(z, edges, axis=-1)
+    return z[..., (np.arange(w) * n) // w]
 
 
 class EspargosSignalAnalyzer(ESPARGOSIQApplication):
+    waterfallFrameReady = PyQt6.QtCore.pyqtSignal()
     displayModeChanged = PyQt6.QtCore.pyqtSignal()
     traceSampleCountChanged = PyQt6.QtCore.pyqtSignal()
 
@@ -90,6 +92,10 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         # render thread (bounded so a stalled render cannot grow it unboundedly)
         self._pending_lock = threading.Lock()
         self._pending_clusters = []
+        self._display_config = {}
+        self._display_schedule = None
+        self._display_epoch = None
+        self._display_epoch_time = -1.0
         self.display_mode = self.get_initial_config("app", "display_mode")
         self.fft_size = int(self.get_initial_config("app", "fft_size"))
         self.complete_only = bool(self.get_initial_config("app", "complete_only"))
@@ -97,7 +103,8 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         self._win = np.hanning(self.fft_size).astype(np.float32)
         self._fft_scale = max(float(np.sum(self._win)) * ADC_FULL_SCALE, 1.0)
         self.block_acc = {}  # block_id -> {antid: {slot: iq}}
-        self.block_time = {}  # block_id -> last-update wall time (stale eviction)
+        self.last_display_block = -1
+        self.block_time = {}  # block_id -> last-update monotonic time (stale eviction)
         self.rows_rendered = [0] * SENSOR_COUNT
         self.render_running = False
         self._first_sets_logged = False
@@ -138,6 +145,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
                 p.clear()
             if mode in ("time", "constellation", "spectrum"):
                 self._publish_sample_windows({})
+            self.waterfallFrameReady.emit()
             self.displayModeChanged.emit()
 
     def _set_fft_size(self, n):
@@ -147,10 +155,12 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         self._win = np.hanning(n).astype(np.float32)
         self._fft_scale = max(float(np.sum(self._win)) * ADC_FULL_SCALE, 1.0)
         self.block_acc = {}
+        self.last_display_block = -1
         self.block_time = {}
         for p in self.providers:
             p.clear()
         self._publish_sample_windows({})
+        self.waterfallFrameReady.emit()
         self.traceSampleCountChanged.emit()
 
     @PyQt6.QtCore.pyqtSlot(int)
@@ -162,6 +172,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         self.display_width = w
         for p in self.providers:
             p.resize(w)
+        self.waterfallFrameReady.emit()
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def sensorCount(self):
@@ -204,11 +215,14 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
             return
         self.active_board = index
         self.block_acc = {}
+        self.last_display_block = -1
         self.block_time = {}
         for p in self.providers:
             p.clear()
         if self.display_mode in ("time", "constellation", "spectrum"):
             self._publish_sample_windows({})
+
+        self.waterfallFrameReady.emit()
 
     # ---- rendering ----
 
@@ -324,11 +338,14 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
             print(f"spectrum config refresh error: {e}", file=sys.stderr)
 
     def _on_iq_cluster(self, cluster):
-        """Pool cluster callback (runs on the pool's processing thread; keep
-        it light). Complete clusters arrive immediately, settled partial ones
-        after the settle timeout — the block assembler reorders by index."""
+        """Keep the live cluster until the short display deadline.
+
+        The pool continues filling it as other sensors arrive. Registering
+        on first arrival avoids waiting for the library's much longer timeout
+        before seeing a partial cluster.
+        """
         with self._pending_lock:
-            self._pending_clusters.append(cluster)
+            self._pending_clusters.append((time.monotonic(), cluster))
             if len(self._pending_clusters) > 2048:
                 del self._pending_clusters[:1024]
 
@@ -341,14 +358,33 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         fft_size/256 block assembler consume either wire format unchanged.
         """
         with self._pending_lock:
-            clusters, self._pending_clusters = self._pending_clusters, []
+            cutoff = time.monotonic() - DISPLAY_SETTLE_SECONDS
+            count = 0
+            while count < len(self._pending_clusters) and self._pending_clusters[count][0] <= cutoff:
+                count += 1
+            clusters = self._pending_clusters[:count]
+            del self._pending_clusters[:count]
         board = self.active_board
         if not clusters or board >= len(self.pool.boards):
             return []
         revision = self.pool.boards[board].revision
         positions = [revision.antenna_id_to_row_col(antenna_id) for antenna_id in range(SENSOR_COUNT)]
         sets = []
-        for cluster in clusters:
+        for arrived, cluster in clusters:
+            if isinstance(cluster, IQAccumCluster):
+                epoch = ("accum", cluster.config_generation)
+            else:
+                present = cluster.completion
+                epoch = ("raw", int(cluster.sync_info[present][0]) & 0xFFFF, int(cluster.sample_rate_hz[present][0]), bool(cluster.flags[present][0] & 256))
+            if epoch != self._display_epoch:
+                if arrived < self._display_epoch_time:
+                    continue
+                self._display_epoch = epoch
+                self.block_acc = {}
+                self.block_time = {}
+                self.last_display_block = -1
+                sets.clear()
+            self._display_epoch_time = arrived
             if isinstance(cluster, IQAccumCluster):
                 completion = cluster.section_completion
                 sections = cluster.iq_sections
@@ -366,22 +402,27 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         return sets
 
     def _render(self):
+        # Include processing time in the 25-Hz frame budget. Sleeping a full
+        # interval after rendering made the scroll speed depend on FFT/copy
+        # cost. QML refreshes only when this worker publishes a complete frame.
+        next_frame = time.monotonic()
         while self.render_running:
-            time.sleep(1 / 20)
+            time.sleep(max(0.0, next_frame - time.monotonic()))
+            if not self.render_running:
+                break
+            next_frame = time.monotonic() + 1 / 25
             try:
                 sets = self._drain_sets()
-                if not sets:
+                if not sets and not self.block_acc:
                     continue
-                if not self._first_sets_logged:
+                if sets and not self._first_sets_logged:
                     self._first_sets_logged = True
                     self.logger.info("first synchronized IQ chunk sets received, display running")
                 mode = self.display_mode
                 if mode == "spectrum":
                     self._refresh_spectrum_config()
-                # Every display mode goes through the block assembler (B >= 1
-                # chunks per display unit): it renders strictly ordered by
-                # chunk index and thereby also absorbs the out-of-order
-                # delivery of settled partial sets behind complete ones.
+                # Every display mode assembles consecutive chunks into FFT
+                # blocks, allowing partial clusters to arrive out of order.
                 self._render_block_rows(sets, mode)
             except Exception as e:
                 print(f"render error: {e}", file=sys.stderr)
@@ -393,50 +434,100 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         time across sensors; a sensor that did not deliver a block gets a
         placeholder row).
 
-        Eviction: a block renders once a NEWER block exists (the normal case —
-        the session's unwrapped chunk index is monotonic) or once it has not
-        been touched for a while (defense against a stale higher key, e.g. a
-        post-sync straggler from the old time base, permanently masking the
-        `b < max_block` rule — that failure mode rendered ~25% of rows broken
-        after the first index wrap before the index was unwrapped)."""
+        Clusters have already had a short settling window. A small additional
+        window joins adjacent chunks crossing a render tick. Retire blocks in
+        index order, once only; late data cannot create duplicate grey rows.
+        """
         B = self.fft_size // CHUNK_SAMPLES
-        now = time.time()
+        config = self._display_config
+        trigger = config.get("trigger", {})
+        schedule = tuple(trigger[k] for k in ("interval_chunks", "offset_chunks", "burst_chunks")) if trigger.get("mode") == "interval" else None
+        if schedule != self._display_schedule:
+            self._display_schedule = schedule
+            self.block_acc.clear()
+            self.block_time.clear()
+            self.last_display_block = -1
+        now = time.monotonic()
         for idx, per in sets:
             b = idx // B
+            if b <= self.last_display_block:
+                continue
             block = self.block_acc.setdefault(b, {})
             for antid, iq in per.items():
                 block.setdefault(antid, {})[idx % B] = iq
-            self.block_time[b] = now
-        max_block = max(self.block_acc.keys())
-        ready = sorted(b for b in self.block_acc.keys() if b < max_block or now - self.block_time.get(b, now) > 2.0)
+            self.block_time.setdefault(b, now)
+        ready = []
+        for b in sorted(self.block_acc):
+            if now - self.block_time[b] < DISPLAY_SETTLE_SECONDS:
+                break
+            ready.append(b)
+        if ready and schedule and len(schedule) == 3 and self.last_display_block >= 0:
+            period, phase, length = schedule
+            if period > 0 and length > 0:
+                # Infer only scheduled Interval blocks, never the intentional
+                # idle space between bursts. Bound work after a long outage.
+                expanded = []
+                previous = self.last_display_block
+                for b in ready:
+                    n = max(0, ((previous + 1) * B - phase - length) // period + 1)
+                    n = max(n, (b * B - phase) // period - WATERFALL_HEIGHT)
+                    missing = max(previous + 1, (phase + n * period) // B)
+                    while missing < b:
+                        self.block_acc.setdefault(missing, {})
+                        expanded.append(missing)
+                        if (missing + 1) * B >= phase + n * period + length:
+                            n += 1
+                        missing = max(missing + 1, (phase + n * period) // B)
+                    expanded.append(b)
+                    previous = b
+                ready = expanded
+        if ready:
+            self.last_display_block = ready[-1]
+        # Older rows would scroll off the image in this same frame. Retire
+        # them without allocating FFT/color buffers for an invisible backlog.
+        for b in ready[:-WATERFALL_HEIGHT]:
+            self.block_acc.pop(b, None)
+            self.block_time.pop(b, None)
+        ready = ready[-WATERFALL_HEIGHT:]
         if mode in ("time", "constellation", "spectrum"):
             self._render_sample_blocks(ready, B)
             return
+        # Batch FFT/color conversion: hundreds of tiny NumPy calls per
+        # frame otherwise contend with the acquisition thread at 80 MSa/s.
+        windows, masks = [], []
         for b in ready:
-            block = self.block_acc.pop(b, None)
+            block = self.block_acc.pop(b, {})
             self.block_time.pop(b, None)
-            if block is None:
-                continue  # block_acc was swapped by a concurrent FFT-size change
-            specs = {}
-            for antid, slots in block.items():
-                if len(slots) == B:
-                    specs[antid] = self._display_spectrum(np.concatenate([slots[k] for k in range(B)]))
-            if self.complete_only and len(specs) < SENSOR_COUNT:
+            present = [len(block.get(a, {})) == B for a in range(SENSOR_COUNT)]
+            if self.complete_only and not all(present):
                 continue
-            for antid in range(SENSOR_COUNT):
-                if mode == "phase":
-                    if antid in specs and 0 in specs:
-                        rel = specs[antid] * np.conj(specs[0])
-                        corr = self.iqcontrol.display_correction(self.active_board, antid, self.fft_size) if self.iqcontrol is not None else None
+            window = np.zeros((SENSOR_COUNT, self.fft_size), dtype=np.complex64)
+            for a in range(SENSOR_COUNT):
+                if present[a]:
+                    window[a] = np.concatenate([block[a][k] for k in range(B)])
+            windows.append(window)
+            masks.append(present)
+        if windows:
+            spectra = np.fft.fftshift(np.fft.fft(np.asarray(windows) * self._win, axis=-1), axes=-1)
+            masks = np.asarray(masks)
+            if mode == "phase":
+                spectra *= np.conj(spectra[:, :1]).copy()
+                if self.iqcontrol is not None:
+                    for a in range(SENSOR_COUNT):
+                        corr = self.iqcontrol.display_correction(self.active_board, a, self.fft_size)
                         if corr is not None:
-                            rel = rel * corr
-                        row = self._phase_row(rel)
-                    else:
-                        row = self._placeholder_row()
-                else:
-                    row = self._power_row(specs[antid]) if antid in specs else self._placeholder_row()
-                self.providers[antid].add_rows(row[np.newaxis, :])
-                self.rows_rendered[antid] += 1
+                            spectra[:, a] *= corr
+                pooled = pool_complex_to_width(spectra, self.display_width)
+                pixels = (PHASE_MAPPER.cmap(PHASE_MAPPER.norm(np.angle(pooled))) * 255).astype(np.uint8)
+                masks &= masks[:, :1].copy()
+            else:
+                db = 20 * np.log10(np.maximum(np.abs(spectra) / self._fft_scale, 1e-12))
+                pixels = power_db_row(db, self.display_width, DB_MIN, DB_MAX)
+            pixels[~masks] = self._placeholder_row()
+            for a in range(SENSOR_COUNT):
+                self.providers[a].add_rows(pixels[:, a])
+                self.rows_rendered[a] += len(windows)
+            self.waterfallFrameReady.emit()
 
     def _render_sample_blocks(self, ready, B):
         """Chart display at fft_size above one chunk: all sensors show the SAME
@@ -465,33 +556,24 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
 
     # ---- application lifecycle ----
 
+    def _update_display_config(self, config):
+        self._display_config = {**self._display_config, **config}
+
     def _start_iq_gui(self):
         """After the framework pool is up: expose the pool's QML adapter,
-        subscribe the display to delivered clusters, and enter IQ mode. Sync
-        (anchors from WiFi packets) BEFORE entering IQ."""
+        subscribe the display to delivered clusters, and synchronize/calibrate IQ."""
         hosts = ", ".join(b.host for b in self.pool.boards)
         self.logger.info(f"IQ capture starting ({len(self.pool.boards)} board(s): {hosts})")
         self.iqcontrol = self.create_iq_controller()
+        self.iqcontrol.configChanged.connect(self._update_display_config)
         self.iqcontrol.set_apply_calibration(bool(self.appconfig.get("apply_calibration")))
         self.engine.rootContext().setContextProperty("iqcontrol", self.iqcontrol)
-        # the display also wants settled partial sets (missing sensors render
-        # as placeholder rows instead of stalling the waterfall)
-        self.pool.add_iq_callback(self._on_iq_cluster, include_partial=True)
-        self.pool.add_accumulation_callback(self._on_iq_cluster, include_partial=True)
+        # Observe each cluster from its first arrival; the display has its own
+        # bounded settling window, independent of calibration/library consumers.
+        self.pool.add_iq_callback(self._on_iq_cluster, callback_predicate=lambda cluster: True)
+        self.pool.add_accumulation_callback(self._on_iq_cluster, callback_predicate=lambda cluster: True)
 
-        def _enter():
-            try:
-                self.logger.info("acquiring array-wide time sync (this anchors all sensors' " "IQ chunk grids to one reference packet; takes a few seconds)...")
-                self.pool.sync()  # blocking, hence this worker thread
-                self.logger.info("time sync done, switching the array to IQ sampling mode...")
-                cfg = self.pool.get_config()
-                cfg["mode"] = "iq"
-                self.pool.apply_config(cfg)  # sensors fire on the anchored grid
-                self.logger.info("IQ mode entered; waiting for the first synchronized chunk sets...")
-            except Exception as e:
-                self.logger.error(f"could not enter IQ mode: {e}")
-
-        threading.Thread(target=_enter, daemon=True).start()
+        self.iqcontrol.sync_async()
         self.start_render()
 
     def onAboutToQuit(self):

@@ -260,10 +260,10 @@ espargos.iq_backlog
    :undoc-members:
    :show-inheritance:
 
-espargos.iq_sync
-----------------
+espargos.iq_reference
+--------------------
 
-.. automodule:: espargos.iq_sync
+.. automodule:: espargos.iq_reference
    :members:
    :undoc-members:
    :show-inheritance:

@@ -166,12 +166,14 @@ Common.ESPARGOSApplication {
 									smooth: false
 									source: "image://display" + antennaPanel.antid
 
-									Timer {
-										interval: 1000 / 25
-										running: !backend.timeDomain && !backend.constellation && !backend.spectrum
-										repeat: true
-										onTriggered: displayImage.source =
-											"image://display" + antennaPanel.antid + "?" + Date.now()
+									property int frameRevision: 0
+									Connections {
+										target: backend
+										function onWaterfallFrameReady() {
+											displayImage.frameRevision += 1
+											displayImage.source = "image://display" + antennaPanel.antid
+												+ "?" + displayImage.frameRevision
+										}
 									}
 								}
 

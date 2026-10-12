@@ -16,6 +16,8 @@ from .iq_packet import (
     IQ_CHUNK_TYPE_HEADER,
     IQAccumPacket,
     IQChunkPacket,
+    IQ_CHUNK_FLAG_REFERENCE,
+    IQ_CHUNK_FLAG_REFERENCE_READY,
 )
 
 __all__ = ["IQCapability"]
@@ -24,6 +26,13 @@ __all__ = ["IQCapability"]
 class IQCapability(BoardCapability):
     """Board capability for IQ-sampling capture control and chunk reception."""
 
+    def __init__(self, board):
+        if board.api_version[0] != 4:
+            from espargos.board import EspargosAPIVersionError
+
+            raise EspargosAPIVersionError("IQ mode requires controller API major 4 and matching sensor firmware. Update the array firmware!")
+        super().__init__(board)
+
     def set_config(self, config: dict):
         """Apply a partial IQ-capture configuration.
 
@@ -31,8 +40,13 @@ class IQCapability(BoardCapability):
         contain an ``antid`` and may contain ``rf_freq_hz``, ``gain_mode``
         (``"auto"``, ``"manual"`` or ``"expert"``), ``rx_gain``, and
         ``expert_gain_words``. Capture-wide fields (e.g. ``mode``,
-        ``adc_decimation``, ``rf_switch``, ``trigger_mode``,
-        ``trigger_config``) remain at the top level.
+        ``adc_decimation``, ``rf_switch``, ``trigger``) remain at the top level.
+
+        ``trigger`` is a named object, e.g. ``{"mode": "interval",
+        "interval_chunks": 16384, "burst_chunks": 4}``. Supplying it replaces
+        the trigger settings with defaults for omitted fields. Omit it to
+        leave the trigger unchanged. ``get_config()`` returns all applied
+        defaults. The controller validates field names, types, and ranges.
         """
         self._board.control.command("set_iq_control", config)
 
@@ -80,31 +94,31 @@ class IQCapability(BoardCapability):
         """Apply the same receiver settings to all eight IQ receivers."""
         self.set_config({"receivers": [{"antid": antenna_id, **settings} for antenna_id in range(8)]})
 
-    def set_sync_anchor(self, anchor_ns: list) -> str:
-        """Post per-sensor sync anchor timestamps (one per antenna ID, in nanoseconds).
+    def set_sync_anchor(self, anchor_ns: list, seq=None) -> str:
+        """Post CPU-cycle reference timestamps (one per antenna ID, encoded in ns).
 
         The controller schedules a coordinated IQ engine (re)start based on the
         anchors. Returns the controller response (the new sync sequence).
         """
         if len(anchor_ns) != 8:
             raise ValueError("anchor_ns must contain one entry per antenna ID (8)")
-        return self._board.control.post_json("set_iq_sync_anchor", {"anchor_ns": [int(value) for value in anchor_ns]})
+        payload = {"anchor_ns": [int(value) for value in anchor_ns]}
+        if seq is not None:
+            payload["seq"] = int(seq)
+        return self._board.control.post_json("set_iq_sync_anchor", payload)
 
-    def set_reftx_tone(self, payload: dict):
-        """Configure the reference CW tone generator (``enable``, ``freq_khz``, ``backoff_qdb``)."""
-        self._board.control.command("set_reftx_tone", payload)
+    def set_reference(self, mode="off", freq_hz=None, backoff_qdb=30, cw_tuning=None):
+        """Set the API-v4 reference source: off, cw, or broadband iq."""
+        payload = {"mode": mode}
+        if mode != "off":
+            payload.update(freq_khz=round(freq_hz / 1000), backoff_qdb=backoff_qdb)
+            if cw_tuning is not None:
+                payload["cw_tuning"] = cw_tuning
+        return self._board.control.post_json("set_iq_reference", payload)
 
-    def set_reftx_tone_freq(self, payload: dict):
-        """Configure a forced-VCO-capacitor tone (``freq_khz``, ``cbw``, ``cap``)."""
-        self._board.control.command("set_reftx_tone_freq", payload)
-
-    def get_reftx_tone(self) -> dict:
-        """Return the reference CW tone generator state."""
-        return self._board.control.get_json("get_reftx_tone")
-
-    def get_reftx_tone_json(self) -> str:
-        """Return the raw reference tone state JSON string (e.g. for QML consumers)."""
-        return self._board.control.fetch("get_reftx_tone")
+    def get_reference(self):
+        """Return the API-v4 reference source state."""
+        return self._board.control.get_json("get_iq_reference")
 
     def subscribe_chunks(
         self,
@@ -114,7 +128,7 @@ class IQCapability(BoardCapability):
         return self._subscribe_decoded_sensor_messages(
             IQ_CHUNK_TYPE_HEADER,
             IQChunkPacket,
-            callback,
+            lambda message: callback(message) if not message.payload.flags & (IQ_CHUNK_FLAG_REFERENCE | IQ_CHUNK_FLAG_REFERENCE_READY) else None,
         )
 
     def subscribe_accumulations(

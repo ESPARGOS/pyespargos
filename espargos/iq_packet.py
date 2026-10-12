@@ -27,6 +27,8 @@ RX_GAIN_TABLE_ENTRIES = 77
 IQ_CHUNK_TYPE_HEADER = 0x32435149  # "IQC2" little-endian (b"IQC2")
 IQ_ACCUM_TYPE_HEADER = 0x31415149  # "IQA1" little-endian (b"IQA1")
 IQ_CHUNK_SAMPLE_WORDS = 256
+# adc_decimation -> complex sample rate (matches iq_adc_sample_cycles in firmware).
+DECIM_TO_FS = {1: 80e6, 2: 40e6, 4: 20e6, 6: 10e6, 8: 8e6, 10: 4e6}
 IQ_SYNC_INFO_SEQ_MASK = 0x0000FFFF
 IQ_SYNC_INFO_GRID_SYNCED = 1 << 16
 IQ_SYNC_INFO_BOOT_SYNCED = 1 << 17
@@ -34,10 +36,20 @@ IQ_SYNC_INFO_FIRE_TIME_VALID = 1 << 18
 IQ_CHUNK_FLAG_SIGNAL_CAPTURE = 1 << 8
 IQ_CHUNK_FLAG_SIGNAL_FIRST = 1 << 9
 IQ_CHUNK_FLAG_SIGNAL_LAST = 1 << 10
+IQ_CHUNK_FLAG_REFERENCE = 1 << 11
+IQ_CHUNK_FLAG_REFERENCE_READY = 1 << 12
 
 
 class IQChunkPacket:
-    """One IQ-sampling chunk streamed by a sensor in IQ mode (magic "IQC2")."""
+    """One IQ-sampling chunk streamed by a sensor in IQ mode (magic "IQC2").
+
+    API 4 timestamps use the local CPU clock, encoded in nanoseconds.
+    Reference snapshots (flag 11) reuse ``fire_time_ns`` for the first
+    snapshot sample and ``producer_wake_write_ptr`` for its onset offset.
+    Four records, indexed by ``capture_chunk_offset``, form one snapshot.
+    Flag 12 acknowledges that the reference detector has observed quiet.
+    Both special record types are excluded from ordinary IQ subscriptions.
+    """
 
     def __init__(self, pktbuf):
         if len(pktbuf) < 76 + 4 * IQ_CHUNK_SAMPLE_WORDS:
