@@ -61,19 +61,17 @@ class IQCapability(BoardCapability):
     def rearm_signal_capture(self):
         """Atomically discard retained Signal state on all eight sensors.
 
-        Event validation remains a host decision. The controller only holds
-        the shared BOOT barrier while it broadcasts a fresh configuration
-        generation, then lets all sensors resume on one common boundary.
+        Starts a new capture generation and resumes acquisition together on
+        this array. Other arrays are unaffected. This does not synchronize
+        Signal triggers across a combined multi-array setup.
         """
         self._board.control.command("set_iq_control", {"rearm_signal": True})
 
     def acknowledge_signal_capture(self, config_generation: int, capture_id: int):
         """Acknowledge one fully validated Signal event to all array sensors.
 
-        The controller is only a stateless UART relay. Event completeness is
-        deliberately decided here on the host so future coherent multi-board
-        coordinators can delay each board's acknowledgement until their joint
-        event is complete.
+        Call this after validating a complete capture to release its retained
+        samples. The acknowledgement applies only to this array.
         """
 
         self._board.control.command(

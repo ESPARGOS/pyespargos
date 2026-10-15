@@ -11,6 +11,12 @@ from .iq_packet import DECIM_TO_FS, IQChunkPacket, IQ_CHUNK_TYPE_HEADER, IQ_CHUN
 REFERENCE = IQ_CHUNK_FLAG_REFERENCE
 READY = IQ_CHUNK_FLAG_REFERENCE_READY
 
+# Reduce antenna leakage, using a stronger wired reference for a clear onset.
+REFERENCE_RX_GAIN = 30
+REFERENCE_EXTERNAL_RX_GAIN = 42
+REFERENCE_THRESHOLD = 48
+REFERENCE_BACKOFF = 0
+
 
 def transfer_delay(timing_seconds, old_origin_ns, new_origin_ns, reference):
     """Transfer a full-rate delay fit to a new, timestamped sample grid."""
@@ -35,10 +41,11 @@ def relative_lag(samples, reference, expected_lag=None):
     score = np.abs(cross) / np.sqrt(np.maximum(power * refpower, 1e-20))
     score[np.abs(lags) > n - 256] = 0
     if expected_lag is not None:
-        # Receiver phase and the startup envelope move the threshold crossing
-        # by tens of samples. Let the full waveform locate the peak; use the
-        # edge only to bound the search and break truly periodic ties.
-        score[np.abs(lags - expected_lag) > 96] = 0
+        # Try near the measured edge first. The edge is relative to a chunk,
+        # so receivers choosing different onset chunks need the full search.
+        nearby = np.where(np.abs(lags - expected_lag) <= 96, score, 0)
+        if np.max(nearby) >= 0.65:
+            score = nearby
     best = np.argmax(score)
     if expected_lag is not None:
         ties = np.flatnonzero(score >= score[best] - 1e-5)
@@ -49,7 +56,7 @@ def relative_lag(samples, reference, expected_lag=None):
 
 
 @contextmanager
-def reference_session(pool, center_hz=None, rx_gain=35):
+def reference_session(pool, center_hz=None, rx_gain=None):
     if not pool._reference_lock.acquire(blocking=False):
         raise RuntimeError("Synchronization or calibration is already running")
     try:
@@ -60,7 +67,7 @@ def reference_session(pool, center_hz=None, rx_gain=35):
 
 
 @contextmanager
-def _reference_session(pool, center_hz=None, rx_gain=35):
+def _reference_session(pool, center_hz=None, rx_gain=None):
     """Restore each board's settings on every exit, including failed acquisition."""
     saved = [b.iq.get_config() for b in pool.boards]
     center = int(center_hz or saved[0]["receivers"][0]["rf_freq_hz"])
@@ -71,11 +78,16 @@ def _reference_session(pool, center_hz=None, rx_gain=35):
         raise ValueError("All boards must use the same IQ sample rate")
     if any(any(r["rf_freq_hz"] != center for r in c["receivers"]) for c in saved) and center_hz is None:
         raise ValueError("All receivers must use the same center frequency")
+    if rx_gain is None:
+        # The external splitter/cables attenuate REF before it reaches the
+        # sensors. Keep the lower gain for a board's direct internal path.
+        external = pool.master_board.wifi_rx.get_config()["calib-source"] != 0
+        rx_gain = REFERENCE_EXTERNAL_RX_GAIN if external else REFERENCE_RX_GAIN
     pool.start_processing()
     pool._calibrating = True
     try:
         pool.master_board.iq.set_reference()
-        pool.apply_config({"mode": "iq", "adc_decimation": 1, "rf_switch": 1, "gain_mode": "manual", "rx_gain": rx_gain, "rf_freq_hz": center, "trigger": {"mode": "interval", "interval_chunks": 2048, "burst_chunks": 4}})
+        pool.apply_config({"mode": "iq", "adc_decimation": 1, "rf_switch": 1, "gain_mode": "manual", "rx_gain": rx_gain, "rf_freq_hz": center, "trigger": {"mode": "interval", "interval_chunks": 16384, "burst_chunks": 1}})
         yield center, fs
     finally:
         try:
@@ -130,9 +142,9 @@ def acquire_grid(pool, center, timeout=3.0):
     try:
         for bi, board in enumerate(pool.boards):
             subscriptions.append(board.subscribe_sensor_messages(IQ_CHUNK_TYPE_HEADER, lambda m, bi=bi: receive(bi, m)))
-        pool.master_board.iq.set_reference("iq", center, 30)
+        pool.master_board.iq.set_reference("iq", center, REFERENCE_BACKOFF)
         pool.master_board.control.command("gate_iq_reference", {"open": False})
-        pool.apply_config({"adc_decimation": 1, "trigger": {"mode": "reference", "threshold": 32}})
+        pool.apply_config({"adc_decimation": 1, "trigger": {"mode": "reference", "threshold": REFERENCE_THRESHOLD}})
         for bi, board in enumerate(pool.boards):
             generations[bi] = board.iq.get_config()["config_generation"]
         wait(lambda: all(ready.get((bi, a)) == generations[bi] for bi in range(count) for a in range(8)), "quiet REF readiness")

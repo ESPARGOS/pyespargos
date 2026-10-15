@@ -1,7 +1,8 @@
-"""Fail-closed assembly of wired-consensus Signal IQ captures.
+"""Assemble complete Signal IQ captures from one ESPARGOS array.
 
-Signal mode is different from the ordinary raw-IQ stream. Pulling the shared
-BOOT net low creates one array-wide capture event. The firmware always exports
+Signal mode captures an event across the eight antennas of one array. Separate
+arrays trigger independently, so their events cannot be assumed to match even
+when they share a clock and reference. The firmware always exports
 the complete 56-chunk bank in which threshold detection ran and may append a
 configured prefix of the next bank. Every chunk repeats the event's total
 length and carries a common ``capture_id`` plus its offset. Those fields are

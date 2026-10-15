@@ -5,8 +5,9 @@
 After broadband reference sync (:meth:`espargos.IQPool.sync`), ordinary
 raw-IQ chunks use their common ``source_chunk_index`` as the association key.
 Signal chunks use ``(config_generation, capture_id, capture_chunk_offset)``
-because that tuple names the array-wide wired-BOOT event even when a sensor's
-local SRAM counter has a different whole-bank epoch. An :class:`IQCluster`
+because that tuple identifies an event within one array. Separate arrays
+trigger independently, so these event IDs cannot be used to match captures
+across arrays. An :class:`IQCluster`
 collects one such association key across the configured sensors.
 """
 

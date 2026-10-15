@@ -443,11 +443,15 @@ class IQPool(Pool):
         applications that only consume the raw chunk stream need no
         Signal-specific code at all.
 
-        Set ``auto_acknowledge=False`` for a multi-array coordinator: the
-        pool then stops acknowledging ACCEPTED events (rejected events are
-        still retired) and disables automatic stall recovery; call
-        :meth:`acknowledge_signal_capture` explicitly after the wider
-        consensus succeeds.
+        Signal capture requires a single-board pool. The eight antennas on
+        that array capture together, but separate arrays trigger independently.
+        A shared clock and reference do not synchronize their Signal events.
+        Use Interval or Accumulate for synchronized multi-array capture.
+
+        Set ``auto_acknowledge=False`` to manage accepted captures yourself.
+        Rejected events are still retired, but automatic stall recovery is
+        disabled. Call :meth:`acknowledge_signal_capture` after validating each
+        accepted capture. This option does not coordinate triggers across arrays.
         """
 
         if len(self.boards) != 1 or self._signal_assembler is None:
@@ -760,11 +764,13 @@ class IQPool(Pool):
         bin_frequencies = self._calibration_center_frequency + (np.arange(fft_size) - fft_size // 2) / fft_size * self._calibration_sample_rate
         return self._calibration.phase_time_correction(bin_frequencies)
 
-    def sync(self, center_hz=None, rx_gain=35, attempts=5, cable_lengths=None, cable_velocity_factors=None, timeout=3.0, iq_ready_timeout=3.0):
+    def sync(self, center_hz=None, rx_gain=None, attempts=5, cable_lengths=None, cable_velocity_factors=None, timeout=3.0, iq_ready_timeout=3.0):
         """Synchronize and calibrate from one broadband REF session.
 
         Acquire a common sample grid, fit phase/delay, validate on fresh data,
         then restore receive settings and publish the calibration atomically.
+        By default, choose RX gain for the configured internal or external
+        reference path. Pass ``rx_gain`` to override it.
         """
         t0 = time.monotonic()
         if attempts < 1:

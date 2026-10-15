@@ -83,8 +83,9 @@ antennas. The results are stored in ``pool.calibration``. The example above
 reads raw samples, while the signal analyzer can apply the calibration to its
 phase display.
 
-After calibration, your receiver settings are restored and the reference is
-switched off. Run ``sync()`` again after changing the frequency or sample rate
+Calibration chooses the receive gain for the configured reference path,
+including the splitter in an aperture kit. After calibration, your receiver
+settings are restored and the reference is switched off. Run ``sync()`` again after changing the frequency or sample rate
 (decimation). Calibration accepts the receiver tuning range, 2310-2640 MHz, and
 has been tested up to 2640 MHz. At 2310 MHz, reference synchronization failed
 on the test array. The web interface has an **RX Sync** button, but its
@@ -109,8 +110,19 @@ of 32768 chunks. Use ``add_accumulation_callback()`` to receive the averages.
 
 **Signal** waits for a signal to cross a threshold, then captures the same
 event across all eight antennas. This is useful for short bursts such as WiFi
-traffic. Use ``add_signal_capture_callback()`` with a single board. For
-example:
+traffic. Use ``add_signal_capture_callback()`` to receive complete captures.
+
+.. note::
+
+   Signal triggering coordinates the eight antennas within one ESPARGOS array.
+   In a combined multi-array setup, each array triggers independently, even
+   with a shared clock and reference connection. Their captures may therefore
+   cover different events or different parts of the same signal.
+
+   Use one board per ``IQPool`` for Signal capture. For synchronized captures
+   across multiple arrays, use Interval or Accumulate instead.
+
+For example:
 
 .. code-block:: python
 
