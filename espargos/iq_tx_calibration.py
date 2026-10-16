@@ -1,10 +1,10 @@
-"""TX calibration using the forward REF network and reciprocal antenna links.
+"""TX calibration using reciprocal links between sensors.
 
 Configure IQ TX roles and source waveforms before calling ``IQPool.calibrate_tx``.
 The boards must share their sample clock and REF source. Calibration temporarily
-uses the left antenna port and transmits one low-level pilot at a time. The
-propagation channel cancels in the two-way ratios, so an amplified REF splitter
-is supported without knowing antenna responses or propagation distances.
+routes pilots through REF, with the antennas disconnected. Signals travel
+between splitter outputs rather than backwards through the amplifier to the
+controller. Their propagation response cancels in the two-way ratios.
 """
 
 import copy
@@ -54,7 +54,7 @@ def fit_links(frequencies, response, valid):
             slopes.append(slope / (2 * np.pi))
             weights.append(weight)
     if not edges or np.linalg.matrix_rank(edges) < n - 1:
-        raise RuntimeError("Reciprocal antenna links do not connect every selected transmitter")
+        raise RuntimeError("Reciprocal links do not connect every selected transmitter")
     # Connection Laplacian avoids degree bias when some paths are weak.
     laplacian = np.diag(np.sum(abs(h), axis=1)) - h
     _, v = np.linalg.eigh(laplacian)
@@ -110,6 +110,7 @@ class _Captures:
         self.frames = {}
         self.chunks = 1
         self.generations = {}
+        self.not_before = {}
         self.subscriptions = [
             (
                 b,
@@ -128,6 +129,15 @@ class _Captures:
         with self.changed:
             if sensor not in self.ids or (sensor in self.generations and packet.config_generation != self.generations[sensor]):
                 return
+            # Queued UDP/SPI records may predate this pilot even when their
+            # configuration generation is unchanged on another board.
+            captured_ns = packet.fire_time_ns + round(packet.chunk_counter * 256e9 / packet.sample_rate_hz)
+            if sensor in self.not_before:
+                # The hardware chunk counter wraps after 2**24 chunks.
+                span_ns = round((1 << 24) * 256e9 / packet.sample_rate_hz)
+                age = (captured_ns - self.not_before[sensor] + span_ns // 2) % span_ns - span_ns // 2
+                if age < 0:
+                    return
             index = packet.source_chunk_index & 0xFFFFFF
             key = (packet.fire_time_ns, packet.config_generation, index // self.chunks)
             pending = self.pending.setdefault(sensor, {})
@@ -139,13 +149,14 @@ class _Captures:
             while len(pending) > 4:
                 del pending[next(iter(pending))]
 
-    def collect(self, ids, samples, count, timeout, generations=None):
+    def collect(self, ids, samples, count, timeout, generations=None, not_before=None):
         if not ids:
             return {}
         deadline = time.monotonic() + timeout
         with self.changed:
             self.ids = set(ids)
             self.generations = generations or {}
+            self.not_before = not_before or {}
             self.chunks = samples // 256
             self.pending = {}
             self.frames = {i: deque(maxlen=count) for i in ids}
@@ -175,7 +186,7 @@ def _transmitter_settings(state):
     return [{key: sensor[key] for key in keys} for sensor in state["sensors"]]
 
 
-def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=None, timeout=10.0):
+def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=None, timeout=10.0, pilot_output="reference"):
     """Calibrate the currently selected transmitters and restore RX/TX operation.
 
     Selected transmitters need a waveform with a common replay length and
@@ -186,7 +197,12 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
     Returns per-board calibration dictionaries and link-fit residuals. The
     corrections are already applied. RX calibration remains available on the
     pool for sensors restored to IQ RX mode.
+
+    Pilots use REF by default. Set ``pilot_output="antenna_l"`` explicitly
+    for over-the-air calibration when REF outputs cannot communicate.
     """
+    if pilot_output not in ("reference", "antenna_l"):
+        raise ValueError("pilot_output must be 'reference' or 'antenna_l'")
     if pool._calibrating:
         raise RuntimeError("Calibration is already running")
     boards = pool.boards
@@ -231,7 +247,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                 "adc_decimation": 1,
                 "gain_mode": "manual",
                 "rx_gain": rx_gain,
-                "rf_switch": 3,
+                "rf_switch": 1 if pilot_output == "reference" else 3,
                 "trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 4},
             }
         )
@@ -268,7 +284,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                 "set_iq_tx",
                 {
                     "muted": False,
-                    "transmitters": [{"antid": ant, "output": "antenna_l", "amplitude": 1}],
+                    "transmitters": [{"antid": ant, "output": pilot_output, "amplitude": 1}],
                     "modes": ["iq_tx" if a == ant else "iq_rx" for a in range(8)],
                 },
             )
@@ -276,7 +292,10 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             origin = state["sensors"][ant].get("origin_ns", 0)
             if not origin:
                 raise RuntimeError("Firmware does not report a synchronized TX replay origin")
-            frames = capture.collect([i for i in target_ids if i != 8 * bi + ant], period, 20, timeout)
+            # Translate the TX start to each receiver's synchronized local clock.
+            # Require a complete pilot period before accepting samples.
+            earliest = {sensor: int(reference[rx]) + origin - int(reference[tx]) + period * 12.5 for rx, sensor in enumerate(target_ids) if rx != tx}
+            frames = capture.collect(list(earliest), period, 20, timeout, not_before=earliest)
             latency = ((origin - int(reference[tx]) + period * 6.25) % (period * 12.5) - period * 6.25) * 1e-9
             for rx, sensor in enumerate(target_ids):
                 if rx == tx:

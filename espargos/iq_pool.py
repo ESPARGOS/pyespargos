@@ -832,12 +832,14 @@ class IQPool(Pool):
     calibrate = sync
 
     def calibrate_tx(self, **kwargs):
-        """Calibrate selected IQ transmitters through reciprocal antenna links.
+        """Calibrate selected IQ transmitters through reciprocal REF links.
 
         Boards must share one clock and forward REF distribution network.
         Configure the desired RX/TX roles and TX waveforms first. The operation
         briefly switches transmitters to RX, preserves their source waveforms,
-        and restores the selected roles and mute state. See :mod:`espargos.iq_tx_calibration`.
+        and restores the selected roles and mute state. Pilots stay on REF
+        unless ``pilot_output="antenna_l"`` is requested explicitly.
+        See :mod:`espargos.iq_tx_calibration`.
         """
         from .iq_tx_calibration import calibrate
 

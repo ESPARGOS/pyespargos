@@ -30,6 +30,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("hosts", help="Comma-separated controller addresses sharing one REF network")
     parser.add_argument("--frequency", required=True, type=float, metavar="MHZ", help="Calibration and TX center frequency in MHz")
+    parser.add_argument("--over-the-air", action="store_true", help="Send pilots through the left antennas instead of REF")
     args = parser.parse_args()
     boards, pool, success = [], None, False
     try:
@@ -67,7 +68,7 @@ def main():
             wait(board, lambda s: all(x["enabled"] and x["applied_mode"] == "iq_tx" for x in s["sensors"]))
         pool = espargos.IQPool(boards)
         pool.start()
-        result = pool.calibrate_tx()
+        result = pool.calibrate_tx(pilot_output="antenna_l" if args.over_the_air else "reference")
         for board, calibration in zip(boards, result["calibration"]):
             print(f"\n{board.host}\nSensor   Phase (degrees)   Delay (samples)")
             for a, (phase, delay) in enumerate(zip(calibration["phase_deg"], calibration["delay_samples"])):
