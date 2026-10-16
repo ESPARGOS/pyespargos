@@ -156,6 +156,7 @@ class IQPool(Pool):
         self._calibration_sample_rate = None
         self._calibration_center_frequency = None
         self._calibration_epoch = None
+        self._calibration_grid_origin = None
         self._calibrating = False
         self._reference_lock = threading.Lock()
         self._reference_sequence = time.monotonic_ns() & 0xFFFFFFFF
@@ -798,6 +799,7 @@ class IQPool(Pool):
                     self._logger.info("Acquiring a fresh broadband grid: %s", error)
             timing = tau / 80e6
             epoch = training[0].fire_time_ns.tobytes()
+            grid_origin = training[0].grid_origin_ns.copy()
             if fs != 80e6:
                 # The ADC subsamples without anti-alias filtering. Measure
                 # the full reference band at 80 MS/s, then transfer the delay
@@ -807,6 +809,7 @@ class IQPool(Pool):
                 target = iq_reference.collect(self, count=4, seqs=seqs)[0]
                 timing = iq_reference.transfer_delay(timing, training[0].grid_origin_ns, target.grid_origin_ns, ref)
                 epoch = target.fire_time_ns.tobytes()
+                grid_origin = target.grid_origin_ns.copy()
             shape = (len(self.boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
             calibration = SensorCalibration(
                 sensor_shape=shape,
@@ -819,6 +822,7 @@ class IQPool(Pool):
         # Publish only after validation AND restoration succeeded.
         self._calibration = calibration
         self._calibration_epoch = epoch
+        self._calibration_grid_origin = grid_origin
         self._calibration_sample_rate = fs
         self._calibration_center_frequency = center
         self._logger.info("Broadband calibration verified: coherence %.3f, residual %.3f rad, %.3f s", quality.min(), residual.max(), time.monotonic() - t0)
@@ -826,3 +830,15 @@ class IQPool(Pool):
 
     # Both names run the same operation; there is no separate coarse-only path.
     calibrate = sync
+
+    def calibrate_tx(self, **kwargs):
+        """Calibrate selected IQ transmitters through reciprocal antenna links.
+
+        Boards must share one clock and forward REF distribution network.
+        Configure the desired RX/TX roles and TX waveforms first. The operation
+        briefly switches transmitters to RX, preserves their source waveforms,
+        and restores the selected roles and mute state. See :mod:`espargos.iq_tx_calibration`.
+        """
+        from .iq_tx_calibration import calibrate
+
+        return calibrate(self, **kwargs)
