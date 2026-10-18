@@ -375,26 +375,6 @@ Common.ESPARGOSApplication {
             endpoint: appconfig
 
             Label {
-                text: "Crosspol Fix"
-                color: "#ffffff"
-                horizontalAlignment: Text.AlignRight
-                Layout.alignment: Qt.AlignRight
-                Layout.fillWidth: true
-            }
-
-            Switch {
-                id: simpleJonesSwitch
-
-                property string configKey: "crosspol_compensation"
-                property string configProp: "checked"
-
-                Component.onCompleted: appDrawer.configManager.register(this)
-                onCheckedChanged: appDrawer.configManager.onControlChanged(this)
-                implicitWidth: 80
-                checked: false
-            }
-
-            Label {
                 text: "Show Mean"
                 color: "#ffffff"
                 horizontalAlignment: Text.AlignRight

@@ -9,6 +9,8 @@ sys.path.append(str(pathlib.Path(__file__).absolute().parents[2]))
 
 from demos.common import CSIBacklogMixin, CameraView, CombinedArrayMixin, ESPARGOSCSIApplication, SingleCSIFormatMixin
 import numpy as np
+from demos.common.polarization import PolarizationMixin
+
 import espargos
 import time
 
@@ -20,7 +22,7 @@ except ImportError:
     from csi_overlay import CSIOverlay
 
 
-class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
+class CSICameraDemo(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     """Acquire CSI, compute its spatial spectrum, and publish it to the camera UI."""
 
     DEFAULT_CONFIG = {
@@ -81,7 +83,6 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
 
         self.initialize_pool(backlog_cb_predicate=self._cb_predicate)
         self._update_steering_vectors()
-        self.jones_matrices_inv = espargos.combined_array.build_jones_matrices(self.antenna_orientations)
 
         self.camera_view = CameraView(self.appconfig, parent=self, update_signal=self.appConfigChanged)
         self.overlay = CSIOverlay(self.appconfig, parent=self, update_signal=self.appConfigChanged)
@@ -185,8 +186,8 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
                     # Apply per-antenna Jones correction to convert R/L feeds to global H/V polarization
                     # in the antenna domain (before beamforming), since each antenna may be rotated differently.
                     # csi_combined: (D, B=1, M, N, S, 2) where last dim is R/L
-                    # jones_matrices_inv: (M, N, 2, 2) maps R/L -> global H/V
-                    csi_combined = np.einsum("dbmnsf,mnfp->dbmnsp", csi_combined, self.jones_matrices_inv)
+                    # The inverse response maps R/L to global H/V, optionally per subcarrier.
+                    csi_combined = self.correct_polarization(csi_combined, csi_format)
 
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
                 # This assumes a constant channel except for CFO-induced phase rotations and noise
@@ -290,12 +291,11 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
                         if np.sum(polarization_estimate[..., 1].real * self.beamspace_power) < 0:
                             polarization_estimate = -polarization_estimate
 
-                        # V is now predominantly real after the global phase rotation.
-                        # Individual pixels may have V < 0 (opposite sign from dominant source) — this is
-                        # real physical information that we preserve. V may also have small imaginary
-                        # residuals which we discard (second-order effect from global phase approximation).
-                        v_signed = polarization_estimate[..., 1].real  # signed, in [-1, 1]
-                        h_complex = polarization_estimate[..., 0]  # complex H
+                        # Retain both complex components. A global phase rotation
+                        # cannot make V real in every direction; discarding Im(V)
+                        # changes the polarization ellipse, especially for slant fields.
+                        v_complex = polarization_estimate[..., 1]
+                        h_complex = polarization_estimate[..., 0]
 
                         # Compute per-pixel power scaling for un-normalized mode.
                         # Scale polarization components by sqrt(power/max_power) so oscillation
@@ -303,10 +303,10 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
                         # shader-side logic is needed.
                         if not self.appconfig.get("beamformer", "normalize_polarization"):
                             power_scale = np.sqrt(self.beamspace_power / (np.max(self.beamspace_power) + 1e-12))
-                            v_signed = v_signed * power_scale
+                            v_complex = v_complex * power_scale
                             h_complex = h_complex * power_scale
 
-                        self.overlay.publish_polarization(v_signed, h_complex)
+                        self.overlay.publish_polarization(v_complex, h_complex)
 
                     # For delay colorization: move polarization axis to front so both H/V are treated
                     # as independent observations. The delay computation sums phase derivatives over

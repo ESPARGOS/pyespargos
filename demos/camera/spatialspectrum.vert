@@ -20,6 +20,7 @@ layout(std140, binding = 0) uniform buf {
 	float gridSpacing;
 	float azimuthCorrection;
 	float elevationCorrection;
+	vec2 polarizationTexelSize;
 };
 
 // Converts normalized camera coordinates into a unit-length ray in camera space.
@@ -54,7 +55,12 @@ void main() {
 	vec2 textureCoords = rawBeamspace == 1 ? coord : (directionToFFTBeamspace(direction) + 0.5);
 
 	beamspaceColor = texture(spatialSpectrumCanvasSource, textureCoords);
-	beamspacePolarization = texture(polarizationCanvasSource, textureCoords);
+	// Left tile stores complex H; right tile stores complex V. Clamp to
+	// texel centers within each tile so filtering cannot mix H and V.
+	vec2 polCoords = clamp(textureCoords, 0.5 * polarizationTexelSize, 1.0 - 0.5 * polarizationTexelSize);
+	vec2 h = texture(polarizationCanvasSource, vec2(polCoords.x * 0.5, polCoords.y)).rg;
+	vec2 v = texture(polarizationCanvasSource, vec2(0.5 + polCoords.x * 0.5, polCoords.y)).rg;
+	beamspacePolarization = vec4(h, v);
 
     gl_Position = qt_Matrix * qt_Vertex;
     qt_TexCoord0 = qt_MultiTexCoord0;

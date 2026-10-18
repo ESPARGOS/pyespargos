@@ -11,7 +11,7 @@ import enum
 
 import numpy as np
 
-__all__ = ["AntennaOrientation", "build_combined_array_data", "build_jones_matrices", "get_cable_wavelength", "parse_combined_array_config"]
+__all__ = ["AntennaOrientation", "build_combined_array_data", "get_cable_wavelength", "parse_combined_array_config"]
 
 from . import constants
 
@@ -47,52 +47,6 @@ class AntennaOrientation(enum.Enum):
             ],
             dtype=float,
         )
-
-
-def build_jones_matrices(antenna_orientations: np.ndarray, base_jones_matrix: np.ndarray = None):
-    """
-    Build per-antenna effective Jones matrices for a combined array, accounting for the physical
-    rotation of each sub-array.
-
-    The effective Jones matrix for each antenna maps from the R/L feed basis to the global H/V
-    linear polarization basis, taking into account the antenna's physical orientation.
-
-    The physical model: the R/L feed probes are mounted on the antenna and rotate with it,
-    while the incoming field has fixed global H/V polarization. Rotating the antenna by angle
-    :math:`\\theta` therefore acts in the feed (output) space of the Jones matrix:
-
-    .. math::
-        J_{\\text{eff}} = R^T(\\theta) \\cdot J_{\\text{base}}
-
-    Inverting to obtain the R/L → H/V mapping:
-
-    .. math::
-        J_{\\text{eff}}^{-1} = J_{\\text{base}}^{-1} \\cdot R(\\theta)
-
-    where :math:`R(\\theta)` is the 2D rotation matrix for the antenna's orientation and
-    :math:`J_{\\text{base}}` is the base Jones matrix (H/V to R/L conversion for the default orientation).
-
-    :param antenna_orientations: Array of :class:`AntennaOrientation` values with shape (rows, cols).
-    :param base_jones_matrix: The base Jones matrix mapping H/V to R/L for the default (N) orientation.
-        If None, uses :data:`constants.ANTENNA_JONES_MATRIX`.
-
-    :return: Array of effective inverse Jones matrices with shape (rows, cols, 2, 2).
-        Multiply with R/L feed vector to obtain global H/V: ``H_V = jones[r, c] @ R_L``.
-    """
-    if base_jones_matrix is None:
-        base_jones_matrix = constants.ANTENNA_JONES_MATRIX
-
-    base_jones_inv = np.linalg.inv(base_jones_matrix)
-
-    rows, cols = antenna_orientations.shape
-    jones_matrices = np.empty((rows, cols, 2, 2), dtype=base_jones_inv.dtype)
-
-    for r in range(rows):
-        for c in range(cols):
-            rot = antenna_orientations[r, c].rotation_matrix()
-            jones_matrices[r, c] = base_jones_inv @ rot
-
-    return jones_matrices
 
 
 def get_cable_wavelength(frequencies: np.ndarray, velocity_factors: np.ndarray):

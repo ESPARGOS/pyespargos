@@ -9,6 +9,8 @@ from demos.common import ESPARGOSCSIApplication, CSIBacklogMixin, CombinedArrayM
 
 import matplotlib.colors
 import numpy as np
+from demos.common.polarization import PolarizationMixin
+
 import espargos
 import argparse
 
@@ -97,7 +99,7 @@ class RadiationPatternGeometry(PyQt6.QtQuick3D.QQuick3DGeometry):
         )
 
 
-class EspargosDemoRadiationPattern3D(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
+class EspargosDemoRadiationPattern3D(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     configChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
@@ -128,9 +130,6 @@ class EspargosDemoRadiationPattern3D(CSIBacklogMixin, CombinedArrayMixin, Single
             np.arcsin(np.linspace(-sin_max_el, sin_max_el, SPHERE_ELEVATION_STEPS + 1)),
         )
         self.element_pattern = np.cos(el_mesh) ** 0.4 * np.cos(az_mesh) ** 0.4
-
-        # Per-antenna inverse Jones matrices for polarization correction (R/L to H/V)
-        self.jones_matrices_inv = espargos.combined_array.build_jones_matrices(self.antenna_orientations)
 
         self.geometry = RadiationPatternGeometry()
         self._board_placements = self._compute_board_placements()
@@ -193,10 +192,10 @@ class EspargosDemoRadiationPattern3D(CSIBacklogMixin, CombinedArrayMixin, Single
         pol_mode = self.appconfig.get("polarization_mode")
 
         if pol_mode == "incorporate":
-            result = self.get_backlog_csi("rx_gain", "fft_gain", "rf_switch_state", allow_incomplete=True)
+            result = self.get_backlog_csi("rx_gain", "fft_gain", "rf_switch_state", allow_incomplete=True, return_format=True)
             if result is None:
                 return
-            csi_backlog, rx_gain_backlog, fft_gain_backlog, rfswitch_state_backlog = result
+            csi_format, csi_backlog, rx_gain_backlog, fft_gain_backlog, rfswitch_state_backlog = result
         else:
             result = self.get_backlog_csi("rx_gain", "fft_gain", allow_incomplete=True)
             if result is None:
@@ -216,7 +215,7 @@ class EspargosDemoRadiationPattern3D(CSIBacklogMixin, CombinedArrayMixin, Single
                 self.logger.warning("Need measurements for both R and L feeds for polarization mode")
                 return
             # Apply per-antenna Jones correction (R/L to global H/V)
-            csi_largearray = np.einsum("dmnsf,mnfp->dmnsp", csi_largearray, self.jones_matrices_inv)
+            csi_largearray = self.correct_polarization(csi_largearray, csi_format)
 
         csi_avg = espargos.csi_processing.csi_interp_iterative(csi_largearray, iterations=5)
 
