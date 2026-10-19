@@ -9,68 +9,17 @@ controller. Their propagation response cancels in the two-way ratios.
 
 import copy
 import json
+import struct
+import zlib
 import threading
 import time
 from collections import deque
+from .iq_reference import _map
+from .iq_tx_calibration_fit import fit_links
 
 from .iq_packet import IQChunkPacket, IQ_CHUNK_TYPE_HEADER, IQ_CHUNK_FLAG_REFERENCE, IQ_CHUNK_FLAG_REFERENCE_READY
 
 import numpy as np
-
-
-def fit_links(frequencies, response, valid):
-    # response[f, receiver, transmitter] has the calibrated RX response removed.
-    n = response.shape[1]
-    if n == 1:
-        return np.zeros(1), np.zeros(1), {"links": 0, "phase_residual_deg": 0.0, "delay_residual_samples": 0.0}
-    h = np.zeros((n, n), complex)
-    edges, slopes, weights = [], [], []
-    for i in range(n):
-        for j in range(i):
-            good = valid[:, j, i] & valid[:, i, j]
-            if good.sum() < 6 or np.ptp(frequencies[good]) < 10e6:
-                continue
-            z = response[good, j, i] / response[good, i, j]
-            z /= abs(z)
-            f = frequencies[good] / 80e6
-            spacing = np.diff(f)
-            nearest = np.isclose(spacing, spacing.min())
-            coarse = np.angle(np.sum(z[1:][nearest] * z[:-1][nearest].conj())) / spacing.min()
-            slope, phase = np.polyfit(f, np.unwrap(np.angle(z * np.exp(-1j * coarse * f))), 1)
-            slope += coarse
-            residual = np.angle(z * np.exp(-1j * (phase + slope * f)))
-            rms = np.sqrt(np.mean(residual**2))
-            if rms > 0.2:
-                continue
-            weight = 1 / max(0.02, rms) ** 2
-            h[i, j] = weight * np.exp(1j * phase)
-            h[j, i] = h[i, j].conjugate()
-            edge = np.zeros(n - 1)
-            if i:
-                edge[i - 1] = 1
-            if j:
-                edge[j - 1] = -1
-            edges.append(edge)
-            slopes.append(slope / (2 * np.pi))
-            weights.append(weight)
-    if not edges or np.linalg.matrix_rank(edges) < n - 1:
-        raise RuntimeError("Reciprocal links do not connect every selected transmitter")
-    # Connection Laplacian avoids degree bias when some paths are weak.
-    laplacian = np.diag(np.sum(abs(h), axis=1)) - h
-    _, v = np.linalg.eigh(laplacian)
-    phase = np.angle(v[:, 0] / v[0, 0])
-    w = np.sqrt(weights)
-    delay = np.r_[0, np.linalg.lstsq(np.asarray(edges) * w[:, None], np.asarray(slopes) * w, rcond=None)[0]]
-    residual = [np.angle(h[i, j] * np.exp(-1j * (phase[i] - phase[j]))) for i in range(n) for j in range(i) if h[i, j]]
-    return (
-        -np.rad2deg(phase),
-        delay,
-        {
-            "links": len(edges),
-            "phase_residual_deg": float(np.rad2deg(np.sqrt(np.mean(np.square(residual))))),
-            "delay_residual_samples": float(np.sqrt(np.mean((np.asarray(edges) @ delay[1:] - slopes) ** 2))),
-        },
-    )
 
 
 def _rpc(board, path, payload=None):
@@ -91,12 +40,28 @@ def _wait(board, predicate, timeout):
         time.sleep(0.03)
 
 
-def _waveform(board, recipe, timeout):
+def _waveform(board, recipe, timeout, wait=_wait, retry=False):
+    started = time.monotonic()
+    antennas = recipe["beams"][0]["waveform"]["antennas"] if "beams" in recipe else recipe["antennas"]
     generation = _rpc(board, "set_iq_tx_waveform", recipe)["generation"]
-    state = _wait(board, lambda s: all(s["sensors"][a]["generation"] == generation for a in recipe["antennas"]), timeout)
-    for a in recipe["antennas"]:
-        if state["sensors"][a]["error"]:
-            raise RuntimeError(f"{board.host}, sensor {a}: waveform error {state['sensors'][a]['error']}")
+
+    def applied(state):
+        for a in antennas:
+            sensor = state["sensors"][a]
+            if sensor["generation"] == generation and sensor["error"]:
+                raise RuntimeError(f"{board.host}, sensor {a}: waveform error {sensor['error']}")
+        return all(state["sensors"][a]["generation"] == generation for a in antennas)
+
+    try:
+        state = wait(board, applied, min(timeout, 0.25) if retry else timeout)
+    except TimeoutError:
+        if not retry:
+            raise
+        # RX can lose a UART command while servicing a capture. These immediate
+        # recipes are safe to repeat, including on sensors that applied them.
+        # Sensor-reported errors are never retried.
+        generation = _rpc(board, "set_iq_tx_waveform", recipe)["generation"]
+        state = wait(board, applied, max(0, timeout - (time.monotonic() - started)))
     return state
 
 
@@ -111,13 +76,93 @@ class _Captures:
         self.chunks = 1
         self.generations = {}
         self.not_before = {}
-        self.subscriptions = [
-            (
-                b,
-                b.subscribe_sensor_messages(IQ_CHUNK_TYPE_HEADER, lambda m, bi=bi: self.receive(8 * bi + m.antenna_id, m)),
-            )
-            for bi, b in enumerate(boards)
-        ]
+        self.status = {b: [None] * 8 for b in boards}
+        self.subscriptions = []
+        try:
+            for bi, b in enumerate(boards):
+                self.subscriptions.append((b, b.subscribe_sensor_messages(IQ_CHUNK_TYPE_HEADER, lambda m, bi=bi: self.receive(8 * bi + m.antenna_id, m))))
+                self.subscriptions.append((b, b.subscribe_sensor_messages(0xA3F1720B, lambda m, b=b: self.receive_status(b, m))))
+        except Exception:
+            self.close()
+            raise
+
+    def receive_status(self, board, message):
+        data = message.payload
+        offset, state = 4, None
+        while offset + 3 <= len(data):
+            tag, size = struct.unpack_from("<BH", data, offset)
+            start = offset
+            offset += 3
+            if offset + size > len(data):
+                return
+            if tag == 6 and size == 108:
+                v = struct.unpack_from("<9I3f15I", data, offset)
+                if v[13] > 2:
+                    return
+                state = dict(
+                    zip(
+                        (
+                            "generation",
+                            "samples",
+                            "crc32",
+                            "error",
+                            "enabled",
+                            "clipped_samples",
+                            "update_us",
+                            "boot_id",
+                            "sequence",
+                            "phase_deg",
+                            "delay_samples",
+                            "applied_amplitude",
+                        ),
+                        v[:12],
+                    )
+                )
+                state.update(applied_mode=("wifi", "iq_rx", "iq_tx")[v[13]], origin_ns=v[25] | v[26] << 32)
+            if tag == 255:
+                if size != 4 or offset + size != len(data) or zlib.crc32(data[:start]) != struct.unpack_from("<I", data, offset)[0]:
+                    return
+                if state is not None:
+                    with self.changed:
+                        old = self.status[board][message.antenna_id]
+                        if old and old["boot_id"] == state["boot_id"] and (state["sequence"] - old["sequence"]) % (1 << 32) >= (1 << 31):
+                            return
+                        self.status[board][message.antenna_id] = state
+                        self.changed.notify_all()
+                return
+            offset += size
+
+    def wait(self, board, predicate, timeout):
+        """Prefer streamed acknowledgements, recover dropped UDP status via HTTP.
+
+        Never hold the collector lock during a control request: stream reception
+        must remain able to make progress while that request is in flight.
+        """
+        deadline = time.monotonic() + timeout
+        next_poll = min(deadline, time.monotonic() + 0.25)
+        state = None
+        while True:
+            with self.changed:
+                sensors = self.status[board]
+                if all(s is not None for s in sensors):
+                    state = {"sensors": list(sensors)}
+                    if predicate(state):
+                        return state
+                left = next_poll - time.monotonic()
+                if left > 0:
+                    # Each sensor wakes us separately. Keep collecting streamed
+                    # acknowledgements instead of fetching a full JSON status
+                    # after every partial update (which strains controller RAM).
+                    self.changed.wait(left)
+                    continue
+            # A missing stream packet does not mean the sensor rejected a command.
+            state = _rpc(board, "get_iq_tx")
+            if predicate(state):
+                return state
+            if time.monotonic() >= deadline:
+                details = ", ".join(f"{a}: mode={s.get('applied_mode')}, generation={s.get('generation')}, error={s.get('error')}" for a, s in enumerate(state["sensors"]))
+                raise TimeoutError(f"{board.host}: sensor settings were not acknowledged ({details})")
+            next_poll = min(deadline, time.monotonic() + 0.25)
 
     def receive(self, sensor, message):
         try:
@@ -172,7 +217,8 @@ class _Captures:
                 self.ids = set()
 
     def close(self):
-        for board, subscription in self.subscriptions:
+        while self.subscriptions:
+            board, subscription = self.subscriptions.pop()
             board.unsubscribe_sensor_messages(subscription)
 
 
@@ -198,16 +244,17 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
     corrections are already applied. RX calibration remains available on the
     pool for sensors restored to IQ RX mode.
 
-    Pilots use REF by default. Set ``pilot_output="antenna_l"`` explicitly
-    for over-the-air calibration when REF outputs cannot communicate.
+    Pilots use REF by default. Select ``antenna_l`` or ``antenna_r`` explicitly
+    for over-the-air calibration. Both directions use the selected RF path.
     """
-    if pilot_output not in ("reference", "antenna_l"):
-        raise ValueError("pilot_output must be 'reference' or 'antenna_l'")
+    routes = {"reference": 1, "antenna_r": 2, "antenna_l": 3}
+    if pilot_output not in routes:
+        raise ValueError(f"pilot_output must be one of {tuple(routes)}")
     if pool._calibrating:
         raise RuntimeError("Calibration is already running")
     boards = pool.boards
-    saved_rx = [b.iq.get_config() for b in boards]
-    saved_tx = [_rpc(b, "get_iq_tx") for b in boards]
+    saved_rx = _map(lambda b: b.iq.get_config(), boards)
+    saved_tx = _map(lambda b: _rpc(b, "get_iq_tx"), boards)
     targets = [(bi, a) for bi, c in enumerate(saved_rx) for a, mode in enumerate(c["modes"]) if mode == "iq_tx"]
     if not targets:
         raise ValueError("Select IQ TX for at least one sensor before calibrating")
@@ -223,20 +270,27 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
         raise ValueError("Active receivers and transmitters must use one common frequency")
     if len({saved_rx[bi]["adc_decimation"] for bi, _ in receivers}) > 1:
         raise ValueError("Active receivers must use one common sample rate")
-    period = min(length, 1024)
-    bins = np.array([k for k in range(-period * 3 // 16, period * 3 // 16 + 1) if k and (k % 8 == 0 or abs(k) == period // 16 + 1)])
+    # Pilot density must not depend on the user's replay length. Short combs
+    # leave too few coherent tones on weak inter-board REF links. Pilots use a
+    # temporary RX-mode buffer; the original source is restored afterwards.
+    period = 1024
+    bins = np.array([k for k in range(-period * 3 // 16, period * 3 // 16 + 1) if abs(k) >= 8])
+    owners = np.where(abs(bins) == period // 16 + 1, 0, abs(bins) % 8)
     frequencies = bins * 80e6 / period
     target_ids = [8 * bi + a for bi, a in targets]
     positions = [(bi, *boards[bi].revision.antenna_id_to_row_col(a)) for bi, a in targets]
     zero = {"phase_deg": [0] * 8, "delay_samples": [0] * 8}
     pilots = set()
-    monitors = [_rpc(b, "get_iq_monitor") for b in boards]
+    monitors = _map(lambda b: _rpc(b, "get_iq_monitor"), boards)
     capture = _Captures(boards)
     success = False
     try:
-        for b in boards:
+
+        def prepare(b):
             _rpc(b, "set_iq_monitor", {"enabled": False})
-            _rpc(b, "set_iq_tx", {"muted": True, "modes": ["iq_rx"] * 8, "calibration": zero, "steering": zero})
+            _rpc(b, "set_iq_tx", {"muted": True, "modes": ["iq_rx"] * 8, "calibration": zero, "steering": zero, "rf_gain": {"a": 0, "b": 0}, "bandwidth_mhz": 40})
+
+        _map(prepare, boards)
         if rx_gain is None:
             rx_gain = 42 if pool.master_board.wifi_rx.get_config()["calib-source"] else 30
         pool.start()
@@ -247,7 +301,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                 "adc_decimation": 1,
                 "gain_mode": "manual",
                 "rx_gain": rx_gain,
-                "rf_switch": 1 if pilot_output == "reference" else 3,
+                "rf_switch": routes[pilot_output],
                 "trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 4},
             }
         )
@@ -265,43 +319,80 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
         timing = np.array([rx_cal.timing_offsets[p] for p in positions])
         paths = np.array([rx_cal.reference_path_delays[p] for p in positions])
         paths -= paths[0]
-        boot_ids = [[s["boot_id"] for s in _rpc(b, "get_iq_tx")["sensors"]] for b in boards]
+        boot_ids = [[x["boot_id"] for x in state["sensors"]] for state in saved_tx]
         count = len(targets)
         response = np.zeros((len(bins), count, count), complex)
         valid = np.zeros(response.shape, bool)
-        for tx, (bi, ant) in enumerate(targets):
+        # Two reference sensors provide redundant reciprocal paths. A whole
+        # board's remaining sensors transmit orthogonal combs in one capture.
+        hubs = [0]
+        if count > 1:
+            hubs.append(next((i for i, (bi, _) in enumerate(targets) if bi != targets[0][0]), 1))
+        groups = [[i] for i in hubs]
+        groups += [[i for i, (j, _) in enumerate(targets) if j == bi and i not in hubs] for bi in range(len(boards))]
+        groups = [g for g in groups if g]
+
+        def prepare_pilots(bi):
+            for group in groups:
+                if targets[group[0]][0] != bi:
+                    continue
+                ants = [targets[i][1] for i in group]
+                # Each sensor appears in exactly one group, so all pilots can
+                # be prepared before the measurement starts.
+                pilots.update((bi, a) for a in ants)
+                # Dense reference pilots spread power across eight times as
+                # many tones. Keep them strong for distant receivers, but
+                # reduce simultaneous OTA pilots to avoid clipping nearby RX.
+                pilot_amplitude = 0.1
+                if len(boards) > 1:
+                    if pilot_output == "reference":
+                        pilot_amplitude = 0.4
+                    elif group[0] in hubs:
+                        pilot_amplitude = 0.2
+                _waveform(
+                    boards[bi],
+                    {
+                        "type": "calibration",
+                        "samples": period,
+                        "amplitude": pilot_amplitude,
+                        "pilot_mask": 255 if group[0] in hubs else 0,
+                        "antennas": ants,
+                    },
+                    timeout,
+                    wait=capture.wait,
+                    retry=True,
+                )
+
+        _map(prepare_pilots, range(len(boards)))
+        for group in groups:
+            bi = targets[group[0]][0]
             board = boards[bi]
-            pool._logger.info("TX calibration: sensor %s/%d (%d/%d)", board.host, ant, tx + 1, count)
-            _wait(board, lambda s: all(x["applied_mode"] == "iq_rx" for x in s["sensors"]), timeout)
-            _waveform(
-                board,
-                {"type": "calibration", "samples": length, "amplitude": 0.1, "variant": 0, "antennas": [ant]},
-                timeout,
-            )
-            pilots.add((bi, ant))
+            ants = [targets[i][1] for i in group]
+            receiving = [i for i in range(count) if i not in group] if group[0] in hubs else hubs
+            pool._logger.info("TX calibration: simultaneous sensors %s/%s", board.host, ants)
             _rpc(
                 board,
                 "set_iq_tx",
                 {
                     "muted": False,
-                    "transmitters": [{"antid": ant, "output": pilot_output, "amplitude": 1}],
-                    "modes": ["iq_tx" if a == ant else "iq_rx" for a in range(8)],
+                    "transmitters": [{"antid": a, "output": pilot_output, "amplitude": 1} for a in ants],
+                    "modes": ["iq_tx" if a in ants else "iq_rx" for a in range(8)],
                 },
             )
-            state = _wait(board, lambda s: s["sensors"][ant]["enabled"] and s["sensors"][ant]["applied_mode"] == "iq_tx", timeout)
-            origin = state["sensors"][ant].get("origin_ns", 0)
-            if not origin:
-                raise RuntimeError("Firmware does not report a synchronized TX replay origin")
-            # Translate the TX start to each receiver's synchronized local clock.
-            # Require a complete pilot period before accepting samples.
-            earliest = {sensor: int(reference[rx]) + origin - int(reference[tx]) + period * 12.5 for rx, sensor in enumerate(target_ids) if rx != tx}
-            frames = capture.collect(list(earliest), period, 20, timeout, not_before=earliest)
-            latency = ((origin - int(reference[tx]) + period * 6.25) % (period * 12.5) - period * 6.25) * 1e-9
-            for rx, sensor in enumerate(target_ids):
-                if rx == tx:
-                    continue
+            # Mode/enable status can precede the first synchronized replay.
+            # Wait for the origin too instead of rejecting that transient state.
+            state = capture.wait(
+                board,
+                lambda s: all(s["sensors"][a]["enabled"] and s["sensors"][a]["applied_mode"] == "iq_tx" and s["sensors"][a].get("origin_ns", 0) for a in ants),
+                timeout,
+            )
+            origins = [state["sensors"][a].get("origin_ns", 0) for a in ants]
+            earliest = {target_ids[rx]: max(int(reference[rx]) + origin - int(reference[tx]) for tx, origin in zip(group, origins)) + period * 12.5 for rx in receiving}
+            frames = capture.collect(list(earliest), period, 8, timeout, not_before=earliest)
+            # One FFT per receiver capture separates all simultaneous pilots.
+            for rx in receiving:
                 spectra = []
-                for frame in frames[sensor]:
+                for frame in frames[target_ids[rx]]:
                     z = np.concatenate([p.decode_iq() for p in frame])
                     if max(abs(z.real).max(), abs(z.imag).max()) >= 500:
                         continue
@@ -311,26 +402,32 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                     delta_ns = p.fire_time_ns - int(reference[rx]) + (p.chunk_counter % (period // 256)) * 3200
                     delta = ((delta_ns + period * 6.25) % (period * 12.5) - period * 6.25) * 1e-9
                     rx_phase = phases[rx] + 2 * np.pi * frequencies * (-timing[rx] + delta) + 2 * np.pi * (center + frequencies) * paths[rx]
-                    spectra.append(np.fft.fft(z)[bins % period] / period * np.exp(-1j * rx_phase + 2j * np.pi * frequencies * latency))
+                    spectra.append(np.fft.fft(z)[bins % period] / period * np.exp(-1j * rx_phase))
                 if len(spectra) < 8:
                     continue
                 spectra = np.array(spectra)
                 mean = spectra.mean(axis=0)
-                power = np.mean(abs(spectra) ** 2, axis=0)
-                response[:, rx, tx] = mean
-                valid[:, rx, tx] = abs(mean) ** 2 > 0.9 * power
-            check = _rpc(board, "get_iq_tx")
-            if [s["boot_id"] for s in check["sensors"]] != boot_ids[bi] or check["sensors"][ant]["origin_ns"] != origin:
+                coherent = abs(mean) ** 2 > 0.9 * np.mean(abs(spectra) ** 2, axis=0)
+                for slot, (tx, origin) in enumerate(zip(group, origins)):
+                    selected = np.ones(len(bins), bool) if tx in hubs else owners == slot
+                    latency = ((origin - int(reference[tx]) + period * 6.25) % (period * 12.5) - period * 6.25) * 1e-9
+                    response[:, rx, tx] = mean * np.exp(2j * np.pi * frequencies * latency)
+                    valid[:, rx, tx] = selected & coherent
+            check = capture.wait(board, lambda s: True, timeout)
+            if [s["boot_id"] for s in check["sensors"]] != boot_ids[bi] or any(check["sensors"][a]["origin_ns"] != origin for a, origin in zip(ants, origins)):
                 raise RuntimeError("A transmitter restarted during calibration")
             _rpc(board, "set_iq_tx", {"muted": True, "modes": ["iq_rx"] * 8})
+            capture.wait(board, lambda s: all(x["applied_mode"] == "iq_rx" for x in s["sensors"]), timeout)
         phase, delay, quality = fit_links(frequencies, response, valid)
         if quality["phase_residual_deg"] > 5 or quality["delay_residual_samples"] > 0.3:
             raise RuntimeError(f"Reciprocal calibration did not validate: {quality}")
-        for bi, b in enumerate(boards):
-            _wait(b, lambda s: all(x["applied_mode"] == "iq_rx" for x in s["sensors"]), timeout)
+
+        def restore(pair):
+            bi, b = pair
+            capture.wait(b, lambda s: all(x["applied_mode"] == "iq_rx" for x in s["sensors"]), timeout)
             ants = [a for j, a in pilots if j == bi]
             if ants:
-                _waveform(b, {"type": "restore", "samples": length, "antennas": ants}, timeout)
+                _waveform(b, {"type": "restore", "samples": length, "antennas": ants}, timeout, wait=capture.wait, retry=True)
             _rpc(
                 b,
                 "set_iq_tx",
@@ -353,24 +450,32 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                     "trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 1},
                 }
             )
-        final = [
-            _wait(
-                b,
-                lambda s, bi=bi: all(x["applied_mode"] == saved_rx[bi]["modes"][a] and (x["applied_mode"] != "iq_tx" or x["enabled"] and x.get("origin_ns")) for a, x in enumerate(s["sensors"])),
+
+        _map(restore, enumerate(boards))
+        final = _map(
+            lambda pair: capture.wait(
+                pair[1],
+                lambda s: all(
+                    x["applied_mode"] == saved_rx[pair[0]]["modes"][a] and (x["applied_mode"] != "iq_tx" or x["enabled"] and x.get("origin_ns")) for a, x in enumerate(s["sensors"])
+                ),
                 timeout,
-            )
-            for bi, b in enumerate(boards)
-        ]
-        latency = np.array([((final[bi]["sensors"][a]["origin_ns"] - int(reference[i]) + length * 6.25) % (length * 12.5) - length * 6.25) / 12.5 for i, (bi, a) in enumerate(targets)])
+            ),
+            enumerate(boards),
+        )
+        latency = np.array(
+            [((final[bi]["sensors"][a]["origin_ns"] - int(reference[i]) + length * 6.25) % (length * 12.5) - length * 6.25) / 12.5 for i, (bi, a) in enumerate(targets)]
+        )
         delay -= latency - latency[0]
         corrections = [copy.deepcopy(s["calibration"]) for s in saved_tx]
         for i, (bi, a) in enumerate(targets):
             corrections[bi]["phase_deg"][a] = float(phase[i])
             corrections[bi]["delay_samples"][a] = float(delay[i])
-        for bi, b in enumerate(boards):
+
+        def apply(pair):
+            bi, b = pair
             _rpc(b, "set_iq_tx", {"calibration": corrections[bi]})
             ants = [a for j, a in targets if j == bi]
-            state = _wait(
+            state = capture.wait(
                 b,
                 lambda s: all(
                     abs(s["sensors"][a]["phase_deg"] - corrections[bi]["phase_deg"][a] - saved_tx[bi]["steering"]["phase_deg"][a]) < 0.02
@@ -381,8 +486,10 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             )
             if [s["boot_id"] for s in state["sensors"]] != boot_ids[bi] or any(state["sensors"][a]["origin_ns"] != final[bi]["sensors"][a]["origin_ns"] for a in ants):
                 raise RuntimeError("A transmitter restarted while applying calibration")
+
+        _map(apply, enumerate(boards))
         # Retain valid RX calibration when restoring a lower receive sample rate.
-        generations = [b.iq.get_config()["config_generation"] for b in boards]
+        generations = _map(lambda b: b.iq.get_config()["config_generation"], boards)
         packets = capture.collect([8 * bi + a for bi, a in receivers], 256, 1, timeout, {8 * bi + a: generations[bi] for bi, a in receivers})
         epoch = np.zeros(rx_cal.sensor_shape, np.uint64)
         grid = np.zeros(rx_cal.sensor_shape, np.int64)
@@ -396,9 +503,13 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
         reference_change = changes[0][1] if changes else 0
         for pos, change in changes:
             rx_cal.timing_offsets[pos] -= change - reference_change
-        for bi, b in enumerate(boards):
+
+        def resume(pair):
+            bi, b = pair
             b.iq.set_config({"trigger": saved_rx[bi]["trigger"]})
             _rpc(b, "set_iq_tx", {"muted": saved_tx[bi]["muted"]})
+
+        _map(resume, enumerate(boards))
         pool._calibration = rx_cal if receivers else None
         pool._calibration_epoch = epoch.tobytes()
         pool._calibration_grid_origin = grid
@@ -421,6 +532,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                     )
                     ants = [a for j, a in pilots if j == bi]
                     if ants:
+                        _wait(b, lambda state: all(state["sensors"][a]["applied_mode"] == "iq_rx" for a in ants), timeout)
                         _waveform(b, {"type": "restore", "samples": length, "antennas": ants}, timeout)
                     _rpc(
                         b,

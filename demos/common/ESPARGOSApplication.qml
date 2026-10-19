@@ -36,6 +36,7 @@ ApplicationWindow {
 	color: "#11191e"
 	title: "ESPARGOS Demo"
 	property bool tooltipsEnabled: true
+	property string receiverDrawerLabel: "⚙ RX"
 
 	function showError(title, message) {
 		errorDialog.title = title && title.length ? title : "Error"
@@ -50,7 +51,7 @@ ApplicationWindow {
 			anchors.fill: parent
 
 			ToolButton {
-				text: "⚙ RX"
+				text: root.receiverDrawerLabel
 				font.pixelSize: Math.max(20, root.width / 80)
 				visible: receiverDrawerComponent !== null
 				MouseArea {
@@ -107,7 +108,7 @@ ApplicationWindow {
 		sourceComponent: root.receiverDrawerComponent
 		onLoaded: {
 			if (item !== null)
-				item.headerHeight = header.height
+				item.headerHeight = Qt.binding(() => header.height)
 		}
 	}
 
@@ -119,7 +120,7 @@ ApplicationWindow {
 		// defer creation to avoid header height being 0 at this point
 		Qt.callLater( () => {
 			appDrawer = appDrawerComponent.createObject(root.contentItem)
-			appDrawer.headerHeight = header.height
+			appDrawer.headerHeight = Qt.binding(() => header.height)
 		})
 	}
 

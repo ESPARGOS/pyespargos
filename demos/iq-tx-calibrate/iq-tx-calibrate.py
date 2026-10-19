@@ -30,7 +30,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("hosts", help="Comma-separated controller addresses sharing one REF network")
     parser.add_argument("--frequency", required=True, type=float, metavar="MHZ", help="Calibration and TX center frequency in MHz")
-    parser.add_argument("--over-the-air", action="store_true", help="Send pilots through the left antennas instead of REF")
+    parser.add_argument("--rx-gain", type=int, help="Override calibration receiver gain for weak or clipping paths")
+    route = parser.add_mutually_exclusive_group()
+    route.add_argument("--pilot-output", choices=("reference", "antenna_l", "antenna_r"), default="reference", help="Reciprocal pilot path (default: reference)")
+    route.add_argument("--over-the-air", dest="pilot_output", action="store_const", const="antenna_l", help="Send pilots through the left antennas instead of REF")
     args = parser.parse_args()
     boards, pool, success = [], None, False
     try:
@@ -68,12 +71,15 @@ def main():
             wait(board, lambda s: all(x["enabled"] and x["applied_mode"] == "iq_tx" for x in s["sensors"]))
         pool = espargos.IQPool(boards)
         pool.start()
-        result = pool.calibrate_tx(pilot_output="antenna_l" if args.over_the_air else "reference")
+        began = time.monotonic()
+        result = pool.calibrate_tx(pilot_output=args.pilot_output, rx_gain=args.rx_gain)
+        elapsed = time.monotonic() - began
         for board, calibration in zip(boards, result["calibration"]):
             print(f"\n{board.host}\nSensor   Phase (degrees)   Delay (samples)")
             for a, (phase, delay) in enumerate(zip(calibration["phase_deg"], calibration["delay_samples"])):
                 print(f"{a:6d} {phase:17.2f} {delay:17.4f}")
         print(f"\nValidated {result['links']} reciprocal links: {result['phase_residual_deg']:.2f} degrees, " f"{result['delay_residual_samples']:.4f} samples RMS.")
+        print(f"Calibration completed in {elapsed:.2f} seconds.")
         print("TX is calibrated and silent. Use Start on the IQ Transmission page to resume.")
         success = True
     finally:

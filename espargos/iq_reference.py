@@ -3,6 +3,7 @@
 import threading
 import time
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -16,6 +17,13 @@ REFERENCE_RX_GAIN = 30
 REFERENCE_EXTERNAL_RX_GAIN = 42
 REFERENCE_THRESHOLD = 48
 REFERENCE_BACKOFF = 0
+
+
+def _map(function, values):
+    """Independent controller operations, joined before returning or raising."""
+    values = list(values)
+    with ThreadPoolExecutor(max_workers=max(1, len(values))) as executor:
+        return list(executor.map(function, values))
 
 
 def transfer_delay(timing_seconds, old_origin_ns, new_origin_ns, reference):
@@ -69,7 +77,7 @@ def reference_session(pool, center_hz=None, rx_gain=None):
 @contextmanager
 def _reference_session(pool, center_hz=None, rx_gain=None):
     """Restore each board's settings on every exit, including failed acquisition."""
-    saved = [b.iq.get_config() for b in pool.boards]
+    saved = _map(lambda b: b.iq.get_config(), pool.boards)
     center = int(center_hz or saved[0]["receivers"][0]["rf_freq_hz"])
     fs = DECIM_TO_FS[saved[0]["adc_decimation"]]
     if not 2310e6 <= center <= 2640e6:
@@ -94,7 +102,9 @@ def _reference_session(pool, center_hz=None, rx_gain=None):
             pool.master_board.iq.set_reference()
         finally:
             errors = []
-            for board, config in zip(pool.boards, saved):
+
+            def restore_board(pair):
+                board, config = pair
                 restore = {k: config[k] for k in ("rf_switch", "trigger", "receivers", "adc_decimation")}
                 # An explicitly requested calibration retune becomes the new operating frequency.
                 if center_hz is not None:
@@ -103,6 +113,8 @@ def _reference_session(pool, center_hz=None, rx_gain=None):
                     board.iq.set_config(restore)
                 except Exception as error:
                     errors.append(error)
+
+            _map(restore_board, zip(pool.boards, saved))
             pool._calibrating = False
             if errors:
                 raise RuntimeError(f"Failed to restore receive settings: {errors}")
@@ -145,8 +157,7 @@ def acquire_grid(pool, center, timeout=3.0):
         pool.master_board.iq.set_reference("iq", center, REFERENCE_BACKOFF)
         pool.master_board.control.command("gate_iq_reference", {"open": False})
         pool.apply_config({"adc_decimation": 1, "trigger": {"mode": "reference", "threshold": REFERENCE_THRESHOLD}})
-        for bi, board in enumerate(pool.boards):
-            generations[bi] = board.iq.get_config()["config_generation"]
+        generations = dict(enumerate(_map(lambda b: b.iq.get_config()["config_generation"], pool.boards)))
         wait(lambda: all(ready.get((bi, a)) == generations[bi] for bi in range(count) for a in range(8)), "quiet REF readiness")
         pool.master_board.control.command("gate_iq_reference", {"open": True})
         wait(lambda: all(len(snapshots.get(((bi, a), generations[bi]), {})) == 4 for bi in range(count) for a in range(8)), "reference onset snapshots")
@@ -165,9 +176,8 @@ def acquire_grid(pool, center, timeout=3.0):
             anchors.append(values)
         # One sequence names this grid across every board in the pool.
         pool._reference_sequence = (pool._reference_sequence + 1) & 0xFFFFFFFF or 1
-        for board, values in zip(pool.boards, anchors):
-            board.iq.set_sync_anchor(values, seq=pool._reference_sequence)
-        pool.apply_config({"trigger": {"mode": "interval", "interval_chunks": 4096, "burst_chunks": 4}})
+        _map(lambda pair: pair[0].iq.set_sync_anchor(pair[1], seq=pool._reference_sequence), zip(pool.boards, anchors))
+        pool.apply_config({"trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 4}})
         pool.clear_chunks()
         pool._logger.info("Broadband onset correlation min %.3f", min(scores))
         return [pool._reference_sequence] * count
@@ -184,7 +194,7 @@ def collect(pool, count=16, timeout=3.0, seqs=None):
     """Wait on useful data, not a fixed dwell or diagnostic polling loop."""
     clusters = []
     event = threading.Event()
-    generations = np.array([b.iq.get_config()["config_generation"] for b in pool.boards])[:, None, None]
+    generations = np.array(_map(lambda b: b.iq.get_config()["config_generation"], pool.boards))[:, None, None]
 
     def cb(c):
         if event.is_set():

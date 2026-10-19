@@ -25,6 +25,7 @@ __all__ = [
     "EspargosStreamConnectionError",
     "EspargosUnexpectedResponseError",
     "SensorMessageSubscription",
+    "ControllerMessageSubscription",
 ]
 
 # Port used by the controller as the source port for UDP sensor packets
@@ -78,6 +79,14 @@ class SensorMessageSubscription:
 
     type_header: int
     callback: Callable[[sensor.SensorMessage[bytes]], None]
+
+
+@dataclass(frozen=True, eq=False)
+class ControllerMessageSubscription:
+    """Handle for a controller-originated frame, such as an IQ monitor burst."""
+
+    type_header: int
+    callback: Callable[[bytes], None]
 
 
 # Magic bytes sent by the controller to confirm a valid sensor stream
@@ -328,6 +337,7 @@ class Board(object):
         self._stream_lifecycle_lock = threading.Lock()
         self._sensor_message_reassembler = sensor.SensorMessageReassembler(logger=self._logger)
         self._sensor_message_subscriptions: dict[int, list[SensorMessageSubscription]] = {}
+        self._controller_message_subscriptions: dict[int, list[ControllerMessageSubscription]] = {}
         self._sensor_message_subscriptions_lock = threading.Lock()
 
     @property
@@ -786,7 +796,47 @@ class Board(object):
                 del self._sensor_message_subscriptions[subscription.type_header]
             return True
 
+    def subscribe_controller_messages(self, type_header: int, callback: Callable[[bytes], None]) -> ControllerMessageSubscription:
+        """Receive raw controller frames on this board's existing stream.
+
+        Unlike sensor messages these frames have no antenna ID or sensor
+        fragmentation envelope. Callbacks run on the shared dispatch thread
+        and must return promptly. The subscriber does not own the stream.
+        """
+        if not isinstance(type_header, int) or not 0 <= type_header <= 0xFFFFFFFF:
+            raise ValueError("type_header must be a 32-bit unsigned integer")
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        subscription = ControllerMessageSubscription(type_header, callback)
+        with self._sensor_message_subscriptions_lock:
+            self._controller_message_subscriptions.setdefault(type_header, []).append(subscription)
+        return subscription
+
+    def unsubscribe_controller_messages(self, subscription: ControllerMessageSubscription) -> bool:
+        """Detach a controller-frame callback without stopping the stream."""
+        if not isinstance(subscription, ControllerMessageSubscription):
+            return False
+        with self._sensor_message_subscriptions_lock:
+            subscriptions = self._controller_message_subscriptions.get(subscription.type_header, [])
+            if subscription not in subscriptions:
+                return False
+            subscriptions.remove(subscription)
+            if not subscriptions:
+                del self._controller_message_subscriptions[subscription.type_header]
+        return True
+
     def _stream_handle_message(self, message):
+        if isinstance(message, bytes) and len(message) >= 4:
+            type_header = int.from_bytes(message[:4], "little")
+            with self._sensor_message_subscriptions_lock:
+                subscriptions = tuple(self._controller_message_subscriptions.get(type_header, ()))
+            if subscriptions:
+                for subscription in subscriptions:
+                    try:
+                        subscription.callback(message)
+                    except Exception:
+                        self._logger.exception(f"Controller-message callback failed for type 0x{type_header:08x}")
+                return
         try:
             sensor_packet = sensor.SensorPacket.from_bytes(message)
         except ValueError as exc:
@@ -883,24 +933,23 @@ class Board(object):
         method = "GET" if data is None else "POST"
         if self._uart_client is not None:
             response = self._uart_client.request(method, path, data, timeout=5)
-            if response.status != 200:
+            if not 200 <= response.status < 300:
                 raise EspargosHTTPStatusError(response.status, path, response.body_text())
             return response.body_text()
 
         conn = http.client.HTTPConnection(self.host, timeout=5)
-        conn.request(method, "/" + path, data)
-
         try:
+            conn.request(method, "/" + path, data)
             res = conn.getresponse()
+            body = res.read()
+            if not 200 <= res.status < 300:
+                raise EspargosHTTPStatusError(res.status, path, body.decode("utf-8", errors="replace"))
+            return body.decode("utf-8")
         except TimeoutError:
             self._logger.error(f"Timeout in HTTP request for {self.host}/{path}")
-            raise TimeoutError
-
-        if res.status != 200:
-            body = res.read().decode("utf-8", errors="replace")
-            raise EspargosHTTPStatusError(res.status, path, body)
-
-        return res.read().decode("utf-8")
+            raise
+        finally:
+            conn.close()
 
     def _handle_uart_log(self, message: str):
         self._logger.info(f"[device] {message.rstrip()}")
