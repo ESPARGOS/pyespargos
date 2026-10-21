@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="520" viewBox="0 0 1000 520" role="img" aria-labelledby="title desc">
+<title id="title">Relationships between calibration types</title><desc id="desc">F implies FR plus FT. FR plus FT implies FR, FT and R. The arrows indicate known information, not measurement steps.</desc>
+<defs><marker id="arrow" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="10" refX="10" refY="5" orient="auto-start-reverse"><path d="M0,0 L11,5 L0,10 L2.5,5 Z" fill="#293135"/></marker></defs>
+<rect width="1000" height="520" fill="white"/><g font-family="Carlito, Calibri, Arial, sans-serif" font-size="19" fill="#293135">
+<rect x="25" y="14" width="5" height="26" rx="0" fill="#37c964" stroke="#37c964" stroke-width="1.5"/>
+<text x="42" y="35" text-anchor="start" font-size="23" font-weight="700" fill="#293135">What does each calibration tell us?</text>
+<rect x="300" y="62" width="400" height="106" rx="4" fill="#d7f4e0" stroke="#293135" stroke-width="1.5"/>
+<text x="500.0" y="92" text-anchor="middle" font-size="23" font-weight="700" fill="#293135">F</text>
+<text x="500.0" y="123" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">RX and TX phases, including</text>
+<text x="500.0" y="148" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">their common TX–RX phase relation</text>
+<path d="M500,168 V208" fill="none" stroke="#293135" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="300" y="220" width="400" height="106" rx="4" fill="#d7f4e0" stroke="#293135" stroke-width="1.5"/>
+<text x="500.0" y="250" text-anchor="middle" font-size="23" font-weight="700" fill="#293135">FR + FT</text>
+<text x="500.0" y="281" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">RX and TX each aligned</text>
+<text x="500.0" y="306" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">Common TX–RX offset unspecified</text>
+<path d="M500,326 V357 H180 V386" fill="none" stroke="#293135" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M500,326 V386" fill="none" stroke="#293135" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M500,357 H820 V386" fill="none" stroke="#293135" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="30" y="398" width="300" height="106" rx="4" fill="#d7f4e0" stroke="#293135" stroke-width="1.5"/>
+<text x="180.0" y="428" text-anchor="middle" font-size="23" font-weight="700" fill="#293135">FR</text>
+<text x="180.0" y="459" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">Relative RX phases</text>
+<text x="180.0" y="484" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">Receive in known directions</text>
+<rect x="350" y="398" width="300" height="106" rx="4" fill="#dcefee" stroke="#293135" stroke-width="1.5"/>
+<text x="500.0" y="428" text-anchor="middle" font-size="23" font-weight="700" fill="#293135">R</text>
+<text x="500.0" y="459" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">Relative TX/RX combination</text>
+<text x="500.0" y="484" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">Beamforming from RX pilots</text>
+<rect x="670" y="398" width="300" height="106" rx="4" fill="#d7f4e0" stroke="#293135" stroke-width="1.5"/>
+<text x="820.0" y="428" text-anchor="middle" font-size="23" font-weight="700" fill="#293135">FT</text>
+<text x="820.0" y="459" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">Relative TX phases</text>
+<text x="820.0" y="484" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">Transmit in known directions</text>
+</g></svg>

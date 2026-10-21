@@ -1,13 +1,6 @@
-"""Board scheduled WiFi transmission controls and report decoding.
+"""Scheduled WiFi transmission and decoded TX reports for one board.
 
-ESPARGOS radar measurements use selected sensors to transmit scheduled WiFi
-frames while the remaining sensors capture CSI.  The controller configuration
-describes that transmission schedule, and each transmitting sensor emits a
-report containing the result and precise transmit metadata.
-
-``board.wifi_tx`` groups those transmit-side operations.  It deliberately does
-not perform clustering or radar signal processing; those remain higher-level
-responsibilities of :class:`espargos.csi_pool.CSIPool` and :mod:`espargos.radar`.
+Access through board.wifi_tx. Pool.wifi associates TX reports with received CSI.
 """
 
 from __future__ import annotations

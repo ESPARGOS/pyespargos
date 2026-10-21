@@ -367,12 +367,12 @@ class CSICameraDemo(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, E
 
     @PyQt6.QtCore.pyqtSlot(str)
     def setMacFilter(self, mac):
-        self.pool.set_mac_filter({"enable": True, "mac": mac})
+        self.receiver.set_mac_filter({"enable": True, "mac": mac})
         self.pooldrawer.configManager().set({"mac_filter": {"enable": True, "mac": mac}})
 
     @PyQt6.QtCore.pyqtSlot()
     def clearMacFilter(self):
-        self.pool.clear_mac_filter()
+        self.receiver.clear_mac_filter()
         self.pooldrawer.configManager().set({"mac_filter": {"enable": False}})
 
 

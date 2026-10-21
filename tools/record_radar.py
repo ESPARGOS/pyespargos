@@ -18,7 +18,8 @@ parser.add_argument("-d", "--duration", type=float, default=20.0, help="Capture 
 parser.add_argument("-g", "--gain-calib-duration", type=float, default=1.0, help="Duration over which packets are collected for gain calibration, in seconds")
 args = parser.parse_args()
 
-pool = espargos.CSIPool([espargos.Board(args.host)])
+owner = espargos.Pool(args.host).open()
+pool = owner.wifi
 
 csi_count = 0
 start_time = 0
@@ -78,7 +79,6 @@ try:
             "fft_scale_enable": False,
         }
     )
-    pool.start()
     pool.calibrate(per_board=False, duration=2)
 
     calibration = pool.calibration
@@ -96,12 +96,12 @@ try:
         espargos.sensor.RFSwitchState.SENSOR_RFSWITCH_ANTENNA_R,
     )
 
-    pool.set_radar_config(radar_config)
-    collect_gain_callback = pool.add_csi_callback(collect_gain_settings, callback_predicate=radar_cb_predicate)
+    pool.set_tx_config(radar_config)
+    collect_gain_callback = pool.add_callback(collect_gain_settings, callback_predicate=radar_cb_predicate)
     gain_calib_start_time = time.monotonic()
     while time.monotonic() < gain_calib_start_time + args.gain_calib_duration:
-        pool.run()
-    pool.remove_csi_callback(collect_gain_callback)
+        owner.run()
+    pool.remove_callback(collect_gain_callback)
 
     # Compute average over all recorded rx and fft gain settings
     if not rx_gain_records or not fft_gain_records:
@@ -130,20 +130,20 @@ try:
     )
 
     # Wait for gain settings to take effect
-    dump_csi = pool.add_csi_callback(lambda cluster: None, callback_predicate=radar_cb_predicate)
+    dump_csi = pool.add_callback(lambda cluster: None, callback_predicate=radar_cb_predicate)
     dump_start_time = time.monotonic()
     while time.monotonic() < dump_start_time + 0.5:
-        pool.run()
-    pool.remove_csi_callback(dump_csi)
+        owner.run()
+    pool.remove_callback(dump_csi)
 
     # Start main capture loop with CSI callback
-    pool.add_csi_callback(on_new_csi, callback_predicate=radar_cb_predicate)
+    pool.add_callback(on_new_csi, callback_predicate=radar_cb_predicate)
 
     start_time = time.monotonic()
     while time.monotonic() < start_time + args.duration:
-        pool.run()
+        owner.run()
 finally:
-    pool.stop()
+    owner.close()
     output_path = pathlib.Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(

@@ -7,9 +7,9 @@ The generic ring-buffer and filter-chain mechanics live in
 IQ snapshots and translates each delivered :class:`.IQCluster` into one
 backlog datapoint — the IQ counterpart of :class:`espargos.CSIBacklog`.
 
-The raw time-domain samples are stored uncalibrated: the pool's fine
+The raw time-domain samples are stored uncalibrated: the receiver's fine
 calibration is a per-frequency correction
-(:meth:`espargos.iq_pool.IQPool.cal_correction`), which consumers
+(:meth:`espargos.iq_receiver.IQReceiver.cal_correction`), which consumers
 apply in whatever spectral domain they process the samples in.
 """
 
@@ -36,11 +36,11 @@ class IQBacklogFilter(BacklogFilter):
 class IQBacklog(SensorBacklog):
     """Ring buffer containing selected fields from delivered IQ clusters.
 
-    :param pool: IQ pool from which clusters are collected
+    :param receiver: IQ receiver from which clusters are collected
     :param fields: Fields to store, or ``None`` for all available fields
     :param callback_predicate: IQ-cluster completion predicate
     :param include_partial: Also store settled incomplete clusters (missing
-        sensors stay NaN); see :meth:`espargos.iq_pool.IQPool.add_iq_callback`
+        sensors stay NaN); see :meth:`espargos.iq_receiver.IQReceiver.add_callback`
     :param size: Number of datapoints retained
     """
 
@@ -58,21 +58,21 @@ class IQBacklog(SensorBacklog):
 
     def __init__(
         self,
-        pool,
+        receiver,
         fields=None,
         callback_predicate=None,
         include_partial=False,
         size=100,
     ):
-        self._pool = pool
+        self._receiver = receiver
         super().__init__(
-            sensor_shape=pool.shape,
+            sensor_shape=receiver.shape,
             field_specs=self.FIELD_SPECS,
             fields=fields,
             size=size,
             logger=logging.getLogger("pyespargos.iq_backlog"),
         )
-        self._callback_handle = pool.add_iq_callback(
+        self._callback_handle = receiver.add_callback(
             self._on_new_cluster,
             callback_predicate=callback_predicate,
             include_partial=include_partial,
@@ -96,20 +96,9 @@ class IQBacklog(SensorBacklog):
             values["sample_rx_gain"] = iq_cluster.sample_rx_gain
         self.append_datapoint(values)
 
-    def start(self):
-        """Start the pool's processing worker so clusters reach this backlog."""
-
-        self._pool.start_processing()
-
-    def stop(self):
-        """Stop the pool-processing worker, if running."""
-
-        self._pool.stop_processing()
-
     def close(self):
-        """Stop processing and detach this backlog from its IQ pool."""
+        """Detach this backlog without stopping other consumers."""
 
-        self.stop()
         if self._callback_handle is not None:
-            self._pool.remove_iq_callback(self._callback_handle)
+            self._receiver.remove_callback(self._callback_handle)
             self._callback_handle = None

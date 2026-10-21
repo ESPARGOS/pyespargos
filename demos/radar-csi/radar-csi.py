@@ -58,8 +58,6 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
         self._csi_data_lock = threading.Lock()
         self._pending_csi_lock = threading.Lock()
         self._pending_csi_by_tx = {}
-        self._pool_worker_stop = threading.Event()
-        self._pool_worker_thread = None
         self._update_link_indices()
 
         self.initComplete.connect(self.applyRadarSchedule)
@@ -71,24 +69,16 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
-        self.sensor_count = int(np.prod(self.pool.shape))
+        self.sensor_count = int(np.prod(self.receiver.shape))
         self._update_link_indices()
         self.sensorCountChanged.emit()
-        self.pool.add_csi_callback(
+        self.receiver.add_callback(
             self._queueCSI,
             callback_predicate=lambda cluster: cluster.is_radar and cluster.has_radar_tx_report and np.any(cluster.completion),
         )
 
     def onInitComplete(self):
-        if self._pool_worker_thread is not None:
-            return
-        self._pool_worker_stop.clear()
-        self._pool_worker_thread = threading.Thread(
-            target=self._pool_worker,
-            name="radar-csi-pool",
-            daemon=True,
-        )
-        self._pool_worker_thread.start()
+        self.pool.start_processing()
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=sensorCountChanged)
     def sensorCount(self):
@@ -109,10 +99,10 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
 
     @PyQt6.QtCore.pyqtSlot()
     def applyRadarSchedule(self):
-        if not hasattr(self, "pool") or self.pool.calibration is None:
+        if not hasattr(self, "pool") or self.receiver.calibration is None:
             return
 
-        calibration = self.pool.calibration
+        calibration = self.receiver.calibration
         requested_start_s = self._get_schedule_ms("start") / 1e3
         min_safe_start_s = max(0.0, -float(np.nanmin(calibration.timing_offsets))) + 1e-6
         effective_start_s = max(requested_start_s, min_safe_start_s)
@@ -131,19 +121,19 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
             tx_rate=espargos.wifi.WiFiPhyRate(int(self.appconfig.get("tx_rate"))),
             rf_switch_state=espargos.sensor.RFSwitchState(int(self.appconfig.get("rfswitch_state"))),
         )
-        self.pool.set_radar_config(pool_radar_config)
+        self.receiver.set_tx_config(pool_radar_config)
 
     @PyQt6.QtCore.pyqtSlot()
     def disableRadarSchedule(self):
         if hasattr(self, "pool"):
-            self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
+            self.receiver.set_tx_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
 
     def _subcarrier_frequencies(self) -> np.ndarray:
-        calibration = self.pool.calibration
+        calibration = self.receiver.calibration
         if calibration is not None:
             channel_primary = calibration.channel_primary
         else:
-            wifi_config = self.pool.get_wifi_config()
+            wifi_config = self.receiver.get_wifi_config()
             channel_primary = int(wifi_config.get("channel-primary", 1))
 
         if channel_primary != self._subcarrier_frequency_channel:
@@ -202,38 +192,13 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
             self._pending_csi_by_tx.clear()
         return pending_csi
 
-    def _pool_worker(self):
-        while not self._pool_worker_stop.is_set():
-            try:
-                self.pool.run(timeout=0.05)
-            except RuntimeError as error:
-                # Pool calibration also drives run(). Wait until it releases
-                # the single-consumer lock instead of competing with it.
-                if str(error) != "Pool.run() must not be called concurrently or reentrantly":
-                    self.logger.exception("Radar CSI processing stopped after an unexpected error")
-                    return
-                self._pool_worker_stop.wait(0.01)
-                continue
-            except Exception:
-                self.logger.exception("Radar CSI processing stopped after an unexpected error")
-                return
-
-            # Pool callbacks above are deliberately cheap. A bounded run may
-            # contain several frames from the same transmitter; only its most
-            # recent frame matters to this latest-value visualization.
-            for clustered_csi in self._take_pending_csi():
-                try:
-                    self.onCSI(clustered_csi)
-                except Exception:
-                    self.logger.exception("Ignoring a radar CSI frame that could not be processed")
-
     def _deserialize_cluster_csi_lltf(self, clustered_csi, calibration):
         if not clustered_csi.has_lltf:
             return None
         return calibration.apply_lltf(clustered_csi.deserialize_csi_lltf())
 
     def onCSI(self, clustered_csi: espargos.CSICluster):
-        calibration = self.pool.calibration
+        calibration = self.receiver.calibration
         if calibration is None:
             return
         tx_index = clustered_csi.radar_tx_index
@@ -319,10 +284,7 @@ class EspargosDemoRadarCSI(ESPARGOSCSIApplication):
             self.disableRadarSchedule()
         except Exception:
             pass
-        self._pool_worker_stop.set()
-        if self._pool_worker_thread is not None:
-            self._pool_worker_thread.join(timeout=1.0)
-            self._pool_worker_thread = None
+        self.pool.stop_processing()
         super().onAboutToQuit()
 
 

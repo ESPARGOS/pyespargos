@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="710" viewBox="0 0 1000 710" role="img" aria-labelledby="title desc">
+<title id="title">Python calibration objects</title><desc id="desc">A Calibration contains zero or more CalibrationGroups. Each group contains one or more AntennaCorrections and a reference ID. Each correction contains phase, delay and a CalibrationState. The state identifies an Antenna and the hardware configuration for which the correction is valid.</desc>
+<defs><marker id="arrow" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="10" refX="10" refY="5" orient="auto-start-reverse"><path d="M0,0 L11,5 L0,10 L2.5,5 Z" fill="#293135"/></marker></defs>
+<rect width="1000" height="710" fill="white"/><g font-family="Carlito, Calibri, Arial, sans-serif" font-size="19" fill="#293135">
+<rect x="25" y="14" width="5" height="26" rx="0" fill="#37c964" stroke="#37c964" stroke-width="1.5"/>
+<text x="42" y="35" text-anchor="start" font-size="23" font-weight="700" fill="#293135">The Python objects</text>
+<rect x="35" y="70" width="350" height="106" rx="4" fill="#d7f4e0" stroke="#293135" stroke-width="1.5"/>
+<text x="210.0" y="100" text-anchor="middle" font-size="23" font-weight="700" fill="#293135">Calibration</text>
+<text x="210.0" y="131" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">groups</text>
+<text x="210.0" y="156" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">diagnostics</text>
+<path d="M385,123 H595" fill="none" stroke="#293135" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="490" y="107" text-anchor="middle" font-size="18" font-weight="400" fill="#4a5550">groups: 0…N</text>
+<rect x="610" y="70" width="350" height="106" rx="4" fill="#d7f4e0" stroke="#293135" stroke-width="1.5"/>
+<text x="785.0" y="100" text-anchor="middle" font-size="23" font-weight="700" fill="#293135">CalibrationGroup</text>
+<text x="785.0" y="131" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">corrections</text>
+<text x="785.0" y="156" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">reference_id</text>
+<path d="M785,176 V238" fill="none" stroke="#293135" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="770" y="214" text-anchor="end" font-size="18" font-weight="400" fill="#4a5550">corrections: 1…N</text>
+<rect x="610" y="250" width="350" height="106" rx="4" fill="#d7f4e0" stroke="#293135" stroke-width="1.5"/>
+<text x="785.0" y="280" text-anchor="middle" font-size="23" font-weight="700" fill="#293135">AntennaCorrection</text>
+<text x="785.0" y="311" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">phase_rad, delay_s</text>
+<text x="785.0" y="336" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">state</text>
+<path d="M610,303 H400" fill="none" stroke="#293135" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="505" y="287" text-anchor="middle" font-size="18" font-weight="400" fill="#4a5550">state: 1</text>
+<rect x="35" y="250" width="350" height="156" rx="4" fill="#edfbf2" stroke="#293135" stroke-width="1.5"/>
+<text x="210.0" y="280" text-anchor="middle" font-size="23" font-weight="700" fill="#293135">CalibrationState</text>
+<text x="210.0" y="311" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">direction: rx or tx</text>
+<text x="210.0" y="336" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">frequency_hz, sample_rate_hz</text>
+<text x="210.0" y="361" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">boot_id, epoch, settings</text>
+<text x="210.0" y="386" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">antenna</text>
+<path d="M210,406 V468" fill="none" stroke="#293135" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="230" y="445" text-anchor="start" font-size="18" font-weight="400" fill="#4a5550">antenna: 1</text>
+<rect x="35" y="480" width="350" height="106" rx="4" fill="white" stroke="#293135" stroke-width="1.5"/>
+<text x="210.0" y="510" text-anchor="middle" font-size="23" font-weight="700" fill="#293135">Antenna</text>
+<text x="210.0" y="541" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">host</text>
+<text x="210.0" y="566" text-anchor="middle" font-size="19" font-weight="400" fill="#293135">antid: hardware ID 0–7</text>
+<text x="610" y="420" text-anchor="start" font-size="21" font-weight="700" fill="#293135">Within one group:</text>
+<text x="610" y="450" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">One RX/TX direction</text>
+<text x="610" y="479" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">One frequency and sample rate</text>
+<text x="610" y="508" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">One shared phase reference</text>
+<text x="610" y="560" text-anchor="start" font-size="21" font-weight="700" fill="#293135">Across groups:</text>
+<text x="610" y="590" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">Scopes and references may differ</text>
+<text x="500" y="653" text-anchor="middle" font-size="19" font-weight="400" fill="#4a5550">correction(state) returns a matching correction or raises KeyError.</text>
+<text x="500" y="682" text-anchor="middle" font-size="19" font-weight="400" fill="#4a5550">select(...) retains the phase reference. merge(...) does not align independent groups.</text>
+</g></svg>

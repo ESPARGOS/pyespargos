@@ -54,8 +54,6 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
         self._residual_history_us = [[] for _ in range(len(self._residuals_us))]
         self._tx_rx_latest_delta_ns = np.full((len(self._residuals_us), len(self._residuals_us)), np.nan, dtype=np.float64)
         self._tx_rx_timestamp_table_text = "No TX/RX timestamp pairs yet"
-        self._run_worker_enabled = True
-        self._run_worker_thread = None
 
         self.initialize_pool(calibrate=False)
         self.initComplete.connect(self.applyRadarSchedule)
@@ -63,34 +61,20 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
-        self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
-        self.pool.calibrate(duration=2, per_board=False, run_in_thread=True)
-        self._residuals_us = np.full(np.prod(self.pool.shape), np.nan, dtype=np.float64)
+        self.receiver.set_tx_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
+        self.receiver.calibrate(duration=2, per_board=False, run_in_thread=True)
+        self._residuals_us = np.full(np.prod(self.receiver.shape), np.nan, dtype=np.float64)
         self._residual_std_us = np.full_like(self._residuals_us, np.nan, dtype=np.float64)
         self._reset_tx_rx_timestamp_table()
         self.sensorCountChanged.emit()
         self.txRxTimestampTableChanged.emit()
-        self.pool.add_csi_callback(
+        self.receiver.add_callback(
             self._on_csi_cluster,
             callback_predicate=lambda cluster: cluster.has_radar_tx_report and np.sum(cluster.completion) >= np.prod(cluster.completion.shape) - 1,
         )
         self.pooldrawer.calibrationStarted.connect(self._on_calibration_started)
         self.pooldrawer.calibrationFinished.connect(self._on_calibration_finished)
-        self._ensure_run_worker()
-
-    def _ensure_run_worker(self):
-        if self._run_worker_thread is not None and self._run_worker_thread.is_alive():
-            return
-
-        def _run_worker():
-            while self._run_worker_enabled:
-                try:
-                    self.pool.run(timeout=0.5)
-                except Exception:
-                    time.sleep(0.05)
-
-        self._run_worker_thread = threading.Thread(target=_run_worker, daemon=True)
-        self._run_worker_thread.start()
+        self.pool.start_processing()
 
     def _reset_packet_state(self):
         self._residuals_us[:] = np.nan
@@ -136,8 +120,8 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
 
     def _build_schedule_lookup(self, pool_radar_config: espargos.radar.RadarPoolConfig):
         schedule_by_source_mac = {}
-        calibration = self.pool.calibration
-        for board_index, (board_obj, board_config) in enumerate(zip(self.pool.boards, pool_radar_config.board_configs)):
+        calibration = self.receiver.calibration
+        for board_index, (board_obj, board_config) in enumerate(zip(self.receiver.boards, pool_radar_config.board_configs)):
             for antid, mac in enumerate(board_config["mac_by_antid"]):
                 row, col = board_obj.revision.antenna_id_to_row_col(antid)
                 reference_start_s = board_config["start_by_antid"][antid] / espargos.radar.RADAR_TIME_SCALE - calibration.timing_offsets[board_index, row, col]
@@ -151,7 +135,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=sensorCountChanged)
     def sensorCount(self):
-        return int(np.prod(self.pool.shape)) if hasattr(self, "pool") else 8
+        return int(np.prod(self.receiver.shape)) if hasattr(self, "pool") else 8
 
     @PyQt6.QtCore.pyqtProperty(list, constant=False, notify=radarResidualsChanged)
     def radarResidualTexts(self):
@@ -185,13 +169,13 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
 
     @PyQt6.QtCore.pyqtSlot()
     def applyRadarSchedule(self):
-        self._ensure_run_worker()
-        if len(self.pool.boards) != 1:
+        self.pool.start_processing()
+        if len(self.receiver.boards) != 1:
             self._status_text = "Radar schedule check demo currently supports exactly one ESPARGOS board"
             self.statusTextChanged.emit()
             return
 
-        calibration = self.pool.calibration
+        calibration = self.receiver.calibration
         if calibration is None:
             self._status_text = "Calibration required before radar schedule can be applied"
             self.statusTextChanged.emit()
@@ -219,7 +203,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
                 tx_rate=espargos.wifi.WiFiPhyRate(int(self.appconfig.get("tx_rate"))),
                 rf_switch_state=espargos.sensor.RFSwitchState(int(self.appconfig.get("rfswitch_state"))),
             )
-            self.pool.set_radar_config(pool_radar_config)
+            self.receiver.set_tx_config(pool_radar_config)
         except Exception as exc:
             self._status_text = f"Failed to apply radar schedule: {exc}"
             self.statusTextChanged.emit()
@@ -232,7 +216,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
 
     @PyQt6.QtCore.pyqtSlot()
     def disableRadarSchedule(self, update_status: bool = True):
-        self.pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
+        self.receiver.set_tx_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
         self._radar_schedule_by_source_mac = {}
         if update_status:
             self._status_text = "Disabled radar schedule"
@@ -248,7 +232,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
         if schedule is None:
             return
 
-        calibration = self.pool.calibration
+        calibration = self.receiver.calibration
         timestamps = csi_cluster.sensor_timestamps
         self._update_tx_rx_timestamp_table(schedule, csi_cluster.radar_tx_report, timestamps)
         reference_timestamps = timestamps - calibration.timing_offsets
@@ -310,7 +294,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
         return board_index * espargos.constants.ANTENNAS_PER_BOARD + row * espargos.constants.ANTENNAS_PER_ROW + col
 
     def _tx_flat_index_from_schedule(self, schedule: dict) -> int:
-        row, col = self.pool.boards[schedule["board_index"]].revision.antenna_id_to_row_col(schedule["antid"])
+        row, col = self.receiver.boards[schedule["board_index"]].revision.antenna_id_to_row_col(schedule["antid"])
         return self._sensor_flat_index(schedule["board_index"], row, col)
 
     def _update_tx_rx_timestamp_table(self, schedule: dict, tx_report, rx_timestamps_s: np.ndarray):
@@ -361,7 +345,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
         return "\n".join(lines)
 
     def onAboutToQuit(self):
-        self._run_worker_enabled = False
+        self.pool.stop_processing()
         super().onAboutToQuit()
 
 

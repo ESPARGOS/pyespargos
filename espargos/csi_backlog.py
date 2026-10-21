@@ -50,9 +50,9 @@ class Exclude11bFilter(CSIBacklogFilter):
 class CSIBacklog(SensorBacklog):
     """Ring buffer containing selected fields from completed CSI clusters.
 
-    :param pool: CSI pool from which clusters are collected
+    :param receiver: CSI receiver from which clusters are collected
     :param fields: Fields to store, or ``None`` for all available fields
-    :param apply_calibration: Whether to apply the pool's CSI calibration
+    :param apply_calibration: Whether to apply the receiver's CSI calibration
     :param callback_predicate: CSI-cluster completion predicate
     :param size: Number of datapoints retained
     """
@@ -154,19 +154,19 @@ class CSIBacklog(SensorBacklog):
 
     def __init__(
         self,
-        pool,
+        receiver,
         fields=None,
         apply_calibration=True,
         callback_predicate=None,
         size=100,
     ):
-        self._pool = pool
+        self._receiver = receiver
         self._apply_calibration = bool(apply_calibration)
         self._missing_calibration_warned = False
         self._callback_handle = None
 
         super().__init__(
-            sensor_shape=pool.shape,
+            sensor_shape=receiver.shape,
             field_specs=self.FIELD_SPECS,
             fields=fields,
             size=size,
@@ -192,12 +192,12 @@ class CSIBacklog(SensorBacklog):
         """Replace the CSI completion predicate used by this backlog."""
 
         if self._callback_handle is None:
-            self._callback_handle = self._pool.add_csi_callback(
+            self._callback_handle = self._receiver.add_callback(
                 self._on_new_csi,
                 callback_predicate=callback_predicate,
             )
         else:
-            self._callback_handle = self._pool.replace_csi_callback(
+            self._callback_handle = self._receiver.replace_callback(
                 self._callback_handle,
                 self._on_new_csi,
                 callback_predicate=callback_predicate,
@@ -234,10 +234,10 @@ class CSIBacklog(SensorBacklog):
         if not self._passes_filters(clustered_csi):
             return
 
-        calibration = self._pool.calibration if self._apply_calibration else None
+        calibration = self._receiver.calibration if self._apply_calibration else None
         if self._apply_calibration and calibration is None:
             if not self._missing_calibration_warned:
-                self._logger.warning("Skipping CSI backlog datapoints while calibration is enabled but the pool has no calibration")
+                self._logger.warning("Skipping CSI backlog datapoints while calibration is enabled but the receiver has no calibration")
                 self._missing_calibration_warned = True
             return
         self._missing_calibration_warned = False
@@ -332,20 +332,9 @@ class CSIBacklog(SensorBacklog):
 
         self.append_datapoint(values)
 
-    def start(self):
-        """Start the pool's processing worker so completed clusters reach this backlog."""
-
-        self._pool.start_processing()
-
-    def stop(self):
-        """Stop the pool-processing worker, if running."""
-
-        self._pool.stop_processing()
-
     def close(self):
-        """Stop processing and detach this backlog from its CSI pool."""
+        """Detach this backlog without stopping other consumers."""
 
-        self.stop()
         if self._callback_handle is not None:
-            self._pool.remove_csi_callback(self._callback_handle)
+            self._receiver.remove_callback(self._callback_handle)
             self._callback_handle = None

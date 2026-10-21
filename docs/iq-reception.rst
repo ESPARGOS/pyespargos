@@ -1,60 +1,37 @@
-IQ sampling
-===========
+IQ Reception
+============
 
 ESPARGOS can capture raw complex (I/Q) samples, synchronized across its
 antennas and boards. This uses an undocumented debug path in the ESP32 modem
 that bypasses WiFi packet processing. Read about our discovery in the `ESP32
 SDR write-up <https://espargos.net/espsdr/>`_.
 
-Before you start
-----------------
-
-Make sure your controller is reachable and runs API major 4 with matching
-sensor firmware. The example below uses ``192.168.1.2``. Replace it with your
-board's address.
-
-Start with one board and its internal reference source. For multiple boards,
-you also need a shared clock and reference connection. See
-:doc:`combined-arrays`.
-
 Receive your first samples
 --------------------------
 
-Create an ``IQPool``, choose the receiver settings, and call ``sync()`` to
-synchronize and calibrate the antennas:
+Open a ``Pool``, configure reception and calibrate it. ``pool.iq`` provides
+the sample callbacks and trigger controls. See :doc:`calibration` for what
+calibration measures and how to apply the corrections:
 
 .. code-block:: python
 
-   import espargos
-
-   board = espargos.Board("192.168.1.2")
-   pool = espargos.IQPool([board])
+   from espargos import Pool
 
    def handle_iq(cluster):
        print("Received IQ samples:", cluster.iq.shape)
 
-   try:
-       pool.start()
+   with Pool("192.168.1.2") as pool:
+       pool.configure(mode="iq_rx", frequency_hz=2437e6,
+                       sample_rate_hz=80e6, output="antenna_r")
+       receiver = pool.iq
+       receiver.apply_config({"trigger": {
+           "mode": "interval", "interval_chunks": 16384,
+           "offset_chunks": 0, "burst_chunks": 4,
+       }})
+       pool.calibrate()
+       receiver.add_callback(handle_iq)
        pool.start_processing()
-       pool.apply_config({
-           "rf_freq_hz": 2437_000_000,
-           "adc_decimation": 1,
-           "rf_switch": 2,  # Receive from the antennas
-           "trigger": {
-               "mode": "interval",
-               "interval_chunks": 16384,
-               "offset_chunks": 0,
-               "burst_chunks": 4,
-           },
-       })
-       pool.sync()
-       pool.add_iq_callback(handle_iq)
        input("Capturing. Press Enter to stop... ")
-   finally:
-       pool.stop_processing()
-       pool.restore_wifi()
-       pool.close()
-       board.close()
 
 The callback receives matching samples from all antennas. ``cluster.iq`` is a
 complex NumPy array with shape ``(boards, rows, columns, 256)``. For one board,
@@ -63,45 +40,27 @@ that is ``(1, 2, 4, 256)``.
 .. note::
 
    **Why 256 samples?** The firmware sends IQ samples in fixed blocks called
-   *chunks*, each containing 256 complex samples per antenna. ``IQPool`` groups
+   *chunks*, each containing 256 complex samples per antenna. ``IQReceiver`` groups
    matching chunks from all antennas into one cluster. This is the transfer
    size, not a limit on capture length. For a longer waveform or FFT, combine
    consecutive chunks from the same capture burst. Four chunks give you 1024
    samples per antenna.
 
-Both ``IQPool`` and ``CSIPool`` support background processing. Here,
-``pool.start_processing()`` starts a thread that calls ``pool.run()`` for you.
+``pool.start_processing()`` starts one worker that processes both IQ and CSI
+and invokes their registered callbacks.
 Do not also call ``run()`` from your own loop while that thread is running.
-
-How Calibration Works
----------------------
-
-``pool.sync()`` sends a broadband reference signal to all receivers through the
-board's (or multi-board) reference network. It uses this common signal to align
-the samples in time and measure the phase and delay differences between
-antennas. The results are stored in ``pool.calibration``. The example above
-reads raw samples, while the signal analyzer can apply the calibration to its
-phase display.
-
-Calibration chooses the receive gain for the configured reference path,
-including the splitter in an aperture kit. After calibration, your receiver
-settings are restored and the reference is switched off. Run ``sync()`` again after changing the frequency or sample rate
-(decimation). Calibration accepts the receiver tuning range, 2310-2640 MHz, and
-has been tested up to 2640 MHz. At 2310 MHz, reference synchronization failed
-on the test array. The web interface has an **RX Sync** button, but its
-calibration is not shared with Python.
 
 The Trigger Modes
 -----------------
 
 Set ``trigger`` to an object with a mode name and its settings. This replaces
 all trigger settings, using defaults for fields you leave out. Omit ``trigger``
-to keep the current settings. ``board.iq.get_config()["trigger"]`` returns the
+to keep the current settings. ``pool.boards[0].iq.get_config()["trigger"]`` returns the
 full applied configuration, including defaults.
 
 **Interval** captures short bursts at regular intervals. Start here for general
 signal inspection. The example above captures four 256-sample chunks every
-16384 chunks, with no offset. Receive the samples with ``add_iq_callback()``.
+16384 chunks, with no offset. Receive the samples with ``add_callback()``.
 
 **Accumulate** averages repeated waveforms to make a weak repeating signal
 easier to see. ``{"mode": "accumulate", "vector_chunks": 4, "interval_chunks":
@@ -114,19 +73,19 @@ traffic. Use ``add_signal_capture_callback()`` to receive complete captures.
 
 .. note::
 
-   Signal triggering coordinates the eight antennas within one ESPARGOS array.
+   Signal triggering coordinates the eight antennas within one ESPARGOS board.
    In a combined multi-array setup, each array triggers independently, even
    with a shared clock and reference connection. Their captures may therefore
    cover different events or different parts of the same signal.
 
-   Use one board per ``IQPool`` for Signal capture. For synchronized captures
+   Use a single-board ``Pool`` for Signal capture. For synchronized captures
    across multiple arrays, use Interval or Accumulate instead.
 
 For example:
 
 .. code-block:: python
 
-   pool.apply_config({"trigger": {
+   receiver.apply_config({"trigger": {
        "mode": "signal",
        "threshold": 64,
        "antennas": list(range(8)),

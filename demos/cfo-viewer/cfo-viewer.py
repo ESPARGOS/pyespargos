@@ -103,7 +103,7 @@ class EspargosDemoCFOViewer(CSIBacklogMixin, ESPARGOSCSIApplication):
     def _effective_min_antennas(self):
         min_antennas = self.appconfig.get("min_antennas")
         if min_antennas is None:
-            return int(np.prod(self.pool.shape))
+            return int(np.prod(self.receiver.shape))
         return int(min_antennas)
 
     def _register_backlog_callback(self):
@@ -118,7 +118,7 @@ class EspargosDemoCFOViewer(CSIBacklogMixin, ESPARGOSCSIApplication):
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def sensorCount(self):
-        return np.prod(self.pool.shape)
+        return np.prod(self.receiver.shape)
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=minAntennasChanged)
     def minAntennas(self):

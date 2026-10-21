@@ -1,34 +1,14 @@
 #!/usr/bin/env python
 
-"""Pool for raw synchronized IQ sampling — the IQ counterpart of ``CSIPool``.
+"""IQ capture, synchronization and receive calibration for a Pool.
 
-:class:`IQPool` receives the boards' IQ chunk streams and assembles ordinary
-raw chunks with equal synchronized indices into an :class:`.IQCluster`.
-Signal-mode chunks instead use the firmware's wired-consensus capture ID and
-offset; their per-sensor SRAM counters remain diagnostic metadata.
-Clusters are handed to registered callbacks: complete clusters immediately,
-incomplete ones once they have settled (SPI uplink drops mean some chunks
-never arrive; consumers that also want those partial snapshots register a
-callback predicate that accepts them).
+Interval chunks are grouped by synchronized sample index. Signal captures use
+capture IDs and offsets. Callbacks receive complete clusters by default, or
+partial clusters when their predicate allows them.
 
-Beyond the data plane, the pool manages the whole IQ-mode lifecycle, like
-``CSIPool`` does for Wi-Fi:
-
-- capture configuration fan-out (``set_iq_control``) with the compact
-  array-wide receiver-field translation;
-- reference CW tone control, routed to the master board (the only transmitter
-  that reaches the shared reference distribution network);
-- combined synchronization and time/phase calibration (:meth:`sync`): the
-  broadband onset aligns the grids, then illuminates the captured band;
-  coherent cross-spectra and a per-sensor (tau, phi) complex fit
-  yields a generic :class:`espargos.SensorCalibration` — the same calibration
-  model the CSI stack uses, with the reference-path (PCB trace) delays
-  compensated by the calibration class itself.
-
-The sensor-side chunk index is only 24 bits (wraps every ~54 s at decimation
-1) and resets to ~0 on every sync re-fire; the pool unwraps it into a
-monotonic 64-bit cluster key, because consumers key on it (ordering, FFT-block
-assembly) and a backwards jump would poison any newest-index bookkeeping.
+Reference calibration aligns the sample grids and measures phase and delay,
+including REF path compensation. The 24-bit chunk counter is unwrapped into
+monotonic cluster keys across counter wraps and synchronization restarts.
 """
 
 import threading
@@ -38,8 +18,9 @@ import numpy as np
 
 import espargos
 from espargos import constants
-from espargos.pool import Pool
+from espargos.clustering import ClusterAssembler
 from espargos.sensor_calibration import SensorCalibration, compute_reference_path_delays
+from espargos.calibration import Calibration
 
 from . import iq_reference
 from . import iq_tone
@@ -48,7 +29,7 @@ from .iq_cluster import CHUNK_SAMPLES, IQCluster
 from .iq_packet import DECIM_TO_FS, IQAccumPacket
 from .iq_signal_capture import IQSignalAssembler
 
-__all__ = ["DECIM_TO_FS", "IQCalibrationError", "IQPool", "SENSOR_COUNT", "iq_receiver_config"]
+__all__ = ["DECIM_TO_FS", "IQCalibrationError", "IQReceiver", "SENSOR_COUNT", "iq_receiver_config"]
 
 _CACHE_CHUNKS = "chunks"
 _CACHE_SIGNAL_CHUNKS = "signal_chunks"
@@ -78,8 +59,8 @@ class IQCalibrationError(RuntimeError):
 
 
 class _SignalCaptureCallbackHandle:
-    """Returned by :meth:`IQPool.add_signal_capture_callback`; accepted by
-    :meth:`IQPool.remove_signal_capture_callback` and exposes the pool's
+    """Returned by :meth:`IQReceiver.add_signal_capture_callback`; accepted by
+    :meth:`IQReceiver.remove_signal_capture_callback` and exposes the pool's
     central ``signal_assembler`` for diagnostics."""
 
     def __init__(self, callback, assembler):
@@ -87,11 +68,10 @@ class _SignalCaptureCallbackHandle:
         self.signal_assembler = assembler
 
 
-class IQPool(Pool):
+class IQReceiver(ClusterAssembler):
     """Manage IQ capture and assemble synchronized chunk clusters.
 
-    :param boards: ESPARGOS boards forming one coherent array (a single board,
-        or e.g. an Aperture Kit sharing one clock and phase reference)
+    :param owner: The owning Pool. Obtain this receiver through ``pool.iq``.
     :param chunk_settle_timeout: Seconds an incomplete cluster may wait for
         stragglers before it is offered to ordinary raw-IQ partial-snapshot
         consumers.
@@ -107,13 +87,14 @@ class IQPool(Pool):
 
     def __init__(
         self,
-        boards,
+        owner,
         chunk_settle_timeout=15.0,
         signal_settle_timeout=2.0,
         master_index=None,
         gain_phase_compensation=True,
     ):
-        super().__init__(boards)
+        super().__init__(owner)
+        self._expected = np.ones(self.shape, dtype=bool)
         self.chunk_settle_timeout = float(chunk_settle_timeout)
         self.signal_settle_timeout = float(signal_settle_timeout)
         self._master_index = master_index
@@ -156,6 +137,7 @@ class IQPool(Pool):
         self._calibration_sample_rate = None
         self._calibration_center_frequency = None
         self._calibration_epoch = None
+        self._calibration_grid_origin = None
         self._calibrating = False
         self._reference_lock = threading.Lock()
         self._reference_sequence = time.monotonic_ns() & 0xFFFFFFFF
@@ -179,7 +161,7 @@ class IQPool(Pool):
         self._signal_assembler = None
         if len(self.boards) == 1:
             self._signal_assembler = IQSignalAssembler(on_rejected_event=self._signal_event_rejected)
-            self.add_iq_callback(
+            self.add_callback(
                 self._signal_feed,
                 callback_predicate=lambda cluster: cluster.is_complete or cluster.settled,
             )
@@ -187,11 +169,14 @@ class IQPool(Pool):
 
     # ---- data plane: chunk clustering ----
 
-    def add_iq_callback(self, callback, callback_predicate=None, include_partial=False):
+    def _complete(self, cluster):
+        expected = self._expected
+        return bool(np.any(expected) and np.all(cluster.completion[expected]))
+
+    def add_callback(self, callback, callback_predicate=None, include_partial=False):
         """Register a callback for assembled :class:`.IQCluster` objects.
 
-        By default only complete clusters (every sensor of every board
-        contributed) are delivered, immediately on completion. With
+        By default only clusters containing every antenna currently in IQ RX mode are delivered, immediately on completion. With
         ``include_partial``, settled incomplete clusters are delivered as well
         (after ``chunk_settle_timeout``, once no more chunks are expected) —
         such consumers must tolerate out-of-order chunk indices between the
@@ -200,13 +185,13 @@ class IQPool(Pool):
         ``cluster.settled`` to recognize the settled-incomplete case.
 
         :param callback: The function to call, gets the :class:`.IQCluster`
-        :param callback_predicate: Cluster completion predicate, see :meth:`espargos.Pool.add_cluster_callback`
+        :param callback_predicate: Cluster completion predicate, see :meth:`espargos.clustering.ClusterAssembler.add_cluster_callback`
         :param include_partial: Also deliver settled incomplete clusters (ignored if ``callback_predicate`` is given)
-        :return: A callback handle for :meth:`remove_iq_callback`
+        :return: A callback handle for :meth:`remove_callback`
         """
         predicate = callback_predicate
         if predicate is None:
-            predicate = (lambda cluster: cluster.settled or cluster.is_complete) if include_partial else (lambda cluster: cluster.is_complete)
+            predicate = (lambda cluster: cluster.settled or self._complete(cluster)) if include_partial else self._complete
 
         # Pool callback completion is tracked globally. Treat clusters of the
         # other IQ data type as an immediate no-op so a raw callback cannot
@@ -220,8 +205,8 @@ class IQPool(Pool):
             callback_predicate=lambda cluster: not isinstance(cluster, IQCluster) or predicate(cluster),
         )
 
-    def remove_iq_callback(self, callback) -> bool:
-        """Remove a callback previously returned by :meth:`add_iq_callback`."""
+    def remove_callback(self, callback) -> bool:
+        """Remove a callback previously returned by :meth:`add_callback`."""
         return self.remove_cluster_callback(callback)
 
     def acknowledge_signal_capture(self, capture):
@@ -363,7 +348,7 @@ class IQPool(Pool):
 
     def _signal_watchdog_loop(self):
         while not self._signal_watchdog_stop.wait(1.0):
-            if not self._signal_auto_maintenance:
+            if not self.processing or not self._signal_auto_maintenance:
                 continue  # a coordinator holds ACKs deliberately
             stamp = self._signal_last_signal_monotonic
             if stamp is None:
@@ -455,7 +440,7 @@ class IQPool(Pool):
         """
 
         if len(self.boards) != 1 or self._signal_assembler is None:
-            raise ValueError("Signal capture consensus is local to one board's shared BOOT net; " "use one IQPool per board")
+            raise ValueError("Signal capture consensus is local to one board's shared BOOT net; " "use one IQReceiver per board")
         if not auto_acknowledge:
             self._signal_auto_maintenance = False
         self._signal_capture_consumers.append(callback)
@@ -470,20 +455,18 @@ class IQPool(Pool):
         except ValueError:
             return False
 
-    def stop_processing(self):
+    def _close(self):
         self._signal_watchdog_stop.set()
-        super().stop_processing()
-
-    def stop(self):
-        self._signal_watchdog_stop.set()
-        super().stop()
+        if self._signal_watchdog_thread is not None and self._signal_watchdog_thread is not threading.current_thread():
+            self._signal_watchdog_thread.join()
+        super()._close()
 
     def add_accumulation_callback(self, callback, callback_predicate=None, include_partial=False):
         """Register for complete, coverage-consistent accumulated vectors.
 
         A custom predicate may opt into deadline-partial or coverage-mismatched
         windows for diagnostics. ``include_partial`` also delivers settled
-        incomplete array clusters, analogous to :meth:`add_iq_callback`.
+        incomplete array clusters, analogous to :meth:`add_callback`.
         """
 
         predicate = callback_predicate
@@ -798,6 +781,7 @@ class IQPool(Pool):
                     self._logger.info("Acquiring a fresh broadband grid: %s", error)
             timing = tau / 80e6
             epoch = training[0].fire_time_ns.tobytes()
+            grid_origin = training[0].grid_origin_ns.copy()
             if fs != 80e6:
                 # The ADC subsamples without anti-alias filtering. Measure
                 # the full reference band at 80 MS/s, then transfer the delay
@@ -807,6 +791,7 @@ class IQPool(Pool):
                 target = iq_reference.collect(self, count=4, seqs=seqs)[0]
                 timing = iq_reference.transfer_delay(timing, training[0].grid_origin_ns, target.grid_origin_ns, ref)
                 epoch = target.fire_time_ns.tobytes()
+                grid_origin = target.grid_origin_ns.copy()
             shape = (len(self.boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
             calibration = SensorCalibration(
                 sensor_shape=shape,
@@ -819,10 +804,26 @@ class IQPool(Pool):
         # Publish only after validation AND restoration succeeded.
         self._calibration = calibration
         self._calibration_epoch = epoch
+        self._calibration_grid_origin = grid_origin
         self._calibration_sample_rate = fs
         self._calibration_center_frequency = center
         self._logger.info("Broadband calibration verified: coherence %.3f, residual %.3f rad, %.3f s", quality.min(), residual.max(), time.monotonic() - t0)
+        from .iq_tx_calibration import snapshot
+
+        snapshot(self)
         return calibration
 
     # Both names run the same operation; there is no separate coarse-only path.
     calibrate = sync
+
+    def calibrate_tx(self, **kwargs):
+        """Calibrate selected transmitters using monitor or reciprocity measurements.
+
+        Boards share a clock and a forward RF reference network. The
+        procedure synchronizes RX first, then measures interlaced TX pilots.
+        User waveforms and settings are restored. Failure leaves TX muted.
+        See :mod:`espargos.iq_tx_calibration`.
+        """
+        from .iq_tx_calibration import calibrate
+
+        return calibrate(self, **kwargs)

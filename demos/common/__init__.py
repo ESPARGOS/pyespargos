@@ -5,4 +5,4 @@ from .csi_application import ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIF
 from .csi_backlog_settings import CSIBacklogSettings
 from .camera_view import CameraView
 from .config_manager import ConfigManager
-from .csi_pool_drawer import CSIPoolDrawer
+from .wifi_transceiver_drawer import WiFiTransceiverDrawer

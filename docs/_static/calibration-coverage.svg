@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="590" viewBox="0 0 1000 590" role="img" aria-labelledby="title desc">
+<title id="title">Examples of calibration coverage</title><desc id="desc">Four examples on two eight-antenna arrays: one shared receive calibration, a selected subset, two receive frequencies, and mixed receive and transmit roles. Each color denotes one group within an example, and gray denotes antennas outside the calibration.</desc>
+<defs><marker id="arrow" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="10" refX="10" refY="5" orient="auto-start-reverse"><path d="M0,0 L11,5 L0,10 L2.5,5 Z" fill="#293135"/></marker></defs>
+<rect width="1000" height="590" fill="white"/><g font-family="Carlito, Calibri, Arial, sans-serif" font-size="19" fill="#293135">
+<rect x="25" y="14" width="5" height="26" rx="0" fill="#37c964" stroke="#37c964" stroke-width="1.5"/>
+<text x="42" y="35" text-anchor="start" font-size="23" font-weight="700" fill="#293135">One group across both arrays</text>
+<text x="137" y="80" text-anchor="middle" font-size="19" font-weight="700" fill="#293135">Array A</text>
+<rect x="55" y="93" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="98" y="93" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="141" y="93" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="184" y="93" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="55" y="129" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="98" y="129" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="141" y="129" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="184" y="129" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<text x="362" y="80" text-anchor="middle" font-size="19" font-weight="700" fill="#293135">Array B</text>
+<rect x="280" y="93" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="323" y="93" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="366" y="93" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="409" y="93" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="280" y="129" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="323" y="129" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="366" y="129" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="409" y="129" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="55" y="180" width="15" height="15" rx="2" fill="#d7f4e0" stroke="#293135" stroke-width="1.5"/>
+<text x="81" y="193" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">FR at 2437 MHz</text>
+<text x="81" y="222" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">One shared phase reference</text>
+<rect x="525" y="14" width="5" height="26" rx="0" fill="#37c964" stroke="#37c964" stroke-width="1.5"/>
+<text x="542" y="35" text-anchor="start" font-size="23" font-weight="700" fill="#293135">Only a selected subset</text>
+<text x="637" y="80" text-anchor="middle" font-size="19" font-weight="700" fill="#293135">Array A</text>
+<rect x="555" y="93" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="598" y="93" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="641" y="93" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="684" y="93" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="555" y="129" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="598" y="129" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="641" y="129" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="684" y="129" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<text x="862" y="80" text-anchor="middle" font-size="19" font-weight="700" fill="#293135">Array B</text>
+<rect x="780" y="93" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="823" y="93" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="866" y="93" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="909" y="93" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="780" y="129" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="823" y="129" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="866" y="129" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="909" y="129" width="34" height="27" rx="4" fill="#f4f4f4" stroke="#d0d8d4" stroke-width="1.5"/>
+<rect x="555" y="180" width="15" height="15" rx="2" fill="#d7f4e0" stroke="#293135" stroke-width="1.5"/>
+<text x="581" y="193" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">FR for three antennas</text>
+<text x="581" y="222" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">Gray antennas are outside the group</text>
+<rect x="25" y="294" width="5" height="26" rx="0" fill="#37c964" stroke="#37c964" stroke-width="1.5"/>
+<text x="42" y="315" text-anchor="start" font-size="23" font-weight="700" fill="#293135">Different receive frequencies</text>
+<text x="137" y="360" text-anchor="middle" font-size="19" font-weight="700" fill="#293135">Array A</text>
+<rect x="55" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="98" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="141" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="184" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="55" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="98" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="141" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="184" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<text x="362" y="360" text-anchor="middle" font-size="19" font-weight="700" fill="#293135">Array B</text>
+<rect x="280" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="323" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="366" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="409" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="280" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="323" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="366" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="409" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="55" y="460" width="15" height="15" rx="2" fill="#d7f4e0" stroke="#293135" stroke-width="1.5"/>
+<text x="81" y="473" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">FR at 2412 MHz</text>
+<rect x="55" y="489" width="15" height="15" rx="2" fill="#dcefee" stroke="#293135" stroke-width="1.5"/>
+<text x="81" y="502" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">FR at 2437 MHz</text>
+<rect x="525" y="294" width="5" height="26" rx="0" fill="#37c964" stroke="#37c964" stroke-width="1.5"/>
+<text x="542" y="315" text-anchor="start" font-size="23" font-weight="700" fill="#293135">Mixed receive and transmit roles</text>
+<text x="637" y="360" text-anchor="middle" font-size="19" font-weight="700" fill="#293135">Array A</text>
+<rect x="555" y="373" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="598" y="373" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="641" y="373" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="684" y="373" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="555" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="598" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="641" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<rect x="684" y="409" width="34" height="27" rx="4" fill="#dcefee" stroke="#007a7a" stroke-width="1.5"/>
+<text x="862" y="360" text-anchor="middle" font-size="19" font-weight="700" fill="#293135">Array B</text>
+<rect x="780" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="823" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="866" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="909" y="373" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="780" y="409" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="823" y="409" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="866" y="409" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="909" y="409" width="34" height="27" rx="4" fill="#d7f4e0" stroke="#227b3d" stroke-width="1.5"/>
+<rect x="555" y="460" width="15" height="15" rx="2" fill="#d7f4e0" stroke="#293135" stroke-width="1.5"/>
+<text x="581" y="473" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">FR on Array B</text>
+<rect x="555" y="489" width="15" height="15" rx="2" fill="#dcefee" stroke="#293135" stroke-width="1.5"/>
+<text x="581" y="502" text-anchor="start" font-size="19" font-weight="400" fill="#4a5550">FT on Array A</text>
+<text x="500" y="575" text-anchor="middle" font-size="19" font-weight="400" fill="#4a5550">Each colored group has its own frequency, sample rate and phase reference.</text>
+</g></svg>

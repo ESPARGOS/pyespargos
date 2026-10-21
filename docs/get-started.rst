@@ -1,140 +1,71 @@
 Getting Started
-===============
+=================
 
-Before you get started with *pyespargos*, make sure that your ESPARGOS controller can be reached either via its IP address or a hostname.
-In the following examples, we will assume that ESPARGOS controllers are reachable at IP addresses :code:`192.168.1.2`, :code:`192.168.1.3`, :code:`192.168.1.4` and so on,
-but you may replace the IP addresses with hostnames if you prefer that.
+ESPARGOS is an antenna array for coherent radio measurements and transmission.
+With *pyespargos*, we can receive WiFi channel estimates, capture raw I/Q
+samples, and transmit custom waveforms with beam steering.
 
-WiFi Settings
--------------
+Choose what you want to do
+----------------------------
 
-Before you can capture channel state information (CSI), you must make sure to configure suitable WiFi settings in the `ESPARGOS web interface <https://espargos.net/setup/>`_.
-ESPARGOS configuration is persistent across reboots, so you only need to do this once.
+* :doc:`wifi-reception` and :doc:`wifi-transmission`: measure channel state
+  information (CSI) from WiFi packets and send scheduled packets for channel
+  sounding, direction finding and sensing.
+* :doc:`iq-reception`: capture raw complex samples without WiFi packet
+  decoding. We can trigger captures periodically or when a signal arrives.
+* :doc:`iq-transmission`: transmit repeating waveforms, steer multiple beams,
+  or assign different signals to individual antennas.
 
-Make sure that the following options are configured correctly before using *pyespargos*:
+We can combine these modes within one board or across several boards. For
+example, some sensors can transmit IQ waveforms while others receive IQ
+samples, and another group can receive WiFi packets. Each sensor has one mode
+at a time, but different sensors can operate in different modes simultaneously.
 
-* Set *Generate Phase Reference* to *During calibration*
-* Leave *Reference Signal Source* at *Internal* (the default for a standalone array). Only change this for phase-coherent multi-board setups, see :doc:`combined-arrays`.
-* Select the correct WiFi country code and make sure that you are allowed to use the desired WiFi channel in your country.
-* Select a suitable WiFi primary and secondary channel for your device. Make sure your settings are correct by checking if you can receive CSI from your device (i.e., while "Antenna" is selected as a source) in the *Live CSI* tab.
-* You can choose a small calibration signal interval, e.g. 10 milliseconds, then calibration takes less time.
+Boards, pools and sensor roles
+--------------------------------
 
-Minimal Example
----------------
+Each ESPARGOS board contains eight **sensors**, which receive or transmit the
+antenna signals, and a **controller**, which connects them to the computer
+and contains the reference radio. Each board has its own controller and IP
+address.
 
-The following code example receives clustered CSI from one ESPARGOS device:
+In a synchronized multi-array setup, one board is the **master**. Its
+controller supplies the shared clock and calibration reference. When we talk
+about the **reference monitor** or the shared **controller reference signal**,
+we mean this master's controller. On a standalone array, its own controller
+performs those functions. The other boards still have controllers that manage
+their sensors and network connections.
 
-.. code-block:: python
+A ``Board`` represents one eight-sensor ESPARGOS array. A ``Pool`` manages one
+or more boards, including their connections, configuration and calibration.
+We normally start with a pool, even for one board::
 
-   import espargos
+   from espargos import Pool
 
-   # Connect to ESPARGOS board at IP address 192.168.1.2
-   board = espargos.Board("192.168.1.2")
+   with Pool("192.168.1.2") as pool:
+       pool.configure(mode="wifi")
+       receiver = pool.wifi
+       # Register callbacks and process incoming measurements here.
 
-   # Create new ESPARGOS pool with only one board
-   pool = espargos.CSIPool([board])
+Each sensor can operate in WiFi, IQ RX or IQ TX mode. We can select subsets
+of antennas and assign different roles or frequencies within the same pool.
+``pool.wifi``, ``pool.iq`` and ``pool.tx`` share that pool's connections.
+See :doc:`pool` for selections and mixed configurations.
 
-   # Always acquire the legacy long training field (L-LTF), independently of
-   # the received WiFi packet format.
-   pool.set_csi_acquisition_config({"acquire_csi_force_lltf": True})
+For larger apertures, we can load the board arrangement from a configuration
+file using ``Pool.from_config()``. A shared clock and reference network allow
+coherent measurements across boards. See :doc:`combined-arrays` for wiring
+and layout configuration.
 
-   # Start sensor-message reception for all boards in the pool
-   # (just one board in this case).
-   pool.start()
+Calibration and demos
+-----------------------
 
-   try:
-       # Collect CSI from the reference channel for calibration.
-       pool.calibrate(duration=2)
+Calibration measures the phase and timing differences between sensors. We
+apply these corrections when comparing received signals or steering transmit
+beams. :doc:`calibration` explains the available methods and how to calibrate
+all antennas or separate groups.
 
-       # Get a callback whenever CSI for one WiFi packet is available from all
-       # antennas. clustered_csi is an instance of CSICluster.
-       def handle_csi(clustered_csi):
-           csi_raw = clustered_csi.deserialize_csi_lltf()
-           csi_calibrated = pool.calibration.apply_lltf(csi_raw)
-           print("Got channel coefficients with shape:", csi_calibrated.shape)
-
-       def complete_lltf(clustered_csi):
-           return clustered_csi.is_complete and clustered_csi.has_lltf
-
-       pool.add_csi_callback(handle_csi, callback_predicate=complete_lltf)
-
-       # Main loop; add your break condition here.
-       while True:
-           pool.run()
-   finally:
-       pool.stop()
-
-The example illustrates the basic usage of the :class:`.Board` and :class:`.CSIPool` classes:
-
-**The** :class:`.Board` **class** represents one ESPARGOS controller.
-It connects to the controller and receives measurements from its sensors over Ethernet or USB.
-WiFi reception settings and individual CSI messages are available through :attr:`~espargos.board.Board.wifi_rx`.
-The optional :attr:`~espargos.board.Board.wifi_tx` interface controls scheduled WiFi transmissions used for radar measurements.
-Most CSI applications use :class:`.CSIPool`, even when working with only one ESPARGOS device.
-
-**The** :class:`.CSIPool` **class** is responsible for handling the clustering of CSI from one or multiple ESPARGOS boards.
-When the microcontrollers ("sensors") on the ESPARGOS array board receive a WiFi packet, they just forward the CSI estimates to the central controller together with packet metadata like MAC address, timestamp and frame counter.
-The controller then forwards the CSI estimates to the computer running *pyespargos*, which is then responsible for figuring out which CSI estimates belong to the same WiFi packet.
-This is easy to achieve by finding matching packet metadata.
-By default, the CSI callback is only triggered if CSI is available from *all* sensors, but you can change this behavior (see documentation of :func:`~espargos.csi_pool.CSIPool.add_csi_callback` for details).
-The example enables ``acquire_csi_force_lltf`` so that every supported OFDM packet is represented by its L-LTF channel estimate, regardless of whether its native format is legacy, HT, or HE.
-This gives applications a consistent 53-subcarrier CSI representation across different transmitters.
-The callback predicate additionally ignores packets without usable L-LTF CSI, such as 802.11b packets.
-
-An ESPARGOS pool is initialized with a list of objects of the :class:`.Board` class, which can also contain just one entry if you only use a single ESPARGOS device.
-Applications must call :meth:`~espargos.csi_pool.CSIPool.run` regularly unless a helper such as :class:`.CSIBacklog` does so in its own worker thread.
-Each call waits briefly for the first message and then processes one bounded batch of queued messages.
-Use ``timeout=0`` when integrating with a GUI or another event loop that must never block; a dedicated worker may use a longer timeout such as ``timeout=0.5``.
-
-With CSI Backlog
-----------------
-When working with a :class:`.CSIPool` of ESPARGOS devices, you get a callback whenever there is a new complete CSI cluster.
-However, in many cases, you don't care about the instantaneous CSI at this very moment in time, but instead want to operate on the last couple of channel estimates.
-This is what the :class:`.CSIBacklog` class is for:
-This class collects CSI alongside other data (like timestamps, RSSI) from complete cluster up until a certain predefined size limit is reached.
-The application code can query the backlog whenever it needs recent CSI.
-
-.. code-block:: python
-
-  import espargos
-  import time
-
-  pool = espargos.CSIPool([espargos.Board("192.168.1.2")])
-  pool.set_csi_acquisition_config({"acquire_csi_force_lltf": True})
-  pool.start()
-  backlog = None
-  try:
-      pool.calibrate(duration=2)
-      backlog = espargos.CSIBacklog(
-          pool,
-          fields=["lltf"],
-          size=20,
-      )
-      backlog.add_filter(espargos.Exclude11bFilter())
-      backlog.start()
-
-      # Wait for a while to collect some WiFi packets in the backlog...
-      time.sleep(4)
-
-      csi_lltf = backlog.get("lltf")
-      print("Received CSI:", csi_lltf)
-  finally:
-      if backlog is not None:
-          backlog.close()
-      pool.stop()
-
-The backlog supports multiple data fields that can be retrieved using the :meth:`~espargos.csi_backlog.CSIBacklog.get` method:
-
-* ``lltf`` - L-LTF CSI data
-* ``ht20`` - HT20 CSI data  
-* ``ht40`` - HT40 CSI data
-* ``rssi`` - RSSI values
-* ``timestamp`` - Sensor timestamps
-* ``host_timestamp`` - Host timestamps
-* ``mac`` - Source MAC addresses
-
-You can also use :meth:`~espargos.csi_backlog.CSIBacklog.get_multiple` to retrieve multiple fields atomically.
-
-Advanced Usage
---------------
-Check out the source code of our `demo applications <https://github.com/ESPARGOS/pyespargos/tree/main/demos>`_ to learn how to use *pyespargos* in a real-time application.
+The reception and transmission pages include runnable examples. For an
+interactive view, try the ``instantaneous-csi``, ``iq-signal-analyzer`` or
+``iq-transmit-beamforming`` demos. :doc:`application-framework` explains how
+to reuse their controls in your own Qt application.

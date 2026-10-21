@@ -100,7 +100,7 @@ class EspargosDemoPowerOverTime(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFo
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         if self.appconfig.get("required_antennas") is None:
-            self.appconfig.set({"required_antennas": int(np.prod(self.pool.shape))})
+            self.appconfig.set({"required_antennas": int(np.prod(self.receiver.shape))})
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=maxAgeChanged)
@@ -123,12 +123,12 @@ class EspargosDemoPowerOverTime(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFo
     def sensorCount(self):
         if getattr(self, "_use_combined_array", False):
             return int(self.n_rows * self.n_cols)
-        return int(np.prod(self.pool.shape))
+        return int(np.prod(self.receiver.shape))
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=requiredAntennasChanged)
     def requiredAntennas(self):
         configured = self.appconfig.get("required_antennas")
-        return int(np.prod(self.pool.shape) if configured is None else configured)
+        return int(np.prod(self.receiver.shape) if configured is None else configured)
 
     def _cluster_predicate(self, cluster):
         completion = cluster.completion
@@ -231,7 +231,7 @@ class EspargosDemoPowerOverTime(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFo
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
-        pool_sensor_count = int(np.prod(self.pool.shape))
+        pool_sensor_count = int(np.prod(self.receiver.shape))
         allow_partial = self.requiredAntennas < pool_sensor_count
         result = self.get_backlog_csi("rx_gain", "fft_gain", "host_timestamp", allow_incomplete=allow_partial, return_format=True)
         if result is None:

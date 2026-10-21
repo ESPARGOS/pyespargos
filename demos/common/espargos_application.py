@@ -30,7 +30,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
     The concrete sensing modality is supplied by a subclass such as
     :class:`.ESPARGOSCSIApplication`, which implements the pool factory
-    (:meth:`_create_pool`) and may provide a receiver-drawer backend
+    (:meth:`_create_receiver`) and may provide a receiver-drawer backend
     (:meth:`_create_pool_drawer`) and a calibration procedure
     (:meth:`_calibrate_pool`).
 
@@ -133,13 +133,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=self._argparse_epilog(),
         )
-        parser.add_argument(
-            "-c",
-            "--config",
-            type=str,
-            default=None,
-            help="Path to YAML configuration file to load",
-        )
+        self._add_config_arguments(parser)
         parser.add_argument(
             "-o",
             "--option",
@@ -212,6 +206,9 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         Override in subclasses to handle specific config changes, then call super()._on_generic_config_updated(newcfg).
         """
         self.genericconfig.updateAppStateHandled.emit()
+
+    def _add_config_arguments(self, parser):
+        parser.add_argument("-c", "--config", help="Path to YAML configuration file to load")
 
     def _add_argparse_arguments(self, parser):
         """
@@ -315,7 +312,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         """
         Initialize the ESPARGOS pool for this application's sensing modality.
 
-        Creates the boards and the modality's pool (:meth:`_create_pool`) and,
+        Creates the boards and the modality's pool (:meth:`_create_receiver`) and,
         if the modality provides one, its receiver-drawer backend
         (:meth:`_create_pool_drawer`). On a background thread, the pool is
         then started and calibrated (:meth:`_calibrate_pool`); once the
@@ -325,12 +322,21 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         # Let mixins prepare pool initialization
         additional_calibrate_args = self._prepare_pool_init(additional_calibrate_args)
 
-        self.pool = self._create_pool([espargos.Board(host) for host in self.get_initial_config("pool", "hosts")])
-        self.pooldrawer = self._create_pool_drawer()
+        if not hasattr(self, "pool"):
+            self.pool = espargos.Pool(self.get_initial_config("pool", "hosts"))
+        try:
+            self.pool.open()
+            self.receiver = self._create_receiver(self.pool)
+            self.pooldrawer = self._create_pool_drawer()
+        except Exception as error:
+            try:
+                self.pool.close()
+            except Exception as cleanup:
+                error.add_note(str(cleanup))
+            raise
 
         def config_applied():
             def _init_worker():
-                self.pool.start()
                 complete = self._calibrate_pool(calibrate=calibrate, additional_calibrate_args=additional_calibrate_args)
 
                 # Let mixins finalize pool initialization
@@ -348,9 +354,9 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         else:
             config_applied()
 
-    def _create_pool(self, boards: list) -> espargos.Pool:
+    def _create_receiver(self, owner: espargos.Pool) -> espargos.Pool:
         """
-        Create this application's pool over the given boards.
+        Return this application's shared pool from the Pool owner.
 
         Must be implemented by a modality subclass such as
         :class:`.ESPARGOSCSIApplication`.
@@ -399,7 +405,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         if hasattr(self, "backlog"):
             self.backlog.close()
         if hasattr(self, "pool"):
-            self.pool.stop()
+            self.pool.close()
         if hasattr(self, "engine"):
             self.engine.deleteLater()
 
@@ -451,7 +457,7 @@ class CombinedArrayMixin:
     def _process_args(self):
         super()._process_args()
         # In single-array mode, auto-generate combined array config
-        if hasattr(self.args, "single_array") and len(self.args.single_array) > 0:
+        if getattr(self.args, "single_array", None):
             host = self.args.single_array
 
             self.initial_config["combined-array"] = {
@@ -479,18 +485,11 @@ class CombinedArrayMixin:
         if combined_array_cfg is None or combined_array_cfg == {}:
             raise ValueError("Combined array configuration is required for applications using CombinedArrayMixin. You must either provide it via config file or use the --single-array option.")
 
-        (
-            self.indexing_matrix,
-            hosts,
-            cable_lengths,
-            cable_velocity_factors,
-            self.n_rows,
-            self.n_cols,
-            self.antenna_orientations,
-        ) = espargos.combined_array.parse_combined_array_config(combined_array_cfg)
-
-        additional_calibrate_args["cable_lengths"] = cable_lengths
-        additional_calibrate_args["cable_velocity_factors"] = cable_velocity_factors
-        self.initial_config["pool"]["hosts"] = list(hosts.values())
+        self.pool = espargos.Pool.from_config(combined_array_cfg)
+        self.indexing_matrix = self.pool.indexing_matrix
+        self.n_rows, self.n_cols = self.indexing_matrix.shape
+        self.antenna_orientations = self.pool.antenna_orientations
+        additional_calibrate_args.update(self.pool.reference_cables)
+        self.initial_config["pool"]["hosts"] = self.pool.hosts
 
         return additional_calibrate_args

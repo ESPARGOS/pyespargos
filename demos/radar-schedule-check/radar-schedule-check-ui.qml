@@ -6,7 +6,7 @@ import "../common" as Common
 
 Common.ESPARGOSApplication {
 	id: window
-	receiverDrawerComponent: Component { Common.CSIReceiverDrawer {} }
+	receiverDrawerComponent: Component { Common.WiFiTransceiverDrawer {} }
 	visible: true
 	minimumWidth: 980
 	minimumHeight: 640

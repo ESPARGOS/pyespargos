@@ -9,7 +9,7 @@ import copy
 
 from .config_manager import ConfigManager, deep_update
 from .csi_backlog_settings import CSIBacklogSettings
-from .csi_pool_drawer import CSIPoolDrawer
+from .wifi_transceiver_drawer import WiFiTransceiverDrawer
 from .espargos_application import ESPARGOSApplication
 
 
@@ -18,8 +18,8 @@ class ESPARGOSCSIApplication(ESPARGOSApplication):
     ESPARGOS application whose sensing modality is WiFi channel state information (CSI).
 
     On top of the generic :class:`.ESPARGOSApplication`, this class provides
-    the :class:`.CSIPool`, the CSI receiver-drawer backend
-    (:class:`.CSIPoolDrawer`), pool calibration during initialization, and the
+    the :class:`.WiFiTransceiver`, the CSI receiver-drawer backend
+    (:class:`.WiFiTransceiverDrawer`), pool calibration during initialization, and the
     :code:`csi` configuration section (preamble format selection, exposed to
     QML as the :code:`csiconfig` context property).
 
@@ -38,7 +38,7 @@ class ESPARGOSCSIApplication(ESPARGOSApplication):
 
     def _extend_default_config(self, config):
         super()._extend_default_config(config)
-        deep_update(config, copy.deepcopy({"pool": CSIPoolDrawer.DEFAULT_CONFIG}))
+        deep_update(config, copy.deepcopy({"pool": WiFiTransceiverDrawer.DEFAULT_CONFIG}))
         deep_update(config, copy.deepcopy({"csi": self.CSI_DEFAULT_CONFIG}))
 
     def _uses_backlog(self):
@@ -69,15 +69,23 @@ class ESPARGOSCSIApplication(ESPARGOSApplication):
         super()._setup_qml_context(context)
         context.setContextProperty("csiconfig", self.csiconfig)
 
-    def _create_pool(self, boards: list) -> espargos.CSIPool:
-        return espargos.CSIPool(
-            boards,
-            gain_phase_compensation=bool(self.get_initial_config("pool", "gain_phase_compensation", default=True)),
-        )
+    def _create_receiver(self, owner: espargos.Pool) -> espargos.WiFiTransceiver:
+        # A previous IQ demo may have left sensors outside WiFi mode.
+        for board in owner.boards:
+            if board.api_version >= (4, 4):
+                board.control.post_json("set_controller_mode", {"mode": "wifi"})
+            if board.api_version[0] >= 4:
+                owner.select(boards=board.host).configure(mode="wifi")
+                # These demos use one channel per board. Clear overrides left
+                # by an application using independently tuned antennas.
+                board.wifi_rx.set_channel_overrides({"override_active": False})
+        pool = owner.wifi
+        pool.gain_phase_compensation = bool(self.get_initial_config("pool", "gain_phase_compensation", default=True))
+        return pool
 
     def _create_pool_drawer(self):
         pool_cfg = self.get_explicit_initial_config("pool", default={})
-        pooldrawer = CSIPoolDrawer(self.pool, pool_cfg or None, parent=self)
+        pooldrawer = WiFiTransceiverDrawer(self.receiver, pool_cfg or None, parent=self)
         pooldrawer.calibrationStarted.connect(self._on_pool_calibration_started)
         pooldrawer.calibrationFinished.connect(self._on_pool_calibration_finished)
         return pooldrawer
@@ -94,7 +102,7 @@ class ESPARGOSCSIApplication(ESPARGOSApplication):
                     "per_board",
                 )
             )
-            self.pool.calibrate(
+            self.receiver.calibrate(
                 duration=2,
                 per_board=per_board,
                 **additional_calibrate_args,
@@ -114,7 +122,7 @@ class ESPARGOSCSIApplication(ESPARGOSApplication):
 
     def _on_pool_calibration_finished(self, success: bool, _error_message: str):
         if hasattr(self, "backlog"):
-            self.backlog.apply_calibration = bool(success and self.pool.calibration is not None)
+            self.backlog.apply_calibration = bool(success and self.receiver.calibration is not None)
             self.backlog.clear()
 
 
@@ -138,13 +146,14 @@ class CSIBacklogMixin:
             "-b",
             "--backlog-size",
             type=int,
-            default=20,
+            default=None,
             help="Size of CSI datapoint backlog",
         )
 
     def _process_args(self):
         super()._process_args()
-        self.initial_config["backlog"]["size"] = self.args.backlog_size
+        if self.args.backlog_size is not None:
+            self.initial_config["backlog"]["size"] = self.args.backlog_size
 
     def _init_config_managers(self):
         super()._init_config_managers()
@@ -167,12 +176,12 @@ class CSIBacklogMixin:
                     initial_fields.discard(field)
 
         self.backlog = espargos.CSIBacklog(
-            self.pool,
+            self.receiver,
             fields=initial_fields,
             callback_predicate=backlog_cb_predicate,
             apply_calibration=calibrate,
         )
-        self.backlog.start()
+        self.pool.start_processing()
 
         self.backlog_settings.set_backlog(self.backlog)
 

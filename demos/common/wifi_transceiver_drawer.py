@@ -6,7 +6,7 @@ import threading
 import copy
 import re
 
-import espargos.csi_pool
+import espargos.wifi_transceiver
 import espargos.sensor
 
 from .config_manager import ConfigManager
@@ -16,7 +16,7 @@ def _first_gain_value(value):
     return value[0] if isinstance(value, list) else value
 
 
-class CSIPoolDrawer(PyQt6.QtCore.QObject):
+class WiFiTransceiverDrawer(PyQt6.QtCore.QObject):
     DEFAULT_CONFIG = {
         "channel": 13,
         "secondary_channel": 2,
@@ -45,12 +45,12 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
     calibrationStarted = PyQt6.QtCore.pyqtSignal()
     calibrationFinished = PyQt6.QtCore.pyqtSignal(bool, str)
 
-    def __init__(self, pool: espargos.csi_pool.CSIPool, force_config=None, parent=None):
+    def __init__(self, pool: espargos.wifi_transceiver.WiFiTransceiver, force_config=None, parent=None):
         # Note that the current pool config is authoritative, the default config is just for UI initialization
         # However, if force_config is given, it takes precedence
         super().__init__(parent=parent)
         self.cfgman = ConfigManager(self.DEFAULT_CONFIG, parent=self)
-        self.pool = pool
+        self.receiver = pool
 
         # Remember force_config for potential resets
         self.force_config = force_config
@@ -93,15 +93,15 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
         Returns a partial config dict (does not include purely-UI fields).
         """
         cfg_out: dict = {}
-        cfg_out["gain_phase_compensation"] = self.pool.gain_phase_compensation
+        cfg_out["gain_phase_compensation"] = self.receiver.gain_phase_compensation
 
-        cfo = self.pool.get_cfo_correction_hz()
+        cfo = self.receiver.get_cfo_correction_hz()
         if isinstance(cfo, dict):
             cfg_out["cfo_compensation"] = bool(cfo.get("auto", False))
             cfg_out["cfo_value_hz"] = float(cfo.get("value_hz", 0))
 
         # CSI acquire config -> UI fields
-        csi_cfg = self.pool.get_csi_acquisition_config()
+        csi_cfg = self.receiver.get_csi_acquisition_config()
         if isinstance(csi_cfg, dict) and "acquire_csi_force_lltf" in csi_cfg:
             cfg_out["acquire_lltf_force"] = bool(csi_cfg["acquire_csi_force_lltf"])
         if isinstance(csi_cfg, dict) and "compress_csi" in csi_cfg:
@@ -115,13 +115,13 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
         # RX/FFT enable flags even after cross-board reconciliation. Reset that
         # state to uniform AGC rather than failing drawer initialization.
         try:
-            gain = self.pool.get_gain_settings()
+            gain = self.receiver.get_gain_settings()
             rx_auto = not bool(_first_gain_value(gain["rx_gain_enable"]))
             fft_auto = not bool(_first_gain_value(gain["fft_scale_enable"]))
             if rx_auto != fft_auto:
                 raise ValueError("rx_gain_enable and fft_scale_enable differ")
         except ValueError:
-            self.pool.set_gain_settings(
+            self.receiver.set_gain_settings(
                 {
                     "rx_gain_enable": False,
                     "fft_scale_enable": False,
@@ -139,14 +139,14 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
             cfg_out["gain"] = gain_cfg
 
         # RF switch config -> UI fields
-        rf = self.pool.get_rf_switch()
+        rf = self.receiver.get_rf_switch()
         cfg_out["rf_switch"] = int(rf.value)
 
         # Pool-local reference CSI stream option -> UI fields
-        cfg_out["show_reference"] = self.pool.emit_calibration_csi
+        cfg_out["show_reference"] = self.receiver.emit_calibration_csi
 
         # MAC filter -> UI fields
-        mf = self.pool.get_mac_filter()
+        mf = self.receiver.get_mac_filter()
         if isinstance(mf, dict):
             cfg_out["mac_filter"] = {
                 "enable": bool(mf.get("enable", False)),
@@ -154,7 +154,7 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
             }
 
         # WiFi config -> channel fields
-        wc = self.pool.get_wifi_config()
+        wc = self.receiver.get_wifi_config()
         if isinstance(wc, dict):
             if "channel-primary" in wc:
                 cfg_out["channel"] = int(wc["channel-primary"])
@@ -181,7 +181,7 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
 
                 # WiFi channels
                 if "channel" in delta or "secondary_channel" in delta:
-                    wc = self.pool.get_wifi_config()
+                    wc = self.receiver.get_wifi_config()
                     if not isinstance(wc, dict):
                         raise RuntimeError("pool.get_wifi_config() returned non-dict")
                     wc = dict(wc)
@@ -189,26 +189,26 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
                         wc["channel-primary"] = int(delta["channel"])
                     if "secondary_channel" in delta:
                         wc["channel-secondary"] = int(delta["secondary_channel"])
-                    self.pool.set_wifi_config(wc)
+                    self.receiver.set_wifi_config(wc)
 
                 # RF switch
                 if "rf_switch" in delta:
-                    self.pool.set_rf_switch(espargos.sensor.RFSwitchState(int(delta["rf_switch"])))
+                    self.receiver.set_rf_switch(espargos.sensor.RFSwitchState(int(delta["rf_switch"])))
 
                 # Pool-local reference CSI stream option
                 if "show_reference" in delta:
-                    self.pool.emit_calibration_csi = bool(delta["show_reference"])
+                    self.receiver.emit_calibration_csi = bool(delta["show_reference"])
 
                 if "cfo_compensation" in delta or "cfo_value_hz" in delta:
-                    current = self.pool.get_cfo_correction_hz()
-                    self.pool.set_cfo_correction_hz(
+                    current = self.receiver.get_cfo_correction_hz()
+                    self.receiver.set_cfo_correction_hz(
                         bool(delta.get("cfo_compensation", current["auto"])),
                         float(delta.get("cfo_value_hz", current["value_hz"])),
                     )
 
                 if "gain_phase_compensation" in delta:
                     enabled = bool(delta["gain_phase_compensation"])
-                    self.pool.gain_phase_compensation = enabled
+                    self.receiver.gain_phase_compensation = enabled
 
                 # CSI acquire config
                 if "acquire_lltf_force" in delta or "compress_csi" in delta or "lltf_8bit_mode" in delta:
@@ -219,7 +219,7 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
                         cfg["compress_csi"] = bool(int(delta["compress_csi"]))
                     if "lltf_8bit_mode" in delta:
                         cfg["lltf_8bit_mode"] = bool(int(delta["lltf_8bit_mode"]))
-                    self.pool.set_csi_acquisition_config(cfg)
+                    self.receiver.set_csi_acquisition_config(cfg)
 
                 # Gains (unified: "automatic" controls both rx_gain and fft_scale)
                 if "gain" in delta:
@@ -235,7 +235,7 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
                     if "fft_gain_value" in gain_delta:
                         gain_settings["fft_scale_value"] = int(gain_delta["fft_gain_value"])
 
-                    self.pool.set_gain_settings(gain_settings)
+                    self.receiver.set_gain_settings(gain_settings)
 
                 # MAC filter
                 if "mac_filter" in delta:
@@ -247,7 +247,7 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
                     if "mac_address" in mf_delta:
                         mac_filter["mac"] = str(mf_delta["mac_address"])
 
-                    self.pool.set_mac_filter(mac_filter)
+                    self.receiver.set_mac_filter(mac_filter)
             except Exception as e:
                 err_str = str(e)
                 self.cfgman.emitShowError("Failed to apply configuration", err_str)
@@ -286,7 +286,7 @@ class CSIPoolDrawer(PyQt6.QtCore.QObject):
             success = False
             error_message = ""
             try:
-                self.pool.calibrate(per_board=per_board, duration=duration, run_in_thread=False)
+                self.receiver.calibrate(per_board=per_board, duration=duration, run_in_thread=False)
                 success = True
             except Exception as e:
                 error_message = str(e)

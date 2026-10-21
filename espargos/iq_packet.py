@@ -43,7 +43,7 @@ IQ_CHUNK_FLAG_REFERENCE_READY = 1 << 12
 class IQChunkPacket:
     """One IQ-sampling chunk streamed by a sensor in IQ mode (magic "IQC2").
 
-    API 4 timestamps use the local CPU clock, encoded in nanoseconds.
+    Timestamps use the local CPU clock, encoded in nanoseconds.
     Reference snapshots (flag 11) reuse ``fire_time_ns`` for the first
     snapshot sample and ``producer_wake_write_ptr`` for its onset offset.
     Four records, indexed by ``capture_chunk_offset``, form one snapshot.

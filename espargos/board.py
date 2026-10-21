@@ -9,6 +9,7 @@ import logging
 import socket
 import json
 import queue
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -25,6 +26,7 @@ __all__ = [
     "EspargosStreamConnectionError",
     "EspargosUnexpectedResponseError",
     "SensorMessageSubscription",
+    "ControllerMessageSubscription",
 ]
 
 # Port used by the controller as the source port for UDP sensor packets
@@ -78,6 +80,14 @@ class SensorMessageSubscription:
 
     type_header: int
     callback: Callable[[sensor.SensorMessage[bytes]], None]
+
+
+@dataclass(frozen=True, eq=False)
+class ControllerMessageSubscription:
+    """Handle for a controller-originated frame, such as an IQ monitor burst."""
+
+    type_header: int
+    callback: Callable[[bytes], None]
 
 
 # Magic bytes sent by the controller to confirm a valid sensor stream
@@ -273,6 +283,8 @@ class Board(object):
         self._capabilities: dict[str, BoardCapability] = {}
         self._capabilities_lock = threading.RLock()
         self._uart_client = None
+        self._http_lock = threading.Lock()
+        self._http_connection = None
         self._transport_kind = "network"
         if uart.is_uart_host(host):
             self._transport_kind = "uart"
@@ -328,6 +340,7 @@ class Board(object):
         self._stream_lifecycle_lock = threading.Lock()
         self._sensor_message_reassembler = sensor.SensorMessageReassembler(logger=self._logger)
         self._sensor_message_subscriptions: dict[int, list[SensorMessageSubscription]] = {}
+        self._controller_message_subscriptions: dict[int, list[ControllerMessageSubscription]] = {}
         self._sensor_message_subscriptions_lock = threading.Lock()
 
     @property
@@ -358,7 +371,7 @@ class Board(object):
         calling :meth:`start` on an already running stream is a no-op, while
         :meth:`stop` tears the stream down for everyone and is reserved for
         the board's lifecycle owner (other consumers detach via their
-        subscriptions, e.g. :meth:`.Pool.close`). If the stream died on its
+        subscriptions, e.g. :meth:`.WiFiTransceiver.close`). If the stream died on its
         own (``stream_connected`` became False), calling :meth:`start` again
         reconnects cleanly.
 
@@ -712,6 +725,10 @@ class Board(object):
         for capability in capabilities:
             capability.close()
         self.stop()
+        with self._http_lock:
+            if self._http_connection is not None:
+                self._http_connection.close()
+                self._http_connection = None
         if self._uart_client is not None:
             self._uart_client.close()
 
@@ -786,7 +803,47 @@ class Board(object):
                 del self._sensor_message_subscriptions[subscription.type_header]
             return True
 
+    def subscribe_controller_messages(self, type_header: int, callback: Callable[[bytes], None]) -> ControllerMessageSubscription:
+        """Receive raw controller frames on this board's existing stream.
+
+        Unlike sensor messages these frames have no antenna ID or sensor
+        fragmentation envelope. Callbacks run on the shared dispatch thread
+        and must return promptly. The subscriber does not own the stream.
+        """
+        if not isinstance(type_header, int) or not 0 <= type_header <= 0xFFFFFFFF:
+            raise ValueError("type_header must be a 32-bit unsigned integer")
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        subscription = ControllerMessageSubscription(type_header, callback)
+        with self._sensor_message_subscriptions_lock:
+            self._controller_message_subscriptions.setdefault(type_header, []).append(subscription)
+        return subscription
+
+    def unsubscribe_controller_messages(self, subscription: ControllerMessageSubscription) -> bool:
+        """Detach a controller-frame callback without stopping the stream."""
+        if not isinstance(subscription, ControllerMessageSubscription):
+            return False
+        with self._sensor_message_subscriptions_lock:
+            subscriptions = self._controller_message_subscriptions.get(subscription.type_header, [])
+            if subscription not in subscriptions:
+                return False
+            subscriptions.remove(subscription)
+            if not subscriptions:
+                del self._controller_message_subscriptions[subscription.type_header]
+        return True
+
     def _stream_handle_message(self, message):
+        if isinstance(message, bytes) and len(message) >= 4:
+            type_header = int.from_bytes(message[:4], "little")
+            with self._sensor_message_subscriptions_lock:
+                subscriptions = tuple(self._controller_message_subscriptions.get(type_header, ()))
+            if subscriptions:
+                for subscription in subscriptions:
+                    try:
+                        subscription.callback(message)
+                    except Exception:
+                        self._logger.exception(f"Controller-message callback failed for type 0x{type_header:08x}")
+                return
         try:
             sensor_packet = sensor.SensorPacket.from_bytes(message)
         except ValueError as exc:
@@ -883,24 +940,36 @@ class Board(object):
         method = "GET" if data is None else "POST"
         if self._uart_client is not None:
             response = self._uart_client.request(method, path, data, timeout=5)
-            if response.status != 200:
+            if not 200 <= response.status < 300:
                 raise EspargosHTTPStatusError(response.status, path, response.body_text())
             return response.body_text()
 
-        conn = http.client.HTTPConnection(self.host, timeout=5)
-        conn.request(method, "/" + path, data)
-
-        try:
-            res = conn.getresponse()
-        except TimeoutError:
-            self._logger.error(f"Timeout in HTTP request for {self.host}/{path}")
-            raise TimeoutError
-
-        if res.status != 200:
-            body = res.read().decode("utf-8", errors="replace")
-            raise EspargosHTTPStatusError(res.status, path, body)
-
-        return res.read().decode("utf-8")
+        # Reuse one connection per board instead of opening a new TCP socket
+        # for every control request.
+        read_only = method == "GET" and path not in ("reboot", "factoryreset")
+        with self._http_lock:
+            for attempt in range(2):
+                if self._http_connection is None:
+                    self._http_connection = http.client.HTTPConnection(self.host, timeout=5)
+                conn = self._http_connection
+                try:
+                    conn.request(method, "/" + path, data)
+                    res = conn.getresponse()
+                    body = res.read()
+                    if res.status == 503 and read_only and attempt == 0:
+                        time.sleep(0.1)
+                        continue
+                    if not 200 <= res.status < 300:
+                        raise EspargosHTTPStatusError(res.status, path, body.decode("utf-8", errors="replace"))
+                    return body.decode("utf-8")
+                except BaseException as error:
+                    conn.close()
+                    self._http_connection = None
+                    # A controller can close an idle connection. Reads may be
+                    # repeated, but a write might already have taken effect.
+                    if attempt == 0 and read_only and isinstance(error, (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError)):
+                        continue
+                    raise
 
     def _handle_uart_log(self, message: str):
         self._logger.info(f"[device] {message.rstrip()}")

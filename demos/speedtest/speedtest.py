@@ -39,8 +39,6 @@ class EspargosDemoSpeedtest(ESPARGOSCSIApplication):
         self._packet_count = 0
         self._last_reset = time.time()
         self._lock = threading.Lock()
-        self._pool_runner_running = threading.Event()
-        self._pool_runner_thread = None
         self._callback_handle = None
 
         self.initialize_pool(calibrate=not self.args.no_calib)
@@ -68,12 +66,12 @@ class EspargosDemoSpeedtest(ESPARGOSCSIApplication):
 
     def _register_callback(self):
         if self._callback_handle is None:
-            self._callback_handle = self.pool.add_csi_callback(
+            self._callback_handle = self.receiver.add_callback(
                 self._on_csi,
                 callback_predicate=self._make_predicate(),
             )
         else:
-            self._callback_handle = self.pool.replace_csi_callback(
+            self._callback_handle = self.receiver.replace_callback(
                 self._callback_handle,
                 self._on_csi,
                 callback_predicate=self._make_predicate(),
@@ -82,10 +80,6 @@ class EspargosDemoSpeedtest(ESPARGOSCSIApplication):
     def _on_csi(self, clustered_csi):
         with self._lock:
             self._packet_count += 1
-
-    def _pool_runner(self):
-        while self._pool_runner_running.is_set():
-            self.pool.run(timeout=0.5)
 
     @PyQt6.QtCore.pyqtSlot()
     def update(self):
@@ -104,7 +98,7 @@ class EspargosDemoSpeedtest(ESPARGOSCSIApplication):
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def totalAntennas(self):
-        return int(np.prod(self.pool.shape))
+        return int(np.prod(self.receiver.shape))
 
     @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=minAntennasChanged)
     def minAntennas(self):
@@ -112,9 +106,7 @@ class EspargosDemoSpeedtest(ESPARGOSCSIApplication):
 
     def onInitComplete(self):
         self._register_callback()
-        self._pool_runner_running.set()
-        self._pool_runner_thread = threading.Thread(target=self._pool_runner, daemon=True)
-        self._pool_runner_thread.start()
+        self.pool.start_processing()
 
         self.poll_timer = PyQt6.QtCore.QTimer(self)
         self.poll_timer.timeout.connect(self.update)
@@ -125,11 +117,9 @@ class EspargosDemoSpeedtest(ESPARGOSCSIApplication):
         self.initComplete.connect(self.onInitComplete)
 
     def onAboutToQuit(self):
-        self._pool_runner_running.clear()
-        if self._pool_runner_thread is not None:
-            self._pool_runner_thread.join(timeout=1.0)
+        self.pool.stop_processing()
         if self._callback_handle is not None:
-            self.pool.remove_csi_callback(self._callback_handle)
+            self.receiver.remove_callback(self._callback_handle)
             self._callback_handle = None
         super().onAboutToQuit()
 

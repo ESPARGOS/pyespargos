@@ -5,7 +5,7 @@
 Requires the pyespargos repository root on ``sys.path`` (like all demos), as
 it builds on the common demo framework in ``demos/common``.
 
-All IQ mechanics live in :class:`.IQPool` (chunk clustering, configuration,
+All IQ mechanics live in :class:`.IQReceiver` (chunk clustering, configuration,
 sync, reference tone, calibration); this module only adds the Qt layer:
 :class:`IQController` adapts the pool to the QML drawer controls
 (non-blocking slots, coalescing tone control, change signals), and
@@ -25,13 +25,13 @@ from demos.common.espargos_application import ESPARGOSApplication
 from espargos import iq_tone
 from espargos.iq_cluster import CHUNK_SAMPLES
 from espargos.iq_packet import DECIM_TO_FS
-from espargos.iq_pool import IQPool, iq_receiver_config
+from espargos.iq_receiver import IQReceiver, iq_receiver_config
 
 __all__ = ["ESPARGOSIQApplication", "IQController"]
 
 
 class IQController(PyQt6.QtCore.QObject):
-    """Qt/QML adapter around an :class:`.IQPool`.
+    """Qt/QML adapter around an :class:`.IQReceiver`.
 
     Exposes the pool's control surface as non-blocking QML slots for the
     shared drawer controls (``IQSettings.qml`` / ``ReftxToneSettings.qml``):
@@ -50,14 +50,14 @@ class IQController(PyQt6.QtCore.QObject):
 
     def __init__(
         self,
-        pool: IQPool,
+        pool: IQReceiver,
         logger=None,
         parent=None,
         cable_lengths=None,
         cable_velocity_factors=None,
     ):
         super().__init__(parent)
-        self.pool = pool
+        self.receiver = pool
         self.logger = logger if logger is not None else logging.getLogger("pyespargos.iq_application")
         self._calibration_kwargs = {
             "cable_lengths": cable_lengths,
@@ -74,8 +74,8 @@ class IQController(PyQt6.QtCore.QObject):
         self._tone_busy = False
         self._reference_busy = False
         self._sync_needed = True
-        self.pool.add_iq_callback(self._observe_capture)
-        self.pool.add_accumulation_callback(self._observe_capture)
+        self.receiver.add_callback(self._observe_capture)
+        self.receiver.add_accumulation_callback(self._observe_capture)
 
     @PyQt6.QtCore.pyqtProperty(bool, notify=referenceBusyChanged)
     def referenceBusy(self):
@@ -91,15 +91,15 @@ class IQController(PyQt6.QtCore.QObject):
             self.syncNeededChanged.emit()
 
     def _observe_capture(self, capture):
-        if not self._reference_busy and not self.pool.calibration_applies_to(capture):
+        if not self._reference_busy and not self.receiver.calibration_applies_to(capture):
             self._set_sync_needed(True)
 
     def _check_calibration_config(self, config):
-        center = self.pool.calibration_center_frequency
-        rate = self.pool.calibration_sample_rate
+        center = self.receiver.calibration_center_frequency
+        rate = self.receiver.calibration_sample_rate
         frequencies = [r.get("rf_freq_hz", center) for r in config.get("receivers", [])]
         frequencies.append(config.get("rf_freq_hz", center))
-        if self.pool.calibration is None or any(f != center for f in frequencies) or DECIM_TO_FS.get(config.get("adc_decimation"), rate) != rate:
+        if self.receiver.calibration is None or any(f != center for f in frequencies) or DECIM_TO_FS.get(config.get("adc_decimation"), rate) != rate:
             self._set_sync_needed(True)
 
     def _begin_reference(self):
@@ -128,7 +128,7 @@ class IQController(PyQt6.QtCore.QObject):
             return
         try:
             config = json.loads(config_json)
-            self.pool.apply_config(config)
+            self.receiver.apply_config(config)
             self._check_calibration_config(config)
             self.configChanged.emit(config)
         except Exception as e:
@@ -137,7 +137,7 @@ class IQController(PyQt6.QtCore.QObject):
     @PyQt6.QtCore.pyqtSlot(result=str)
     def get_config_json(self):
         try:
-            config = self.pool.get_config()
+            config = self.receiver.get_config()
             self._check_calibration_config(config)
             self.configChanged.emit(config)
             return json.dumps(config)
@@ -147,14 +147,14 @@ class IQController(PyQt6.QtCore.QObject):
 
     @PyQt6.QtCore.pyqtProperty(bool, notify=gainPhaseCompensationChanged)
     def gain_phase_compensation(self):
-        return self.pool.gain_phase_compensation
+        return self.receiver.gain_phase_compensation
 
     @PyQt6.QtCore.pyqtSlot(bool)
     def set_gain_phase_compensation(self, enabled):
         enabled = bool(enabled)
-        if enabled == self.pool.gain_phase_compensation:
+        if enabled == self.receiver.gain_phase_compensation:
             return
-        self.pool.gain_phase_compensation = enabled
+        self.receiver.gain_phase_compensation = enabled
         self.gainPhaseCompensationChanged.emit()
 
     # ---- combined synchronization and calibration ----
@@ -168,7 +168,7 @@ class IQController(PyQt6.QtCore.QObject):
             succeeded = False
             try:
                 with self._reference_io_lock:
-                    self.pool.sync(**self._calibration_kwargs)
+                    self.receiver.sync(**self._calibration_kwargs)
                     succeeded = True
             except Exception as e:
                 self.logger.error(f"sync/calibration failed: {e}")
@@ -189,11 +189,11 @@ class IQController(PyQt6.QtCore.QObject):
         calibrated."""
         corrections = self._correction_cache.get(n)
         if corrections is None:
-            corrections = self.pool.cal_correction(n)
+            corrections = self.receiver.cal_correction(n)
             if corrections is None:
                 return None
             self._correction_cache[n] = corrections
-        row, col = self.pool.boards[board_index].revision.antenna_id_to_row_col(antenna_id)
+        row, col = self.receiver.boards[board_index].revision.antenna_id_to_row_col(antenna_id)
         return corrections[board_index, row, col]
 
     def display_correction(self, board_index, antenna_id, n=CHUNK_SAMPLES):
@@ -240,18 +240,18 @@ class IQController(PyQt6.QtCore.QObject):
 
     def _apply_tone_request(self, mode, freq_mhz, atten_db):
         if mode == "off":
-            self.pool.set_reference_tone(enable=False)
+            self.receiver.set_reference_tone(enable=False)
             return
         backoff = int(round(max(0.0, min(atten_db, 20.0)) * 4))
         freq_hz = freq_mhz * 1e6
         if mode == "iq":
             if not 2310e6 <= freq_hz <= 2640e6:
                 raise ValueError("Reference noise requires 2310–2640 MHz")
-            self.pool.master_board.iq.set_reference("iq", freq_hz, backoff)
+            self.receiver.master_board.iq.set_reference("iq", freq_hz, backoff)
         elif freq_hz <= iq_tone.TONE_MAX_HZ:
-            self.pool.set_reference_tone(freq_hz, backoff_qdb=backoff)
+            self.receiver.set_reference_tone(freq_hz, backoff_qdb=backoff)
         else:
-            cap, f_expected, approximate = self.pool.place_highband_tone(freq_hz, backoff_qdb=backoff)
+            cap, f_expected, approximate = self.receiver.place_highband_tone(freq_hz, backoff_qdb=backoff)
             if approximate:
                 self.logger.info(f"high-band tone at ~{f_expected:.0f} MHz (cap {cap}, target {freq_hz/1e6:.0f}; wandering band, drifts ±10+ MHz, read exact frequency off the waterfall)")
             else:
@@ -260,7 +260,7 @@ class IQController(PyQt6.QtCore.QObject):
     @PyQt6.QtCore.pyqtSlot(result=str)
     def tone_get_json(self):
         try:
-            return json.dumps(self.pool.get_reference_tone())
+            return json.dumps(self.receiver.get_reference_tone())
         except Exception as e:
             self.logger.error(f"get_reference failed: {e}")
             return "{}"
@@ -270,7 +270,7 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
     """
     ESPARGOS application whose sensing modality is raw synchronized IQ sampling.
 
-    Provides board lifecycle and the IQ data path through :class:`.IQPool`
+    Provides board lifecycle and the IQ data path through :class:`.IQReceiver`
     (chunk clustering with completion callbacks, configuration fan-out,
     array-wide anchored time sync, reference tone, fine calibration). The
     pool's processing worker is started automatically, so cluster callbacks
@@ -289,8 +289,9 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
         self._interrupt_timer.timeout.connect(lambda: None)
         self._interrupt_timer.start(200)
 
-    def _create_pool(self, boards: list) -> IQPool:
-        return IQPool(boards)
+    def _create_receiver(self, owner) -> IQReceiver:
+        owner.configure(mode="iq_rx")
+        return owner.iq
 
     def _calibrate_pool(self, calibrate: bool, additional_calibrate_args: dict) -> bool:
         # IQ synchronization includes calibration. The demo starts that
@@ -305,7 +306,7 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
     ) -> IQController:
         """Create the QML adapter for this application's pool."""
         return IQController(
-            self.pool,
+            self.receiver,
             logger=self.logger,
             parent=self,
             cable_lengths=cable_lengths,
@@ -320,5 +321,5 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
             self.pool.stop_processing()
             # Hand the array back to WiFi/CSI mode on exit (the firmware
             # force-disables a running reference tone on that transition).
-            self.pool.restore_wifi()
+            self.receiver.restore_wifi()
         super().onAboutToQuit()

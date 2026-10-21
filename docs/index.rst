@@ -11,7 +11,12 @@ Table of contents
 
    ESPARGOS Website <https://www.espargos.net>
    get-started
+   pool
    combined-arrays
-   iq-sampling
+   calibration
+   wifi-reception
+   wifi-transmission
+   iq-reception
+   iq-transmission
    application-framework
    source/modules

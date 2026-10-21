@@ -32,13 +32,14 @@ espargos.pool
 
 .. automodule:: espargos.pool
    :members:
+   :inherited-members:
    :undoc-members:
    :show-inheritance:
 
-espargos.csi_pool
------------------
+espargos.wifi_transceiver
+-------------------------
 
-.. automodule:: espargos.csi_pool
+.. automodule:: espargos.wifi_transceiver
    :members:
    :undoc-members:
    :show-inheritance:
@@ -212,10 +213,18 @@ espargos.board_iq
    :undoc-members:
    :show-inheritance:
 
-espargos.iq_pool
-----------------
+espargos.iq_receiver
+--------------------
 
-.. automodule:: espargos.iq_pool
+.. automodule:: espargos.iq_receiver
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.iq_transmitter
+-----------------------
+
+.. automodule:: espargos.iq_transmitter
    :members:
    :undoc-members:
    :show-inheritance:
@@ -261,7 +270,7 @@ espargos.iq_backlog
    :show-inheritance:
 
 espargos.iq_reference
---------------------
+---------------------
 
 .. automodule:: espargos.iq_reference
    :members:

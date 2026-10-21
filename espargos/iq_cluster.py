@@ -2,7 +2,7 @@
 
 """Assemble IQ chunks with the same synchronized index into one array snapshot.
 
-After broadband reference sync (:meth:`espargos.IQPool.sync`), ordinary
+After broadband reference sync (:meth:`espargos.IQReceiver.sync`), ordinary
 raw-IQ chunks use their common ``source_chunk_index`` as the association key.
 Signal chunks use ``(config_generation, capture_id, capture_chunk_offset)``
 because that tuple identifies an event within one array. Separate arrays

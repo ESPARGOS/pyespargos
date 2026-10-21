@@ -52,7 +52,7 @@ The library supports combining multiple ESPARGOS arrays into larger antenna arra
 </table>
 
 *pyespargos* comes with a selection of demo applications for testing ESPARGOS.
-All demos are built on a common application framework (`demos/common`) that provides:
+Receive demos are built on a common application framework (`demos/common`) that provides:
 * A consistent command-line interface and YAML configuration support
 * A graphical pool management drawer for connecting to ESPARGOS devices
 * Selectable preamble formats (L-LTF, HT20, HT40)
@@ -62,6 +62,7 @@ The following demos are provided in the `demos` folder of this repository:
 
 | Demo | Description |
 |------|-------------|
+| `iq-transmit-beamforming` | Control up to four TX beams across a single or combined array, with waveform generation/upload, beamspace steering, RX/TX calibration and a reference monitor. See [usage](demos/iq-transmit-beamforming/README.md). |
 | `iq-signal-analyzer` | Display synchronized raw IQ as power/phase waterfalls, I/Q traces, constellations, and spectra. Supports Interval, Accumulate, and Signal capture; see [usage](demos/iq-signal-analyzer/README.md). |
 | `music-spectrum` | Use the [MUSIC algorithm](https://en.wikipedia.org/wiki/MUSIC_(algorithm)) to display a spatial (angular) spectrum. Demonstrates angle of arrival (AoA) estimation. |
 | `phases-over-space` | Show the average received phase for each ESPARGOS antenna. |

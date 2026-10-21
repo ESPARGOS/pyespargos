@@ -15,7 +15,7 @@ across all sensors):
 
 Capture control (frequency, sample rate, analog filter bandwidth, RF switch,
 gain, triggers), array time sync and phase calibration come from the reusable
-espargos interfaces: IQPool assembles the chunk streams into
+espargos interfaces: IQReceiver assembles the chunk streams into
 synchronized clusters and manages the IQ lifecycle, IQController adapts it to
 the drawer UI (IQSettings.qml).
 
@@ -200,18 +200,18 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def boardCount(self):
-        return len(self.pool.boards) if hasattr(self, "pool") else 1
+        return len(self.receiver.boards) if hasattr(self, "pool") else 1
 
     @PyQt6.QtCore.pyqtProperty("QVariantList", constant=True)
     def boardHosts(self):
-        return [b.host for b in self.pool.boards] if hasattr(self, "pool") else []
+        return [b.host for b in self.receiver.boards] if hasattr(self, "pool") else []
 
     @PyQt6.QtCore.pyqtSlot(int)
     def set_active_board(self, index):
         """Tab switch: render this board's waterfalls (only the active board
         is rendered — with 4+ boards rendering everything is too costly; the
         clusters span all boards, so switching just changes the slice)."""
-        if index == self.active_board or not hasattr(self, "pool") or not (0 <= index < len(self.pool.boards)):
+        if index == self.active_board or not hasattr(self, "pool") or not (0 <= index < len(self.receiver.boards)):
             return
         self.active_board = index
         self.block_acc = {}
@@ -327,7 +327,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
             return
         self._spectrum_config_read_at = now
         try:
-            cfg = self.pool.get_config()
+            cfg = self.receiver.get_config()
             sample_rate_hz = DECIM_TO_FS.get(int(cfg.get("adc_decimation", 1)), DECIM_TO_FS[1])
             receivers = cfg.get("receivers", [])
             center_hz = float(receivers[0].get("rf_freq_hz", 2437e6)) if receivers else 2437e6
@@ -365,9 +365,9 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
             clusters = self._pending_clusters[:count]
             del self._pending_clusters[:count]
         board = self.active_board
-        if not clusters or board >= len(self.pool.boards):
+        if not clusters or board >= len(self.receiver.boards):
             return []
-        revision = self.pool.boards[board].revision
+        revision = self.receiver.boards[board].revision
         positions = [revision.antenna_id_to_row_col(antenna_id) for antenna_id in range(SENSOR_COUNT)]
         sets = []
         for arrived, cluster in clusters:
@@ -562,16 +562,16 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
     def _start_iq_gui(self):
         """After the framework pool is up: expose the pool's QML adapter,
         subscribe the display to delivered clusters, and synchronize/calibrate IQ."""
-        hosts = ", ".join(b.host for b in self.pool.boards)
-        self.logger.info(f"IQ capture starting ({len(self.pool.boards)} board(s): {hosts})")
+        hosts = ", ".join(b.host for b in self.receiver.boards)
+        self.logger.info(f"IQ capture starting ({len(self.receiver.boards)} board(s): {hosts})")
         self.iqcontrol = self.create_iq_controller()
         self.iqcontrol.configChanged.connect(self._update_display_config)
         self.iqcontrol.set_apply_calibration(bool(self.appconfig.get("apply_calibration")))
         self.engine.rootContext().setContextProperty("iqcontrol", self.iqcontrol)
         # Observe each cluster from its first arrival; the display has its own
         # bounded settling window, independent of calibration/library consumers.
-        self.pool.add_iq_callback(self._on_iq_cluster, callback_predicate=lambda cluster: True)
-        self.pool.add_accumulation_callback(self._on_iq_cluster, callback_predicate=lambda cluster: True)
+        self.receiver.add_callback(self._on_iq_cluster, callback_predicate=lambda cluster: True)
+        self.receiver.add_accumulation_callback(self._on_iq_cluster, callback_predicate=lambda cluster: True)
 
         self.iqcontrol.sync_async()
         self.start_render()

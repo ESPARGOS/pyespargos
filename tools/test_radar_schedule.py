@@ -17,7 +17,7 @@ def normalize_mac(mac: str) -> str:
     return str(mac).replace(":", "").lower()
 
 
-def build_schedule_lookup(pool: espargos.CSIPool, pool_radar_config: espargos.radar.RadarPoolConfig):
+def build_schedule_lookup(pool: espargos.WiFiTransceiver, pool_radar_config: espargos.radar.RadarPoolConfig):
     calibration = pool.calibration
     schedule_by_source_mac = {}
     for board_index, (board_obj, board_config) in enumerate(zip(pool.boards, pool_radar_config.board_configs)):
@@ -43,7 +43,8 @@ def main():
     parser.add_argument("--threshold-us", type=float, default=50.0, help="Acceptable absolute mean residual threshold [us]")
     args = parser.parse_args()
 
-    pool = espargos.CSIPool([espargos.Board(args.host)])
+    owner = espargos.Pool(args.host).open()
+    pool = owner.wifi
     collected = []
 
     def on_cluster(csi_cluster: espargos.CSICluster):
@@ -51,8 +52,7 @@ def main():
             collected.append(csi_cluster)
 
     try:
-        pool.start()
-        pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
+        pool.set_tx_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
         pool.calibrate(duration=2, per_board=False, run_in_thread=True)
 
         calibration = pool.calibration
@@ -66,7 +66,7 @@ def main():
         sensor_shape = (espargos.constants.ROWS_PER_BOARD, espargos.constants.ANTENNAS_PER_ROW)
         t0_by_sensor = effective_start_s + np.arange(espargos.constants.ANTENNAS_PER_BOARD, dtype=np.float64).reshape(sensor_shape) * (args.slot_us / 1e6)
         period_by_sensor = np.full(sensor_shape, args.period_us / 1e6, dtype=np.float64)
-        current_radar_config = pool.get_radar_config()
+        current_radar_config = pool.get_tx_config()
 
         pool_radar_config = espargos.radar.build_pool_config(
             calibration=calibration,
@@ -79,16 +79,16 @@ def main():
             rf_switch_state=espargos.sensor.RFSwitchState(int(current_radar_config["rfswitch_state"])),
         )
         schedule_by_source_mac = build_schedule_lookup(pool, pool_radar_config)
-        pool.set_radar_config(pool_radar_config)
+        pool.set_tx_config(pool_radar_config)
 
-        pool.add_csi_callback(
+        pool.add_callback(
             on_cluster,
             callback_predicate=lambda cluster: np.sum(cluster.completion) >= np.prod(cluster.completion.shape) - 1,
         )
 
         end_time = time.time() + args.duration
         while time.time() < end_time:
-            pool.run()
+            owner.run()
 
         if not collected:
             raise RuntimeError("No radar packets were captured")
@@ -147,10 +147,10 @@ def main():
         print("Radar schedule check passed")
     finally:
         try:
-            pool.set_radar_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
+            pool.set_tx_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
         except Exception:
             pass
-        pool.stop()
+        owner.close()
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ re-lock, which is why they must be measured by a calibration run.
 reference-path delays and synthesizes the corresponding correction vector for any
 frequency grid on demand. It is a data container plus synthesis: how the
 offsets are estimated is up to the measurement-format-specific code, e.g.
-:meth:`.CSIPool.calibrate`.
+:meth:`.WiFiTransceiver.calibrate`.
 
 Static per-sensor hardware characteristics (such as baseband filter ripple)
 are deliberately out of scope: calibration only compensates the phase and

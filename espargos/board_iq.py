@@ -106,7 +106,12 @@ class IQCapability(BoardCapability):
         return self._board.control.post_json("set_iq_sync_anchor", payload)
 
     def set_reference(self, mode="off", freq_hz=None, backoff_qdb=30, cw_tuning=None):
-        """Set the API-v4 reference source: off, cw, or broadband iq."""
+        """Set the controller reference source: off, cw, or broadband iq.
+
+        Reference generation is independent of sensor modes.
+        WiFi reference packets pause while CW/noise owns the radio and resume
+        when disabled. Stop reference monitoring before enabling this source.
+        """
         payload = {"mode": mode}
         if mode != "off":
             payload.update(freq_khz=round(freq_hz / 1000), backoff_qdb=backoff_qdb)
@@ -115,7 +120,7 @@ class IQCapability(BoardCapability):
         return self._board.control.post_json("set_iq_reference", payload)
 
     def get_reference(self):
-        """Return the API-v4 reference source state."""
+        """Return the reference source state."""
         return self._board.control.get_json("get_iq_reference")
 
     def subscribe_chunks(

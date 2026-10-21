@@ -2,7 +2,9 @@ Phase-Coherent Multi-Array Systems
 ==================================
 
 By default, each ESPARGOS device with its 2 × 4 antennas is phase-coherent only *within itself*: the eight antennas of one array share a common reference, but separate arrays each use their own internal reference and are therefore *not* mutually phase-coherent.
-You can, however, make multiple ESPARGOS devices phase-coherent with each other by driving them all from the same reference signal.
+We can operate multiple ESPARGOS devices coherently by sharing a clock and
+calibrating their relative phase and timing offsets. This applies to WiFi
+reception, raw IQ reception and IQ transmission.
 This is an advanced feature intended for research use only.
 
 A phase-coherent system built from several ESPARGOS devices can be arranged in two ways:
@@ -17,7 +19,9 @@ If you don't need phase-coherence *across* devices, there is no need to follow t
 .. note::
    Several independent, unsynchronized arrays are sufficient for many applications.
    Angle-of-arrival (AoA) localization relies only on the phase coherence *within* a single device and needs no synchronization between devices.
-   Only time-of-arrival (ToA) localization, which compares signal timing *across* devices, requires the phase-coherent setup described here.
+   Comparing arrival times across devices, combining their received signals
+   coherently, or steering a transmit beam across boards requires a shared
+   timing reference and the appropriate calibration.
 
 .. figure:: _static/phase-coherent-topology.png
    :alt: Phase-coherent star-topology setup
@@ -51,7 +55,8 @@ Wire the devices in a **star topology** (see schematic above):
 * Because the master must also receive the reference back, the SYNC OUT signal is **always** routed through an RF power splitter, with one output port per node, *including the master itself*.
 * **All cables from the splitter outputs to the devices must be identical in length and type.**
   Any difference in electrical length introduces a fixed phase offset between the devices.
-  (Alternatively, see the *cable_lengths* parameter below to compensate for known length differences in software.)
+  (Alternatively, describe known cable lengths in the array configuration
+  so calibration can account for them.)
 
 Choosing a splitter and amplifier
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -81,88 +86,107 @@ The power of the clock signal is the most critical; the phase reference signal i
    Never run a master with SYNC OUT left open: always route it through shielded SMA cabling into a splitter, or terminate the port.
 
 Software Setup
---------------
-Once the devices are wired, select each device's role on the **Settings** page of its web interface, in the **Reference Signal and Channel** card.
+----------------
+
+The reference role describes the wiring. It is independent of whether the
+sensors use WiFi, IQ RX or IQ TX. In the web interface's **Settings**, select
+**Reference Signal Source** for each board:
+
+* **Internal**: a standalone array uses its own clock and reference generator.
+* **Master (OUT + IN)**: the board generates the shared reference and receives
+  it back through the splitter on SYNC IN.
+* **Slave (IN only)**: the board receives the master's reference on SYNC IN.
 
 .. figure:: _static/web-reference-signal.png
-   :alt: Reference Signal and Channel settings card
+   :alt: Reference source and WiFi reference generation settings
    :align: center
    :width: 600
 
-   The **Reference Signal and Channel** settings card: per-unit selection of the reference signal source (Internal / Master / Slave) and of when the phase reference is generated.
-
-Two settings govern the phase-coherent multi-array behavior:
-
-* **Reference Signal Source** selects how the device obtains the reference:
-
-  * *Internal*: standalone single array (default). The device uses its own internal generator; the SYNC ports are unused.
-  * *Master (OUT + IN)*: the device generates the shared reference and drives SYNC OUT, and also locks onto the distributed signal via its own SYNC IN.
-  * *Slave (IN only)*: the device locks onto an external reference received on SYNC IN.
-
-* **Generate Phase Reference** sets when the reference packets are emitted:
-
-  * *During calibration*: emitted only while the sensors measure the reference channel. Use this for *Internal* and *Master* devices.
-  * *Never*: the device never emits the reference. Use this for *Slave* devices, which receive it from the master.
-  * *Always*: continuous emission, intended for debugging only.
-
-For a phase-coherent system, configure:
-
-* **The master device**: *Reference Signal Source* = *Master (OUT + IN)* and *Generate Phase Reference* = *During calibration*.
-* **All slave devices**: *Reference Signal Source* = *Slave (IN only)* and *Generate Phase Reference* = *Never*.
-
-This way, the master generates the phase reference signal for the whole system during calibration, and the slaves never generate a reference signal of their own, so there is no danger of RF leakage at a non-terminated output.
+   Reference-source selection and the WiFi phase-reference policy.
 
 .. warning::
-   Selecting a *Reference Signal Source* that does not match the physical wiring (e.g., *Slave* with no signal present on SYNC IN) will cause the sensors to fail to boot.
-   Leave the setting at *Internal* unless the device is part of a properly wired phase-coherent setup.
+
+   The reference role must match the wiring. A slave without a clock on
+   SYNC IN cannot boot its sensors. Leave standalone boards on **Internal**.
+
+For WiFi calibration, set **Generate Phase Reference** to **During
+calibration** on the master and **Never** on slaves. This setting controls
+WiFi reference packets, not the shared 40 MHz clock. IQ calibration uses
+custom IQ reference signals instead. The Python calibration routines select
+the required controller radio function and coordinate acquisition across
+boards.
 
 .. note::
-   Switching to calibration mode (e.g., by running :code:`CSIPool.calibrate` or in the web interface) on any slave device will now only show phase reference packets if the master is also in calibration mode.
 
-To obtain phase-coherent CSI data from the combined arrays, you can use the following code snippet:
+   Selecting the reference input on a slave does not make the master generate
+   a calibration signal. Calibrate the connected boards together through one
+   ``Pool`` so the library controls both the source and the receivers.
 
-.. code-block:: python
+Configure a combined pool
+---------------------------
 
-  import espargos
-  import time
+An array configuration records board addresses, antenna positions and the
+reference cables from splitter outputs to boards. For example, the supplied
+aperture-kit configuration describes four boards arranged as an 8 × 4 array::
 
-  pool = espargos.CSIPool([
-    espargos.Board("192.168.1.2"),
-    espargos.Board("192.168.1.3"),
-    espargos.Board("192.168.1.4"),
-    espargos.Board("192.168.1.5")
-  ])
-  pool.set_csi_acquisition_config({"acquire_csi_force_lltf": True})
-  pool.start()
-  pool.calibrate(
-      duration=2,
-      per_board=False,
-      cable_lengths=[0.4, 0.4, 0.8, 0.8],
-      cable_velocity_factors=[0.76, 0.76, 0.76, 0.76],
-  )
+   from espargos import Pool
 
-  backlog = espargos.CSIBacklog(
-      pool,
-      fields=["lltf"],
-      size=20,
-  )
-  backlog.add_filter(espargos.Exclude11bFilter())
-  backlog.start()
+   pool = Pool.from_config("config/aperture-kit-8x4.yml")
 
-  # Wait for a while to collect some WiFi packets in the backlog...
-  time.sleep(4)
+Each board's ``cable.length`` is in metres. ``cable.velocity_factor`` gives
+propagation speed relative to the speed of light. Calibration uses these
+values to account for different cable delays. Use the cable manufacturer's
+velocity factor and the measured cable length. Equal cables contribute a
+common delay, so their length differences are zero.
 
-  print("Received CSI of shape:", backlog.get("lltf").shape)
+The configuration describes geometry and cabling. It does not select sensor
+modes or establish the physical clock connection. See :doc:`pool` for choosing
+sensor subsets and assigning different roles.
 
-  backlog.close()
-  pool.stop()
+Calibrate for the chosen sensor modes
+---------------------------------------
 
-In this example, we create a pool of four ESPARGOS boards by passing a list of four :class:`.Board` instances to the :class:`.CSIPool` constructor.
-The important change is to call the :meth:`.CSIPool.calibrate` method with the *per_board* parameter set to *False*, which means that the phase calibration is performed globally across all arrays and not per-board.
-This requires all ESPARGOS devices to be connected to the same phase reference signal generator (the master) so that all sensors receive the same phase reference signal packets.
-Forced L-LTF acquisition provides the same 53-subcarrier CSI representation for supported legacy, HT, and HE packets.
+``pool.calibrate()`` measures the corrections needed for the sensors' current
+roles. For WiFi reception across a shared reference network, use
+``per_board=False`` to relate receivers across boards::
 
-The optional *cable_lengths* and *cable_velocity_factors* parameters are used to compensate for potentially different cable lengths between the splitter and the ESPARGOS devices.
-If your cables are all the same length, you can omit these parameters.
-If your cables are different lengths, you should measure / calculate the total cable length between the splitter and each ESPARGOS device and provide these values in the *cable_lengths* list.
-You can usually look up the velocity factor in the datasheet of the coaxial cable.
+   with Pool.from_config("config/aperture-kit-8x4.yml") as pool:
+       pool.configure(mode="wifi", channel=6)
+       calibration = pool.calibrate(per_board=False)
+
+For IQ reception, we configure the sample rate and frequency before calibration::
+
+   with Pool.from_config("config/aperture-kit-8x4.yml") as pool:
+       pool.configure(mode="iq_rx", frequency_hz=2437e6,
+                      sample_rate_hz=80e6)
+       calibration = pool.calibrate()
+
+These examples obtain calibration results. :doc:`wifi-reception` and
+:doc:`iq-reception` show how to acquire measurements, and :doc:`calibration`
+explains how to apply corrections and combine calibration groups.
+
+IQ transmit calibration
+-------------------------
+
+For IQ TX, prepare the signals before calling ``pool.calibrate()``. There are
+two methods:
+
+* ``tx_method="monitor"``: sensors transmit into REF and the controller
+  receives them. This requires a bidirectional RF path through the reference
+  network.
+* ``tx_method="reciprocity"``: sensors receive the controller reference and
+  exchange pilots with each other. The controller-to-sensor path may be
+  unidirectional. Sensor-to-sensor coupling must still be sufficient for the
+  selected antennas to be calibrated together.
+
+.. warning::
+
+   Aperture kits with an amplifying reference splitter cannot use the
+   controller-monitor method through that splitter. Use reciprocity with
+   ``path="reference"``, or an antenna feed if the reference network does not
+   provide sufficient coupling between sensors.
+
+Use the Python library for combined-array TX calibration. The web interface
+supports TX calibration on standalone arrays only. See :doc:`iq-transmission`
+for waveform preparation and beam steering, and :doc:`calibration` for the
+signal paths used by each method.

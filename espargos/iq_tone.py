@@ -11,7 +11,7 @@ The controller's reference tone generator has two regimes:
   cap in ~4.7 MHz steps, reproducible to ~1 MHz within the accurate table.
 
 This module holds the measured cap->frequency tables and the pure planning
-functions; the RPC keying lives in :class:`espargos.iq_pool.IQPool`.
+functions; the RPC keying lives in :class:`espargos.iq_receiver.IQReceiver`.
 """
 
 import numpy as np

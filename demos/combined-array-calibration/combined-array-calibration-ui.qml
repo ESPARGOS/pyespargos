@@ -8,7 +8,7 @@ import "../common" as Common
 
 Common.ESPARGOSApplication {
 	id: window
-	receiverDrawerComponent: Component { Common.CSIReceiverDrawer {} }
+	receiverDrawerComponent: Component { Common.WiFiTransceiverDrawer {} }
 	title: "Combined Array Calibration Demo"
 
 	// Tab20 color cycle reordered: https://github.com/matplotlib/matplotlib/blob/main/lib/matplotlib/_cm.py#L1293

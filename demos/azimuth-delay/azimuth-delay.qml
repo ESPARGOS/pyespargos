@@ -8,7 +8,7 @@ import "../common" as Common
 
 Common.ESPARGOSApplication {
     id: window
-    receiverDrawerComponent: Component { Common.CSIReceiverDrawer {} }
+    receiverDrawerComponent: Component { Common.WiFiTransceiverDrawer {} }
     title: "Azimuth-Delay Demo"
     minimumWidth: 1024
     minimumHeight: 768

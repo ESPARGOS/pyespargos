@@ -1,15 +1,6 @@
-"""Board WiFi receive controls and CSI sensor-message decoding.
+"""WiFi receive controls and decoded CSI delivery for one board.
 
-An ESPARGOS board can receive WiFi frames on all of its sensors and report
-their channel state information (CSI).  This capability owns the controller
-settings that affect that receive path—channel selection, CSI acquisition, RF
-switches, filtering, frequency correction, and gain—and turns raw
-sensor-message payloads into decoded CSI packets.
-
-Keeping this API on ``board.wifi_rx`` leaves :class:`espargos.board.Board`
-responsible only for controller identity, transport, and generic sensor-message
-delivery.  Other acquisition modes can therefore add their own capabilities
-without growing the Board interface.
+Access through board.wifi_rx. Pool.wifi assembles messages into CSI clusters.
 """
 
 from __future__ import annotations
@@ -114,7 +105,9 @@ class WiFiRxCapability(BoardCapability):
 
         Supported keys include ``channel-primary``, ``channel-secondary``,
         ``country-code``, and the ``calib-*`` reference-signal settings. Only
-        provided fields are changed by the controller.
+        provided fields are changed by the controller. This command also
+        resets sensor channel overrides to the board's primary/secondary
+        channel. Use :meth:`set_reference_config` to leave sensors tuned.
         """
 
         self._board.control.command("set_wificonf", config)
@@ -123,6 +116,16 @@ class WiFiRxCapability(BoardCapability):
         """Return the board's WiFi receive and calibration configuration."""
 
         return self._board.control.get_json("get_wificonf")
+
+    def set_reference_config(self, config: dict):
+        """Update the controller's WiFi reference without retuning sensors.
+
+        Accepts the same fields as :meth:`set_config`. Sensor channel settings
+        stay unchanged, including when they previously matched the controller.
+        Use :meth:`get_config` to read the resulting reference configuration and
+        :meth:`get_channel_overrides` for the actual sensor channels.
+        """
+        self._board.control.command("set_wifi_reference_config", config)
 
     def set_csi_acquisition_config(self, config: dict):
         """Update which WiFi training fields the sensors acquire as CSI.
