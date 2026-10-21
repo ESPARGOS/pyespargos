@@ -16,6 +16,7 @@ from . import sensor_backlog
 from . import sensor_cluster
 from . import array_processing
 from . import combined_array
+from . import polarization
 from . import csi_processing
 from . import delay_estimation
 from . import pool

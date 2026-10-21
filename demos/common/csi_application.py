@@ -258,6 +258,10 @@ class SingleCSIFormatMixin:
             return None
 
         csi_key = self._resolve_backlog_preamble_format(allow_incomplete=allow_incomplete)
+        # Discard buffered HT40 samples after switching back to a 20 MHz channel.
+        if csi_key == "ht40" and self.pooldrawer.configManager().get("secondary_channel") == 0:
+            self.backlog.clear()
+            return None
 
         try:
             results = list(self.backlog.get_multiple([csi_key, *additional_keys]))

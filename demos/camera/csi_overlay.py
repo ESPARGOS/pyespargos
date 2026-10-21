@@ -50,12 +50,15 @@ class CSIOverlay(PyQt6.QtCore.QObject):
             self.macListChanged.emit(list(self.recent_macs))
 
     def publish_polarization(self, vertical, horizontal):
-        image = np.zeros(vertical.size * 4, dtype=np.uint8)
-        image[0::4] = np.clip(np.swapaxes((vertical + 1.0) / 2.0, 0, 1).ravel(), 0, 1) * 255
-        image[1::4] = np.clip(np.swapaxes((horizontal.real + 1.0) / 2.0, 0, 1).ravel(), 0, 1) * 255
-        image[2::4] = np.clip(np.swapaxes((horizontal.imag + 1.0) / 2.0, 0, 1).ravel(), 0, 1) * 255
-        image[3::4] = 255
-        self.polarizationImagedataChanged.emit(image.tolist())
+        # Two opaque RGB tiles retain all four Jones components without using
+        # alpha for data (Qt Canvas textures use premultiplied alpha).
+        components = np.concatenate([horizontal.T, vertical.T], axis=1)
+        image = np.empty((*components.shape, 4), dtype=np.uint8)
+        image[..., 0] = np.rint(np.clip((components.real + 1) / 2, 0, 1) * 255)
+        image[..., 1] = np.rint(np.clip((components.imag + 1) / 2, 0, 1) * 255)
+        image[..., 2] = 0
+        image[..., 3] = 255
+        self.polarizationImagedataChanged.emit(image.ravel().tolist())
 
     def publish_spatial_spectrum(self, power, frequency_space=None):
         power = np.asarray(power)

@@ -302,7 +302,7 @@ Common.ESPARGOSApplication {
                     }
 
                     Label {
-                        text: "For this demo, disable the AGC (use manual gain) and choose RF switch state \"Random\""
+                        text: "For this demo, choose RF switch state \"Random\""
                         color: textColor
                         horizontalAlignment: Text.AlignHCenter
                         Layout.alignment: Qt.AlignHCenter
@@ -373,26 +373,6 @@ Common.ESPARGOSApplication {
 
             title: "Settings"
             endpoint: appconfig
-
-            Label {
-                text: "Crosspol Fix"
-                color: "#ffffff"
-                horizontalAlignment: Text.AlignRight
-                Layout.alignment: Qt.AlignRight
-                Layout.fillWidth: true
-            }
-
-            Switch {
-                id: simpleJonesSwitch
-
-                property string configKey: "crosspol_compensation"
-                property string configProp: "checked"
-
-                Component.onCompleted: appDrawer.configManager.register(this)
-                onCheckedChanged: appDrawer.configManager.onControlChanged(this)
-                implicitWidth: 80
-                checked: false
-            }
 
             Label {
                 text: "Show Mean"

@@ -19,6 +19,7 @@ layout(std140, binding = 0) uniform buf {
 	float gridSpacing;
 	float azimuthCorrection;
 	float elevationCorrection;
+	vec2 polarizationTexelSize;
 };
 
 // Constants for polarization mode
@@ -72,24 +73,18 @@ void main() {
 
 	// dot/trace overlay, only visible in polarization "show" mode
 	if (polarizationVisible == 1) {
-		// Decode polarization from texture
-		// R = V real part, encoded as [0,1] -> [-1,1] (signed: preserves polarity between sources)
-		// G = H real part, encoded as [0,1] -> [-1,1]
-		// B = H imag part, encoded as [0,1] -> [-1,1]
-		// A = 1.0 (opaque)
-		// Power scaling is already baked into R/G/B by Python when normalization is off.
-		float v_re = beamspacePolarization.r * 2.0 - 1.0;
-		float h_re = beamspacePolarization.g * 2.0 - 1.0;
-		float h_im = beamspacePolarization.b * 2.0 - 1.0;
+		// The vertex shader unpacks the two opaque Jones-component tiles.
+		float h_re = beamspacePolarization.r * 2.0 - 1.0;
+		float h_im = beamspacePolarization.g * 2.0 - 1.0;
+		float v_re = beamspacePolarization.b * 2.0 - 1.0;
+		float v_im = beamspacePolarization.a * 2.0 - 1.0;
 
-		// Compute instantaneous E-field: Re(polarization * e^{j*omega*t})
-		// This traces out the polarization ellipse over time
-		// V is predominantly real after global phase normalization (can be negative for
-		// sources with opposite sign), so V contributes only via cos(t)
+		// Re(E * exp(j*omega*t)) preserves slant linear polarization at
+		// every common phase, as well as genuinely elliptical fields.
 		float ct = cos(pol_oscillation_freq * time);
 		float st = sin(pol_oscillation_freq * time);
-		float ev = v_re * ct;                // vertical displacement (V is signed real)
-		float eh = h_re * ct - h_im * st;    // horizontal displacement
+		float ev = v_re * ct - v_im * st;
+		float eh = h_re * ct - h_im * st;
 
 		// Displace each grid point by the polarization ellipse position
 		// Check all 4 neighboring grid centers to handle large displacements crossing cell boundaries
@@ -123,7 +118,7 @@ void main() {
 
 			float ct_sample = cos(phase);
 			float st_sample = sin(phase);
-			float ev_sample = v_re * ct_sample;
+			float ev_sample = v_re * ct_sample - v_im * st_sample;
 			float eh_sample = h_re * ct_sample - h_im * st_sample;
 
 			for (int dy = 0; dy <= 1; dy++) {

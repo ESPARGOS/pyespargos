@@ -51,7 +51,7 @@ Rectangle {
 		// This is the source for the polarization canvas (polarization information)
 		property Canvas polarizationCanvas: Canvas {
 			id: polarizationCanvas
-			width: overlayModel.resolutionAzimuth
+			width: 2 * overlayModel.resolutionAzimuth
 			height: overlayModel.resolutionElevation
 
 			property var polarizationImageData: undefined
@@ -103,6 +103,7 @@ Rectangle {
 				+ Math.PI * overlayModel.polarizationSpeed * frameTime) % (2 * Math.PI)
 		}
 		property bool polarizationVisible: overlayModel.polarizationVisible
+		property vector2d polarizationTexelSize: Qt.vector2d(1.0 / overlayModel.resolutionAzimuth, 1.0 / overlayModel.resolutionElevation)
 		property real gridSpacing: overlayModel.gridSpacing
 		property real azimuthCorrection: overlayModel.azimuth_correction
 		property real elevationCorrection: overlayModel.elevation_correction
