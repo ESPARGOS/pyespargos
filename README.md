@@ -2,82 +2,22 @@
 
 <img src="img/espargos-logo.png" width="40%" align="right">
 
-*pyespargos* is the Python library for working with the [ESPARGOS](https://espargos.net/) WiFi channel sounder.
-ESPARGOS is a real-time-capable, phase-synchronous 2 &times; 4 WiFi antenna array built from Espressif ESP32 chips that facilitates the development and deployment of WiFi sensing applications.
+*pyespargos* is the Python library for working with [ESPARGOS](https://espargos.net/), a low-cost digital phased array built from Espressif ESP32 chips.
+An ESPARGOS array contains eight phase-synchronized ESP32 radio front-ends, one per antenna, that are orchestrated by a central controller.
+The current hardware, [ESPARGOS One](https://espargos.net/espargos-one/), is a 4 &times; 2 array of dual-polarized patch antennas for the 2.4 GHz band and is controlled and powered over Ethernet (PoE) or USB-C.
+Multiple arrays can be combined into one larger phase-coherent aperture.
 
-The library supports combining multiple ESPARGOS arrays into larger antenna arrays, various CSI preamble formats (L-LTF, HT20, HT40), and provides a flexible calibration system for multi-board setups.
+With *pyespargos*, you can use ESPARGOS to
 
-## Different Hardware Revisions
-<table>
-	<tr>
-		<th width="50%">Your ESPARGOS looks like this:</th>
-		<th width="50%">Your ESPARGOS looks like this:</th>
-	</tr>
-	<tr>
-		<td width="50%"><img src="img/espargosv2.jpg" width="100%"></td>
-		<td width="50%"><img src="img/espargosv1.jpg" width="100%"></td>
-	</tr>
-	<tr>
-		<td width="50%">&rarr; You have the current ESPARGOS, please use the <code>main</code> branch of this repository.</td>
-		<td width="50%">&rarr; You have the older prototype generation of ESPARGOS, please use the <code>legacy-prototype</code> branch of this repository. This hardware revision is no longer supported.</td>
-	</tr>
-</table>
+* **measure WiFi channels**: ESPARGOS passively extracts channel state information (CSI) from received 802.11g/n/ax packets in real time, phase-coherent across all antennas and arrays. Supported formats are L-LTF, HT-LTF (20 and 40 MHz) and HE-LTF.
+* **capture raw I/Q samples**: ESPARGOS can record synchronized complex baseband samples from all antennas, bypassing WiFi decoding (see [ESP-SDR](https://espargos.net/espsdr/)). This is useful for non-WiFi signals and radar-like measurements.
+* **transmit** (requires transmit authorization): sensors can send WiFi packets on a schedule, or replay arbitrary I/Q waveforms with beam steering across the array.
 
-## Demo Applications
-<table style="max-width: 800px;">
-	<tr>
-		<th style="text-align: center;">MUSIC Spatial Spectrum</th>
-		<th style="text-align: center;">Receive Signal Phase by Antenna</th>
-	</tr>
-	<tr>
-		<td style="text-align: center;"><img src="img/demo-gifs/music-spatial-spectrum.gif" width="100%"></td>
-		<td style="text-align: center;"><img src="img/demo-gifs/phases-over-space.gif" width="100%"></td>
-	</tr>
-	<tr>
-		<th style="text-align: center;">Instantaneous CSI: Frequency Domain</th>
-		<th style="text-align: center;">Instantaneous CSI: Time Domain</th>
-	</tr>
-	<tr>
-		<td style="text-align: center;"><img src="img/demo-gifs/instantaneous-fdomain-csi.gif" width="100%"></td>
-		<td style="text-align: center;"><img src="img/demo-gifs/instantaneous-tdomain-csi.gif" width="100%"></td>
-	</tr>
-	<tr>
-		<th style="text-align: center;">Phases over Time</th>
-		<th style="text-align: center;">Combined 8 &times; 4 ESPARGOS Array</th>
-	</tr>
-	<tr>
-		<td style="text-align: center;"><img src="img/demo-gifs/phases-over-time.gif" width="100%"></td>
-		<td style="text-align: center;"><img src="img/demo-gifs/combined-array.gif" width="100%"></td>
-	</tr>
-</table>
+The library handles device communication, clustering of measurements across sensors and boards, and phase/timing calibration, and provides array-processing utilities such as angle-of-arrival estimation.
+It also ships with a collection of demo applications, listed below.
+Full documentation, including runnable examples and the API reference, is available at [espargos.net/docs](https://espargos.net/docs/).
 
-*pyespargos* comes with a selection of demo applications for testing ESPARGOS.
-Receive demos are built on a common application framework (`demos/common`) that provides:
-* A consistent command-line interface and YAML configuration support
-* A graphical pool management drawer for connecting to ESPARGOS devices
-* Selectable preamble formats (L-LTF, HT20, HT40)
-* Configurable CSI backlog settings
-
-The following demos are provided in the `demos` folder of this repository:
-
-| Demo | Description |
-|------|-------------|
-| `iq-transmit-beamforming` | Control up to four TX beams across a single or combined array, with waveform generation/upload, beamspace steering, RX/TX calibration and a reference monitor. See [usage](demos/iq-transmit-beamforming/README.md). |
-| `iq-signal-analyzer` | Display synchronized raw IQ as power/phase waterfalls, I/Q traces, constellations, and spectra. Supports Interval, Accumulate, and Signal capture; see [usage](demos/iq-signal-analyzer/README.md). |
-| `music-spectrum` | Use the [MUSIC algorithm](https://en.wikipedia.org/wiki/MUSIC_(algorithm)) to display a spatial (angular) spectrum. Demonstrates angle of arrival (AoA) estimation. |
-| `phases-over-space` | Show the average received phase for each ESPARGOS antenna. |
-| `instantaneous-csi` | Plot the current frequency-domain or time-domain transfer function of the measured channel. |
-| `phases-over-time` | Plot the average received phase for every antenna over time. |
-| `tdoas-over-time` | Visualize time difference of arrival (TDOA) measurements over time. |
-| `azimuth-delay` | Display a 2D azimuth-delay diagram using beamspace processing. Ships with pre-compiled shaders; see [`demos/azimuth-delay/README.md`](demos/azimuth-delay/README.md) in case of shader issues. |
-| `polarization` | Visualize WiFi signal polarization using constellation diagrams and polarization ellipses. |
-| `speedtest` | Measure CSI packet throughput from ESPARGOS. |
-| `combined-array` | Combine multiple ESPARGOS arrays into one large antenna array and visualize the average received phase for each antenna. Requires multiple ESPARGOS arrays. |
-| `combined-array-calibration` | Tool for calibrating combined multi-board antenna arrays. Visualizes and exports calibration data. |
-| `camera` | Overlay WiFi spatial spectrum on a live camera feed. Ships with pre-compiled shaders; see [`demos/camera/README.md`](demos/camera/README.md) in case of shader issues. |
-| `radiation-pattern-3d` | Interactive 3D radiation pattern visualization. Requires additional packages (see [`demos/radiation-pattern-3d/README.md`](demos/radiation-pattern-3d/README.md)). |
-
-Most demos support both single ESPARGOS arrays and combined multi-board setups via command-line arguments or YAML configuration files.
+<p align="center"><a href="https://espargos.net/espargos-one/"><img src="img/espargos-one-banner.svg" width="900" alt="ESPARGOS One: Digital Phased Array for 2.4 GHz"></a></p>
 
 ## Installation
 
@@ -161,7 +101,6 @@ sudo pacman -S qt6-shadertools
 ---
 
 ### <img src="img/windows-logo.svg" width="20" height="20" style="vertical-align: middle;"> Windows
-*(not recommended)*
 
 <details>
 <summary><b>Click to expand Windows instructions</b></summary>
@@ -221,7 +160,6 @@ Demos such as `camera` and `azimuth-delay` use shaders, which are shipped in pre
 ---
 
 ### <img src="img/macos-logo.svg" width="20" height="20" style="vertical-align: middle;"> macOS
-*(not recommended)*
 
 <details>
 <summary><b>Click to expand macOS instructions</b></summary>
@@ -294,7 +232,61 @@ qsb --version
 
 </details>
 
----
+## Demo Applications
+<table style="max-width: 800px;">
+	<tr>
+		<th style="text-align: center;">MUSIC Spatial Spectrum</th>
+		<th style="text-align: center;">Receive Signal Phase by Antenna</th>
+	</tr>
+	<tr>
+		<td style="text-align: center;"><img src="img/demo-gifs/music-spatial-spectrum.gif" width="100%"></td>
+		<td style="text-align: center;"><img src="img/demo-gifs/phases-over-space.gif" width="100%"></td>
+	</tr>
+	<tr>
+		<th style="text-align: center;">Instantaneous CSI: Frequency Domain</th>
+		<th style="text-align: center;">Instantaneous CSI: Time Domain</th>
+	</tr>
+	<tr>
+		<td style="text-align: center;"><img src="img/demo-gifs/instantaneous-fdomain-csi.gif" width="100%"></td>
+		<td style="text-align: center;"><img src="img/demo-gifs/instantaneous-tdomain-csi.gif" width="100%"></td>
+	</tr>
+	<tr>
+		<th style="text-align: center;">Phases over Time</th>
+		<th style="text-align: center;">Combined 8 &times; 4 ESPARGOS Array</th>
+	</tr>
+	<tr>
+		<td style="text-align: center;"><img src="img/demo-gifs/phases-over-time.gif" width="100%"></td>
+		<td style="text-align: center;"><img src="img/demo-gifs/combined-array.gif" width="100%"></td>
+	</tr>
+</table>
+
+*pyespargos* comes with a selection of demo applications for testing ESPARGOS.
+Receive demos are built on a common application framework (`demos/common`) that provides:
+* A consistent command-line interface and YAML configuration support
+* A graphical pool management drawer for connecting to ESPARGOS devices
+* Selectable preamble formats (L-LTF, HT20, HT40)
+* Configurable CSI backlog settings
+
+The following demos are provided in the `demos` folder of this repository:
+
+| Demo | Description |
+|------|-------------|
+| `iq-transmit-beamforming` | Control up to four TX beams across a single or combined array, with waveform generation/upload, beamspace steering, RX/TX calibration and a reference monitor. See [usage](demos/iq-transmit-beamforming/README.md). |
+| `iq-signal-analyzer` | Display synchronized raw IQ as power/phase waterfalls, I/Q traces, constellations, and spectra. Supports Interval, Accumulate, and Signal capture; see [usage](demos/iq-signal-analyzer/README.md). |
+| `music-spectrum` | Use the [MUSIC algorithm](https://en.wikipedia.org/wiki/MUSIC_(algorithm)) to display a spatial (angular) spectrum. Demonstrates angle of arrival (AoA) estimation. |
+| `phases-over-space` | Show the average received phase for each ESPARGOS antenna. |
+| `instantaneous-csi` | Plot the current frequency-domain or time-domain transfer function of the measured channel. |
+| `phases-over-time` | Plot the average received phase for every antenna over time. |
+| `tdoas-over-time` | Visualize time difference of arrival (TDOA) measurements over time. |
+| `azimuth-delay` | Display a 2D azimuth-delay diagram using beamspace processing. Ships with pre-compiled shaders; see [`demos/azimuth-delay/README.md`](demos/azimuth-delay/README.md) in case of shader issues. |
+| `polarization` | Visualize WiFi signal polarization using constellation diagrams and polarization ellipses. |
+| `speedtest` | Measure CSI packet throughput from ESPARGOS. |
+| `combined-array` | Combine multiple ESPARGOS arrays into one large antenna array and visualize the average received phase for each antenna. Requires multiple ESPARGOS arrays. |
+| `combined-array-calibration` | Tool for calibrating combined multi-board antenna arrays. Visualizes and exports calibration data. |
+| `camera` | Overlay WiFi spatial spectrum on a live camera feed. Ships with pre-compiled shaders; see [`demos/camera/README.md`](demos/camera/README.md) in case of shader issues. |
+| `radiation-pattern-3d` | Interactive 3D radiation pattern visualization. Requires additional packages (see [`demos/radiation-pattern-3d/README.md`](demos/radiation-pattern-3d/README.md)). |
+
+Most demos support both single ESPARGOS arrays and combined multi-board setups via command-line arguments or YAML configuration files.
 
 ### Running a Demo
 
@@ -384,6 +376,17 @@ If you need to override the default UART baud rate, append it after `@`, for exa
 
 To build your own ESPARGOS application, either start from one of the demos (they share the application framework in `demos/common`) or use the `espargos` package directly.
 Runnable minimal examples, the API reference and explanations of pools, calibration, WiFi reception/transmission and IQ reception/transmission are in the [pyespargos documentation](https://espargos.net/docs/).
+
+## Older Prototype Hardware
+
+<img src="img/espargosv1.jpg" width="30%" align="right">
+
+If your ESPARGOS looks like the board on the right, you have the older prototype generation from before ESPARGOS One.
+These prototypes were never sold, they were only ever distributed as free-of-charge loans to selected research partners.
+Please use the [`legacy-prototype`](https://github.com/ESPARGOS/pyespargos/tree/legacy-prototype) branch of this repository.
+This hardware revision is no longer supported.
+
+<br clear="right">
 
 ## License
 `pyespargos` is licensed under the GNU Lesser General Public License version 3 (LGPLv3), see `LICENSE` for details.
