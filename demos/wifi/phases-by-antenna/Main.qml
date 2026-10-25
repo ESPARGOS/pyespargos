@@ -13,7 +13,7 @@ Common.ESPARGOSApplication {
 	minimumHeight: 500
 
 	color: "#11191e"
-	title: "Spatial Phase Distribution Demo"
+	title: "Phases by Antenna"
 
 	appDrawerComponent: Component {
 		Common.AppDrawer {
@@ -68,21 +68,21 @@ Common.ESPARGOSApplication {
 			spacing: -2
 
 			Repeater {
-				model: 2
+				model: backend.numberOfRows
 
 				RowLayout {
 					spacing: -2
 
 					Repeater {
-						model: 4
+						model: backend.numberOfColumns
 
 						Rectangle {
 							id: antennaRect
-							implicitWidth: window.width / 6
-							implicitHeight: window.width / 6
+							implicitWidth: window.width / (Math.max(backend.numberOfRows, backend.numberOfColumns) + 2)
+							implicitHeight: window.width / (Math.max(backend.numberOfRows, backend.numberOfColumns) + 2)
 							color: "#cd4141"
 							border.width: 2
-							border.color: antennaArray.isPrimaryTransmitter ? "#33ff33" : "#ffffff"
+							border.color: "#ffffff"
 						}
 					}
 				}
@@ -103,11 +103,11 @@ Common.ESPARGOSApplication {
 		target: backend
 
 		function onUpdateColors(colors) {
-			for (var row = 0; row < antennaArray.children.length; row++) {
-				for (var col = 0; col < antennaArray.children[row].children.length; col++) {
+			for (var row = 0; row < backend.numberOfRows; row++) {
+				for (var col = 0; col < backend.numberOfColumns; col++) {
 					let phaseRect = antennaArray.children[row].children[col]
 					if (phaseRect instanceof Rectangle) {
-						phaseRect.color = Qt.rgba(...colors[row * 4 + col])
+						phaseRect.color = Qt.rgba(...colors[row * backend.numberOfColumns + col])
 					}
 				}
 			}

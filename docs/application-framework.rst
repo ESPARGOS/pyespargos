@@ -156,7 +156,7 @@ Values are parsed as YAML: ``true`` is a boolean, ``64`` an integer, and
 ``[a, b]`` a list. Repeat ``-o`` to set several keys. For combined arrays, use
 one of the supplied layouts and override individual settings as needed::
 
-   ./demos/wifi/combined-array/main.py \
+   ./demos/wifi/phases-by-antenna/main.py \
        -c config/aperture-kit-8x4.yml -o backlog.size=100
 
 Host arguments differ between demos. Receive demos may accept positional

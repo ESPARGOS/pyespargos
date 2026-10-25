@@ -22,6 +22,27 @@ Common.ESPARGOSApplication {
 			title: "Settings"
 			endpoint: appconfig
 
+			Label { text: "Signal components"; color: "#ffffff" }
+			SpinBox {
+				id: sourceCount
+				objectName: "sourceCount"
+				property string configKey: "sources"
+				property string configProp: "value"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				Layout.fillWidth: true
+				from: 1
+				to: backend.maximumSources
+				value: 1
+			}
+			Label {
+				Layout.columnSpan: 2
+				Layout.maximumWidth: 290
+				wrapMode: Text.WordWrap
+				text: "Number of independent signal components assumed by MUSIC."
+				color: "#9fb3c8"
+			}
+
 			WiFi.CSIAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
@@ -76,9 +97,9 @@ Common.ESPARGOSApplication {
 				ValueAxis {
 					id: musicSpectrumXAxis
 
-					min: -80
-					max: 80
-					titleText: "<font color=\"#e0e0e0\">Scanning Vector Angle &Theta; [degrees]</font>"
+					min: -90
+					max: 90
+					titleText: "<font color=\"#e0e0e0\">Broadside angle &Theta; [degrees]</font>"
 					titleFont.bold: false
 					gridLineColor: "#c0c0c0"
 					tickInterval: 30
@@ -88,13 +109,13 @@ Common.ESPARGOSApplication {
 				ValueAxis {
 					id: musicSpectrumYAxis
 
-					min: -10
-					max: 0
-					titleText: "<font color=\"#e0e0e0\">P<sub>MUSIC</sub>(&Theta;) [dB]</font>"
+					min: -50
+					max: 2
+					titleText: "<font color=\"#e0e0e0\">MUSIC spectrum [dB relative to peak]</font>"
 					titleFont.bold: false
 					gridLineColor: "#c0c0c0"
-					tickInterval: 2
-					tickType: ValueAxis.TicksDynamic
+					tickCount: 6
+					labelFormat: "%.0f"
 					labelsColor: "#e0e0e0"
 				}
 			]

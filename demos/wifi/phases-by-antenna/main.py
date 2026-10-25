@@ -16,14 +16,14 @@ import argparse
 import PyQt6.QtCore
 
 
-class EspargosDemoCombinedArray(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
+class EspargosDemoPhasesByAntenna(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     updateColors = PyQt6.QtCore.pyqtSignal(list)
 
     DEFAULT_CONFIG = {}
 
     def __init__(self, argv):
         # Parse command line arguments
-        parser = argparse.ArgumentParser(description="ESPARGOS Demo: Combined ESPARGOS arrays", add_help=False)
+        parser = argparse.ArgumentParser(description="ESPARGOS Demo: Phases by Antenna (single or combined arrays)", add_help=False)
         parser.add_argument("--no-calib", default=False, help="Do not calibrate", action="store_true")
         super().__init__(
             argv,
@@ -71,5 +71,5 @@ class EspargosDemoCombinedArray(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFo
 
 
 if __name__ == "__main__":
-    app = EspargosDemoCombinedArray(sys.argv)
+    app = EspargosDemoPhasesByAntenna(sys.argv)
     sys.exit(app.exec())

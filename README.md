@@ -233,31 +233,22 @@ qsb --version
 </details>
 
 ## Demo Applications
-<table style="max-width: 800px;">
-	<tr>
-		<th style="text-align: center;">MUSIC Spatial Spectrum</th>
-		<th style="text-align: center;">Receive Signal Phase by Antenna</th>
-	</tr>
-	<tr>
-		<td style="text-align: center;"><img src="img/demo-gifs/music-spatial-spectrum.gif" width="100%"></td>
-		<td style="text-align: center;"><img src="img/demo-gifs/phases-over-space.gif" width="100%"></td>
-	</tr>
-	<tr>
-		<th style="text-align: center;">Instantaneous CSI: Frequency Domain</th>
-		<th style="text-align: center;">Instantaneous CSI: Time Domain</th>
-	</tr>
-	<tr>
-		<td style="text-align: center;"><img src="img/demo-gifs/instantaneous-fdomain-csi.gif" width="100%"></td>
-		<td style="text-align: center;"><img src="img/demo-gifs/instantaneous-tdomain-csi.gif" width="100%"></td>
-	</tr>
-	<tr>
-		<th style="text-align: center;">Phases over Time</th>
-		<th style="text-align: center;">Combined 8 &times; 4 ESPARGOS Array</th>
-	</tr>
-	<tr>
-		<td style="text-align: center;"><img src="img/demo-gifs/phases-over-time.gif" width="100%"></td>
-		<td style="text-align: center;"><img src="img/demo-gifs/combined-array.gif" width="100%"></td>
-	</tr>
+<table>
+  <tr>
+    <td align="center" width="33%"><a href="demos/wifi/camera"><b>Camera Overlay</b><br><img src="img/demo-gifs/camera.gif" alt="Camera Overlay preview" width="240" height="150"></a></td>
+    <td align="center" width="33%"><a href="demos/iq/mimo-radar"><b>MIMO Radar</b><br><img src="img/demo-gifs/mimo-radar.gif" alt="MIMO Radar preview" width="240" height="150"></a></td>
+    <td align="center" width="33%"><a href="demos/wifi/azimuth-delay"><b>Azimuth-Delay Diagram</b><br><img src="img/demo-gifs/azimuth-delay.gif" alt="Azimuth-Delay Diagram preview" width="240" height="150"></a></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><a href="demos/wifi/music-spectrum"><b>MUSIC Spatial Spectrum</b><br><img src="img/demo-gifs/music-spatial-spectrum.gif" alt="MUSIC Spatial Spectrum preview" width="240" height="150"></a></td>
+    <td align="center" width="33%"><a href="demos/wifi/phases-by-antenna"><b>Phases by Antenna</b><br><img src="img/demo-gifs/phases-by-antenna.gif" alt="Phases by Antenna preview" width="240" height="150"></a></td>
+    <td align="center" width="33%"><a href="demos/wifi/instantaneous-csi"><b>Instantaneous Frequency-Domain CSI</b><br><img src="img/demo-gifs/instantaneous-fdomain-csi.gif" alt="Instantaneous Frequency-Domain CSI preview" width="240" height="150"></a></td>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><a href="demos/wifi/instantaneous-csi"><b>Instantaneous Time-Domain CSI</b><br><img src="img/demo-gifs/instantaneous-tdomain-csi.gif" alt="Instantaneous Time-Domain CSI preview" width="240" height="150"></a></td>
+    <td align="center" width="33%"><a href="demos/wifi/phases-over-time"><b>Received Phases over Time</b><br><img src="img/demo-gifs/phases-over-time.gif" alt="Received Phases over Time preview" width="240" height="150"></a></td>
+    <td align="center" width="33%"><a href="demos/wifi/tdoas-over-time"><b>Time of Arrival</b><br><img src="img/demo-gifs/tdoa-over-time.gif" alt="Time of Arrival preview" width="240" height="150"></a></td>
+  </tr>
 </table>
 
 *pyespargos* comes with a selection of demo applications for testing ESPARGOS.
@@ -270,24 +261,6 @@ Receive demos are built on a common application framework (`demos/common`) that 
 Demos are grouped by signal type: [`demos/wifi`](demos/wifi) for WiFi/CSI and
 [`demos/iq`](demos/iq) for raw IQ reception and transmission. Shared components
 are in `demos/common`. Use [`demos/custom`](demos/custom) for local experiments.
-
-| Demo | Description |
-|------|-------------|
-| [`mimo-radar`](demos/iq/mimo-radar) | Display range–Doppler and range–azimuth maps using two OFDM transmitters. See [usage](demos/iq/mimo-radar/README.md). |
-| [`transmit-beamforming`](demos/iq/transmit-beamforming) | Control up to four TX beams across a single or combined array, with waveform generation/upload, beamspace steering, RX/TX calibration and a reference monitor. See [usage](demos/iq/transmit-beamforming/README.md). |
-| [`signal-analyzer`](demos/iq/signal-analyzer) | Display synchronized raw IQ as power/phase waterfalls, I/Q traces, constellations, and spectra. Supports Interval, Accumulate, and Signal capture; see [usage](demos/iq/signal-analyzer/README.md). |
-| [`music-spectrum`](demos/wifi/music-spectrum) | Use the [MUSIC algorithm](https://en.wikipedia.org/wiki/MUSIC_(algorithm)) to display a spatial (angular) spectrum. Demonstrates angle of arrival (AoA) estimation. |
-| [`phases-over-space`](demos/wifi/phases-over-space) | Show the average received phase for each ESPARGOS antenna. |
-| [`instantaneous-csi`](demos/wifi/instantaneous-csi) | Plot the current frequency-domain or time-domain transfer function of the measured channel. |
-| [`phases-over-time`](demos/wifi/phases-over-time) | Plot the average received phase for every antenna over time. |
-| [`tdoas-over-time`](demos/wifi/tdoas-over-time) | Visualize time difference of arrival (TDOA) measurements over time. |
-| [`azimuth-delay`](demos/wifi/azimuth-delay) | Display a 2D azimuth-delay diagram using beamspace processing. Ships with pre-compiled shaders; see [`demos/wifi/azimuth-delay/README.md`](demos/wifi/azimuth-delay/README.md) in case of shader issues. |
-| [`polarization`](demos/wifi/polarization) | Visualize WiFi signal polarization using constellation diagrams and polarization ellipses. |
-| [`speedtest`](demos/wifi/speedtest) | Measure CSI packet throughput from ESPARGOS. |
-| [`combined-array`](demos/wifi/combined-array) | Combine multiple ESPARGOS arrays into one large antenna array and visualize the average received phase for each antenna. Requires multiple ESPARGOS arrays. |
-| [`combined-array-calibration`](demos/wifi/combined-array-calibration) | Tool for calibrating combined multi-board antenna arrays. Visualizes and exports calibration data. |
-| [`camera`](demos/wifi/camera) | Overlay WiFi spatial spectrum on a live camera feed. Ships with pre-compiled shaders; see [`demos/wifi/camera/README.md`](demos/wifi/camera/README.md) in case of shader issues. |
-| [`radiation-pattern-3d`](demos/wifi/radiation-pattern-3d) | Interactive 3D radiation pattern visualization. Requires additional packages (see [`demos/wifi/radiation-pattern-3d/README.md`](demos/wifi/radiation-pattern-3d/README.md)). |
 
 Most demos support both single ESPARGOS arrays and combined multi-board setups via command-line arguments or YAML configuration files.
 
