@@ -235,19 +235,19 @@ qsb --version
 ## Demo Applications
 <table>
   <tr>
-    <td align="center" width="33%"><a href="demos/wifi/camera"><b>Camera Overlay</b><br><img src="img/demo-gifs/camera.gif" alt="Camera Overlay preview" width="240" height="150"></a></td>
-    <td align="center" width="33%"><a href="demos/iq/mimo-radar"><b>MIMO Radar</b><br><img src="img/demo-gifs/mimo-radar.gif" alt="MIMO Radar preview" width="240" height="150"></a></td>
-    <td align="center" width="33%"><a href="demos/wifi/azimuth-delay"><b>Azimuth-Delay Diagram</b><br><img src="img/demo-gifs/azimuth-delay.gif" alt="Azimuth-Delay Diagram preview" width="240" height="150"></a></td>
+    <td align="center" width="33%"><a href="demos/wifi/camera"><b>Camera Overlay</b></a><br><img src="img/demo-gifs/camera.gif" alt="Camera Overlay preview" width="240" height="150"></td>
+    <td align="center" width="33%"><a href="demos/iq/mimo-radar"><b>MIMO Radar</b></a><br><img src="img/demo-gifs/mimo-radar.gif" alt="MIMO Radar preview" width="240" height="150"></td>
+    <td align="center" width="33%"><a href="demos/wifi/azimuth-delay"><b>Azimuth-Delay Diagram</b></a><br><img src="img/demo-gifs/azimuth-delay.gif" alt="Azimuth-Delay Diagram preview" width="240" height="150"></td>
   </tr>
   <tr>
-    <td align="center" width="33%"><a href="demos/wifi/music-spectrum"><b>MUSIC Spatial Spectrum</b><br><img src="img/demo-gifs/music-spatial-spectrum.gif" alt="MUSIC Spatial Spectrum preview" width="240" height="150"></a></td>
-    <td align="center" width="33%"><a href="demos/wifi/phases-by-antenna"><b>Phases by Antenna</b><br><img src="img/demo-gifs/phases-by-antenna.gif" alt="Phases by Antenna preview" width="240" height="150"></a></td>
-    <td align="center" width="33%"><a href="demos/wifi/instantaneous-csi"><b>Instantaneous Frequency-Domain CSI</b><br><img src="img/demo-gifs/instantaneous-fdomain-csi.gif" alt="Instantaneous Frequency-Domain CSI preview" width="240" height="150"></a></td>
+    <td align="center" width="33%"><a href="demos/wifi/music-spectrum"><b>MUSIC Spatial Spectrum</b></a><br><img src="img/demo-gifs/music-spatial-spectrum.gif" alt="MUSIC Spatial Spectrum preview" width="240" height="150"></td>
+    <td align="center" width="33%"><a href="demos/wifi/phases-by-antenna"><b>Phases by Antenna</b></a><br><img src="img/demo-gifs/phases-by-antenna.gif" alt="Phases by Antenna preview" width="240" height="150"></td>
+    <td align="center" width="33%"><a href="demos/wifi/instantaneous-csi"><b>Instantaneous Frequency-Domain CSI</b></a><br><img src="img/demo-gifs/instantaneous-fdomain-csi.gif" alt="Instantaneous Frequency-Domain CSI preview" width="240" height="150"></td>
   </tr>
   <tr>
-    <td align="center" width="33%"><a href="demos/wifi/instantaneous-csi"><b>Instantaneous Time-Domain CSI</b><br><img src="img/demo-gifs/instantaneous-tdomain-csi.gif" alt="Instantaneous Time-Domain CSI preview" width="240" height="150"></a></td>
-    <td align="center" width="33%"><a href="demos/wifi/phases-over-time"><b>Received Phases over Time</b><br><img src="img/demo-gifs/phases-over-time.gif" alt="Received Phases over Time preview" width="240" height="150"></a></td>
-    <td align="center" width="33%"><a href="demos/wifi/tdoas-over-time"><b>Time of Arrival</b><br><img src="img/demo-gifs/tdoa-over-time.gif" alt="Time of Arrival preview" width="240" height="150"></a></td>
+    <td align="center" width="33%"><a href="demos/wifi/instantaneous-csi"><b>Instantaneous Time-Domain CSI</b></a><br><img src="img/demo-gifs/instantaneous-tdomain-csi.gif" alt="Instantaneous Time-Domain CSI preview" width="240" height="150"></td>
+    <td align="center" width="33%"><a href="demos/wifi/phases-over-time"><b>Received Phases over Time</b></a><br><img src="img/demo-gifs/phases-over-time.gif" alt="Received Phases over Time preview" width="240" height="150"></td>
+    <td align="center" width="33%"><a href="demos/wifi/tdoas-over-time"><b>Time of Arrival</b></a><br><img src="img/demo-gifs/tdoa-over-time.gif" alt="Time of Arrival preview" width="240" height="150"></td>
   </tr>
 </table>
 
