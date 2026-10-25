@@ -9,8 +9,8 @@ from . import csi_backlog
 from . import csi_packet
 from . import csi_cluster
 from . import wifi_transceiver
-from . import radar
-from . import radar_packet
+from . import wifi_tx
+from . import wifi_tx_packet
 from . import sensor
 from . import sensor_backlog
 from . import sensor_cluster
@@ -43,8 +43,8 @@ from .csi_cluster import CSICluster
 from .csi_association import FrameIdentity, FrameIdentityMatch, FrameSignature
 from .csi_packet import CSIPacket
 from .wifi_transceiver import WiFiTransceiver, CalibrationError
-from .radar import RadarPoolConfig
-from .radar_packet import RadarTxReportPacket
+from .wifi_tx import WiFiTxConfig
+from .wifi_tx_packet import WiFiTxReportPacket
 from .revisions import BoardRevision, BoardRevisionDensiflorus
 from .sensor import (
     RFSwitchState,

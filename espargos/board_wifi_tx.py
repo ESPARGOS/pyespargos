@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from . import radar_packet
+from . import wifi_tx_packet
 from . import sensor
 from .board import BoardCapability, SensorMessageSubscription
 
@@ -36,14 +36,14 @@ class WiFiTxCapability(BoardCapability):
     def subscribe_reports(
         self,
         callback: Callable[
-            [sensor.SensorMessage[radar_packet.RadarTxReportPacket]],
+            [sensor.SensorMessage[wifi_tx_packet.WiFiTxReportPacket]],
             None,
         ],
     ) -> SensorMessageSubscription:
         """Subscribe to decoded reports produced by transmitting sensors."""
 
         return self._subscribe_decoded_sensor_messages(
-            radar_packet.RADAR_TX_REPORT_TYPE_HEADER,
-            radar_packet.RadarTxReportPacket,
+            wifi_tx_packet.WIFI_TX_REPORT_TYPE_HEADER,
+            wifi_tx_packet.WiFiTxReportPacket,
             callback,
         )

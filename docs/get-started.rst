@@ -15,6 +15,8 @@ Choose what you want to do
   decoding. We can trigger captures periodically or when a signal arrives.
 * :doc:`iq-transmission`: transmit repeating waveforms, steer multiple beams,
   or assign different signals to individual antennas.
+* :doc:`iq-radar`: combine IQ transmission and reception to measure range,
+  direction and motion, with a calibrated range origin.
 
 We can combine these modes within one board or across several boards. For
 example, some sensors can transmit IQ waveforms while others receive IQ
@@ -36,7 +38,7 @@ we mean this master's controller. On a standalone array, its own controller
 performs those functions. The other boards still have controllers that manage
 their sensors and network connections.
 
-A ``Board`` represents one eight-sensor ESPARGOS array. A ``Pool`` manages one
+A :class:`Board <espargos.board.Board>` represents one eight-sensor ESPARGOS array. A :class:`Pool <espargos.pool.Pool>` manages one
 or more boards, including their connections, configuration and calibration.
 We normally start with a pool, even for one board::
 
@@ -49,11 +51,11 @@ We normally start with a pool, even for one board::
 
 Each sensor can operate in WiFi, IQ RX or IQ TX mode. We can select subsets
 of antennas and assign different roles or frequencies within the same pool.
-``pool.wifi``, ``pool.iq`` and ``pool.tx`` share that pool's connections.
+:attr:`pool.wifi <espargos.pool.Pool.wifi>`, :attr:`pool.iq <espargos.pool.Pool.iq>` and :attr:`pool.tx <espargos.pool.Pool.tx>` share that pool's connections.
 See :doc:`pool` for selections and mixed configurations.
 
 For larger apertures, we can load the board arrangement from a configuration
-file using ``Pool.from_config()``. A shared clock and reference network allow
+file using :meth:`Pool.from_config() <espargos.pool.Pool.from_config>`. A shared clock and reference network allow
 coherent measurements across boards. See :doc:`combined-arrays` for wiring
 and layout configuration.
 

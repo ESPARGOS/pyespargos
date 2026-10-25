@@ -7,13 +7,16 @@ from .iq_reference import _map
 from .iq_tx_control import _rpc
 
 
-def snapshot(pool, tx_result=None, method="rx"):
+def snapshot(pool, tx_result=None, method="rx", scope=None):
     """Bind measured corrections to the restored, currently running sensors."""
+    from .iq_calibration_scope import CalibrationScope
+
+    scope = scope or CalibrationScope(pool)
     configs = _map(lambda b: b.iq.get_config(), pool.boards)
     states = _map(lambda b: _rpc(b, "get_iq_tx"), pool.boards)
     rx, tx = [], []
     if tx_result is not None:
-        selected = {(bi, a) for bi, c in enumerate(configs) for a, mode in enumerate(c["modes"]) if mode == "iq_tx"}
+        selected = {(bi, a) for bi, c in enumerate(configs) for a, mode in enumerate(c["modes"]) if mode == "iq_tx" and a in scope.ids[bi]}
         if selected != set(tx_result["_tx_states"]):
             raise RuntimeError("Sensor roles changed while publishing calibration")
     model = pool.calibration
@@ -21,6 +24,8 @@ def snapshot(pool, tx_result=None, method="rx"):
     for bi, board in enumerate(pool.boards):
         for a, mode in enumerate(configs[bi]["modes"]):
             antenna = Antenna(board.host, a)
+            if antenna not in scope.antennas:
+                continue
             sensor = states[bi]["sensors"][a]
             pos = (bi, *board.revision.antenna_id_to_row_col(a))
             if mode == "iq_rx" and model is not None and epochs is not None:
@@ -28,7 +33,8 @@ def snapshot(pool, tx_result=None, method="rx"):
                 rate = DECIM_TO_FS[configs[bi]["adc_decimation"]]
                 if center != model.phase_reference_frequency or rate != pool.calibration_sample_rate:
                     continue
-                state = CalibrationState(antenna, "rx", center, rate, sensor["boot_id"], int(epochs[pos]))
+                origin = None if pool._calibration_grid_origin is None else int(pool._calibration_grid_origin[pos])
+                state = CalibrationState(antenna, "rx", center, rate, sensor["boot_id"], int(epochs[pos]), sample_origin_ns=origin)
                 phase = -model.phase_offsets[pos] - 2 * np.pi * center * model.reference_path_delays[pos]
                 delay = model.reference_path_delays[pos] - model.timing_offsets[pos]
                 rx.append(AntennaCorrection(state, float(phase), float(delay)))
@@ -43,11 +49,10 @@ def snapshot(pool, tx_result=None, method="rx"):
     groups = tuple(CalibrationGroup(tuple(corrections)) for corrections in (rx, tx) if corrections)
     diagnostics = {k: v for k, v in (tx_result or {}).items() if k != "calibration" and not k.startswith("_")}
     result = Calibration(groups, {"method": method, **diagnostics})
-    pool._owner.calibrations = pool._owner.calibrations.merge(result)
     return result
 
 
-def calibrate(pool, *, method="monitor", path="reference", **kwargs):
+def calibrate(pool, *, method="monitor", path="reference", scope=None, **kwargs):
     """Calibrate current IQ TX sensors, preserving waveforms and receiver roles.
 
     ``monitor`` needs a bidirectional RF path back to the master controller.
@@ -63,15 +68,15 @@ def calibrate(pool, *, method="monitor", path="reference", **kwargs):
     if method == "monitor":
         from .iq_tx_monitor_calibration import calibrate as run
 
-        result = run(pool, **kwargs)
+        result = run(pool, scope=scope, **kwargs)
     else:
         from .iq_tx_reciprocity_calibration import calibrate as run
 
-        result = run(pool, pilot_output=path, **kwargs)
+        result = run(pool, pilot_output=path, scope=scope, **kwargs)
     try:
         result["path"] = path
-        return snapshot(pool, result, method)
+        return snapshot(pool, result, method, scope)
     except Exception:
         # A result without verified hardware scope must never leave TX active.
-        _map(lambda b: _rpc(b, "set_iq_tx", {"muted": True}), pool.boards)
+        _map(lambda b: _rpc(b, "set_iq_tx", {"muted": True}), pool.boards if scope is None else [pool.boards[bi] for bi in scope.active])
         raise

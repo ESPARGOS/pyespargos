@@ -510,10 +510,17 @@ class Board(object):
             udp_sock.close()
             return udp_control_error
 
-        # Wait for the magic packet on the UDP socket
-        udp_sock.settimeout(3)
+        # An already-active capture can send data before the handshake packet.
+        deadline = time.monotonic() + 3
         try:
-            data, addr = udp_sock.recvfrom(1024)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise socket.timeout()
+                udp_sock.settimeout(remaining)
+                data, addr = udp_sock.recvfrom(65535)
+                if data == STREAM_MAGIC and addr[0] == udp_remote_addr[0]:
+                    break
         except socket.timeout:
             udp_sock.close()
             self._disable_udp_stream()
@@ -522,11 +529,6 @@ class Board(object):
             udp_sock.close()
             self._disable_udp_stream()
             return f"Error receiving UDP magic packet: {e}"
-
-        if data != STREAM_MAGIC:
-            udp_sock.close()
-            self._disable_udp_stream()
-            return f"Invalid UDP magic packet: expected {STREAM_MAGIC.hex()}, got {data.hex()}"
 
         # UDP stream established successfully
         self._udp_sock = udp_sock
@@ -573,7 +575,6 @@ class Board(object):
         self._stream_ready_event = threading.Event()
         self._stream_error = None
         self._stream_transport = "websocket"
-        self._stream_websocket_path = path
         self._stream_thread = threading.Thread(target=self._stream_loop_websocket, args=(path,))
         self._stream_thread.start()
 

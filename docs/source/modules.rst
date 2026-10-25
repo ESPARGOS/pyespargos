@@ -36,6 +36,15 @@ espargos.pool
    :undoc-members:
    :show-inheritance:
 
+.. currentmodule:: espargos.pool
+
+.. py:attribute:: Pool.calibrations
+   :type: espargos.calibration.Calibration
+
+   Stored RX and TX calibration groups. Successful measurements update this
+   collection; use :meth:`select() <espargos.calibration.Calibration.select>`
+   to obtain corrections for particular antennas.
+
 espargos.wifi_transceiver
 -------------------------
 
@@ -108,10 +117,10 @@ espargos.csi_compression
    :undoc-members:
    :show-inheritance:
 
-espargos.radar_packet
----------------------
+espargos.wifi_tx_packet
+-----------------------
 
-.. automodule:: espargos.radar_packet
+.. automodule:: espargos.wifi_tx_packet
    :members:
    :undoc-members:
    :show-inheritance:
@@ -140,10 +149,10 @@ espargos.wifi
    :undoc-members:
    :show-inheritance:
 
-espargos.radar
---------------
+espargos.wifi_tx
+----------------
 
-.. automodule:: espargos.radar
+.. automodule:: espargos.wifi_tx
    :members:
    :undoc-members:
    :show-inheritance:
@@ -229,6 +238,14 @@ espargos.iq_transmitter
    :undoc-members:
    :show-inheritance:
 
+.. currentmodule:: espargos.iq_transmitter
+
+.. py:attribute:: IQTransmitter.signals
+   :type: espargos.tx_signal.TXSignals
+
+   Signal assignments for this transmitter. Add, edit or remove contributions
+   to the selected antennas' replay buffers.
+
 espargos.iq_packet
 ------------------
 
@@ -281,6 +298,53 @@ espargos.iq_tone
 ----------------
 
 .. automodule:: espargos.iq_tone
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.iq_tx_rx_delay
+-----------------------
+
+.. automodule:: espargos.iq_tx_rx_delay
+   :members:
+   :show-inheritance:
+
+espargos.calibration
+--------------------
+
+.. automodule:: espargos.calibration
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.waveforms
+------------------
+
+.. automodule:: espargos.waveforms
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.steering
+-----------------
+
+.. automodule:: espargos.steering
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.tx_signal
+------------------
+
+.. automodule:: espargos.tx_signal
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.reference_monitor
+--------------------------
+
+.. automodule:: espargos.reference_monitor
    :members:
    :undoc-members:
    :show-inheritance:

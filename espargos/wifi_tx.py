@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+"""WiFi transmission schedules and transmit-timestamp corrections."""
 
 from dataclasses import dataclass
 
@@ -10,157 +10,19 @@ from . import sensor
 from . import wifi
 
 __all__ = [
-    "FTM_TIMESTAMP_UNIT_S",
-    "RADAR_TIME_SCALE",
-    "RadarPoolConfig",
-    "build_pool_config",
-    "correct_radar_csi_tx_timestamps",
-    "ftm_get_phy_comp",
-    "get_ftm_tx_timestamp_reciprocity_delay_s",
+    "WIFI_TX_TIME_SCALE",
+    "WiFiTxConfig",
+    "build_tx_config",
+    "correct_csi_tx_timestamps",
 ]
 
-RADAR_TIME_SCALE = 1e6
-FTM_TIMESTAMP_UNIT_S = 1.5625e-9
-
-
-def ftm_get_phy_comp(
-    *,
-    responder: bool,
-    primary_channel: int,
-    secondary_channel: int = 0,
-    mode: int = 0,
-    sta_connected: bool = False,
-) -> int:
-    """
-    Reimplementation of ESP32-C61 ``ftm_get_phy_comp`` from the Wi-Fi blob.
-
-    This raw-units version is kept as a reference to the recovered original
-    control flow. New code should prefer
-    :func:`get_ftm_tx_timestamp_reciprocity_delay_s`, which expresses the same
-    logic in a table-driven form and returns seconds directly.
-
-    The returned value is in raw FTM timestamp units. Multiply by
-    :data:`FTM_TIMESTAMP_UNIT_S` to convert to seconds. ``secondary_channel``
-    follows ESP-IDF's ``wifi_second_chan_t`` convention: ``0`` none, ``1``
-    above, ``2`` below.
-
-    ``sta_connected`` only affects the initiator/nonzero-mode branch in the
-    recovered implementation.
-    """
-    primary = int(primary_channel)
-    secondary = int(secondary_channel) & 0xFF
-    mode_nonzero = int(mode) != 0
-
-    if not responder:
-        if mode_nonzero:
-            if sta_connected and primary > 10:
-                return 0x3AD
-            return 0x399
-
-        if secondary == 1:
-            if ((primary - 1) & 0xFF) <= 8:
-                return 0x2EA if primary > 10 else 0x2EC
-        elif secondary == 2:
-            if ((primary - 5) & 0xFF) <= 8:
-                return 0x2EA if primary > 10 else 0x2EC
-
-        return 0x35C if primary > 10 else 0x361
-
-    if mode_nonzero:
-        return 0x23F if primary > 10 else 0x23E
-
-    if secondary == 1:
-        if primary == 0:
-            return 0x363
-        if primary <= 9:
-            return 0x2EE
-    elif secondary == 2:
-        if ((primary - 5) & 0xFF) <= 8:
-            return 0x2F4 if primary > 10 else 0x2EE
-
-    return 0x365 if primary > 10 else 0x363
-
-
-def _ftm_channel_group(primary_channel: int) -> str:
-    """
-    Group 2.4 GHz channels into the low and high ranges used by the blob logic.
-    """
-    return "high" if int(primary_channel) > 10 else "low"
-
-
-def get_ftm_tx_timestamp_reciprocity_delay_s(
-    *,
-    responder: bool,
-    primary_channel: int,
-    secondary_channel: int = 0,
-    home_channel_ht40: bool = False,
-    mode: int | None = None,
-    sta_connected: bool = False,
-) -> float:
-    """
-    Return the PHY reciprocity delay used to align TX/RX FTM timestamps.
-
-    This is the same compensation modeled by :func:`ftm_get_phy_comp`, but
-    expressed in terms of role, HT40 home-channel state, channel layout, and
-    channel group instead of reproducing the recovered branch tree. The returned
-    value is in seconds.
-
-    ``home_channel_ht40`` is intentionally separate from
-    ``secondary_channel``. The blob does not use the nonzero ``mode`` branch as
-    a generic "secondary channel present" test; it switches into a distinct PHY
-    compensation regime used when the current/home channel context is HT40.
-    That is why this flag remains separate even though ``primary_channel`` and
-    ``secondary_channel`` are also provided.
-
-    ``mode`` is kept as a backward-compatible alias for the recovered blob
-    parameter. When provided, only its zero/nonzero state matters.
-
-    ``secondary_channel`` follows ESP-IDF's ``wifi_second_chan_t`` convention:
-    ``0`` none, ``1`` above, ``2`` below.
-    """
-    secondary = int(secondary_channel) & 0xFF
-    if secondary == 1:
-        layout = "ht40_above"
-    elif secondary == 2:
-        layout = "ht40_below"
-    else:
-        layout = "ht20"
-    channel_group = _ftm_channel_group(primary_channel)
-    use_ht40_home_channel_comp = bool(home_channel_ht40)
-    if mode is not None:
-        use_ht40_home_channel_comp = bool(mode)
-
-    if not responder and use_ht40_home_channel_comp:
-        ftm_units = 941 if sta_connected and channel_group == "high" else 921
-    elif responder and use_ht40_home_channel_comp:
-        ftm_units = {
-            "low": 574,
-            "high": 575,
-        }[channel_group]
-    elif not responder:
-        ftm_units = {
-            "ht20": {"low": 865, "high": 860},
-            "ht40_above": {"low": 748, "high": 746},
-            "ht40_below": {"low": 748, "high": 746},
-        }[
-            layout
-        ][channel_group]
-    else:
-        ftm_units = {
-            "ht20": {"low": 867, "high": 869},
-            "ht40_above": {"low": 750, "high": 869},
-            "ht40_below": {"low": 750, "high": 756},
-        }[
-            layout
-        ][channel_group]
-
-    return ftm_units * FTM_TIMESTAMP_UNIT_S
+WIFI_TX_TIME_SCALE = 1e6
 
 
 @dataclass
-class RadarPoolConfig:
+class WiFiTxConfig:
     """
-    Low-level radar configuration for an entire pool, one controller config per board.
+    Low-level WiFi TX configuration for an entire pool, one controller config per board.
     """
 
     board_configs: list[dict]
@@ -206,7 +68,7 @@ def _macs_by_antenna_ids(mac_by_sensor, boards) -> list[list[str]]:
     raise ValueError("mac_by_sensor must be a (row, column) array or a (board, row, column) array")
 
 
-def build_pool_config(
+def build_tx_config(
     calibration: csi_calibration.CSICalibration,
     active_by_sensor,
     t0_by_sensor,
@@ -216,9 +78,9 @@ def build_pool_config(
     tx_rate: wifi.WiFiPhyRate,
     rf_switch_state: sensor.RFSwitchState,
     mac_by_sensor=None,
-) -> RadarPoolConfig:
+) -> WiFiTxConfig:
     """
-    Build low-level per-board radar controller configuration from a reference-time schedule.
+    Build low-level per-board WiFi TX controller configuration from a reference-time schedule.
 
     ``active_by_sensor``, ``t0_by_sensor`` and ``period_by_sensor`` may be scalars,
     board-local ``(row, column)`` arrays, or pool-wide ``(board, row, column)`` arrays.
@@ -241,14 +103,14 @@ def build_pool_config(
     board_configs = []
     for board_index, board in enumerate(calibration.boards):
         start_by_antenna_id = board.revision.sensor_values_to_antenna_id_list(
-            np.rint(sensor_local_times[board_index] * RADAR_TIME_SCALE).astype(int),
+            np.rint(sensor_local_times[board_index] * WIFI_TX_TIME_SCALE).astype(int),
             name="t0_by_sensor",
         )
         board_configs.append(
             {
                 "active_by_antid": board.revision.sensor_values_to_antenna_id_list(active_by_sensor[board_index].astype(bool), name="active_by_sensor"),
                 "start_by_antid": start_by_antenna_id,
-                "period_by_antid": board.revision.sensor_values_to_antenna_id_list(np.rint(period_by_sensor[board_index] * RADAR_TIME_SCALE).astype(int), name="period_by_sensor"),
+                "period_by_antid": board.revision.sensor_values_to_antenna_id_list(np.rint(period_by_sensor[board_index] * WIFI_TX_TIME_SCALE).astype(int), name="period_by_sensor"),
                 "mac_by_antid": mac_by_board[board_index],
                 "rfswitch_state": int(rf_switch_state),
                 "tx_power": int(tx_power),
@@ -257,10 +119,10 @@ def build_pool_config(
             }
         )
 
-    return RadarPoolConfig(board_configs=board_configs)
+    return WiFiTxConfig(board_configs=board_configs)
 
 
-def correct_radar_csi_tx_timestamps(
+def correct_csi_tx_timestamps(
     csi_data: np.ndarray,
     tx_timestamps_s,
     tx_sensor_indices,
@@ -270,11 +132,11 @@ def correct_radar_csi_tx_timestamps(
     tx_timestamp_offset_s: float = 0.0,
 ) -> np.ndarray:
     """
-    Apply radar TX timestamp phase correction to frequency-domain CSI.
+    Apply WiFi TX timestamp phase correction to frequency-domain CSI.
 
     The CSI deserialization path already applies the receive-side timestamp/STO
     correction. This helper applies the complementary transmit-side correction
-    using the radar TX report timestamp. ``tx_timestamps_s`` are sensor-local TX
+    using the WiFi TX report timestamp. ``tx_timestamps_s`` are sensor-local TX
     timestamps; they are converted into the calibration reference clock by
     subtracting the transmitting sensor's clock offset.
 

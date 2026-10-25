@@ -372,7 +372,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         sets = []
         for arrived, cluster in clusters:
             if isinstance(cluster, IQAccumCluster):
-                epoch = ("accum", cluster.config_generation)
+                epoch = ("accum", tuple(cluster.config_generation[board].flat))
             else:
                 present = cluster.completion
                 epoch = ("raw", int(cluster.sync_info[present][0]) & 0xFFFF, int(cluster.sample_rate_hz[present][0]), bool(cluster.flags[present][0] & 256))

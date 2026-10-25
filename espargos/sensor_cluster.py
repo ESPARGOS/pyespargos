@@ -86,11 +86,6 @@ class SensorCluster(ABC):
 
         self._created_at = time.monotonic()
 
-    def _mark_sensor_complete(self, board_index: int, antenna_id: int) -> None:
-        """Mark the observation data for one sensor as complete."""
-
-        self._mark_sensor_position_complete(self.get_sensor_position(board_index, antenna_id))
-
     def _mark_sensor_position_complete(
         self,
         sensor_position: tuple[int, int, int],

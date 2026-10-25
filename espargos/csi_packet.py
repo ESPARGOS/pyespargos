@@ -2,7 +2,7 @@
 
 Sensor transport framing and fragment reassembly live in :mod:`espargos.sensor`.
 Compact tap reconstruction lives in :mod:`espargos.csi_compression`, while
-radar transmit reports have their own parser in :mod:`espargos.radar_packet`.
+WiFi transmit reports have their own parser in :mod:`espargos.wifi_tx_packet`.
 """
 
 from enum import IntEnum
@@ -55,7 +55,7 @@ SERIALIZED_CSI_TLV_TYPE_GAIN_TABLE_ENTRY = 9
 SERIALIZED_CSI_TLV_TYPE_CRC32 = 255
 
 SERIALIZED_CSI_TLV_FRAME_FLAG_IS_CALIB = 1 << 0
-SERIALIZED_CSI_TLV_FRAME_FLAG_IS_RADAR = 1 << 1
+SERIALIZED_CSI_TLV_FRAME_FLAG_IS_SCHEDULED_TX = 1 << 1
 SERIALIZED_CSI_TLV_FRAME_FLAG_FIRST_WORD_INVALID = 1 << 2
 
 SERIALIZED_CSI_TLV_ACQUIRE_FLAG_FORCE_LLTF = 1 << 0
@@ -390,8 +390,8 @@ class CSIPacket:
         return int(self.global_timestamp_us) * 1000 - 20_800 + int(rx_ctrl.rxstart_time_cyc) * 12.5
 
     @property
-    def is_radar(self):
-        return bool(self.frame_flags & SERIALIZED_CSI_TLV_FRAME_FLAG_IS_RADAR)
+    def is_scheduled_tx(self):
+        return bool(self.frame_flags & SERIALIZED_CSI_TLV_FRAME_FLAG_IS_SCHEDULED_TX)
 
     @property
     def is_calibration(self):

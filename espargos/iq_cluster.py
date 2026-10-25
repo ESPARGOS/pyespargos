@@ -50,6 +50,7 @@ class IQCluster(SensorCluster):
         self.settled = False
         self._host_timestamp = time.time()
         self._iq = np.full(self.shape + (CHUNK_SAMPLES,), np.nan, dtype=np.complex64)
+        self._adc_peak = np.full(self.shape, np.nan, dtype=np.float32)
         self._sample_rx_gain = np.full(self.shape + (CHUNK_SAMPLES,), 0xFF, dtype=np.uint8)
         self._flags = np.zeros(self.shape, dtype=np.uint32)
         self._sample_rate_hz = np.zeros(self.shape, dtype=np.uint32)
@@ -68,6 +69,7 @@ class IQCluster(SensorCluster):
         position = self.get_sensor_position(board_index, int(sensor_message.antenna_id))
         payload = sensor_message.payload
         iq = payload.decode_iq()
+        adc_peak = max(np.max(np.abs(iq.real)), np.max(np.abs(iq.imag)))
         rx_gain = payload.sample_rx_gain()
         # A rare dump chunk can consist entirely of samples stamped with the
         # DCO servo's out-of-table shadow slot.  There is then no trustworthy
@@ -83,6 +85,7 @@ class IQCluster(SensorCluster):
                 return False
             raise ClusterCollisionError(f"different IQ data for chunk index {self.chunk_index} at sensor position {position}")
         self._iq[position] = iq
+        self._adc_peak[position] = adc_peak
         self._sample_rx_gain[position] = rx_gain
         self._flags[position] = int(getattr(payload, "flags", 0))
         self._sample_rate_hz[position] = int(getattr(payload, "sample_rate_hz", 0))
@@ -106,6 +109,12 @@ class IQCluster(SensorCluster):
         return self._iq
 
     @property
+    def adc_peak(self) -> np.ndarray:
+        """Largest absolute raw I/Q component per sensor, before phase correction."""
+
+        return self._adc_peak
+
+    @property
     def grid_origin_ns(self) -> np.ndarray:
         """Local CPU time of grid sample zero, including measured fire latency.
 
@@ -113,7 +122,8 @@ class IQCluster(SensorCluster):
         This permits comparing capture starts at different sample rates.
         """
         base = (self._source_chunk_index.astype(np.int64) - self._chunk_counter) & 0xFFFFFF
-        return self._fire_time_ns.astype(np.int64) - np.rint(base * 256e9 / self._sample_rate_hz).astype(np.int64)
+        offset_ns = np.divide(base * 256e9, self._sample_rate_hz, out=np.zeros(self.shape), where=self._sample_rate_hz != 0)
+        return self._fire_time_ns.astype(np.int64) - np.rint(offset_ns).astype(np.int64)
 
     @property
     def host_timestamp(self) -> float:

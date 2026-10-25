@@ -12,7 +12,7 @@ from . import constants
 from . import csi_compression
 from . import gain_phase_calibration
 from . import csi_packet
-from . import radar_packet
+from . import wifi_tx_packet
 from . import sensor
 from . import csi_processing
 from . import wifi
@@ -33,7 +33,7 @@ class CSICluster(SensorCluster):
     Sensors report the packet independently. This class places each report at
     its ``(board, row, column)`` position so consumers receive one array-shaped
     measurement. A cluster may additionally contain the transmit-side report
-    for a radar packet. CSI can come from ordinary over-the-air traffic or from
+    for a scheduled WiFi packet. CSI can come from ordinary over-the-air traffic or from
     packets used during calibration.
     """
 
@@ -67,8 +67,8 @@ class CSICluster(SensorCluster):
 
         self._host_timestamp = time.time()
         self._csi_packets = [[[None for _ in range(constants.ANTENNAS_PER_ROW)] for _ in range(constants.ROWS_PER_BOARD)] for _ in self.board_revisions]
-        self._radar_tx_report = None
-        self._radar_tx_index = -1
+        self._tx_report = None
+        self._tx_index = -1
 
         # Allocate memory for the RSSI, gain, rf switch state and noise floor values
         self._rssi = np.full(self.shape, fill_value=np.nan, dtype=np.float32)
@@ -95,7 +95,7 @@ class CSICluster(SensorCluster):
         return self._csi_packets[board_index][row][col]
 
     def add_message(self, board_index: int, sensor_message: sensor.SensorMessage) -> bool:
-        """Add CSI or radar metadata for this cluster's Wi-Fi frame."""
+        """Add CSI or WiFi transmit metadata for this cluster's Wi-Fi frame."""
 
         stream_packet = sensor_message.payload
         board_index, row, col = self.get_sensor_position(board_index, sensor_message.antenna_id)
@@ -112,23 +112,23 @@ class CSICluster(SensorCluster):
                 if self.retry:
                     return False
                 raise ClusterCollisionError(f"conflicting CSI from board {board_index}, row {row}, column {col}")
-            if np.any(self.completion) and self.is_radar != stream_packet.is_radar:
-                raise ClusterCollisionError("radar and non-radar CSI use the same Wi-Fi frame key")
-            if self.has_radar_tx_report and not stream_packet.is_radar:
-                raise ClusterCollisionError("non-radar CSI conflicts with an existing radar TX report")
+            if np.any(self.completion) and self.is_scheduled_tx != stream_packet.is_scheduled_tx:
+                raise ClusterCollisionError("scheduled TX and ordinary CSI use the same Wi-Fi frame key")
+            if self.has_tx_report and not stream_packet.is_scheduled_tx:
+                raise ClusterCollisionError("ordinary CSI conflicts with an existing WiFi TX report")
             self._add_csi((board_index, row, col), stream_packet)
             self._mark_sensor_position_complete((board_index, row, col))
             return True
 
-        if isinstance(stream_packet, radar_packet.RadarTxReportPacket):
-            existing_report = self.radar_tx_report
+        if isinstance(stream_packet, wifi_tx_packet.WiFiTxReportPacket):
+            existing_report = self.tx_report
             if existing_report is not None:
                 if bytes(existing_report) == bytes(stream_packet):
                     return False
-                raise ClusterCollisionError(f"conflicting radar TX report with tx_count={stream_packet.tx_count}")
-            if np.any(self.completion) and not self.is_radar:
-                raise ClusterCollisionError("radar TX report conflicts with existing non-radar CSI")
-            self._set_radar_tx_report(
+                raise ClusterCollisionError(f"conflicting WiFi TX report with tx_count={stream_packet.tx_count}")
+            if np.any(self.completion) and not self.is_scheduled_tx:
+                raise ClusterCollisionError("WiFi TX report conflicts with existing ordinary CSI")
+            self._set_tx_report(
                 stream_packet,
                 sensor_position=(board_index, row, col),
             )
@@ -152,8 +152,8 @@ class CSICluster(SensorCluster):
         assert serialized_csi.sequence_control.seg == self.sequence_control.seg
         assert serialized_csi.sequence_control.frag == self.sequence_control.frag
         assert serialized_csi.is_retry == self.retry
-        if self._radar_tx_report is not None:
-            assert serialized_csi.is_radar
+        if self._tx_report is not None:
+            assert serialized_csi.is_scheduled_tx
 
         board_index, row, col = sensor_position
 
@@ -174,51 +174,51 @@ class CSICluster(SensorCluster):
         if serialized_csi.gain_table_entry_valid:
             self._gain_table_entry_raw[board_index, row, col, :] = np.frombuffer(serialized_csi.gain_table_entry_raw, dtype=np.uint8)
 
-    def _set_radar_tx_report(
+    def _set_tx_report(
         self,
-        radar_tx_report: radar_packet.RadarTxReportPacket,
+        tx_report: wifi_tx_packet.WiFiTxReportPacket,
         sensor_position: tuple[int, int, int] | None = None,
     ):
         """
-        Attach radar transmit metadata for the Wi-Fi packet represented by this cluster.
+        Attach WiFi transmit metadata for the Wi-Fi packet represented by this cluster.
         """
-        assert binascii.hexlify(bytearray(radar_tx_report.source_mac)).decode("utf-8") == self.source_mac
-        assert binascii.hexlify(bytearray(radar_tx_report.destination_mac)).decode("utf-8") == self.destination_mac
-        assert radar_tx_report.sequence_control.seg == self.sequence_control.seg
-        assert radar_tx_report.sequence_control.frag == self.sequence_control.frag
+        assert binascii.hexlify(bytearray(tx_report.source_mac)).decode("utf-8") == self.source_mac
+        assert binascii.hexlify(bytearray(tx_report.destination_mac)).decode("utf-8") == self.destination_mac
+        assert tx_report.sequence_control.seg == self.sequence_control.seg
+        assert tx_report.sequence_control.frag == self.sequence_control.frag
 
         serialized_csi = self._first_complete_sensor()
         if serialized_csi is not None:
-            assert serialized_csi.is_radar
+            assert serialized_csi.is_scheduled_tx
 
-        if self._radar_tx_report is not None:
-            assert bytes(self._radar_tx_report) == bytes(radar_tx_report)
+        if self._tx_report is not None:
+            assert bytes(self._tx_report) == bytes(tx_report)
 
-        self._radar_tx_report = radar_tx_report
+        self._tx_report = tx_report
         if sensor_position is not None:
             board_index, row, col = sensor_position
-            self._radar_tx_index = board_index * constants.ROWS_PER_BOARD * constants.ANTENNAS_PER_ROW + row * constants.ANTENNAS_PER_ROW + col
+            self._tx_index = board_index * constants.ROWS_PER_BOARD * constants.ANTENNAS_PER_ROW + row * constants.ANTENNAS_PER_ROW + col
 
     @property
-    def has_radar_tx_report(self) -> bool:
+    def has_tx_report(self) -> bool:
         """
-        Check whether this cluster has transmit-side radar metadata attached.
+        Check whether a WiFi TX report is attached.
         """
-        return self._radar_tx_report is not None
+        return self._tx_report is not None
 
     @property
-    def radar_tx_report(self):
+    def tx_report(self):
         """
-        Return the transmit-side radar report for this packet, or None if not available.
+        Return the WiFi TX report for this packet, or None.
         """
-        return self._radar_tx_report
+        return self._tx_report
 
     @property
-    def radar_tx_index(self) -> int:
+    def tx_index(self) -> int:
         """
         Return the flattened TX sensor index derived from the sensor-stream UID, or -1 if unknown.
         """
-        return int(self._radar_tx_index)
+        return int(self._tx_index)
 
     def deserialize_csi_lltf(self):
         """
@@ -647,12 +647,12 @@ class CSICluster(SensorCluster):
         return self._gain_table_entry_valid
 
     @property
-    def is_radar(self) -> bool:
+    def is_scheduled_tx(self) -> bool:
         """
-        Check whether this cluster corresponds to a radar packet.
+        Check whether this cluster corresponds to a scheduled WiFi packet.
         """
         serialized_csi = self._first_complete_sensor()
-        return False if serialized_csi is None else serialized_csi.is_radar
+        return False if serialized_csi is None else serialized_csi.is_scheduled_tx
 
     @property
     def is_calibration(self) -> bool:

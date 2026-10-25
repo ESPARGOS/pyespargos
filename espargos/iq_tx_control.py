@@ -17,7 +17,14 @@ class _SensorTXError(RuntimeError):
 def _rpc(board, path, payload=None):
     if payload is None:
         return board.control.get_json(path)
-    result = board.control.post_json(path, payload)
+    try:
+        result = board.control.post_json(path, payload)
+    except EspargosHTTPStatusError as error:
+        # These errors occur while serializing status, after set_iq_tx has
+        # applied the settings. Read status again without repeating the write.
+        if path == "set_iq_tx" and error.status == 503 and error.body in ("not enough memory for JSON response", "not enough memory for TX status"):
+            return board.control.get_json("get_iq_tx")
+        raise
     return None if result == "ok" else json.loads(result)
 
 
@@ -151,6 +158,12 @@ class TXStatus:
             next_poll = min(deadline, time.monotonic() + 0.25)
 
     def close(self):
+        errors = []
         while self.subscriptions:
             board, subscription = self.subscriptions.pop()
-            board.unsubscribe_sensor_messages(subscription)
+            try:
+                board.unsubscribe_sensor_messages(subscription)
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise ExceptionGroup("Could not unsubscribe sensor messages", errors)

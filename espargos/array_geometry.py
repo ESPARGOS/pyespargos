@@ -1,4 +1,10 @@
-"""Physical geometry and reference cabling shared by RX and TX."""
+"""Planar array layouts and reference cabling shared by RX and TX.
+
+Layout cells use the hardware antenna spacing; this is not an arbitrary 3D
+position model. Custom apertures can use explicit per-antenna steering weights
+and keep their physical coordinates in the application. Reference cable delays
+are independent of antenna positions.
+"""
 
 import copy
 from pathlib import Path

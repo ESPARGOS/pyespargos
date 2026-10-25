@@ -16,9 +16,9 @@ from . import board
 from . import csi_processing
 from . import csi_cluster
 from . import csi_packet
-from . import radar_packet
+from . import wifi_tx_packet
 from . import sensor
-from . import radar
+from . import wifi_tx
 from . import wifi
 from .clustering import ClusterAssembler
 from .sensor_calibration import ClockReferenceScope
@@ -362,24 +362,26 @@ class WiFiTransceiver(ClusterAssembler):
         Return scheduled WiFi TX configuration; sanity-check all boards report the same value.
         """
         configs = self.get_tx_configs()
-        self._common_setting(configs, "Radar config")
+        self._common_setting(configs, "WiFi TX config")
         return configs[0]
 
-    def set_tx_config(self, config: dict | radar.RadarPoolConfig):
+    def set_tx_config(self, config: dict | wifi_tx.WiFiTxConfig):
         """
         Set scheduled WiFi TX configuration on the boards in this pool.
 
         ``config`` may either be a single controller config dict applied to every board,
-        or a :class:`pyespargos.espargos.radar.RadarPoolConfig` containing one config per board.
+        or a :class:`espargos.wifi_tx.WiFiTxConfig` containing one config per board.
         """
-        if isinstance(config, radar.RadarPoolConfig):
+        if isinstance(config, wifi_tx.WiFiTxConfig):
             if len(config.board_configs) != len(self.boards):
-                raise ValueError(f"RadarPoolConfig contains {len(config.board_configs)} board configs, expected {len(self.boards)}")
+                raise ValueError(f"WiFiTxConfig contains {len(config.board_configs)} board configs, expected {len(self.boards)}")
             for board_obj, board_config in zip(self.boards, config.board_configs):
+                self._owner._wifi_tx_boards.add(board_obj)
                 board_obj.wifi_tx.set_config(board_config)
             return
 
         for b in self.boards:
+            self._owner._wifi_tx_boards.add(b)
             b.wifi_tx.set_config(config)
 
     def stop_transmission(self):
@@ -436,7 +438,7 @@ class WiFiTransceiver(ClusterAssembler):
             clustered CSI is regarded as completed and thus provided to the callback.
             If :code:`callback_predicate` returns true, clustered CSI is regarded as completed.
             If no predicate is provided, the default behavior is to trigger the callback when CSI has been received
-            from all antennas currently in WiFi mode. By default, callbacks receive over-the-air/radar CSI only. Enable
+            from all antennas currently in WiFi mode. By default, callbacks receive over-the-air CSI only. Enable
             :attr:`emit_calibration_csi` to also emit calibration CSI (from internal reference generators)
             through this same callback path.
         :return: A callback handle that can be passed to :meth:`remove_callback`
@@ -859,7 +861,7 @@ class WiFiTransceiver(ClusterAssembler):
         stream_packet = sensor_message.payload
         if isinstance(stream_packet, csi_packet.CSIPacket):
             return _CACHE_CALIBRATION if stream_packet.is_calibration else _CACHE_OTA
-        if isinstance(stream_packet, radar_packet.RadarTxReportPacket):
+        if isinstance(stream_packet, wifi_tx_packet.WiFiTxReportPacket):
             return _CACHE_OTA
         raise TypeError(f"Unsupported WiFiTransceiver sensor-message payload: {type(stream_packet).__name__}")
 
@@ -909,17 +911,17 @@ class WiFiTransceiver(ClusterAssembler):
                 if isinstance(anchor, csi_association.FrameIdentity):
                     match = anchor.match(proposed_key)
                 else:
-                    # A cluster created from a radar report has no RX timestamp until CSI arrives.
+                    # A cluster created from a WiFi TX report has no RX timestamp until CSI arrives.
                     match = csi_association.FrameIdentityMatch(None)
             elif isinstance(existing_key, csi_association.FrameIdentity):
-                # Radar reports have no RX timestamp, so require a unique matching CSI cluster.
+                # WiFi TX reports have no RX timestamp, so require a unique matching CSI cluster.
                 match = csi_association.FrameIdentityMatch(None)
             if match is None:
                 continue
             position = cluster.get_sensor_position(board_index, sensor_message.antenna_id)
             if is_csi and cluster.completion[position]:
                 continue
-            if not is_csi and cluster.has_radar_tx_report:
+            if not is_csi and cluster.has_tx_report:
                 continue
             candidates.append((match, existing_key, cluster))
 

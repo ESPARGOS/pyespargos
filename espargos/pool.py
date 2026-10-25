@@ -86,6 +86,8 @@ class AntennaSelection:
         with owner._lock:
             owner.open()
             plans = []
+            invalidated = set()
+            switched = False
             for board in owner.boards:
                 ids = [a.antid for a in self.antennas if a.host == board.host]
                 if not ids:
@@ -93,6 +95,7 @@ class AntennaSelection:
                 config = board.iq.get_config()
                 modes = list(config["modes"])
                 before = modes.copy()
+                tx_state = _rpc(board, "get_iq_tx") if mode in ("iq_rx", "iq_tx") or owner.calibrations.groups else None
                 if mode is not None:
                     for a in ids:
                         modes[a] = mode
@@ -119,6 +122,13 @@ class AntennaSelection:
                     receiver["gain_mode"] = gain_mode
                 if receiver and rx:
                     iq["receivers"] = [dict(antid=a, **receiver) for a in rx]
+                if mode == "iq_rx" and frequency_hz is None:
+                    updates = {r["antid"]: r for r in iq.get("receivers", [])}
+                    for a in rx:
+                        if before[a] == "iq_tx":
+                            updates.setdefault(a, {"antid": a})["rf_freq_hz"] = tx_state["sensors"][a]["frequency_hz"]
+                    if updates:
+                        iq["receivers"] = list(updates.values())
                 if sample_rate_hz is not None:
                     iq["adc_decimation"] = rates[sample_rate_hz]
                 if output is not None and rx:
@@ -130,6 +140,8 @@ class AntennaSelection:
                     # merely because an antenna changes into TX mode.
                     if before[a] != "iq_tx":
                         settings["amplitude"] = 0
+                        if before[a] == "iq_rx" and frequency_hz is None:
+                            settings["frequency_hz"] = config["receivers"][a]["rf_freq_hz"]
                     if settings:
                         transmitters.append(dict(antid=a, **settings))
                 channels = None
@@ -154,8 +166,15 @@ class AntennaSelection:
                             channels["channel-primary"][a] = primary
                         if secondary_channel is not None:
                             channels["channel-secondary"][a] = 2 if secondary_channel == -1 else secondary_channel
+                for a in ids:
+                    antenna = Antenna(board.host, a)
+                    switched |= before[a] != modes[a] and before[a] != "wifi" and modes[a] != "wifi"
+                    previous_frequency = tx_state["sensors"][a]["frequency_hz"] if before[a] == "iq_tx" and tx_state else config["receivers"][a]["rf_freq_hz"]
+                    if (before[a] != modes[a] and "wifi" in (before[a], modes[a])) or (frequency_hz is not None and frequency_hz != previous_frequency) or (sample_rate_hz is not None and rates[sample_rate_hz] != config["adc_decimation"]) or channels:
+                        invalidated.add(antenna)
                 plans.append((board, iq, transmitters, channels, bool(wifi)))
             # All scope checks precede writes, including across multiple boards.
+            owner.calibrations = owner.calibrations.without(invalidated)
             try:
                 for board, iq, transmitters, channels, wifi in plans:
                     if transmitters:
@@ -169,6 +188,7 @@ class AntennaSelection:
                     if wifi and output is not None:
                         board.wifi_rx.set_rf_switch(routes[output])
             except Exception:
+                owner.calibrations = owner.calibrations.without(self.antennas)
                 for board, *_ in plans:
                     try:
                         _rpc(board, "set_iq_tx", {"muted": True})
@@ -182,7 +202,28 @@ class AntennaSelection:
                     owner._refresh_receivers()
                 if owner._tx is not None and not owner._tx.closed:
                     owner._tx.read()
+            if switched and owner.calibrations.groups:
+                owner.refresh_calibration()
         return self
+
+    def calibrate_tx_rx_delay(self, *, path="reference", reference_delays_s=None, timeout=5.0):
+        """Measure each IQ transmitter's delay relative to calibrated receivers.
+
+        Temporarily receive calibration probes at 80 MSa/s, then restore the RX
+        rate and application waveforms without changing the TX replay length.
+        Below 80 MSa/s, select all active RX sensors on each affected board.
+        Reference-path delays come from board traces and configured cable lengths.
+        For antenna paths, supply {(tx_antenna, rx_antenna): delay_seconds}.
+        At least one calibrated IQ receiver and transmitter must be running.
+        """
+        from .iq_tx_rx_delay_capture import measure
+
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be positive and finite")
+        owner = self._pool
+        with owner._lock:
+            owner.open()
+            return measure(owner, self.antennas, path, reference_delays_s, timeout)
 
     def start_transmission(self, *, amplitude=1.0):
         """Unmute selected IQ transmitters, scaling their prepared waveforms.
@@ -195,6 +236,9 @@ class AntennaSelection:
         owner = self._pool
         with owner._lock:
             owner.open()
+            if owner._tx is not None and not owner._tx.closed:
+                owner._tx.read()
+                owner._tx.signals._check_beam_calibration(self.antennas)
             plans = []
             for board in owner.boards:
                 ids = {a.antid for a in self.antennas if a.host == board.host}
@@ -209,6 +253,7 @@ class AntennaSelection:
                 plans.append((board, changes))
             try:
                 for board, changes in plans:
+                    owner._iq_tx_boards.add(board)
                     _rpc(board, "set_iq_tx", {"transmitters": changes, "muted": False})
                     _wait(board, lambda s, changes=changes: all(abs(s["sensors"][v["antid"]]["applied_amplitude"] - v["amplitude"]) < 1e-6 for v in changes if s["sensors"][v["antid"]]["applied_mode"] == "iq_tx"), 10)
             except Exception:
@@ -233,8 +278,11 @@ class AntennaSelection:
     def calibrate(self, *, tx_method="reciprocity", path="reference", duration=2, per_board=True):
         """Calibrate configured roles and return only the requested coverage.
 
-        IQ measurement uses the entire connected reference domain as helpers,
-        restores its roles, and currently requires a common IQ frequency/rate.
+        IQ measurement uses only selected sensors and restores their roles.
+        Selected IQ sensors need one frequency/rate. Capture routing and triggers
+        remain board-wide. With other IQ sensors on the same board, subgroup
+        calibration needs an existing synchronized grid at 80 MSa/s.
+        Existing calibration groups must be selected in full for recalibration.
         WiFi groups retain their individual channels. Set per_board=False only
         for boards connected to a common reference. Geometry does not select
         a reference domain. Stored corrections do not
@@ -255,36 +303,54 @@ class AntennaSelection:
             roles = {Antenna(b.host, a): c["modes"][a] for b, c in zip(owner.boards, configs) for a in range(8)}
             iq_selected = {a for a in selected if roles[a] != "wifi"}
             wifi_selected = selected - iq_selected
+            # Validate every role before either IQ or WiFi acquisition starts.
+            tx_states = [_rpc(b, "get_iq_tx") for b in owner.boards] if iq_selected else []
+            keys = []
+            for bi, (board, config) in enumerate(zip(owner.boards, configs)):
+                for a in range(8):
+                    antenna = Antenna(board.host, a)
+                    if antenna in iq_selected:
+                        direction = "tx" if roles[antenna] == "iq_tx" else "rx"
+                        frequency = tx_states[bi]["sensors"][a]["frequency_hz"] if direction == "tx" else config["receivers"][a]["rf_freq_hz"]
+                        keys.append((antenna, direction, frequency))
+            if wifi_selected:
+                from .csi_scoped_calibration import states
+
+                current = states(owner.wifi)
+                keys.extend((a, "rx", current[a].frequency_hz) for a in wifi_selected)
+            owner.calibrations._check_replacement(keys)
             result = Calibration()
             if iq_selected:
-                tx_states = [_rpc(b, "get_iq_tx") for b in owner.boards]
-                centers, rates = set(), set()
-                for b, c, t in zip(owner.boards, configs, tx_states):
-                    for a, role in enumerate(c["modes"]):
-                        if role == "iq_rx":
-                            centers.add(c["receivers"][a]["rf_freq_hz"])
-                            rates.add(c["adc_decimation"])
-                        elif role == "iq_tx":
-                            centers.add(t["sensors"][a]["frequency_hz"])
-                if len(centers) != 1 or len(rates) > 1:
-                    raise ValueError("IQ calibration currently requires one frequency and RX sample rate across the connected reference domain")
-                cables = dict(cable_lengths=owner._geometry.cables, cable_velocity_factors=owner._geometry.velocity_factors)
-                if "iq_tx" in roles.values():
-                    measured = owner.iq.calibrate_tx(method=tx_method, path=path, **cables)
-                else:
-                    from .iq_tx_calibration import snapshot
+                from .iq_calibration_scope import CalibrationScope
+                from .iq_tx_calibration import calibrate, snapshot
 
-                    try:
-                        owner.iq.sync(center_hz=next(iter(centers)), **cables)
-                    finally:
-                        for b, c in zip(owner.boards, configs):
-                            b.iq.set_config({"modes": c["modes"], "receivers": c["receivers"]})
-                        for b, c in zip(owner.boards, configs):
-                            _wait(b, lambda state, modes=c["modes"]: all(sensor["applied_mode"] == mode for sensor, mode in zip(state["sensors"], modes)), 10)
-                    measured = snapshot(owner.iq)
-                result = result.merge(measured.select(antennas=iq_selected))
+                scope = CalibrationScope(owner.iq, iq_selected)
+                scope.check_sync(configs)
+                tx_selected = [a for a in iq_selected if roles[a] == "iq_tx"]
+                if tx_selected and tx_method == "reciprocity" and len(tx_selected) < 2:
+                    raise ValueError("Reciprocity calibration requires at least two selected IQ transmitters")
+                centers, rates = set(), set()
+                for bi, a in scope.pairs:
+                    if configs[bi]["modes"][a] == "iq_rx":
+                        centers.add(configs[bi]["receivers"][a]["rf_freq_hz"])
+                        rates.add(configs[bi]["adc_decimation"])
+                    else:
+                        centers.add(tx_states[bi]["sensors"][a]["frequency_hz"])
+                if len(centers) != 1 or len(rates) > 1:
+                    raise ValueError("Selected IQ sensors require one frequency and RX sample rate")
+                cables = dict(cable_lengths=owner._geometry.cables, cable_velocity_factors=owner._geometry.velocity_factors)
+                try:
+                    if tx_selected:
+                        measured = calibrate(owner.iq, method=tx_method, path=path, scope=scope, **cables)
+                    else:
+                        owner.iq._sync(center_hz=next(iter(centers)), scope=scope, publish=False, **cables)
+                        measured = snapshot(owner.iq, scope=scope)
+                except Exception:
+                    owner.calibrations = owner.calibrations.without(iq_selected)
+                    raise
+                result = result.merge(measured)
                 if owner._wifi is not None:
-                    owner._wifi.invalidate_calibration()
+                    owner._wifi.invalidate_calibration(antennas=iq_selected)
             if wifi_selected:
                 result = result.merge(
                     owner.wifi.calibrate_channels(antennas=wifi_selected, per_board=per_board, duration=duration, run_in_thread=not owner.wifi.processing, cable_lengths=owner._geometry.cables, cable_velocity_factors=owner._geometry.velocity_factors)
@@ -326,6 +392,9 @@ class Pool(AntennaSelection):
         self._opened = False
         self._iq = self._wifi = self._tx = None
         self._monitor = None
+        self._iq_tx_boards = set()
+        self._wifi_tx_boards = set()
+        self._reference_boards = set()
         self._closed = False
         self._lock = RLock()
         self._run_lock = Lock()
@@ -396,6 +465,7 @@ class Pool(AntennaSelection):
         """Reboot every board. Call reconnect() once the devices are reachable."""
         with self._lock:
             self.open()
+            self.calibrations = Calibration()
             for board in self.boards:
                 board.reboot()
 
@@ -439,6 +509,24 @@ class Pool(AntennaSelection):
             if self._tx is None or self._tx.closed:
                 self._tx = IQTransmitter(self)
             return self._tx
+
+    def refresh_calibration(self, timeout=5.0):
+        """Retain IQ calibration after same-frequency RX/TX mode switches.
+
+        Read fresh sample origins and apply the corresponding TX correction.
+        RX capture briefly uses interval mode, then restores its trigger.
+        Configure radios through this pool while using retained calibration.
+        Changes from another client or direct board calls require recalibration.
+        """
+        from .iq_calibration import refresh
+
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be positive and finite")
+        with self._lock:
+            self.open()
+            if not self.calibrations.groups:
+                return self.calibrations
+            return refresh(self, timeout)
 
     def configure_monitor(self, config):
         """Configure the reference monitor on the master controller."""
@@ -557,13 +645,13 @@ class Pool(AntennaSelection):
         if self._tx is not None and not self._tx.closed:
             attempt(self._tx.close)
         else:
-            for b in self.boards:
-                if b.api_version[0] >= 4:
-                    attempt(lambda b=b: _rpc(b, "set_iq_tx", {"muted": True}))
-        for b in self.boards:
+            for b in self._iq_tx_boards:
+                attempt(lambda b=b: _rpc(b, "set_iq_tx", {"muted": True}))
+        # Receive-only pools must not change unrelated transmitters or REF sources.
+        for b in self._wifi_tx_boards:
             attempt(lambda b=b: b.wifi_tx.set_config({"active_by_antid": [False] * 8}))
-            if b.api_version[0] >= 4:
-                attempt(b.iq.set_reference)
+        for b in self._reference_boards:
+            attempt(b.iq.set_reference)
         for pool in (self._iq, self._wifi):
             if pool is not None:
                 attempt(pool._close)

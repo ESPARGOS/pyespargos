@@ -170,7 +170,7 @@ class WiFiRxCapability(BoardCapability):
         """Select automatic CFO correction or a fixed CFO in Hz.
 
         Use the sign of received packet ``rx_ctrl.cfo`` values. Manual 0 Hz
-        disables correction for shared-clock reference/radar transmitters.
+        disables correction for shared-clock reference/WiFi transmitters.
         Values are rounded to the nearest hardware step (about 76.3 Hz).
         Invalid or out-of-range values raise :class:`ValueError`.
         """

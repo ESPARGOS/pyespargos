@@ -5,7 +5,7 @@ ESPARGOS measures channel state information (CSI) from received WiFi packets.
 We collect the measurements from all selected sensors into a cluster, then
 apply calibration to compare their phases.
 
-``pool.wifi`` handles both reception and transmission in the same ``wifi``
+:attr:`pool.wifi <espargos.pool.Pool.wifi>` handles both reception and transmission in the same ``wifi``
 sensor mode. A sensor cannot receive while it is actively transmitting a
 packet, but receives again between transmissions. Enabling a periodic TX
 schedule does not disable reception for the whole schedule. See
@@ -36,7 +36,7 @@ We can tune subsets of sensors to different WiFi channels. For example:
 
 This produces separate RX calibration groups for the two channels on each board.
 For boards connected to one common reference, use
-``pool.calibrate(per_board=False)`` to relate their WiFi receivers across boards.
+:meth:`pool.calibrate(per_board=False) <espargos.pool.Pool.calibrate>` to relate their WiFi receivers across boards.
 Geometry does not imply a shared reference connection.
 
 Minimal Example
@@ -67,8 +67,8 @@ The following code example receives clustered CSI from one ESPARGOS device:
        while True:
            pool.run()
 
-``Pool`` manages connections and cleanup. ``pool.wifi`` supplies a shared
-``WiFiTransceiver`` for packet processing. For antenna selections, combined arrays and
+:class:`Pool <espargos.pool.Pool>` manages connections and cleanup. :attr:`pool.wifi <espargos.pool.Pool.wifi>` supplies a shared
+:class:`WiFiTransceiver <espargos.wifi_transceiver.WiFiTransceiver>` for packet processing. For antenna selections, combined arrays and
 mixed RX/TX operation, see :doc:`pool`.
 
 The lower-level classes remain available for custom integrations:
@@ -76,7 +76,7 @@ The lower-level classes remain available for custom integrations:
 **The** :class:`.Board` **class** represents one ESPARGOS controller.
 It connects to the controller and receives measurements from its sensors over Ethernet or USB.
 WiFi reception settings and individual CSI messages are available through :attr:`~espargos.board.Board.wifi_rx`.
-The optional :attr:`~espargos.board.Board.wifi_tx` interface controls scheduled WiFi transmissions used for radar measurements.
+The optional :attr:`~espargos.board.Board.wifi_tx` interface controls scheduled WiFi transmissions.
 Most CSI applications use :class:`.WiFiTransceiver`, even when working with only one ESPARGOS device.
 
 **The** :class:`.WiFiTransceiver` **class** is responsible for handling the clustering of CSI from one or multiple ESPARGOS boards.
@@ -88,10 +88,10 @@ The example enables ``acquire_csi_force_lltf`` so that every supported OFDM pack
 This gives applications a consistent 53-subcarrier CSI representation across different transmitters.
 The callback predicate additionally ignores packets without usable L-LTF CSI, such as 802.11b packets.
 
-Obtain receivers through ``pool.wifi`` or ``pool.iq``. They share the connections
+Obtain receivers through :attr:`pool.wifi <espargos.pool.Pool.wifi>` or :attr:`pool.iq <espargos.pool.Pool.iq>`. They share the connections
 and processing lifecycle owned by the pool.
-Call ``pool.start_processing()`` to run callbacks in the background, or call
-``pool.run()`` regularly from your own loop. Backlogs collect data through
+Call :meth:`pool.start_processing() <espargos.pool.Pool.start_processing>` to run callbacks in the background, or call
+:meth:`pool.run() <espargos.pool.Pool.run>` regularly from your own loop. Backlogs collect data through
 callbacks and do not own a worker thread.
 Each call waits briefly for the first message and then processes one bounded batch of queued messages.
 Use ``timeout=0`` when integrating with a GUI or another event loop that must never block; a dedicated worker may use a longer timeout such as ``timeout=0.5``.

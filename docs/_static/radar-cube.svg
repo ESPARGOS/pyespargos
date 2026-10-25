@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="500" viewBox="0 0 1000 500" role="img" aria-labelledby="title desc">
+<title id="title">Radar data cube</title>
+<desc id="desc">Channel measurements arranged by frequency, antenna position and measurement time. Frequency gives delay, antenna position gives direction, and changes across measurements give Doppler.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#293135"/></marker></defs>
+<rect width="1000" height="500" fill="white"/>
+<g stroke="#0d4f1a" stroke-width="2" stroke-linejoin="round">
+<path d="M230 340 L570 340 L570 150 L230 150 Z" fill="#d7f4e0"/>
+<path d="M230 150 L350 65 L690 65 L570 150 Z" fill="#eef8f0"/>
+<path d="M570 340 L690 255 L690 65 L570 150 Z" fill="#b6dfc1"/>
+
+<path d="M272.5 340 V150 L392.5 65" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M315.0 340 V150 L435.0 65" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M357.5 340 V150 L477.5 65" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M400.0 340 V150 L520.0 65" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M442.5 340 V150 L562.5 65" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M485.0 340 V150 L605.0 65" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M527.5 340 V150 L647.5 65" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M230 302.0 H570 L690 217.0" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M230 264.0 H570 L690 179.0" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M230 226.0 H570 L690 141.0" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M230 188.0 H570 L690 103.0" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M254.0 133.0 H594.0 V323.0" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M278.0 116.0 H618.0 V306.0" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M302.0 99.0 H642.0 V289.0" fill="none" stroke="#86b997" stroke-width="1"/>
+<path d="M326.0 82.0 H666.0 V272.0" fill="none" stroke="#86b997" stroke-width="1"/>
+</g>
+<g fill="none" stroke="#293135" stroke-width="2">
+<path d="M230 370 H570"/>
+<path d="M200 340 V150"/>
+<path d="M600 355 L720 270"/>
+</g>
+<path d="M570 370 L558 364 L558 376 Z M200 150 L194 162 L206 162 Z M720 270 L706 273 L713 283 Z" fill="#293135"/>
+<g font-family="Carlito, Calibri, Arial, sans-serif" font-size="22" fill="#293135">
+<text x="400" y="408" text-anchor="middle">Frequency</text>
+<text x="400" y="438" text-anchor="middle" fill="#007a7a">Delay / range</text>
+<text x="176" y="224" text-anchor="end">Antenna</text>
+<text x="176" y="253" text-anchor="end">position</text>
+<text x="176" y="287" text-anchor="end" fill="#007a7a">Direction</text>
+<text x="735" y="290">Measurement time</text>
+<text x="735" y="319">(slow time)</text>
+<text x="735" y="353" fill="#007a7a">Doppler / velocity</text>
+</g></svg>

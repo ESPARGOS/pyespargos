@@ -78,6 +78,9 @@ class IQTransmitter:
         return self.read()
 
     def mute(self, muted):
+        if not muted:
+            self.read()
+            self.signals._check_beam_calibration()
         try:
 
             def apply(i, b):
@@ -146,6 +149,9 @@ class IQTransmitter:
         if not resize:
             yield
             return
+        from .calibration import Antenna
+
+        self.owner.calibrations = self.owner.calibrations.without(Antenna(board.host, a) for a in antennas)
         # RX mode status can arrive while the engine is still restarting.
         # A fresh chunk from every target proves it can accept a new buffer.
         trigger = board.iq.get_config()["trigger"]
@@ -238,7 +244,7 @@ class IQTransmitter:
 
     def calibrate(self, *, method="reciprocity", path="reference"):
         try:
-            return self.receiver.calibrate_tx(method=method, path=path, cable_lengths=self.geometry.cables, cable_velocity_factors=self.geometry.velocity_factors)
+            return self.owner.calibrate(tx_method=method, path=path)
         finally:
             self.read()
 

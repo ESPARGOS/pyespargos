@@ -1,7 +1,7 @@
 """Shared Wi-Fi protocol types.
 
 These definitions are used by more than one sensor-message format. Keeping
-them here avoids making radar packets depend on CSI packet implementation
+them here avoids making WiFi TX reports depend on CSI packet implementation
 details.
 """
 

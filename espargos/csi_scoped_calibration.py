@@ -147,6 +147,7 @@ def calibrate(pool, *, antennas=None, per_board=True, duration=2, cable_lengths=
     selected = list(current) if antennas is None else list(antennas)
     if not selected or len(set(selected)) != len(selected) or any(a not in current for a in selected):
         raise ValueError("Select distinct antennas currently in WiFi mode")
+    pool._owner.calibrations._check_replacement((a, "rx", current[a].frequency_hz) for a in selected)
     pool._invalidate_association_timebase("new WiFi calibration started", warn=False, invalidate_scoped=False)
     current = states(pool)
     groups = {}

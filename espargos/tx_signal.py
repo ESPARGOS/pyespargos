@@ -6,7 +6,7 @@ import threading
 
 import numpy as np
 
-from .calibration import Antenna
+from .calibration import Antenna, CalibrationState
 from .steering import Beamspace, Weights
 
 from .waveforms import CW, IQSamples, Waveform, SAMPLE_RATE, _finite
@@ -142,8 +142,27 @@ class TXSignals:
             finally:
                 self._editing = False
 
+    def _check_beam_calibration(self, antennas=None, preparing=False):
+        """Geometric beams need a common TX reference, raw weights do not."""
+        tx = self.transmitter
+        calibration = tx.owner.calibrations
+        sensors = {Antenna(b.host, a): tx.states[bi]["sensors"][a] for bi, b in enumerate(tx.boards) for a in range(8)}
+        known = {c.state.antenna for g in calibration.groups for c in g.corrections if c.state.direction == "tx"}
+        for signal in self:
+            if not isinstance(signal.steering, Beamspace):
+                continue
+            members = set(signal.antennas)
+            if antennas is not None and not members.intersection(antennas):
+                continue
+            # Waveforms are normally prepared before the first calibration.
+            if preparing and not members.intersection(known):
+                continue
+            states = [CalibrationState.from_tx_status(a.host, sensors[a]) for a in signal.antennas]
+            calibration.require_coherent(states)
+
     def _compile(self):
         tx = self.transmitter
+        self._check_beam_calibration(preparing=True)
         recipes, targets = {}, set()
         for signal in tx.signals:
             s = signal._settings

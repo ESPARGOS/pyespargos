@@ -120,7 +120,7 @@ boards.
 
    Selecting the reference input on a slave does not make the master generate
    a calibration signal. Calibrate the connected boards together through one
-   ``Pool`` so the library controls both the source and the receivers.
+   :class:`Pool <espargos.pool.Pool>` so the library controls both the source and the receivers.
 
 Configure a combined pool
 ---------------------------
@@ -146,7 +146,7 @@ sensor subsets and assigning different roles.
 Calibrate for the chosen sensor modes
 ---------------------------------------
 
-``pool.calibrate()`` measures the corrections needed for the sensors' current
+:meth:`pool.calibrate() <espargos.pool.Pool.calibrate>` measures the corrections needed for the sensors' current
 roles. For WiFi reception across a shared reference network, use
 ``per_board=False`` to relate receivers across boards::
 
@@ -168,7 +168,7 @@ explains how to apply corrections and combine calibration groups.
 IQ transmit calibration
 -------------------------
 
-For IQ TX, prepare the signals before calling ``pool.calibrate()``. There are
+For IQ TX, prepare the signals before calling :meth:`pool.calibrate() <espargos.pool.Pool.calibrate>`. There are
 two methods:
 
 * ``tx_method="monitor"``: sensors transmit into REF and the controller

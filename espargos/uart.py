@@ -14,8 +14,6 @@ if os.name == "posix":
 import serial
 import serial.tools.list_ports
 
-from . import sensor
-
 __all__ = [
     "UARTClient",
     "UARTControlResponse",
@@ -618,14 +616,3 @@ class UARTClient:
             return
 
         self._logger.debug(f"Ignoring UART frame type 0x{frame_type:02x}")
-
-
-def validate_sensor_stream_payload(payload: bytes, revision) -> bool:
-    del revision
-    if len(payload) < 4:
-        return False
-    try:
-        sensor.SensorPacket.from_bytes(payload)
-    except ValueError:
-        return False
-    return True

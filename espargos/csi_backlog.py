@@ -5,7 +5,7 @@
 The generic ring-buffer and filter-chain mechanics live in
 :mod:`espargos.sensor_backlog`. This module describes the fields available for
 CSI and translates each completed :class:`.CSICluster` into one backlog
-datapoint. CSI deserialization, calibration, radar metadata, and the concrete
+datapoint. CSI deserialization, calibration, WiFi transmit metadata, and the concrete
 packet filters remain CSI-specific.
 """
 
@@ -33,7 +33,6 @@ class MACFilter(CSIBacklogFilter):
     """Match source MAC addresses against a regular expression."""
 
     def __init__(self, filter_regex):
-        self._pattern = filter_regex
         self._compiled_pattern = re.compile(filter_regex)
 
     def matches(self, clustered_csi):
@@ -116,25 +115,25 @@ class CSIBacklog(SensorBacklog):
             per_sensor=False,
             fill_value=0,
         ),
-        "radar_tx_timestamp": BacklogField(
+        "tx_timestamp": BacklogField(
             (),
             np.float64,
             per_sensor=False,
             fill_value=np.nan,
         ),
-        "radar_tx_index": BacklogField(
+        "tx_index": BacklogField(
             (),
             np.int16,
             per_sensor=False,
             fill_value=-1,
         ),
-        "radar_tx_power": BacklogField(
+        "tx_power": BacklogField(
             (),
             np.int16,
             per_sensor=False,
             fill_value=-1,
         ),
-        "radar_tx_rf_switch_state": BacklogField(
+        "tx_rf_switch_state": BacklogField(
             (),
             np.uint8,
             per_sensor=False,
@@ -313,22 +312,22 @@ class CSIBacklog(SensorBacklog):
                 raise ValueError(f"Unexpected CSI source MAC {mac_string!r}")
             values["mac"] = mac
 
-        radar_fields = {
-            "radar_tx_timestamp",
-            "radar_tx_index",
-            "radar_tx_power",
-            "radar_tx_rf_switch_state",
+        tx_fields = {
+            "tx_timestamp",
+            "tx_index",
+            "tx_power",
+            "tx_rf_switch_state",
         }
-        if fields & radar_fields and clustered_csi.has_radar_tx_report:
-            radar_tx_report = clustered_csi.radar_tx_report
-            if "radar_tx_timestamp" in fields:
-                values["radar_tx_timestamp"] = radar_tx_report.get_hardware_tx_timestamp_ns() / 1e9
-            if "radar_tx_index" in fields:
-                values["radar_tx_index"] = clustered_csi.radar_tx_index
-            if "radar_tx_power" in fields:
-                values["radar_tx_power"] = radar_tx_report.tx_power
-            if "radar_tx_rf_switch_state" in fields:
-                values["radar_tx_rf_switch_state"] = radar_tx_report.rf_switch_state
+        if fields & tx_fields and clustered_csi.has_tx_report:
+            tx_report = clustered_csi.tx_report
+            if "tx_timestamp" in fields:
+                values["tx_timestamp"] = tx_report.get_hardware_tx_timestamp_ns() / 1e9
+            if "tx_index" in fields:
+                values["tx_index"] = clustered_csi.tx_index
+            if "tx_power" in fields:
+                values["tx_power"] = tx_report.tx_power
+            if "tx_rf_switch_state" in fields:
+                values["tx_rf_switch_state"] = tx_report.rf_switch_state
 
         self.append_datapoint(values)
 

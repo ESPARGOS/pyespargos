@@ -9,7 +9,7 @@ SDR write-up <https://espargos.net/espsdr/>`_.
 Receive your first samples
 --------------------------
 
-Open a ``Pool``, configure reception and calibrate it. ``pool.iq`` provides
+Open a :class:`Pool <espargos.pool.Pool>`, configure reception and calibrate it. :attr:`pool.iq <espargos.pool.Pool.iq>` provides
 the sample callbacks and trigger controls. See :doc:`calibration` for what
 calibration measures and how to apply the corrections:
 
@@ -33,43 +33,43 @@ calibration measures and how to apply the corrections:
        pool.start_processing()
        input("Capturing. Press Enter to stop... ")
 
-The callback receives matching samples from all antennas. ``cluster.iq`` is a
+The callback receives matching samples from all antennas. :attr:`cluster.iq <espargos.iq_cluster.IQCluster.iq>` is a
 complex NumPy array with shape ``(boards, rows, columns, 256)``. For one board,
 that is ``(1, 2, 4, 256)``.
 
 .. note::
 
    **Why 256 samples?** The firmware sends IQ samples in fixed blocks called
-   *chunks*, each containing 256 complex samples per antenna. ``IQReceiver`` groups
+   *chunks*, each containing 256 complex samples per antenna. :class:`IQReceiver <espargos.iq_receiver.IQReceiver>` groups
    matching chunks from all antennas into one cluster. This is the transfer
    size, not a limit on capture length. For a longer waveform or FFT, combine
    consecutive chunks from the same capture burst. Four chunks give you 1024
    samples per antenna.
 
-``pool.start_processing()`` starts one worker that processes both IQ and CSI
+:meth:`pool.start_processing() <espargos.pool.Pool.start_processing>` starts one worker that processes both IQ and CSI
 and invokes their registered callbacks.
-Do not also call ``run()`` from your own loop while that thread is running.
+Do not also call :meth:`run() <espargos.pool.Pool.run>` from your own loop while that thread is running.
 
 The Trigger Modes
 -----------------
 
 Set ``trigger`` to an object with a mode name and its settings. This replaces
 all trigger settings, using defaults for fields you leave out. Omit ``trigger``
-to keep the current settings. ``pool.boards[0].iq.get_config()["trigger"]`` returns the
+to keep the current settings. :meth:`pool.boards[0].iq.get_config()["trigger"] <espargos.board_iq.IQCapability.get_config>` returns the
 full applied configuration, including defaults.
 
 **Interval** captures short bursts at regular intervals. Start here for general
 signal inspection. The example above captures four 256-sample chunks every
-16384 chunks, with no offset. Receive the samples with ``add_callback()``.
+16384 chunks, with no offset. Receive the samples with :meth:`add_callback() <espargos.iq_receiver.IQReceiver.add_callback>`.
 
-**Accumulate** averages repeated waveforms to make a weak repeating signal
-easier to see. ``{"mode": "accumulate", "vector_chunks": 4, "interval_chunks":
-32768, "offset_chunks": 0}`` selects four-chunk vectors and an output interval
-of 32768 chunks. Use ``add_accumulation_callback()`` to receive the averages.
+**Accumulate** averages matching complex IQ samples from repeated waveforms
+on each sensor before transfer. Its main application is :doc:`iq-radar`, where
+coherent repetitions improve the visibility of weak reflections while reducing
+data traffic. See :ref:`iq-accumulate` below for its requirements and settings.
 
 **Signal** waits for a signal to cross a threshold, then captures the same
 event across all eight antennas. This is useful for short bursts such as WiFi
-traffic. Use ``add_signal_capture_callback()`` to receive complete captures.
+traffic. Use :meth:`add_signal_capture_callback() <espargos.iq_receiver.IQReceiver.add_signal_capture_callback>` to receive complete captures.
 
 .. note::
 
@@ -78,7 +78,7 @@ traffic. Use ``add_signal_capture_callback()`` to receive complete captures.
    with a shared clock and reference connection. Their captures may therefore
    cover different events or different parts of the same signal.
 
-   Use a single-board ``Pool`` for Signal capture. For synchronized captures
+   Use a single-board :class:`Pool <espargos.pool.Pool>` for Signal capture. For synchronized captures
    across multiple arrays, use Interval or Accumulate instead.
 
 For example:
@@ -98,6 +98,45 @@ These are also the Signal defaults. ``antennas`` lists which antennas may
 request a capture. A threshold is measured in ADC counts (I or Q). Set
 ``quiet_threshold`` above zero to require a quiet period before a new onset.
 Unknown fields and settings for a different mode are rejected.
+
+.. _iq-accumulate:
+
+Accumulate mode
+----------------
+
+Accumulation requires coherent repetition: the signal must return with the
+same sample alignment and stable phase on each repetition. There must be no
+significant carrier-frequency offset (CFO) or sampling-frequency offset (SFO)
+between TX and RX over the averaging window. CFO rotates the signal's phase;
+SFO shifts its samples. Averaging does not compensate for either effect and
+can weaken or blur a signal instead of improving it. Radar with a shared TX/RX
+clock is the main use case. Unrelated transmissions generally do not meet
+these conditions.
+
+Choose ``vector_chunks`` so that ``vector_chunks * 256`` received samples cover
+one waveform repetition, or an integer multiple of it. ``interval_chunks`` sets
+the output interval in units of 256 received samples. For example::
+
+   receiver.apply_config({"trigger": {
+       "mode": "accumulate",
+       "vector_chunks": 4,
+       "interval_chunks": 32768,
+       "offset_chunks": 0,
+   }})
+   receiver.add_accumulation_callback(handle_average)
+
+This produces 1024-sample vectors at intervals of 32768 chunks.
+:meth:`add_accumulation_callback() <espargos.iq_receiver.IQReceiver.add_accumulation_callback>`
+delivers :class:`IQAccumCluster <espargos.iq_accum_cluster.IQAccumCluster>` objects;
+:attr:`iq <espargos.iq_accum_cluster.IQAccumCluster.iq>` contains the averages.
+By default, a callback receives a window only when all active receivers have
+accumulated matching source chunks. This keeps their measurements comparable
+when packets are lost or acquisition falls behind.
+
+Longer averaging reduces uncorrelated noise, but also reduces the output rate
+and can suppress signals whose phase changes during the window, including
+reflections from moving targets. Choose the interval for the motion you need
+to observe. Use Interval mode when you need individual, unaveraged captures.
 
 Signal Analyzer Demo
 --------------------

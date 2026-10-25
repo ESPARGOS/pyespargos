@@ -1,18 +1,26 @@
 """TX calibration using the master controller's reference monitor.
 
-The RF reference network must carry signals from every sensor back to the
-master. Amplified splitters with no reverse RF path are not supported.
+After RX synchronization, sensors transmit pilots through REF to the master
+controller's monitor. Relative pilot phases and delays, corrected for known
+reference-path delays, determine the TX phase and delay corrections.
+
+Unlike ``iq_tx_reciprocity_calibration``, this method measures all transmitters
+at one common receiver instead of exchanging pilots between sensors. It needs
+a reverse RF path from every sensor to the master; amplified splitters without
+that path are not supported. Reciprocity instead cancels the propagation
+response using two-way sensor links and also supports antenna paths.
 """
 
 import copy
 import numpy as np
 from .iq_tx_control import TXStatus, _rpc, _waveform
-from .iq_tx_calibration_fit import pilots, measure
+from .iq_tx_pilots import pilots
+from .iq_tx_monitor_fit import measure
 from .sensor_calibration import compute_reference_path_delays
 from .iq_reference import _map
 
 
-def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=None, timeout=10.0):
+def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=None, timeout=10.0, scope=None):
     """Synchronize RX, measure TX through REF, and restore user waveforms.
 
     All selected transmitters use one frequency and replay length. Combined
@@ -23,10 +31,13 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
 
     if pool._calibrating:
         raise RuntimeError("Calibration is already running")
+    from .iq_calibration_scope import CalibrationScope
+
+    scope = scope or CalibrationScope(pool)
     boards = pool.boards
     saved_rx = _map(lambda b: b.iq.get_config(), boards)
     saved_tx = _map(lambda b: _rpc(b, "get_iq_tx"), boards)
-    targets = [[a for a, m in enumerate(c["modes"]) if m == "iq_tx"] for c in saved_rx]
+    targets = [[a for a in scope.ids[bi] if c["modes"][a] == "iq_tx"] for bi, c in enumerate(saved_rx)]
     selected = [(bi, a) for bi, ants in enumerate(targets) for a in ants]
     if not selected:
         raise ValueError("Select at least one IQ TX sensor")
@@ -38,7 +49,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
     base = next((bi for bi in active if len(targets[bi]) >= 2), active[0])
     if len(active) > 1 and len(targets[base]) < 2:
         raise ValueError("Combined calibration needs at least two TX sensors on one board")
-    if any(r["rf_freq_hz"] != center for c in saved_rx for a, r in enumerate(c["receivers"]) if c["modes"][a] == "iq_rx"):
+    if any(r["rf_freq_hz"] != center for bi, c in enumerate(saved_rx) for a, r in enumerate(c["receivers"]) if a in scope.ids[bi] and c["modes"][a] == "iq_rx"):
         raise ValueError("Active receivers must use the TX frequency")
     paths = compute_reference_path_delays(boards, cable_lengths, cable_velocity_factors)
 
@@ -46,7 +57,10 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
         bi, a = sensor
         return paths[(bi, *boards[bi].revision.antenna_id_to_row_col(a))]
 
-    zero = {"phase_deg": [0] * 8, "delay_samples": [0] * 8}
+    steering = [copy.deepcopy(s["steering"]) for s in saved_tx]
+    for bi, a in scope.pairs:
+        for values in steering[bi].values():
+            values[a] = 0
     corrections = [copy.deepcopy(s["calibration"]) for s in saved_tx]
     monitors = _map(lambda b: _rpc(b, "get_iq_monitor"), boards)
     status = TXStatus(boards)
@@ -57,7 +71,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
     epochs = {}
 
     def wait_modes(bi, modes):
-        return status.wait(boards[bi], lambda s: all(x["applied_mode"] == modes[a] for a, x in enumerate(s["sensors"])), timeout)
+        return status.wait(boards[bi], lambda s: all(s["sensors"][a]["applied_mode"] == modes[a] for a in scope.ids[bi]), timeout)
 
     def weights(bi):
         cal = corrections[bi]
@@ -74,12 +88,13 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             _rpc(b, "set_iq_monitor", {"enabled": False})
             # The pilots span ±30 MHz, regardless of the user's waveform.
             # A narrower TX filter bends their phase enough to hide the origin.
-            _rpc(b, "set_iq_tx", {"muted": True, "modes": ["iq_rx" if m == "iq_tx" else m for m in saved_rx[bi]["modes"]], "rf_gain": {"a": 0, "b": 0}, "bandwidth_mhz": 60})
-            wait_modes(bi, ["iq_rx" if m == "iq_tx" else m for m in saved_rx[bi]["modes"]])
+            modes = scope.modes(bi, saved_rx[bi]["modes"])
+            _rpc(b, "set_iq_tx", {"muted": True, "modes": modes, "transmitters": [{"antid": a, "rf_gain": {"a": 0, "b": 0}, "bandwidth_mhz": 60} for a in targets[bi]]})
+            wait_modes(bi, modes)
 
-        _map(prepare, range(len(boards)))
-        pool.apply_config({"rf_freq_hz": center, "adc_decimation": 1})
-        rx_cal = pool.sync(center_hz=center, rx_gain=rx_gain, cable_lengths=cable_lengths, cable_velocity_factors=cable_velocity_factors)
+        _map(prepare, scope.active)
+        scope.apply_rx({"rf_freq_hz": center})
+        rx_cal = pool._sync(center_hz=center, rx_gain=rx_gain, cable_lengths=cable_lengths, cable_velocity_factors=cable_velocity_factors, scope=scope, publish=False)
         pool._calibrating = True
         for bi in active:
             b = boards[bi]
@@ -94,8 +109,8 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                     "muted": True,
                     "modes": saved_rx[bi]["modes"],
                     "calibration": corrections[bi],
-                    "steering": zero,
-                    "transmitters": [{"antid": a, "output": "reference", "amplitude": 1} for a in targets[bi]],
+                    "steering": steering[bi],
+                    "transmitters": [{"antid": a, "output": "reference", "amplitude": 1} for a in targets[bi]] + [{"antid": a, "amplitude": 0} for a, m in enumerate(saved_rx[bi]["modes"]) if m == "iq_tx" and a not in targets[bi]],
                 },
             )
             wait_modes(bi, saved_rx[bi]["modes"])
@@ -135,6 +150,20 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             for bi in active:
                 _rpc(boards[bi], "set_iq_tx", {"muted": False, "transmitters": [{"antid": a, "amplitude": int((bi, a) in emitting)} for a in targets[bi]]})
                 status.wait(boards[bi], lambda s, bi=bi: all(abs(s["sensors"][a]["applied_amplitude"] - int((bi, a) in emitting)) < 1e-6 for a in targets[bi]), timeout)
+            # Dense pilots need enough ADC resolution per tone. Set gain from
+            # the received peak, leaving headroom when several TXs add together.
+            monitor_config = _rpc(pool.master_board, "get_iq_monitor")
+            gain = monitor_config["gain"]
+            for _ in range(6):
+                captures = monitor.collect(3, timeout)
+                peak = float(np.median([max(abs(z.real).max(), abs(z.imag).max()) for z in captures]))
+                if 64 <= peak <= 400:
+                    break
+                adjusted = int(np.clip(gain + (6 if peak < 64 else -6), 0, monitor_config["gain_max"]))
+                if adjusted == gain:
+                    break
+                gain = adjusted
+                _rpc(pool.master_board, "set_iq_monitor", {"gain": gain})
             index = next(j for j, (bi, a, _) in enumerate(group) if (bi, a) == reference)
             delays = np.array([path((bi, a)) for bi, a, _ in group])
             delays -= delays[index]
@@ -182,7 +211,8 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             _rpc(pool.master_board, "set_iq_monitor", {"enabled": False})
         except Exception as error:
             errors.append(str(error))
-        for bi, b in enumerate(boards):
+        for bi in scope.active:
+            b = boards[bi]
             try:
                 _rpc(b, "set_iq_tx", {"muted": True})
                 status.wait(b, lambda s: all(not x["enabled"] or abs(x["applied_amplitude"]) < 1e-8 for x in s["sensors"]), timeout)
@@ -198,7 +228,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                         "transmitters": [{k: x[k] for k in ("antid", "frequency_hz", "rf_gain", "bandwidth_mhz", "output", "amplitude")} for x in saved_tx[bi]["sensors"]],
                     },
                 )
-                b.iq.set_config({k: saved_rx[bi][k] for k in ("modes", "receivers", "rf_switch", "adc_decimation", "trigger")})
+                b.iq.set_config({**{k: saved_rx[bi][k] for k in ("modes", "rf_switch", "adc_decimation", "trigger")}, "receivers": [saved_rx[bi]["receivers"][a] for a in scope.ids[bi]]})
                 if success and targets[bi]:
                     restored = _rpc(b, "get_iq_tx")
                     if any(restored["sensors"][a]["epoch"] != epochs[bi, a] or restored["sensors"][a]["boot_id"] != saved_tx[bi]["sensors"][a]["boot_id"] for a in targets[bi]):
@@ -209,7 +239,8 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             pool.master_board.iq.set_reference()
         except Exception as error:
             errors.append(str(error))
-        for b, c in zip(boards, monitors):
+        for bi in scope.active:
+            b, c = boards[bi], monitors[bi]
             try:
                 _rpc(
                     b,
@@ -225,10 +256,10 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             pool._calibration = None
         if success and not errors:
             try:
-                _map(lambda pair: _rpc(pair[1], "set_iq_tx", {"muted": saved_tx[pair[0]]["muted"]}), enumerate(boards))
+                _map(lambda pair: _rpc(pair[1], "set_iq_tx", {"muted": saved_tx[pair[0]]["muted"]}), [(bi, boards[bi]) for bi in scope.active])
             except Exception as error:
                 errors.append(str(error))
-                for b in boards:
+                for b in [boards[bi] for bi in scope.active]:
                     try:
                         _rpc(b, "set_iq_tx", {"muted": True})
                     except Exception as mute_error:

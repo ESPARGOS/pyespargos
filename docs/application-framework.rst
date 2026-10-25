@@ -21,9 +21,9 @@ interface through ``self.receiver``. Drawers use the same connections.
    * - ``ESPARGOSApplication``
      - Command-line parsing, configuration, QML setup and shutdown hooks.
    * - ``ESPARGOSCSIApplication``
-     - WiFi CSI reception through ``pool.wifi``, calibration and the WiFi settings drawer.
+     - WiFi CSI reception through :attr:`pool.wifi <espargos.pool.Pool.wifi>`, calibration and the WiFi settings drawer.
    * - ``ESPARGOSIQApplication``
-     - IQ reception through ``pool.iq`` and a controller for the IQ settings drawer.
+     - IQ reception through :attr:`pool.iq <espargos.pool.Pool.iq>` and a controller for the IQ settings drawer.
    * - ``ESPARGOSTxApplication``
      - IQ transmission controls, startup calibration and asynchronous hardware updates.
 
@@ -106,7 +106,7 @@ custom drawer:
 
 The controls select monitor-based or reciprocal calibration and, for the
 reciprocal method, the signal path. Calibration runs through
-``Pool.calibrate()`` on the controller's worker thread. Changing a selector
+:meth:`Pool.calibrate() <espargos.pool.Pool.calibrate>` on the controller's worker thread. Changing a selector
 sets the next calibration method without starting it.
 
 The TX application selects IQ TX on all sensors, calibrates, then starts

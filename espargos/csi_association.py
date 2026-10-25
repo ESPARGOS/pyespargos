@@ -89,7 +89,7 @@ class FrameSignature:
     rate: int
     channel_estimate_length: int
     is_calibration: bool
-    is_radar: bool
+    is_scheduled_tx: bool
 
     @classmethod
     def from_packet(cls, packet: csi_packet.CSIPacket) -> "FrameSignature":
@@ -104,7 +104,7 @@ class FrameSignature:
             rate=int(rx_ctrl.rate),
             channel_estimate_length=int(rx_ctrl.rx_channel_estimate_len),
             is_calibration=bool(packet.is_calibration),
-            is_radar=bool(packet.is_radar),
+            is_scheduled_tx=bool(packet.is_scheduled_tx),
         )
 
 

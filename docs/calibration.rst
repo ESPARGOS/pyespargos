@@ -1,9 +1,9 @@
 Calibration
 ===========
 
-ESPARGOS sensors share a reference clock. To understand what this synchronizes
-and what we still need to calibrate, we distinguish four offsets between radio
-chains:
+A shared clock keeps ESPARGOS sensors in step, but their radio chains still
+add different phases and delays. Calibration measures these differences.
+We distinguish four kinds of offset:
 
 .. list-table::
    :header-rows: 1
@@ -25,23 +25,14 @@ chains:
      - Carrier phase offset
      - The carriers have different phases even at the same frequency.
 
-Within a synchronized array, the shared clock removes relative CFO and SFO
-when we use the same carrier frequency and sample rate. We therefore do not
-need to calibrate these two offsets between its sensors. This also applies to
-combined arrays that share a reference clock. An external transmitter can
-still have a frequency offset relative to the array.
+A shared clock removes relative CFO and SFO between sensors at the same
+carrier frequency and sample rate, including across connected arrays.
+An external transmitter can still have a frequency offset.
 
-The challenge is that a shared clock does not remove STO and CPO. Each receiver
-and transmitter still introduces a hardware-dependent phase offset and delay.
-Two receivers can report different phases for the same input, and identical
-digital samples can leave two transmitters at different phases or times. We
-measure and compensate for these offsets so that we can use the phase and
-timing differences between antennas to estimate direction or form a transmit
-beam.
-
-We can measure the offsets with either WiFi reference packets or broadband IQ
-pilots. In both cases, we want to measure the phase and timing differences
-between the receive or transmit chains involved.
+STO and CPO remain. Two receivers can report different phases for the same
+signal, and identical samples can leave two transmitters at different times.
+We calibrate these differences to estimate directions and form transmit beams,
+using WiFi reference packets or broadband IQ pilots.
 
 Phase, delay and amplitude
 --------------------------
@@ -127,13 +118,9 @@ and III to distinguish the following calibration types:
 Which antennas does a calibration cover?
 ----------------------------------------
 
-In pyespargos, a ``Pool`` groups one or more ESPARGOS boards so that we can
-configure their sensors and process their measurements together.
-
-We do not have to calibrate the whole pool at once. For example, we can put
-four sensors on WiFi channel 1 and four on channel 11. We then calibrate each
-channel separately, with its own phase reference. In a mixed IQ array, we can
-instead calibrate a group of receivers and a group of transmitters.
+A :class:`Pool <espargos.pool.Pool>` manages one or more boards. It can hold
+several calibration groups, such as receivers on different WiFi channels or
+separate IQ RX and TX groups.
 
 .. figure:: _static/calibration-coverage.svg
    :alt: Calibration can cover both arrays together, just three antennas, two groups at different frequencies, or separate RX and TX groups.
@@ -142,15 +129,14 @@ instead calibrate a group of receivers and a group of transmitters.
    two arrays mean that those antennas were calibrated together. Gray antennas
    are not covered. The examples are independent of one another.
 
-In Python, a ``Calibration`` holds one or more ``CalibrationGroup`` objects.
-Each group covers a particular set of antennas, one direction (RX or TX), one
-frequency and one sample rate. Its phase reference is shared within that group.
+A :class:`Calibration <espargos.calibration.Calibration>` contains one or more
+:class:`CalibrationGroup <espargos.calibration.CalibrationGroup>` objects.
+Each group shares a phase reference, RX/TX role, frequency and
+sample rate. Any subset of a group keeps its reference.
 
-Two independently calibrated boards are not automatically coherent together.
-To use them as one aperture, we measure them against a common reference across
-both boards. Similarly, storing two groups in the same ``Calibration`` object
-does not align their references. Taking a subset of an existing group does
-preserve its reference.
+To use several boards as one coherent array, calibrate them together against
+a common reference. Storing independent measurements in the same object does
+not align them.
 
 .. figure:: _static/calibration-objects.svg
    :alt: Calibration contains CalibrationGroups, each containing AntennaCorrections with a CalibrationState and Antenna identity.
@@ -158,27 +144,59 @@ preserve its reference.
    The Python objects store per-antenna RX or TX phase and delay corrections,
    together with the state for which each correction is valid.
 
-An ``Antenna`` identifies a controller address and a hardware antenna ID, 0–7.
+An :class:`Antenna <espargos.calibration.Antenna>` identifies a controller address and a hardware antenna ID, 0–7.
 These IDs are not row/column indices. Use the board revision's mapping when
 indexing array-shaped CSI or IQ data.
 
 Choose what to calibrate
 ------------------------
 
-``pool.calibrate()`` reads the current sensor modes: WiFi and IQ RX sensors
-need receive calibration, while IQ TX sensors need transmit calibration.
-``pool.select(...).calibrate()`` returns corrections for just that selection.
-Both return a ``Calibration`` and merge successful measurements into
-``pool.calibrations``. Merely selecting antennas does not change their modes.
+:meth:`pool.calibrate() <espargos.pool.Pool.calibrate>` calibrates the configured
+roles: reception for WiFi and IQ RX sensors, transmission for IQ TX sensors.
+Use :meth:`pool.select(...).calibrate() <espargos.pool.AntennaSelection.calibrate>`
+for a selection. Both return a :class:`Calibration <espargos.calibration.Calibration>`
+and save it in :attr:`pool.calibrations <espargos.pool.Pool.calibrations>`.
+Selecting sensors alone changes no settings.
 
-WiFi measurements can cover several channels in one call. IQ measurement
-currently requires a common center frequency and RX sample rate across the
-connected IQ sensors. TX sensors also need prepared waveforms with the same
-replay length. Store IQ measurements at different frequencies as separate calibration groups.
+**Recalibrate whole groups.** After measuring ``[0, 1, 2]`` as one group:
 
-IQ calibration uses the connected reference domain as helpers, including
-sensors outside the selection. It restores their modes afterward, but may
-change their acquisition epochs. Check validity before reusing an older result.
+.. list-table::
+   :header-rows: 1
+   :widths: 48 52
+
+   * - Operation
+     - Result
+   * - Use ``[0, 1]`` without recalibrating
+     - Allowed. The subset keeps the group's reference.
+   * - Recalibrate ``[0, 1, 2]``
+     - Replaces the group.
+   * - Calibrate ``[0, 1, 2, 3]``
+     - Replaces it with a larger group.
+   * - Calibrate ``[1, 2]`` or ``[1, 2, 3]``
+     - Rejected before hardware changes. Include sensor ``0`` too.
+   * - Calibrate a separate set, such as ``[4, 5]``
+     - Creates an independent group.
+
+The rule applies separately to RX and TX at each frequency. To combine
+independent groups coherently, calibrate their union together.
+
+WiFi calibration can visit several channels in one call. Selected IQ sensors
+need one center frequency and RX sample rate. TX sensors also need prepared
+waveforms of equal replay length. Reciprocity requires at least two selected
+transmitters.
+
+IQ calibration changes modes and tuning only within the selection. Shared
+reference and capture controls briefly interrupt normal reception and pause
+transmission on participating boards. These settings are restored afterward.
+
+.. note::
+
+   IQ subgroups sharing a board need an existing synchronized sample grid at
+   80 MSa/s. Establish it by calibrating all participating IQ sensors once.
+   That measurement also creates a group, which must be recalibrated in full
+   while it is retained. Closing and reopening a pool keeps the hardware grid
+   but starts without stored Python calibration. Creating a new grid during
+   subgroup calibration is rejected because it would restart other sensors.
 
 How to measure calibration
 --------------------------
@@ -186,18 +204,13 @@ How to measure calibration
 Receive calibration
 ~~~~~~~~~~~~~~~~~~~
 
-We send a reference signal from the controller through the REF distribution
-network and measure it at each sensor. We then subtract the modeled
-distribution delays to recover the relative receive phase and timing. This
-gives us **FR calibration**.
-
-For WiFi calibration, we use reference packets. For IQ receive calibration,
-we use a broadband reference signal. In either case, we remove receiver
-offsets while preserving phase differences caused by the external signal.
+The controller sends a reference through the REF distribution network.
+We measure it at the sensors and subtract the modeled cable and distribution
+delays to obtain **FR calibration**. WiFi uses reference packets, IQ uses a
+broadband signal.
 
 Combined arrays need a shared clock, a common RF reference and the correct
-reference-path model, including external cable lengths. See
-:doc:`combined-arrays` for wiring and configuration.
+cable lengths. See :doc:`combined-arrays` for wiring and configuration.
 
 Transmit calibration
 ~~~~~~~~~~~~~~~~~~~~
@@ -211,12 +224,10 @@ receive calibration.
    Arrows show calibration signals. The shared clock and control connections
    are omitted.
 
-**Controller monitor.** We have the sensors transmit known pilots back through
-REF and measure them with the controller's receiver. The monitor contributes
-the same receive response to every measurement. We subtract the modeled REF
-delays to obtain relative sensor TX phase and delay, giving us **FT
-calibration**. For this method, we need a bidirectional RF path.
-An amplifier that passes signals only from controller to sensors can block it.
+**Controller monitor.** Sensors transmit pilots back through REF to the
+controller's receiver. Its response is common to all measurements. Subtracting
+the modeled REF delays gives the relative TX phase and delay. This needs a
+bidirectional RF path.
 
 .. warning::
 
@@ -224,44 +235,34 @@ An amplifier that passes signals only from controller to sensors can block it.
    so we cannot use controller-monitor TX calibration with these kits. Use
    reciprocal sensor calibration instead.
 
-**Reciprocal sensor links.** We exchange pilots between sensors in both
-directions, either over the air or through weak coupling between REF
-distribution ports. By comparing both directions, we cancel the coupling,
-provided it is reciprocal and stable during the measurement. We need enough
-usable links to connect the selected sensors.
-The measurement starts with two reference sensors. If their links leave part
-of the array disconnected, it tries additional reference sensors using the
-links already observed. We check the fitted phase and delay
-corrections with separate captures before applying them.
+**Reciprocal sensor links.** Sensors exchange pilots in both directions,
+either over the air or through coupling between REF ports. Comparing the two
+directions cancels the coupling, provided it is reciprocal and stable during
+the measurement. After removing the measured RX response, we obtain the
+relative TX response. The selected sensors need enough usable links to connect
+them. The procedure tries additional reference sensors if needed and validates
+the result with fresh captures.
 
-We first remove the RX response that we measured with forward REF calibration.
-From the reciprocal comparison, we can then recover the relative TX response.
-The complete procedure provides **FR + FT**. The initial RX calibration uses
-the forward REF signal for both REF and over-the-air pilot exchanges.
+Both methods start with forward REF receive calibration and provide **FR + FT**.
+IQ synchronization also puts TX and RX on a common sample grid, but the common
+carrier-phase offset between TX and RX remains unknown. This is not full
+**F calibration**, though it is enough for receive processing and geometric
+transmit steering.
 
-For IQ, we use the timing anchors from receive synchronization to start TX
-replay on the same sample grid. We therefore have coarse TX–RX time alignment,
-but this does not establish the carrier-phase relationship between TX and RX.
-Neither method measures that remaining common phase offset, so we obtain
-**FR + FT**, rather than strict **F calibration**. We do not need that common
-phase offset for relative receive processing or geometric transmit steering.
-
-Our accuracy depends on the reference paths. If we use the wrong cable delay,
-we can mistake it for a sensor delay. Differences between the REF route and an
-antenna-port route can also leave residual errors. Calibration does not replace
-a measurement of antenna patterns or the surrounding propagation environment.
+Accuracy depends on the reference-path model. A wrong cable delay becomes a
+calibration error, and differences between the REF and antenna routes can
+leave residual offsets.
 
 WiFi: measure and apply a calibration
 -------------------------------------
 
-The following example assumes the sensors are in WiFi mode and the board is
-configured to generate its internal reference during calibration. Transmit
-authorization must be enabled for the reference generator.
+Enable transmit authorization for the reference generator first. This example
+uses the board's internal reference.
 
-``pool.calibrate()`` delegates WiFi measurements to
-``pool.wifi.calibrate_channels()``, which groups sensors by their actual primary
-and secondary channels. It visits each channel with the reference generator
-without retuning the receivers. ``duration`` is the capture time **per channel**.
+For WiFi, :meth:`pool.calibrate() <espargos.pool.Pool.calibrate>` calls
+:meth:`calibrate_channels() <espargos.wifi_transceiver.WiFiTransceiver.calibrate_channels>`
+to visit each configured channel without retuning the sensors.
+``duration`` is the capture time per channel.
 
 .. code-block:: python
 
@@ -290,22 +291,22 @@ without retuning the receivers. ``duration`` is the capture time **per channel**
        for _ in range(100):
            pool.run(timeout=0.05)
 
-Refresh ``states`` after configuration changes. Passing it explicitly avoids
-HTTP reads inside the callback. If omitted, ``apply_calibration()`` reads the
-current state itself. An uncalibrated channel or a stale selected antenna
-raises ``KeyError``. The returned CSI has the normal timestamp and gain-phase
-corrections from ``CSICluster`` deserialization as well as the measured
-calibration correction.
+Passing ``states`` avoids HTTP reads inside the callback. Refresh them after
+configuration changes or reconnects. If omitted,
+:meth:`apply_calibration() <espargos.wifi_transceiver.WiFiTransceiver.apply_calibration>`
+reads the current state itself. Missing or stale corrections raise ``KeyError``.
+The result includes the usual CSI timestamp and gain-phase corrections.
 
-Within the same ``with`` block, we can calibrate a subset of antennas by ID::
+We can use a subset of an existing measurement without recalibrating::
 
-   result = pool.select(antennas=[0, 2, 5]).calibrate(duration=2)
+   from espargos.calibration import Antenna
 
-WiFi calibration defaults to separate phase references for each board.
-For a combined aperture sharing a reference, request ``per_board=False``
-explicitly. Loading a layout does not select a shared phase reference.
-``Pool.from_config()`` supplies the cable corrections, which require that
-shared-reference setting:
+   subset = result.select(antennas=[Antenna("172.16.0.241", a) for a in [0, 2]])
+
+WiFi uses a separate reference for each board by default. For a combined
+array sharing a reference, pass ``per_board=False``. A layout loaded with
+:meth:`Pool.from_config() <espargos.pool.Pool.from_config>` supplies cable
+corrections, but does not choose this setting for you:
 
 .. code-block:: python
 
@@ -315,12 +316,7 @@ shared-reference setting:
        pool.configure(mode="wifi", channel=6, secondary_channel=0)
        result = pool.calibrate(per_board=False)
 
-We can use either 20 MHz or bonded 40 MHz WiFi channels.
-
-``pool.calibrations`` retains the scoped results. New measurements replace
-only overlapping antenna/direction/frequency entries. Recalibrating a subset
-creates a new reference group, so do not assume it is phase-aligned with the
-antennas left out of that measurement.
+Both 20 MHz and bonded 40 MHz WiFi channels are supported.
 
 .. figure:: _static/calibration-csi.svg
    :alt: Measured reference CSI phase before and after phase and delay calibration
@@ -333,13 +329,12 @@ antennas left out of that measurement.
 IQ: measure and apply a calibration
 -----------------------------------
 
-For IQ reception, ``pool.calibrate()`` synchronizes the sample grids and
-measures phase and delay using the broadband REF source. It chooses the
-receive gain for the reference path.
+For IQ reception, :meth:`pool.calibrate() <espargos.pool.Pool.calibrate>`
+synchronizes the sample grids and measures phase and delay with the broadband
+REF source. It chooses the reference receive gain automatically.
 
-The pool also stores the returned ``Calibration`` in ``pool.calibrations``.
-``pool.iq.calibration`` holds the dense receive model used by
-``cal_correction()``. We apply the correction to the raw IQ samples ourselves:
+RX corrections are applied in software. This example uses the array-shaped
+model from the latest measurement:
 
 .. code-block:: python
 
@@ -363,18 +358,19 @@ The pool also stores the returned ``Calibration`` in ``pool.calibrations``.
        for _ in range(100):
            pool.run(timeout=0.05)
 
-The lower-level ``receiver.sync()`` performs the IQ receive measurement directly
-and returns a ``SensorCalibration``. Use ``pool.calibrate()`` for mixed sensor
-roles and antenna selections.
+:attr:`pool.iq.calibration <espargos.iq_receiver.IQReceiver.calibration>` holds
+the latest receive model, with NaN outside its selection.
+:meth:`cal_correction() <espargos.iq_receiver.IQReceiver.cal_correction>` evaluates
+it on an FFT grid. For stored groups or a different sensor order, use
+:meth:`Calibration.response() <espargos.calibration.Calibration.response>` instead.
 
-Recalibrate after changing the frequency or sample rate. The accepted
-receiver tuning range is 2310–2640 MHz, but synchronization also depends on
-reference signal quality. A valid tuning frequency does not guarantee that
-reference synchronization will succeed. The web interface's
-calibration result is not shared with Python. The signal analyzer can apply
-its own calibration to the phase display.
+The lower-level :meth:`receiver.sync() <espargos.iq_receiver.IQReceiver.sync>`
+returns a :class:`SensorCalibration <espargos.sensor_calibration.SensorCalibration>`.
+Prefer the pool API for selections and mixed RX/TX roles.
 
-See :doc:`iq-reception` for capture setup and trigger modes.
+IQ tuning supports 2310–2640 MHz. Synchronization still needs a usable reference
+signal at the chosen frequency. Python does not import calibration from the
+web interface. See :doc:`iq-reception` for capture and trigger setup.
 
 For IQ transmission, we first configure sensor modes and source waveforms.
 The pool uses reciprocity by default, but we can select either method::
@@ -388,36 +384,167 @@ measurements. TX calibration applies the corrections on the sensors, so do
 not apply them again to uploaded waveforms. Each run uses one common TX
 frequency and replay length.
 
-See :doc:`iq-transmission` for a complete ``Pool`` example, waveform
+See :doc:`iq-transmission` for a complete :class:`Pool <espargos.pool.Pool>` example, waveform
 selection and steering for single and combined arrays.
+
+.. _calibration-range-zero:
+
+TX–RX delay and range zero
+----------------------------------
+
+RX calibration aligns receivers with one another. TX calibration does the
+same for transmitters. Neither determines the remaining hardware delay
+between TX and RX. Measuring it separately lets us distinguish hardware delay
+from the signal's travel time along the measured path.
+:meth:`pool.calibrate_tx_rx_delay() <espargos.pool.Pool.calibrate_tx_rx_delay>` sends its own probes through
+the selected path, then restores the application waveforms and settings.
+The default is the reference network. Antenna paths are also supported.
+
+.. code-block:: python
+
+   pool.calibrate(tx_method="monitor")       # or "reciprocity"
+   timing = pool.calibrate_tx_rx_delay()
+
+   hardware_delay_s = timing.delays_s[transmitter]
+   propagation_delay_s = measured_delay_s - hardware_delay_s
+
+Use one RX calibration group and one TX calibration group at the same
+frequency, with prepared TX buffers and valid calibration. Sensors within
+each group share a phase reference. Timing probes temporarily use 80 MSa/s
+reception, then restore the selected RX rate and application waveforms.
+The TX replay length stays unchanged. For buffers longer than 1024 samples,
+the probe repeats every 1024 samples. The reference path must be shorter than
+this probe period to avoid ambiguous delays. Changing the TX replay length
+invalidates the old calibration.
+``transmitter`` is an :class:`Antenna <espargos.calibration.Antenna>` from the TX selection.
+
+Use :meth:`pool.select(antennas=...).calibrate_tx_rx_delay() <espargos.pool.AntennaSelection.calibrate_tx_rx_delay>` to measure a subset,
+including both TX and RX sensors. Below 80 MSa/s, include all active RX sensors
+on each affected board because the RX rate is shared. Independent groups need
+separate timing records.
+
+The reference path must provide coupling between sensor ports. We subtract
+the modeled delays of board traces and configured cables. Any splitter or
+cable delay missing from that model remains a range error.
+
+For an antenna path, supply its propagation delay explicitly::
+
+   timing = pool.calibrate_tx_rx_delay(
+       path="antenna_r",
+       reference_delays_s={(tx, rx): path_delay_s for tx in tx_antennas
+                           for rx in rx_antennas},
+   )
+
+Supply the known propagation delay for each TX/RX pair, such as distance
+divided by propagation speed. Ensure the direct path dominates reflections.
+
+We can also remove the hardware delay directly from a channel spectrum::
+
+   channel *= timing.response(transmitter, frequencies_hz)
+
+``frequencies_hz`` contains absolute RF frequencies, as for RX corrections.
+Apply the RX correction first. The sensor already applies its TX correction.
+The timing correction then places the delay origin at the antenna feeds.
+It corrects delay, but does not measure the remaining common carrier-phase
+offset between TX and RX.
+
+If a separate instrument or application has measured a known path, use
+:meth:`TxRxDelayCalibration.from_reference(calibration, measured_delay_s=..., reference_delay_s=...) <espargos.iq_tx_rx_delay.TxRxDelayCalibration.from_reference>` to store its result. Select one coherent RX group
+and TX group from :attr:`pool.calibrations <espargos.pool.Pool.calibrations>`. Independent groups or different
+frequencies need separate timing records.
+
+Reusing TX–RX delay calibration after mode changes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:attr:`pool.calibrations <espargos.pool.Pool.calibrations>` retains RX and TX corrections independently. At a fixed
+frequency, IQ RX/TX switches preserve RF phase but restart the sample engine.
+:meth:`pool.configure() <espargos.pool.Pool.configure>` adjusts the retained corrections to the reported sample
+start time automatically. Both directions must have been calibrated beforehand.
+Retuning, changing sample rate or TX replay length, entering WiFi, or rebooting
+requires recalibration.
+
+For example, after measuring both directions for the selected transmitters::
+
+   transmitters.stop_transmission()
+   transmitters.configure(mode="iq_rx")
+   # These antennas can now receive using their retained RX corrections.
+   transmitters.configure(mode="iq_tx")
+   calibration = pool.calibrations
+   timing = timing.for_calibration(calibration)
+   transmitters.start_transmission()
+
+:meth:`timing.for_calibration() <espargos.iq_tx_rx_delay.TxRxDelayCalibration.for_calibration>` checks that the original measurement groups still
+cover these sensors. Use the updated RX corrections for subsequent captures.
+The sensors already apply the updated TX corrections.
+
+:meth:`pool.refresh_calibration() <espargos.pool.Pool.refresh_calibration>` explicitly checks when each sensor started sampling or playing its waveform, briefly
+changing and restoring the capture trigger. Call it outside capture callbacks.
+The pool must be the sole configuration owner. After changes through another
+application or direct board API calls, recalibrate. Mode changes are blocking
+control operations and do not provide sample-timed TX/RX switching.
 
 Validity and reuse
 ------------------
 
-We need to recalibrate after retuning, switching sensor modes, restarting
-acquisition or changing the TX replay length. These operations can change phase or timing.
-Returning to the previous settings does not restore the previous calibration.
+Calibration belongs to a particular radio configuration. Use
+:meth:`pool.configure() <espargos.pool.Pool.configure>` so the pool can track
+changes.
 
-``CalibrationState`` stores the antenna, RX/TX direction, frequency, sample rate,
-boot ID and acquisition start identifier (the epoch). For IQ TX it also stores
-the replay length. The library checks these fields when looking up a correction.
+.. list-table::
+   :header-rows: 1
+   :widths: 45 55
 
-For IQ, the epoch comes from the hardware RX/TX start timestamp. WiFi CSI does
-not carry an equivalent epoch. Its API uses a receiver-local generation and checks
-current channel, mode and boot information. After changing settings outside the
-pool, call ``pool.wifi.invalidate_calibration()`` and recalibrate. In particular,
-retuning away and back cannot be detected from a final channel read alone.
-WiFi state snapshots belong to the pool that created them. When passing cached
-``states`` to ``apply_calibration()``, refresh them after configuration changes
-or reconnects. The function cannot detect later hardware changes from cached
-values.
+   * - Change
+     - Can I keep the calibration?
+   * - Use fewer antennas from a measured group
+     - Yes.
+   * - Switch IQ RX/TX at the same frequency through the pool
+     - Yes, if that sensor already has calibration for the new role (RX or TX). The pool updates the timing correction automatically.
+   * - Change frequency, IQ sample rate or the number of samples in the repeating TX waveform
+     - No. Recalibrate the group you want to use together.
+   * - Switch between WiFi and IQ, or reboot
+     - No. Recalibrate.
+   * - Return to an earlier frequency
+     - No. The earlier RF phase is not restored.
 
-We can use ``result.select(antennas=..., direction=..., frequency_hz=...)`` to
-extract a subset, and ``older.merge(newer)`` to combine stored results. Neither operation
-creates coherence between independently measured groups.
+Switching between IQ RX and TX restarts sample capture or waveform playback.
+The first sample may then occur at a different time. The pool reads that start
+time and adjusts the stored delay correction, without measuring the radio
+chain again. :meth:`pool.refresh_calibration() <espargos.pool.Pool.refresh_calibration>`
+performs this check explicitly. It cannot create a TX correction from RX
+calibration, or the reverse. See :ref:`calibration-range-zero` for keeping the same zero point
+on a radar's range axis.
 
-For custom processing, ``result.correction(state)`` returns an
-``AntennaCorrection`` or raises ``KeyError`` if no matching measurement exists.
-Its ``response(frequencies_hz)`` gives complex correction factors at absolute
-frequencies. The factors contain phase and delay only. We apply them once. ``result.diagnostics`` provides the measurement method and any available
-fit diagnostics.
+A :class:`CalibrationState <espargos.calibration.CalibrationState>` is a snapshot
+of a sensor's settings. It also identifies the device restart and capture or
+playback session, so an old correction does not accidentally match a new
+session with the same frequency and sample rate.
+
+Refresh these snapshots after configuration changes or reconnects. They do
+not update themselves, and reading the current frequency cannot reveal a
+retune away and back. After changing
+tuning or modes outside the pool, recalibrate. For WiFi, first call
+:meth:`invalidate_calibration() <espargos.wifi_transceiver.WiFiTransceiver.invalidate_calibration>`.
+WiFi states belong to the pool that created them.
+
+Use stored corrections
+----------------------
+
+:meth:`result.select() <espargos.calibration.Calibration.select>` extracts a
+subset. :meth:`older.merge(newer) <espargos.calibration.Calibration.merge>`
+combines results or replaces complete groups. Partial replacements raise
+``ValueError``. Neither operation aligns independent references.
+
+For custom processing,
+:meth:`result.response(states, frequencies_hz) <espargos.calibration.Calibration.response>`
+returns one row per supplied state and one column per **absolute RF frequency
+in Hz**. Missing or stale corrections raise ``KeyError``. Mixing independent
+references for the same RX/TX role raises ``ValueError``. Process those groups
+separately or calibrate them together. This method does not read the hardware.
+
+For one antenna, use
+:meth:`result.correction(state) <espargos.calibration.Calibration.correction>`
+and its :meth:`response() <espargos.calibration.AntennaCorrection.response>`.
+Apply RX corrections once. TX calibration is already applied on the sensors.
+:attr:`result.diagnostics <espargos.calibration.Calibration.diagnostics>` holds
+the measurement method and available fit results.

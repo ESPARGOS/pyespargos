@@ -1,4 +1,11 @@
-"""Pure phase/delay estimation for reciprocal TX calibration, without device I/O."""
+"""Estimate relative TX corrections from two-way measurements between sensors.
+
+``iq_tx_reciprocity_calibration`` makes sensors exchange pilots and removes the
+known RX response before passing the captured spectra here. Taking the ratio
+of opposite directions cancels the reciprocal propagation channel. This module
+fits the remaining phase and delay differences across connected sensor pairs,
+then checks the corrections against independent captures. It performs numerical
+estimation only; device configuration and capture belong to the caller."""
 
 import numpy as np
 
@@ -86,7 +93,16 @@ def _residuals(links, phase, delay):
 
 
 def fit_links(frequencies, response, valid):
-    """Fit relative TX corrections from RX-corrected reciprocal measurements."""
+    """Combine two-way sensor links into relative TX phase and delay corrections.
+
+    ``frequencies`` gives pilot offsets in Hz. ``response`` and ``valid`` have
+    axes ``(frequency, receiver, transmitter)`` and contain RX-corrected spectra
+    and their validity mask. Only tones measured in both directions contribute
+    to a link; accepted links must connect all selected sensors.
+
+    Return phase corrections in degrees, delay corrections in 80 MSa/s samples,
+    and fit diagnostics. Sensor zero fixes the common phase and delay reference.
+    """
     n = response.shape[1]
     links = _links(frequencies, response, valid)
     h = np.zeros((n, n), complex)

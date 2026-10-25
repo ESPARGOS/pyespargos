@@ -44,7 +44,7 @@ Terminology:
 
 - SensorMessage:
   A complete logical message produced by host-side fragment reassembly. Its
-  payload may be raw bytes or a decoded message such as CSI data or a radar TX
+  payload may be raw bytes or a decoded message such as CSI data or a WiFi TX
   report.
 """
 

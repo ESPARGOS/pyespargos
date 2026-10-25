@@ -1,51 +1,13 @@
-"""Controller-monitor pilot model and relative phase/delay estimator."""
+"""Estimate relative TX phase and delay from controller-monitor captures.
+
+The monitor receives several sensors' pilots together. This module separates
+those pilots by frequency bin and compares them with the transmitted spectra
+modeled by ``iq_tx_pilots``. The monitor calibration workflow uses the resulting
+offsets to align transmitters; reciprocal sensor-link fitting is implemented
+separately in ``iq_tx_reciprocity_fit``.
+"""
 
 import numpy as np
-
-
-def pilots(n=1024, peak=192, variant=0):
-    """Match sensor integer-IFFT synthesis, including integer sample rounding."""
-    quarter = np.minimum(32767, np.floor(32767 * np.sin(np.arange(1025) * 2 * np.pi / 4096) + 0.5)).astype(np.int64)
-
-    def sine(p):
-        p = p % 4096
-        quadrant, x = p // 1024, p % 1024
-        return quarter[np.where(quadrant & 1, 1024 - x, x)] * np.where(quadrant >= 2, -1, 1)
-
-    bins = np.array([k for k in range(-n * 3 // 8, n * 3 // 8 + 1) if abs(k) >= 8])
-    owner = np.where(abs(bins) == n // 16 + 1, 0, abs(bins) % 8)
-    result = []
-    for slot in range(8):
-        k = bins[owner == slot]
-        phase = ((k * k * (37 + 11 * variant) + 190 * k) * 4096 + 1000) // 2000
-        z = np.zeros((n, 2), dtype=np.int64)
-        z[k % n, 0], z[k % n, 1] = sine(phase + 1024), sine(phase)
-        j = 0
-        for i in range(1, n):
-            bit = n >> 1
-            while j & bit:
-                j ^= bit
-                bit >>= 1
-            j ^= bit
-            if i < j:
-                z[[i, j]] = z[[j, i]]
-        length = 2
-        while length <= n:
-            for b in range(length // 2):
-                r, q = sine(b * 4096 // length + 1024), sine(b * 4096 // length)
-                x = np.arange(b, n, length)
-                y = x + length // 2
-                re = (r * z[y, 0] - q * z[y, 1] + 16384) // 32768
-                im = (r * z[y, 1] + q * z[y, 0] + 16384) // 32768
-                delta = np.column_stack((re, im))
-                z[y] = z[x] - delta
-                z[x] += delta
-            length *= 2
-        scale = max(abs(z).max(), 1)
-        z = (z * peak + scale // 2) // scale
-        z = z[:, 0] + 1j * z[:, 1]
-        result.append((k, np.fft.fft(z), z))
-    return result
 
 
 def _phase_fit(k, phase, n):
@@ -59,7 +21,17 @@ def _phase_fit(k, phase, n):
 
 
 def estimate(samples, models):
-    """Fit disjoint combs against the slot-zero reference, as in the web UI."""
+    """Estimate relative TX phase and delay from a controller-monitor capture.
+
+    ``samples`` contains the summed received pilots; ``models`` contains their
+    transmitted spectra from ``iq_tx_pilots.pilots``, with the slot-zero pilot first. Average
+    complete waveform periods, separate the pilots by their frequency bins, and
+    divide by the model spectra. The slot-zero pilot resolves the capture's
+    waveform origin and supplies a common phase-curvature reference.
+
+    Return phase offsets in radians and delay offsets in samples, both relative
+    to the first model. Reject clipped captures and inconsistent pilot fits.
+    """
     n = len(models[0][2])
     if len(samples) < n or max(abs(samples.real).max(), abs(samples.imag).max()) > 470:
         raise ValueError("Monitor capture is too short or clips")

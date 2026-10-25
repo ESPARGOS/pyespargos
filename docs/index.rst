@@ -18,5 +18,6 @@ Table of contents
    wifi-transmission
    iq-reception
    iq-transmission
+   iq-radar
    application-framework
    source/modules

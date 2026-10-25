@@ -242,13 +242,6 @@ def get_frequencies_lltf(channel: int):
     return center_lltf + csi_packet.get_csi_format_subcarrier_indices("lltf") * constants.WIFI_SUBCARRIER_SPACING
 
 
-def _wrap_period_symmetric(values: np.ndarray, period: float) -> np.ndarray:
-    """
-    Wrap values into the interval ``[-period / 2, period / 2)``.
-    """
-    return np.mod(values + period / 2.0, period) - period / 2.0
-
-
 def get_csi_sto_correction_frequencies(csi_format: str, secondary_channel_relative: int = 0) -> tuple[np.ndarray, np.ndarray]:
     """
     Return the baseband frequency grid on which CSI of a format is STO-corrected.

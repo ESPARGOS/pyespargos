@@ -22,6 +22,8 @@ class IQAccumCluster(SensorCluster):
     :attr:`counts` and :attr:`coverage_hashes` retain one value per sensor and
     vector section. A complete cluster is array-coherent only when
     :attr:`coverage_consistent` is true.
+    :attr:`config_generation` has shape ``(boards, rows, columns)`` because
+    each controller maintains its own configuration counter.
     """
 
     def __init__(self, first_packet, board_revisions, gain_phase_compensation=False):
@@ -31,7 +33,7 @@ class IQAccumCluster(SensorCluster):
         self.source_chunk_end = int(first_packet.source_chunk_end)
         self.vector_chunks = int(first_packet.vector_chunks)
         self.nominal_chunks = int(first_packet.nominal_chunks)
-        self.config_generation = int(first_packet.config_generation)
+        self.config_generation = np.zeros(self.shape, dtype=np.uint32)
         self.adc_decimation = int(first_packet.adc_decimation)
         self.sample_rate_hz = int(first_packet.sample_rate_hz)
         self.center_freq_hz = int(first_packet.center_freq_hz)
@@ -55,12 +57,30 @@ class IQAccumCluster(SensorCluster):
             or int(payload.source_chunk_end) != self.source_chunk_end
             or int(payload.vector_chunks) != self.vector_chunks
             or int(payload.nominal_chunks) != self.nominal_chunks
-            or int(payload.config_generation) != self.config_generation
             or int(payload.adc_decimation) != self.adc_decimation
             or int(payload.sample_rate_hz) != self.sample_rate_hz
             or int(payload.center_freq_hz) != self.center_freq_hz
         ):
             raise ClusterCollisionError("inconsistent IQ accumulation window metadata")
+        # Generations are controller-local; only lanes on the same board
+        # must agree. Different boards can share one synchronized window.
+        section_present = np.any(self._section_completion[board_index], axis=-1)
+        generations = self.config_generation[board_index][section_present]
+        if generations.size and int(generations[0]) != int(payload.config_generation):
+            # A settings change can split a window across generations. Keep
+            # the newer one, including when UDP delivers old packets late.
+            delta = (int(payload.config_generation) - int(generations[0])) & 0xFFFFFFFF
+            if delta >= 0x80000000:
+                return False
+            self._completion[board_index] = False
+            self._section_completion[board_index] = False
+            self._sections[board_index] = np.nan
+            self._counts[board_index] = -1
+            self._coverage_hashes[board_index] = 0
+            self._flags[board_index] = 0
+            self._deadline_aborts[board_index] = 0
+            self._fire_time_ns[board_index] = 0
+            self.config_generation[board_index] = 0
         lane = int(payload.vector_chunk_index)
         position = self.get_sensor_position(board_index, int(sensor_message.antenna_id))
         slot = position + (lane,)
@@ -84,6 +104,7 @@ class IQAccumCluster(SensorCluster):
                 return False
             raise ClusterCollisionError("different IQ accumulation data for an existing section")
         self._sections[slot] = iq
+        self.config_generation[position] = int(payload.config_generation)
         self._counts[slot] = int(payload.accumulated_chunks)
         self._coverage_hashes[slot] = int(payload.coverage_hash)
         self._flags[slot] = int(payload.flags)

@@ -1,7 +1,7 @@
 Boards and pools
 =====================
 
-``Board`` represents one ESPARGOS array. ``Pool`` groups one or more boards
+:class:`Board <espargos.board.Board>` represents one ESPARGOS array. :class:`Pool <espargos.pool.Pool>` groups one or more boards
 and owns their connections. The boards need not form a regular arrangement.
 Use it as a context manager so that streams are closed and transmissions
 stopped when your program leaves the block:
@@ -32,7 +32,7 @@ For an aperture kit, load the existing configuration file instead:
 The file supplies board names, addresses, antenna geometry and reference-cable
 information. Loading it does not connect to hardware, change modes or enable
 transmission. Entering ``with pool:`` opens the connections. For a GUI, call
-``pool.open()`` and ``pool.close()`` explicitly from its hardware worker.
+:meth:`pool.open() <espargos.pool.Pool.open>` and :meth:`pool.close() <espargos.pool.Pool.close>` explicitly from its hardware worker.
 A pool cannot be reopened after closing it.
 
 Choose antennas, then configure them
@@ -65,9 +65,9 @@ indices. IDs apply to each board in the selection:
    selected.configure(mode="iq_rx", frequency_hz=2412e6)
 
 Nested selections can only narrow the selected set. For different antenna
-lists on different boards, pass explicit ``Antenna(host, antid)`` identities.
+lists on different boards, pass explicit :class:`Antenna(host, antid) <espargos.calibration.Antenna>` identities.
 
-``configure()`` changes the supplied fields on selected antennas. It does not
+:meth:`configure() <espargos.pool.AntennaSelection.configure>` changes the supplied fields on selected antennas. It does not
 calibrate. Antennas entering IQ TX remain silent even if a waveform was
 previously loaded. RX sample rate and RX port routing are board-wide hardware
 settings, so changing them requires selecting all eight antennas on that board.
@@ -78,24 +78,24 @@ For per-sensor WiFi channels and their calibration, see :doc:`wifi-reception`.
 Receive and transmit
 ---------------------
 
-``pool.iq`` and ``pool.wifi`` provide shared ``IQReceiver`` and ``WiFiTransceiver`` objects.
-Use their callbacks and backlogs, with ``Pool`` driving processing, as described in
+:attr:`pool.iq <espargos.pool.Pool.iq>` and :attr:`pool.wifi <espargos.pool.Pool.wifi>` provide shared :class:`IQReceiver <espargos.iq_receiver.IQReceiver>` and :class:`WiFiTransceiver <espargos.wifi_transceiver.WiFiTransceiver>` objects.
+Use their callbacks and backlogs, with :class:`Pool <espargos.pool.Pool>` driving processing, as described in
 :doc:`iq-reception` and :doc:`wifi-reception`. Both use the same board connections,
-and ``Pool`` manages their lifetime. Default callbacks wait for antennas in the
+and :class:`Pool <espargos.pool.Pool>` manages their lifetime. Default callbacks wait for antennas in the
 corresponding mode. Other antennas remain missing in the returned data. A
 selection does not change the shape of receiver data.
 
-WiFi packet transmission also uses ``pool.wifi``, as described in
+WiFi packet transmission also uses :attr:`pool.wifi <espargos.pool.Pool.wifi>`, as described in
 :doc:`wifi-transmission`.
 
-``pool.tx`` provides waveform and beam controls, described in
+:attr:`pool.tx <espargos.pool.Pool.tx>` provides waveform and beam controls, described in
 :doc:`iq-transmission`. It also shares the pool's connections and IQ receiver.
-Beamspace steering across boards requires geometry from ``from_config()``.
-A ``Pool`` built from addresses alone can still use explicit per-antenna
+Beamspace steering across boards requires geometry from :meth:`from_config() <espargos.pool.Pool.from_config>`.
+A :class:`Pool <espargos.pool.Pool>` built from addresses alone can still use explicit per-antenna
 phases and delays.
 Creating these TX controls mutes transmission. Preparing a waveform does not
-start it. Use ``selection.start_transmission()`` and
-``selection.stop_transmission()`` to control selected transmitters. Stop sends
+start it. Use :meth:`selection.start_transmission() <espargos.pool.AntennaSelection.start_transmission>` and
+:meth:`selection.stop_transmission() <espargos.pool.AntennaSelection.stop_transmission>` to control selected transmitters. Stop sends
 silence while replay continues, preserving calibration.
 
 These calls are blocking. GUI applications should serialize hardware operations
@@ -105,20 +105,22 @@ receivers while other parts of your application are using the pool.
 Calibrate the configured roles
 ------------------------------
 
-``pool.calibrate()`` examines the current modes. It calibrates reception for
+:meth:`pool.calibrate() <espargos.pool.Pool.calibrate>` examines the current modes. It calibrates reception for
 WiFi/IQ RX antennas and transmission for IQ TX antennas, returning a
-``Calibration``. ``selection.calibrate()`` returns only the requested antenna
-coverage. Successful results are also merged into ``pool.calibrations``.
+:class:`Calibration <espargos.calibration.Calibration>`. :meth:`selection.calibrate() <espargos.pool.AntennaSelection.calibrate>` returns only the requested antenna
+coverage. Recalibration must include each overlapping calibration group in
+full. Using a subset without recalibrating is always allowed.
+Successful results are also merged into :attr:`pool.calibrations <espargos.pool.Pool.calibrations>`.
 
 TX uses reciprocal sensor measurements by default. Select
 ``tx_method="monitor"`` for a bidirectional REF path to the controller, or
 ``path="antenna_r"`` / ``"antenna_l"`` for OTA reciprocal measurements.
 
-IQ calibration temporarily uses the connected reference domain, including
-antennas outside the requested subset. It restores operating modes afterward,
-but other acquisition epochs can change. It currently requires a common
-frequency and RX sample rate across active IQ antennas. Configuring different
-IQ frequencies is supported, but calibrating them together is not yet supported.
+IQ calibration requires a common frequency and RX sample rate within the
+selection. Sensors outside it keep their modes, tuning and stored corrections.
+Shared capture controls and transmission pause during the measurement.
+Subgroup recalibration reuses an existing sample grid at 80 MSa/s. See
+:doc:`calibration` for initial synchronization and independent group references.
 WiFi calibration can measure multiple channel groups without retuning receivers.
 
 Saved calibration is bound to the hardware state in which it was measured.
@@ -128,16 +130,16 @@ references, subset selection and validity checks.
 Connection ownership
 --------------------
 
-Only ``Pool`` starts, reconnects and closes board streams. Its CSI and IQ
-receivers assemble incoming messages. ``pool.start_processing()`` runs their
+Only :class:`Pool <espargos.pool.Pool>` starts, reconnects and closes board streams. Its CSI and IQ
+receivers assemble incoming messages. :meth:`pool.start_processing() <espargos.pool.Pool.start_processing>` runs their
 callbacks on one shared worker, including receivers first accessed after the
-worker starts. ``pool.stop_processing()`` stops that worker without closing
+worker starts. :meth:`pool.stop_processing() <espargos.pool.Pool.stop_processing>` stops that worker without closing
 connections. Receivers have no independent start, stop or close operation.
 Backlog ``close()`` only removes its callback. Calibration results live in
-``pool.calibrations``.
+:attr:`pool.calibrations <espargos.pool.Pool.calibrations>`.
 
 CSI getters that return one pool-wide value raise ``ValueError`` when boards
-disagree. They never change settings. Read individual ``Board`` capabilities
+disagree. They never change settings. Read individual :class:`Board <espargos.board.Board>` capabilities
 when different settings are intentional, or explicitly set a common value.
 
 Mixed roles
@@ -172,7 +174,7 @@ The result contains a WiFi receive group for the four selected WiFi sensors
 and an IQ receive group for the other 28 sensors.
 
 Selections do not reserve antennas or remember their roles. If selections
-intersect, a later ``configure(mode=...)`` changes the overlapping antennas to
+intersect, a later :meth:`configure(mode=...) <espargos.pool.AntennaSelection.configure>` changes the overlapping antennas to
 that mode. Each antenna has exactly one operating mode at a time. Mixing roles
 in a calibration request is valid. Unsupported combinations, such as IQ
 calibration across different center frequencies, are rejected before acquisition.

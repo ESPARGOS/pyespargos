@@ -462,19 +462,25 @@ class IQReceiver(ClusterAssembler):
         super()._close()
 
     def add_accumulation_callback(self, callback, callback_predicate=None, include_partial=False):
-        """Register for complete, coverage-consistent accumulated vectors.
+        """Register for coverage-consistent vectors from all current IQ receivers.
 
         A custom predicate may opt into deadline-partial or coverage-mismatched
         windows for diagnostics. ``include_partial`` also delivers settled
         incomplete array clusters, analogous to :meth:`add_callback`.
         """
 
+        def complete(cluster):
+            # TX/WiFi sensors have no IQ sections in a mixed-mode array.
+            counts = cluster.counts[self._expected]
+            hashes = cluster.coverage_hashes[self._expected]
+            return self._complete(cluster) and bool(np.all(counts == counts[0]) and np.all(hashes == hashes[0]))
+
         predicate = callback_predicate
         if predicate is None:
             if include_partial:
-                predicate = lambda cluster: cluster.settled or (cluster.is_complete and cluster.coverage_consistent)
+                predicate = lambda cluster: cluster.settled or complete(cluster)
             else:
-                predicate = lambda cluster: cluster.is_complete and cluster.coverage_consistent
+                predicate = complete
 
         def typed_callback(cluster):
             if isinstance(cluster, IQAccumCluster):
@@ -515,9 +521,11 @@ class IQReceiver(ClusterAssembler):
         if isinstance(sensor_message.payload, IQAccumPacket):
             payload = sensor_message.payload
             return (
-                int(payload.config_generation),
                 int(payload.source_chunk_start),
+                int(payload.source_chunk_end),
                 int(payload.vector_chunks),
+                int(payload.sample_rate_hz),
+                int(payload.center_freq_hz),
             )
         payload = sensor_message.payload
         if payload.is_signal_capture and payload.capture_id != 0xFFFFFFFF:
@@ -564,7 +572,8 @@ class IQReceiver(ClusterAssembler):
 
     def _on_cluster_updated(self, cache_name, cluster_key, sensor_cluster) -> bool:
         all_callbacks_fired = self._try_callbacks(sensor_cluster)
-        return all_callbacks_fired and sensor_cluster.is_complete
+        # TX/WiFi antennas cannot complete an IQ cluster in a mixed-mode pool.
+        return all_callbacks_fired and self._complete(sensor_cluster)
 
     def _on_cluster_expired(self, cache_name, cluster_key, sensor_cluster) -> None:
         # A settled incomplete cluster: mark it settled and offer it to the
@@ -614,6 +623,23 @@ class IQReceiver(ClusterAssembler):
             if "receivers" in config:
                 raise ValueError("cannot combine array-wide receiver fields with receivers")
             config["receivers"] = [{"antid": antenna_id, **receiver_update} for antenna_id in range(SENSOR_COUNT)]
+
+        # Trigger, gain and feed edits leave RF calibration intact. Retunes
+        # through this receiver API must also invalidate the pool's records.
+        if self._owner.calibrations.groups:
+            from .calibration import Antenna
+
+            sensitive = {"adc_decimation", "adc_source_sel", "bw_mhz", "second_chan", "filter_bw_mhz", "loopback", "tx_tone_enable", "mode", "modes"}
+            if sensitive.intersection(config) or any("rf_freq_hz" in r for r in config.get("receivers", [])):
+                invalid = set()
+                for board in self.boards:
+                    old = board.iq.get_config()
+                    if any(key in config and config[key] != old.get(key) for key in sensitive):
+                        invalid.update(Antenna(board.host, a) for a in range(8))
+                    for r in config.get("receivers", []):
+                        if "rf_freq_hz" in r and r["rf_freq_hz"] != old["receivers"][r["antid"]]["rf_freq_hz"]:
+                            invalid.add(Antenna(board.host, r["antid"]))
+                self._owner.calibrations = self._owner.calibrations.without(invalid)
 
         errors = self._fanout(lambda board_obj: board_obj.iq.set_config(dict(config)))
         failed = [f"{self.boards[i].host}: {e}" for i, e in enumerate(errors) if e is not None]
@@ -686,7 +712,12 @@ class IQReceiver(ClusterAssembler):
         """Reference CW tone on the cabled distribution network (master
         controller ESP32). While active, reference packet TX is suppressed;
         disabling restores the packet-TX WiFi state."""
-        self.master_board.iq.set_reference("cw" if enable else "off", freq_hz, backoff_qdb)
+        board = self.master_board
+        if enable:
+            self._owner._reference_boards.add(board)
+        board.iq.set_reference("cw" if enable else "off", freq_hz, backoff_qdb)
+        if not enable:
+            self._owner._reference_boards.discard(board)
 
     def place_highband_tone(self, freq_hz, backoff_qdb=30):
         """Place the forced-cap high-band tone at freq_hz — instant, from the
@@ -694,6 +725,7 @@ class IQReceiver(ClusterAssembler):
         ``(cap, expected_freq_mhz, approximate)``; in the approximate zone the
         tone wanders thermally (read the exact frequency off a spectrum)."""
         cap, f_expected, approximate = iq_tone.highband_cap_for_freq(freq_hz)
+        self._owner._reference_boards.add(self.master_board)
         self.master_board.iq.set_reference("cw", iq_tone.HIGHBAND_TONE_CODE_HZ, backoff_qdb, {"cbw": iq_tone.HIGHBAND_TONE_CBW, "cap": cap})
         return cap, f_expected, approximate
 
@@ -728,11 +760,9 @@ class IQReceiver(ClusterAssembler):
         ``source`` (an :class:`.IQCluster`, :class:`.IQAccumCluster` or
         :class:`.IQSignalCapture`).
 
-        Every re-fire of the sensors' sample engines (a sync, a retune or a
-        sample-rate change) re-rolls the per-sensor sample alignment and
-        thereby invalidates the fine calibration. The sensors stamp each chunk
-        with the fire time of its epoch, which makes a stale calibration
-        detectable."""
+        A restarted sample engine has a new epoch. Same-frequency IQ mode
+        switches through the pool transfer the correction to that epoch.
+        Unhandled restarts and retunes remain detectable as a mismatch."""
         return self._calibration is not None and self._calibration_epoch == np.asarray(source.fire_time_ns, dtype=np.uint64).tobytes()
 
     def cal_correction(self, fft_size=CHUNK_SAMPLES):
@@ -748,6 +778,27 @@ class IQReceiver(ClusterAssembler):
         return self._calibration.phase_time_correction(bin_frequencies)
 
     def sync(self, center_hz=None, rx_gain=None, attempts=5, cable_lengths=None, cable_velocity_factors=None, timeout=3.0, iq_ready_timeout=3.0):
+        """Calibrate IQ receivers and return the dense receive model.
+
+        Prefer ``pool.calibrate()`` for antenna selections and mixed RX/TX roles.
+        This low-level entry point retains the receive-only API used by older
+        applications. It shares the pool's calibration lock.
+        """
+        from .calibration import Antenna
+        from .iq_calibration_scope import CalibrationScope
+
+        with self._owner._lock:
+            antennas = [Antenna(b.host, a) for b in self.boards for a, mode in enumerate(b.iq.get_config()["modes"]) if mode == "iq_rx"]
+            scope = CalibrationScope(self, antennas)
+            configs = [b.iq.get_config() for b in self.boards]
+            self._owner.calibrations._check_replacement((Antenna(self.boards[bi].host, a), "rx", center_hz or configs[bi]["receivers"][a]["rf_freq_hz"]) for bi, a in scope.pairs)
+            try:
+                return self._sync(center_hz, rx_gain, attempts, cable_lengths, cable_velocity_factors, timeout, iq_ready_timeout, scope=scope, publish=True)
+            except Exception:
+                self._owner.calibrations = self._owner.calibrations.without(antennas)
+                raise
+
+    def _sync(self, center_hz=None, rx_gain=None, attempts=5, cable_lengths=None, cable_velocity_factors=None, timeout=3.0, iq_ready_timeout=3.0, *, scope=None, publish=False):
         """Synchronize and calibrate from one broadband REF session.
 
         Acquire a common sample grid, fit phase/delay, validate on fresh data,
@@ -758,39 +809,50 @@ class IQReceiver(ClusterAssembler):
         t0 = time.monotonic()
         if attempts < 1:
             raise ValueError("attempts must be positive")
-        row, col = self.boards[0].revision.antenna_id_to_row_col(0)
-        ref = row * 4 + col
-        with iq_reference.reference_session(self, center_hz, rx_gain) as (center, fs):
+        from .iq_calibration_scope import CalibrationScope
+
+        scope = scope or CalibrationScope(self)
+        configs = [b.iq.get_config() for b in self.boards]
+        reuse_grid = scope.check_sync(configs)
+        bi, a = scope.pairs[0]
+        row, col = self.boards[bi].revision.antenna_id_to_row_col(a)
+        ref = bi * 8 + row * 4 + col
+        with iq_reference.reference_session(self, center_hz, rx_gain, scope) as (center, fs):
             self._calibration = None
             for attempt in range(attempts):
                 try:
-                    seqs = iq_reference.acquire_grid(self, center, timeout)
-                    training = iq_reference.collect(self, count=32, timeout=iq_ready_timeout, seqs=seqs)
-                    tau, phi, quality = iq_reference.fit(training, ref)
-                    validation = iq_reference.collect(self, count=32, timeout=iq_ready_timeout, seqs=seqs)
-                    tau2, phi2, _ = iq_reference.fit(validation, ref)
-                    if not np.array_equal(training[0].fire_time_ns, validation[0].fire_time_ns):
+                    if reuse_grid:
+                        self.master_board.iq.set_reference("iq", center, iq_reference.REFERENCE_BACKOFF)
+                        scope.apply_rx({"trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 4}})
+                        seqs = None
+                    else:
+                        seqs = iq_reference.acquire_grid(self, center, timeout, scope)
+                    training = iq_reference.collect(self, count=32, timeout=iq_ready_timeout, seqs=seqs, mask=scope.mask)
+                    tau, phi, quality = iq_reference.fit(training, ref, scope.mask)
+                    validation = iq_reference.collect(self, count=32, timeout=iq_ready_timeout, seqs=seqs, mask=scope.mask)
+                    tau2, phi2, _ = iq_reference.fit(validation, ref, scope.mask)
+                    if not np.array_equal(training[0].fire_time_ns[scope.mask], validation[0].fire_time_ns[scope.mask]):
                         raise IQCalibrationError("Capture epoch changed during calibration")
                     residual = np.abs(np.angle(np.exp(1j * (phi2 - phi)))) + np.pi * np.abs(tau2 - tau) * (36e6 / 80e6)
-                    if residual.max() > _CALIBRATION_MAX_RESIDUAL_RAD:
-                        raise IQCalibrationError(f"Broadband validation residual {residual.max():.3f} rad")
+                    if np.nanmax(residual) > _CALIBRATION_MAX_RESIDUAL_RAD:
+                        raise IQCalibrationError(f"Broadband validation residual {np.nanmax(residual):.3f} rad")
                     break
                 except RuntimeError as error:
                     if attempt + 1 == attempts:
                         raise IQCalibrationError(str(error)) from error
                     self._logger.info("Acquiring a fresh broadband grid: %s", error)
             timing = tau / 80e6
-            epoch = training[0].fire_time_ns.tobytes()
+            epoch = np.where(scope.mask, training[0].fire_time_ns, 0).astype(np.uint64).tobytes()
             grid_origin = training[0].grid_origin_ns.copy()
             if fs != 80e6:
                 # The ADC subsamples without anti-alias filtering. Measure
                 # the full reference band at 80 MS/s, then transfer the delay
                 # using the measured starts of the two capture epochs.
-                self.apply_config({"adc_decimation": {rate: decimation for decimation, rate in DECIM_TO_FS.items()}[fs], "trigger": {"mode": "interval", "interval_chunks": max(128, 2 ** round(np.log2(fs / 256 / 100))), "burst_chunks": 4}})
+                scope.apply_rx({"adc_decimation": {rate: decimation for decimation, rate in DECIM_TO_FS.items()}[fs], "trigger": {"mode": "interval", "interval_chunks": max(128, 2 ** round(np.log2(fs / 256 / 100))), "burst_chunks": 4}})
                 self.clear_chunks()
-                target = iq_reference.collect(self, count=4, seqs=seqs)[0]
+                target = iq_reference.collect(self, count=4, seqs=seqs, mask=scope.mask)[0]
                 timing = iq_reference.transfer_delay(timing, training[0].grid_origin_ns, target.grid_origin_ns, ref)
-                epoch = target.fire_time_ns.tobytes()
+                epoch = np.where(scope.mask, target.fire_time_ns, 0).astype(np.uint64).tobytes()
                 grid_origin = target.grid_origin_ns.copy()
             shape = (len(self.boards), constants.ROWS_PER_BOARD, constants.ANTENNAS_PER_ROW)
             calibration = SensorCalibration(
@@ -807,23 +869,26 @@ class IQReceiver(ClusterAssembler):
         self._calibration_grid_origin = grid_origin
         self._calibration_sample_rate = fs
         self._calibration_center_frequency = center
-        self._logger.info("Broadband calibration verified: coherence %.3f, residual %.3f rad, %.3f s", quality.min(), residual.max(), time.monotonic() - t0)
+        self._logger.info("Broadband calibration verified: coherence %.3f, residual %.3f rad, %.3f s", np.nanmin(quality), np.nanmax(residual), time.monotonic() - t0)
         from .iq_tx_calibration import snapshot
 
-        snapshot(self)
+        if publish:
+            result = snapshot(self, scope=scope)
+            self._owner.calibrations = self._owner.calibrations.merge(result)
         return calibration
 
     # Both names run the same operation; there is no separate coarse-only path.
     calibrate = sync
 
     def calibrate_tx(self, **kwargs):
-        """Calibrate selected transmitters using monitor or reciprocity measurements.
+        """Calibrate configured IQ roles through the owning pool.
 
         Boards share a clock and a forward RF reference network. The
         procedure synchronizes RX first, then measures interlaced TX pilots.
         User waveforms and settings are restored. Failure leaves TX muted.
         See :mod:`espargos.iq_tx_calibration`.
         """
-        from .iq_tx_calibration import calibrate
-
-        return calibrate(self, **kwargs)
+        method = kwargs.pop("method", "reciprocity")
+        if kwargs.keys() - {"path"}:
+            raise TypeError("Use pool.calibrate() and configure reference cables on the pool")
+        return self._owner.calibrate(tx_method=method, **kwargs)

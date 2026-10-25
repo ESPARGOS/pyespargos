@@ -70,7 +70,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
         self.txRxTimestampTableChanged.emit()
         self.receiver.add_callback(
             self._on_csi_cluster,
-            callback_predicate=lambda cluster: cluster.has_radar_tx_report and np.sum(cluster.completion) >= np.prod(cluster.completion.shape) - 1,
+            callback_predicate=lambda cluster: cluster.has_tx_report and np.sum(cluster.completion) >= np.prod(cluster.completion.shape) - 1,
         )
         self.pooldrawer.calibrationStarted.connect(self._on_calibration_started)
         self.pooldrawer.calibrationFinished.connect(self._on_calibration_finished)
@@ -118,18 +118,18 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
     def _normalize_mac(mac: str) -> str:
         return str(mac).replace(":", "").lower()
 
-    def _build_schedule_lookup(self, pool_radar_config: espargos.radar.RadarPoolConfig):
+    def _build_schedule_lookup(self, pool_tx_config: espargos.wifi_tx.WiFiTxConfig):
         schedule_by_source_mac = {}
         calibration = self.receiver.calibration
-        for board_index, (board_obj, board_config) in enumerate(zip(self.receiver.boards, pool_radar_config.board_configs)):
+        for board_index, (board_obj, board_config) in enumerate(zip(self.receiver.boards, pool_tx_config.board_configs)):
             for antid, mac in enumerate(board_config["mac_by_antid"]):
                 row, col = board_obj.revision.antenna_id_to_row_col(antid)
-                reference_start_s = board_config["start_by_antid"][antid] / espargos.radar.RADAR_TIME_SCALE - calibration.timing_offsets[board_index, row, col]
+                reference_start_s = board_config["start_by_antid"][antid] / espargos.wifi_tx.WIFI_TX_TIME_SCALE - calibration.timing_offsets[board_index, row, col]
                 schedule_by_source_mac[self._normalize_mac(mac)] = {
                     "board_index": board_index,
                     "antid": antid,
                     "reference_start_s": reference_start_s,
-                    "period_s": board_config["period_by_antid"][antid] / espargos.radar.RADAR_TIME_SCALE,
+                    "period_s": board_config["period_by_antid"][antid] / espargos.wifi_tx.WIFI_TX_TIME_SCALE,
                 }
         self._radar_schedule_by_source_mac = schedule_by_source_mac
 
@@ -193,7 +193,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
         period_by_sensor = np.full(sensor_shape, float(self.appconfig.get("period_us")) / 1e6, dtype=np.float64)
 
         try:
-            pool_radar_config = espargos.radar.build_pool_config(
+            pool_tx_config = espargos.wifi_tx.build_tx_config(
                 calibration=calibration,
                 active_by_sensor=True,
                 t0_by_sensor=t0_by_sensor,
@@ -203,13 +203,13 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
                 tx_rate=espargos.wifi.WiFiPhyRate(int(self.appconfig.get("tx_rate"))),
                 rf_switch_state=espargos.sensor.RFSwitchState(int(self.appconfig.get("rfswitch_state"))),
             )
-            self.receiver.set_tx_config(pool_radar_config)
+            self.receiver.set_tx_config(pool_tx_config)
         except Exception as exc:
             self._status_text = f"Failed to apply radar schedule: {exc}"
             self.statusTextChanged.emit()
             return
 
-        self._build_schedule_lookup(pool_radar_config)
+        self._build_schedule_lookup(pool_tx_config)
         self._reset_packet_state()
         self._status_text = "Applied radar schedule for all 8 transmitters"
         self.statusTextChanged.emit()
@@ -223,9 +223,9 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
             self.statusTextChanged.emit()
 
     def _on_csi_cluster(self, csi_cluster: espargos.CSICluster):
-        if not csi_cluster.is_radar:
+        if not csi_cluster.is_scheduled_tx:
             return
-        if not csi_cluster.has_radar_tx_report:
+        if not csi_cluster.has_tx_report:
             return
 
         schedule = self._radar_schedule_by_source_mac.get(self._normalize_mac(csi_cluster.source_mac))
@@ -234,7 +234,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSCSIApplication):
 
         calibration = self.receiver.calibration
         timestamps = csi_cluster.sensor_timestamps
-        self._update_tx_rx_timestamp_table(schedule, csi_cluster.radar_tx_report, timestamps)
+        self._update_tx_rx_timestamp_table(schedule, csi_cluster.tx_report, timestamps)
         reference_timestamps = timestamps - calibration.timing_offsets
 
         expected_reference_time = np.full_like(reference_timestamps, schedule["reference_start_s"], dtype=np.float64)
