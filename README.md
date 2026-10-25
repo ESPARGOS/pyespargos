@@ -267,24 +267,27 @@ Receive demos are built on a common application framework (`demos/common`) that 
 * Selectable preamble formats (L-LTF, HT20, HT40)
 * Configurable CSI backlog settings
 
-The following demos are provided in the `demos` folder of this repository:
+Demos are grouped by signal type: [`demos/wifi`](demos/wifi) for WiFi/CSI and
+[`demos/iq`](demos/iq) for raw IQ reception and transmission. Shared components
+are in `demos/common`. Use [`demos/custom`](demos/custom) for local experiments.
 
 | Demo | Description |
 |------|-------------|
-| `iq-transmit-beamforming` | Control up to four TX beams across a single or combined array, with waveform generation/upload, beamspace steering, RX/TX calibration and a reference monitor. See [usage](demos/iq-transmit-beamforming/README.md). |
-| `iq-signal-analyzer` | Display synchronized raw IQ as power/phase waterfalls, I/Q traces, constellations, and spectra. Supports Interval, Accumulate, and Signal capture; see [usage](demos/iq-signal-analyzer/README.md). |
-| `music-spectrum` | Use the [MUSIC algorithm](https://en.wikipedia.org/wiki/MUSIC_(algorithm)) to display a spatial (angular) spectrum. Demonstrates angle of arrival (AoA) estimation. |
-| `phases-over-space` | Show the average received phase for each ESPARGOS antenna. |
-| `instantaneous-csi` | Plot the current frequency-domain or time-domain transfer function of the measured channel. |
-| `phases-over-time` | Plot the average received phase for every antenna over time. |
-| `tdoas-over-time` | Visualize time difference of arrival (TDOA) measurements over time. |
-| `azimuth-delay` | Display a 2D azimuth-delay diagram using beamspace processing. Ships with pre-compiled shaders; see [`demos/azimuth-delay/README.md`](demos/azimuth-delay/README.md) in case of shader issues. |
-| `polarization` | Visualize WiFi signal polarization using constellation diagrams and polarization ellipses. |
-| `speedtest` | Measure CSI packet throughput from ESPARGOS. |
-| `combined-array` | Combine multiple ESPARGOS arrays into one large antenna array and visualize the average received phase for each antenna. Requires multiple ESPARGOS arrays. |
-| `combined-array-calibration` | Tool for calibrating combined multi-board antenna arrays. Visualizes and exports calibration data. |
-| `camera` | Overlay WiFi spatial spectrum on a live camera feed. Ships with pre-compiled shaders; see [`demos/camera/README.md`](demos/camera/README.md) in case of shader issues. |
-| `radiation-pattern-3d` | Interactive 3D radiation pattern visualization. Requires additional packages (see [`demos/radiation-pattern-3d/README.md`](demos/radiation-pattern-3d/README.md)). |
+| [`mimo-radar`](demos/iq/mimo-radar) | Display range–Doppler and range–azimuth maps using two OFDM transmitters. See [usage](demos/iq/mimo-radar/README.md). |
+| [`transmit-beamforming`](demos/iq/transmit-beamforming) | Control up to four TX beams across a single or combined array, with waveform generation/upload, beamspace steering, RX/TX calibration and a reference monitor. See [usage](demos/iq/transmit-beamforming/README.md). |
+| [`signal-analyzer`](demos/iq/signal-analyzer) | Display synchronized raw IQ as power/phase waterfalls, I/Q traces, constellations, and spectra. Supports Interval, Accumulate, and Signal capture; see [usage](demos/iq/signal-analyzer/README.md). |
+| [`music-spectrum`](demos/wifi/music-spectrum) | Use the [MUSIC algorithm](https://en.wikipedia.org/wiki/MUSIC_(algorithm)) to display a spatial (angular) spectrum. Demonstrates angle of arrival (AoA) estimation. |
+| [`phases-over-space`](demos/wifi/phases-over-space) | Show the average received phase for each ESPARGOS antenna. |
+| [`instantaneous-csi`](demos/wifi/instantaneous-csi) | Plot the current frequency-domain or time-domain transfer function of the measured channel. |
+| [`phases-over-time`](demos/wifi/phases-over-time) | Plot the average received phase for every antenna over time. |
+| [`tdoas-over-time`](demos/wifi/tdoas-over-time) | Visualize time difference of arrival (TDOA) measurements over time. |
+| [`azimuth-delay`](demos/wifi/azimuth-delay) | Display a 2D azimuth-delay diagram using beamspace processing. Ships with pre-compiled shaders; see [`demos/wifi/azimuth-delay/README.md`](demos/wifi/azimuth-delay/README.md) in case of shader issues. |
+| [`polarization`](demos/wifi/polarization) | Visualize WiFi signal polarization using constellation diagrams and polarization ellipses. |
+| [`speedtest`](demos/wifi/speedtest) | Measure CSI packet throughput from ESPARGOS. |
+| [`combined-array`](demos/wifi/combined-array) | Combine multiple ESPARGOS arrays into one large antenna array and visualize the average received phase for each antenna. Requires multiple ESPARGOS arrays. |
+| [`combined-array-calibration`](demos/wifi/combined-array-calibration) | Tool for calibrating combined multi-board antenna arrays. Visualizes and exports calibration data. |
+| [`camera`](demos/wifi/camera) | Overlay WiFi spatial spectrum on a live camera feed. Ships with pre-compiled shaders; see [`demos/wifi/camera/README.md`](demos/wifi/camera/README.md) in case of shader issues. |
+| [`radiation-pattern-3d`](demos/wifi/radiation-pattern-3d) | Interactive 3D radiation pattern visualization. Requires additional packages (see [`demos/wifi/radiation-pattern-3d/README.md`](demos/wifi/radiation-pattern-3d/README.md)). |
 
 Most demos support both single ESPARGOS arrays and combined multi-board setups via command-line arguments or YAML configuration files.
 
@@ -297,18 +300,18 @@ For example, to run the **Instantaneous CSI** demo with an ESPARGOS controller a
 
 **Linux / macOS:**
 ```bash
-./demos/instantaneous-csi/instantaneous-csi.py 192.168.1.2
+./demos/wifi/instantaneous-csi/main.py 192.168.1.2
 ```
 
 **Windows (Command Prompt):**
 ```cmd
-python demos\instantaneous-csi\instantaneous-csi.py 192.168.1.2
+python demos\wifi\instantaneous-csi\main.py 192.168.1.2
 ```
 
 If you have multiple ESPARGOS boards, pass their addresses separated by commas:
 
 ```
-python demos/instantaneous-csi/instantaneous-csi.py 192.168.1.2,192.168.1.3
+python demos/wifi/instantaneous-csi/main.py 192.168.1.2,192.168.1.3
 ```
 
 Other demos may ask for different command line arguments.
@@ -351,13 +354,13 @@ Use the format `uart:<serial-device>`.
 For example, to run the **Instantaneous CSI** demo over USB on Linux:
 
 ```bash
-./demos/instantaneous-csi/instantaneous-csi.py uart:/dev/ttyUSB0
+./demos/wifi/instantaneous-csi/main.py uart:/dev/ttyUSB0
 ```
 
 On Windows:
 
 ```cmd
-python demos\instantaneous-csi\instantaneous-csi.py uart:COM3
+python demos\wifi\instantaneous-csi\main.py uart:COM3
 ```
 
 In your own Python code, pass the same host string to `espargos.Board`:

@@ -2,9 +2,9 @@ The Common Demo Application Framework
 =======================================
 
 The Qt demos share application setup, settings drawers and plotting components
-from ``demos/common``. We can reuse these components when building a new demo,
-while keeping signal processing and hardware control in the ``espargos``
-library. Applications without a Qt interface can use :class:`.Pool` directly.
+from ``demos/common``, ``demos/wifi/common`` and ``demos/iq/common``.
+These components can also be used in new demos. Hardware control lives in the ``espargos`` library, while application-specific
+processing stays with each demo. Applications without a Qt interface can use :class:`.Pool` directly.
 
 Choose an application class
 -----------------------------
@@ -27,8 +27,9 @@ interface through ``self.receiver``. Drawers use the same connections.
    * - ``ESPARGOSTxApplication``
      - IQ transmission controls, startup calibration and asynchronous hardware updates.
 
-The CSI classes are available from ``demos.common``. Import the IQ classes
-from ``demos.common.iq_application`` and ``demos.common.iq_tx_application``.
+The CSI classes are available from ``demos.wifi.common.application``. Import the IQ classes
+from ``demos.iq.common.application`` and the transmit-beamforming demo’s local
+``application.py``.
 These modules belong to the repository's demo code, so run your application
 from a checkout or include the common directory with it.
 
@@ -37,8 +38,8 @@ initialization can calibrate automatically. IQ reception starts processing,
 but its calibration is initiated through the IQ controller. The TX application
 starts connecting after QML loads and reports progress through ``txcontrol``.
 
-The existing ``instantaneous-csi``, ``iq-signal-analyzer`` and
-``iq-transmit-beamforming`` demos show complete examples of these three paths.
+The existing ``instantaneous-csi``, ``signal-analyzer`` and
+``transmit-beamforming`` demos show complete examples of these three paths.
 
 Optional mixins
 -----------------
@@ -46,7 +47,7 @@ Optional mixins
 Mixins add features to a receive application. Put them before the application
 class in the inheritance list::
 
-   from demos.common import (
+   from demos.wifi.common.application import (
        ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIFormatMixin,
    )
 
@@ -77,11 +78,12 @@ For example, a CSI window can use the shared WiFi drawer:
 .. code-block:: qml
 
    import QtQuick
-   import "../common" as Common
+   import "../../common" as Common
+   import "../common" as WiFi
 
    Common.ESPARGOSApplication {
        receiverDrawerComponent: Component {
-           Common.WiFiTransceiverDrawer {}
+           WiFi.WiFiTransceiverDrawer {}
        }
    }
 
@@ -147,27 +149,47 @@ For example, this YAML file changes the CSI channel and backlog size:
 
 We can use dotted keys for a single run instead::
 
-   ./demos/instantaneous-csi/instantaneous-csi.py 192.168.1.2 \
+   ./demos/wifi/instantaneous-csi/main.py 192.168.1.2 \
        -o pool.channel=6 -o backlog.size=64
 
 Values are parsed as YAML: ``true`` is a boolean, ``64`` an integer, and
 ``[a, b]`` a list. Repeat ``-o`` to set several keys. For combined arrays, use
 one of the supplied layouts and override individual settings as needed::
 
-   ./demos/combined-array/combined-array.py \
+   ./demos/wifi/combined-array/main.py \
        -c config/aperture-kit-8x4.yml -o backlog.size=100
 
 Host arguments differ between demos. Receive demos may accept positional
 comma-separated hosts. The TX application requires either ``-s HOST`` or
 ``-c FILE``::
 
-   ./demos/iq-transmit-beamforming/iq-transmit-beamforming.py \
+   ./demos/iq/transmit-beamforming/main.py \
        -s 192.168.1.2 --tx-calibration monitor
 
-   ./demos/iq-transmit-beamforming/iq-transmit-beamforming.py \
+   ./demos/iq/transmit-beamforming/main.py \
        -c config/aperture-kit-8x4.yml \
        --tx-calibration reciprocity --calibration-path reference
 
 Without ``--tx-calibration``, the TX application uses the controller monitor
 for one board and reciprocity for multiple boards. See :doc:`calibration`
 for the RF connections each method requires.
+
+Demo layout
+-----------
+
+Each published demo has a ``main.py`` entry point and a ``Main.qml`` window.
+Keep its processing, shaders and application-specific controls beside them.
+Only components used across demos belong in the shared folders:
+
+* ``demos/common``: application shell, configuration and branding.
+* ``demos/wifi/common``: CSI application support and WiFi controls.
+* ``demos/iq/common``: IQ receive controls and waterfall rendering.
+
+Import Python helpers from their modules explicitly. This keeps camera and
+other optional dependencies out of demos that do not use them. Local
+experiments belong in ``demos/custom`` and are ignored by Git.
+
+Use ``Pool.configure()`` and ``Pool.calibrate()`` for radio configuration and
+calibration. Receiver-specific capture options and data callbacks remain on
+``pool.iq`` and ``pool.wifi``. Reference cable properties come from the pool’s
+array configuration.

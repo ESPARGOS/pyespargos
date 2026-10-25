@@ -23,8 +23,15 @@ def states(pool):
     """
     result = {}
     for b in pool.boards:
-        pairs = channels(b.wifi_rx.get_config(), b.wifi_rx.get_channel_overrides())
-        status = b.control.get_json("get_iq_tx")
+        config = b.wifi_rx.get_config()
+        if b.api_version[0] >= 4:
+            pairs = channels(config, b.wifi_rx.get_channel_overrides())
+            status = b.control.get_json("get_iq_tx")
+        else:
+            # API 3 has board-wide WiFi settings and no hardware boot IDs.
+            # Its receive-stream clock checks maintain the pool-local epoch.
+            pairs = channels(config, {"override_active": False})
+            status = {"sensors": [{"applied_mode": "wifi", "boot_id": 0}] * 8}
         for a, (primary, secondary) in enumerate(pairs):
             s = status["sensors"][a]
             if s["applied_mode"] != "wifi":
@@ -207,3 +214,43 @@ def calibrate(pool, *, antennas=None, per_board=True, duration=2, cable_lengths=
     result = Calibration(tuple(measured), {"method": "wifi-reference"})
     pool._owner.calibrations = pool._owner.calibrations.merge(result)
     return result
+
+
+def calibrate_full_array(pool, *, per_board, duration, cable_lengths=None, cable_velocity_factors=None):
+    """Publish a full-array CSI measurement as scoped corrections as well.
+
+    The existing CSI acquisition also establishes the timestamp association
+    used by backlogs and WiFi schedules. Reuse that measurement, preserving
+    its array-shaped model, and expose the same corrections through Pool.
+    The caller checks that every sensor is in WiFi mode on the same channel.
+    """
+    before = states(pool)
+    try:
+        config = dict(next(iter(before.values())).settings)
+        reference = {"channel-primary": config["primary"], "channel-secondary": 2 if config["secondary"] == -1 else config["secondary"]}
+        with ExitStack() as restore:
+            for board in dict.fromkeys(pool.boards + pool._reference_generator_boards):
+                previous = board.wifi_rx.get_config()
+                previous = {key: previous[key] for key in reference}
+                if previous != reference:
+                    restore.callback(board.wifi_rx.set_reference_config, previous)
+                    board.wifi_rx.set_reference_config(reference)
+            pool.calibrate(duration=duration, per_board=per_board, cable_lengths=cable_lengths, cable_velocity_factors=cable_velocity_factors)
+        model = pool.calibration
+        current = states(pool)
+        if model is None or current.keys() != before.keys() or any((s.frequency_hz, s.boot_id, s.settings) != (before[a].frequency_hz, before[a].boot_id, before[a].settings) for a, s in current.items()):
+            from .wifi_transceiver import CalibrationError
+
+            raise CalibrationError("WiFi configuration or clock changed during calibration")
+        groups = {}
+        for bi, board in enumerate(pool.boards):
+            for antid in range(8):
+                state = current[Antenna(board.host, antid)]
+                pos = (bi, *board.revision.antenna_id_to_row_col(antid))
+                path = model.reference_path_delays[pos]
+                correction = AntennaCorrection(state, float(-model.phase_offsets[pos] - 2 * np.pi * state.frequency_hz * path), float(path - model.timing_offsets[pos]))
+                groups.setdefault(bi if per_board else None, []).append(correction)
+        return Calibration(tuple(CalibrationGroup(tuple(c)) for c in groups.values()), {"method": "wifi-reference"})
+    except Exception:
+        pool._invalidate_association_timebase("WiFi calibration failed", warn=False)
+        raise

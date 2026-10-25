@@ -145,7 +145,7 @@ From a checkout with the demo dependencies installed, run:
 
 .. code-block:: console
 
-   python demos/iq-signal-analyzer/iq-signal-analyzer.py 192.168.1.2
+   python demos/iq/signal-analyzer/main.py 192.168.1.2
 
 Open **RX** to set the frequency, gain, and trigger mode. Use **App** to switch
 between waterfalls, spectra, I/Q traces, and constellations.

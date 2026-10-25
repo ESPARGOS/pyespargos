@@ -160,7 +160,7 @@ ApplicationWindow {
 
 	// Logo
 	Image {
-		source: "../common/img/espargos-logo.png"
+		source: "img/espargos-logo.png"
 		anchors.left: parent.left
 		anchors.bottom: parent.bottom
 		anchors.margins: 10

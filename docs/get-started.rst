@@ -68,6 +68,6 @@ beams. :doc:`calibration` explains the available methods and how to calibrate
 all antennas or separate groups.
 
 The reception and transmission pages include runnable examples. For an
-interactive view, try the ``instantaneous-csi``, ``iq-signal-analyzer`` or
-``iq-transmit-beamforming`` demos. :doc:`application-framework` explains how
+interactive view, try the ``instantaneous-csi``, ``signal-analyzer`` or
+``transmit-beamforming`` demos. :doc:`application-framework` explains how
 to reuse their controls in your own Qt application.

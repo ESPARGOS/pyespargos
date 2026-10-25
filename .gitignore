@@ -18,10 +18,10 @@ wheels/
 *.egg-info/
 
 # images for camera demo
-demos/camera/img/*
-!demos/camera/img/*.tex
-!demos/camera/img/*.png
-!demos/camera/img/*.svg
+demos/wifi/camera/img/*
+!demos/wifi/camera/img/*.tex
+!demos/wifi/camera/img/*.png
+!demos/wifi/camera/img/*.svg
 
 # addon checkouts (only the README is tracked)
 addons/*

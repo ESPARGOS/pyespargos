@@ -22,7 +22,7 @@ from espargos.clustering import ClusterAssembler
 from espargos.sensor_calibration import SensorCalibration, compute_reference_path_delays
 from espargos.calibration import Calibration
 
-from . import iq_reference
+from ._iq_calibration import reference as iq_reference
 from . import iq_tone
 from .iq_accum_cluster import IQAccumCluster
 from .iq_cluster import CHUNK_SAMPLES, IQCluster
@@ -785,7 +785,7 @@ class IQReceiver(ClusterAssembler):
         applications. It shares the pool's calibration lock.
         """
         from .calibration import Antenna
-        from .iq_calibration_scope import CalibrationScope
+        from ._iq_calibration.scope import CalibrationScope
 
         with self._owner._lock:
             antennas = [Antenna(b.host, a) for b in self.boards for a, mode in enumerate(b.iq.get_config()["modes"]) if mode == "iq_rx"]
@@ -809,7 +809,7 @@ class IQReceiver(ClusterAssembler):
         t0 = time.monotonic()
         if attempts < 1:
             raise ValueError("attempts must be positive")
-        from .iq_calibration_scope import CalibrationScope
+        from ._iq_calibration.scope import CalibrationScope
 
         scope = scope or CalibrationScope(self)
         configs = [b.iq.get_config() for b in self.boards]
@@ -870,7 +870,7 @@ class IQReceiver(ClusterAssembler):
         self._calibration_sample_rate = fs
         self._calibration_center_frequency = center
         self._logger.info("Broadband calibration verified: coherence %.3f, residual %.3f rad, %.3f s", np.nanmin(quality), np.nanmax(residual), time.monotonic() - t0)
-        from .iq_tx_calibration import snapshot
+        from ._iq_calibration.orchestration import snapshot
 
         if publish:
             result = snapshot(self, scope=scope)
@@ -886,7 +886,7 @@ class IQReceiver(ClusterAssembler):
         Boards share a clock and a forward RF reference network. The
         procedure synchronizes RX first, then measures interlaced TX pilots.
         User waveforms and settings are restored. Failure leaves TX muted.
-        See :mod:`espargos.iq_tx_calibration`.
+        See :mod:`espargos._iq_calibration.orchestration`.
         """
         method = kwargs.pop("method", "reciprocity")
         if kwargs.keys() - {"path"}:

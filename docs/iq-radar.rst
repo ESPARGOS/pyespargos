@@ -166,11 +166,11 @@ MIMO Radar Demo
 
 For one array::
 
-   ./demos/iq-mimo-radar/iq-mimo-radar.py -s 192.168.1.2
+   ./demos/iq/mimo-radar/main.py -s 192.168.1.2
 
 For an aperture kit::
 
-   ./demos/iq-mimo-radar/iq-mimo-radar.py -c config/aperture-kit-8x4.yml
+   ./demos/iq/mimo-radar/main.py -c config/aperture-kit-8x4.yml
 
 Two sensors at opposite corners
 transmit OFDM signals on alternating subcarriers; the other sensors receive.

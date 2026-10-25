@@ -1,0 +1,333 @@
+import "../common" as WiFi
+import QtQuick.Controls.Material
+import QtQuick.Controls
+import QtQuick.Layouts
+import QtQuick
+import QtCharts
+import "../../common" as Common
+
+Common.ESPARGOSApplication {
+	id: window
+	receiverDrawerComponent: Component { WiFi.WiFiTransceiverDrawer {} }
+	visible: true
+	minimumWidth: 800
+	minimumHeight: 500
+
+	color: "#11191e"
+	title: "Instantaneous CSI: " + (backend.constellation ? "Constellation" : (backend.timeDomain ? "Time Domain" : (backend.superResolution ? "Superresolution Time Domain" : "Frequency Domain")))
+
+	// Tab20 color cycle reordered: https://github.com/matplotlib/matplotlib/blob/main/lib/matplotlib/_cm.py#L1293
+	property var colorCycle: ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5", "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5"]
+
+	appDrawerComponent: Component {
+		Common.AppDrawer {
+			id: appDrawer
+			title: "Settings"
+			endpoint: appconfig
+
+
+			Label { Layout.columnSpan: 2; text: "Display Settings"; color: "#9fb3c8" }
+
+			Label { text: "Display Mode"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			ComboBox {
+				id: displayModeCombo
+				property string configKey: "display_mode"
+				property string configProp: "currentValue"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+
+				model: [
+					{ value: "frequency", text: "Frequency Domain" },
+					{ value: "constellation", text: "Constellation" },
+					{ value: "timedomain", text: "Time Domain" },
+					{ value: "music", text: "MUSIC" },
+					{ value: "mvdr", text: "MVDR" }
+				]
+				textRole: "text"
+				valueRole: "value"
+				currentValue: "frequency"
+			}
+
+			Label { text: "Oversampling"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: backend.timeDomain }
+			SpinBox {
+				id: oversamplingSpinBox
+				property string configKey: "oversampling"
+				property string configProp: "value"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+				from: 1
+				to: 16
+				value: 4
+				visible: backend.timeDomain
+			}
+
+			Label { text: "Feed Filter"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			ComboBox {
+				id: feedFilterCombo
+				property string configKey: "feed_filter"
+				property string configProp: "currentValue"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+
+				model: [
+					{ value: "all", text: "All" },
+					{ value: "R", text: "45° Right" },
+					{ value: "L", text: "45° Left" },
+					{ value: "ref", text: "Reference" },
+					{ value: "iso", text: "Isolated" }
+				]
+				textRole: "text"
+				valueRole: "value"
+				currentValue: "all"
+			}
+
+			Label { text: "Relative Phase"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			Switch {
+				id: relativePhaseSwitch
+				property string configKey: "relative_phase"
+				property string configProp: "checked"
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+				checked: true
+			}
+
+			Label { text: "Min. Antennas"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+			SpinBox {
+				id: requiredAntennasSpinBox
+				property string configKey: "required_antennas"
+				property string configProp: "value"
+				property var encode: function(v) { return v }
+				property var decode: function(v) { return Number(v) }
+				Component.onCompleted: appDrawer.configManager.register(this)
+				onValueChanged: appDrawer.configManager.onControlChanged(this)
+				implicitWidth: 210
+				from: 1
+				to: backend.sensorCount
+				value: backend.sensorCount
+			}
+
+			WiFi.CSIAppSettings {
+				id: genericAppSettings
+				insertBefore: genericAppSettingsAnchor
+			}
+
+			Item {
+				id: genericAppSettingsAnchor
+				Layout.columnSpan: 2
+				width: 0
+				height: 0
+				visible: false
+			}
+
+			WiFi.CSIBacklogSettings {
+				id: backlogSettings
+				insertBefore: backlogSettingsAnchor
+			}
+
+			Item {
+				id: backlogSettingsAnchor;
+				Layout.columnSpan: 2;
+				width: 0;
+				height: 0;
+				visible: false
+			}
+
+			// Spacer
+			Rectangle {
+				id: endSpacer
+				Layout.columnSpan: 2
+				width: 1; height: 30
+				color: "transparent"
+			}
+		}
+	}
+
+	ColumnLayout {
+		height: parent.height
+		width: parent.width
+
+		Item {
+			id: csiConstellationPane
+			Layout.alignment: Qt.AlignTop
+			Layout.fillWidth: true
+			Layout.fillHeight: true
+			visible: backend.constellation
+
+			ChartView {
+				id: csiConstellation
+				anchors.centerIn: parent
+				width: Math.min(parent.width, parent.height)
+				height: width
+				legend.visible: false
+				legend.labelColor: "#e0e0e0"
+				antialiasing: true
+				backgroundColor: "#151f26"
+
+				axes: [
+					ValueAxis {
+						id: csiConstellationIAxis
+
+						min: -128
+						max: 127
+						titleText: "<font color=\"#e0e0e0\">I</font>"
+						titleFont.bold: false
+						gridLineColor: "#c0c0c0"
+						tickInterval: Math.max(32, Math.round((max - min + 1) / 8))
+						tickType: ValueAxis.TicksDynamic
+						labelsColor: "#e0e0e0"
+						labelFormat: "%d"
+					},
+					ValueAxis {
+						id: csiConstellationQAxis
+
+						min: -128
+						max: 127
+						titleText: "<font color=\"#e0e0e0\">Q</font>"
+						titleFont.bold: false
+						gridLineColor: "#c0c0c0"
+						tickInterval: Math.max(32, Math.round((max - min + 1) / 8))
+						tickType: ValueAxis.TicksDynamic
+						labelsColor: "#e0e0e0"
+						labelFormat: "%d"
+					}
+				]
+
+				Component.onCompleted : {
+					for (let ant = 0; ant < backend.sensorCount; ++ant) {
+						let series = csiConstellation.createSeries(ChartView.SeriesTypeScatter, "tx-" + ant, csiConstellationIAxis, csiConstellationQAxis)
+						series.markerSize = 7
+						series.color = colorCycle[ant % colorCycle.length]
+						series.borderColor = colorCycle[ant % colorCycle.length]
+						series.useOpenGL = Qt.platform.os === "linux"
+					}
+				}
+			}
+		}
+
+		ChartView {
+			id: csiAmplitude
+			Layout.alignment: Qt.AlignTop
+			legend.visible: false
+			legend.labelColor: "#e0e0e0"
+			Layout.fillWidth: true
+			Layout.fillHeight: true
+			antialiasing: true
+			backgroundColor: "#151f26"
+			visible: !backend.constellation
+
+			axes: [
+				ValueAxis {
+					id: csiAmplitudeSubcarrierAxis
+
+					min: (backend.timeDomain || backend.superResolution) ? -7 : -Math.floor(backend.subcarrierCount / 2)
+					max: (backend.timeDomain || backend.superResolution) ? 7 : Math.floor(backend.subcarrierCount / 2) - 1
+					titleText: (backend.timeDomain || backend.superResolution) ? "<font color=\"#e0e0e0\">Delay [tap]</font>" : "<font color=\"#e0e0e0\">Subcarrier Index</font>"
+					titleFont.bold: false
+					gridLineColor: "#c0c0c0"
+					tickInterval: backend.superResolution ? 1 : 20
+					tickType: ValueAxis.TicksDynamic
+					labelsColor: "#e0e0e0"
+					labelFormat: "%d"
+				},
+				ValueAxis {
+					id: csiAmplitudeAxis
+
+					min: 0
+					max: 0.02
+					titleText: (backend.timeDomain || backend.superResolution) ? "<font color=\"#e0e0e0\">Power [linear]</font>" : "<font color=\"#e0e0e0\">Power [dB]</font>"
+					titleFont.bold: false
+					gridLineColor: "#c0c0c0"
+					tickInterval: (backend.timeDomain || backend.superResolution)
+						? Math.max(0.2, (max - min) / 6)
+						: 5
+					tickType: ValueAxis.TicksDynamic
+					labelsColor: "#e0e0e0"
+				}
+			]
+
+			Component.onCompleted : {
+				for (let ant = 0; ant < backend.sensorCount; ++ant) {
+					let series = csiAmplitude.createSeries(ChartView.SeriesTypeLine, "tx-" + ant, csiAmplitudeSubcarrierAxis, csiAmplitudeAxis)
+					series.pointsVisible = false
+					series.color = colorCycle[ant % colorCycle.length]
+					series.useOpenGL = Qt.platform.os === "linux"
+				}
+			}
+		}
+
+		ChartView {
+			id: csiPhase
+			Layout.alignment: Qt.AlignTop
+			legend.visible: false
+			legend.labelColor: "#e0e0e0"
+			Layout.fillWidth: true
+			Layout.fillHeight: true
+			antialiasing: true
+			backgroundColor: "#151f26"
+			visible: !backend.superResolution && !backend.constellation
+
+			axes: [
+				ValueAxis {
+					id: csiPhaseSubcarrierAxis
+
+					min: (backend.timeDomain || backend.superResolution) ? -7 : -Math.floor(backend.subcarrierCount / 2)
+					max: (backend.timeDomain || backend.superResolution) ? 7 : Math.floor(backend.subcarrierCount / 2) - 1
+					titleText: (backend.timeDomain || backend.superResolution) ? "<font color=\"#e0e0e0\">Delay [tap]</font>" : "<font color=\"#e0e0e0\">Subcarrier Index</font>"
+					titleFont.bold: false
+					gridLineColor: "#c0c0c0"
+					tickInterval: backend.superResolution ? 5 : 20
+					tickType: ValueAxis.TicksDynamic
+					labelsColor: "#e0e0e0"
+					labelFormat: "%d"
+				},
+				ValueAxis {
+					id: csiPhaseAxis
+
+					min: -3.14
+					max: 3.14
+					titleText: "<font color=\"#e0e0e0\">Phase [rad]</font>"
+					titleFont.bold: false
+					gridLineColor: "#c0c0c0"
+					tickInterval: 2
+					tickType: ValueAxis.TicksDynamic
+					labelsColor: "#e0e0e0"
+				}
+			]
+
+			Component.onCompleted : {
+				for (let ant = 0; ant < backend.sensorCount; ++ant) {
+					let series = csiPhase.createSeries(ChartView.SeriesTypeLine, "tx-" + ant, csiPhaseSubcarrierAxis, csiPhaseAxis)
+					series.pointsVisible = false
+					series.color = colorCycle[ant % colorCycle.length]
+					series.useOpenGL = Qt.platform.os === "linux"
+				}
+			}
+		}
+	}
+
+	Timer {
+		id: updateTimer
+		interval: (backend.superResolution ? 1 / 30 : 1 / 60) * 1000
+		running: true
+		repeat: true
+		onTriggered: {
+			let amplitudeSeries = [];
+			let phaseSeries = [];
+			for (let i = 0; i < backend.sensorCount; ++i) {
+				amplitudeSeries.push(backend.constellation ? csiConstellation.series(i) : csiAmplitude.series(i));
+				phaseSeries.push(csiPhase.series(i));
+			}
+
+			backend.updateCSI(
+				amplitudeSeries,
+				phaseSeries,
+				backend.constellation ? csiConstellationIAxis : csiAmplitudeSubcarrierAxis,
+				backend.constellation ? csiConstellationQAxis : csiAmplitudeAxis
+			)
+		}
+	}
+}

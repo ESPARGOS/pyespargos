@@ -113,7 +113,7 @@ The application code can query the backlog whenever it needs recent CSI.
       pool.configure(mode="wifi")
       receiver = pool.wifi
       receiver.set_csi_acquisition_config({"acquire_csi_force_lltf": True})
-      receiver.calibrate(duration=2)
+      pool.calibrate(duration=2)
       backlog = espargos.CSIBacklog(
           receiver,
           fields=["lltf"],

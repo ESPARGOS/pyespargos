@@ -259,10 +259,12 @@ WiFi: measure and apply a calibration
 Enable transmit authorization for the reference generator first. This example
 uses the board's internal reference.
 
-For WiFi, :meth:`pool.calibrate() <espargos.pool.Pool.calibrate>` calls
-:meth:`calibrate_channels() <espargos.wifi_transceiver.WiFiTransceiver.calibrate_channels>`
-to visit each configured channel without retuning the sensors.
-``duration`` is the capture time per channel.
+For WiFi, :meth:`pool.calibrate() <espargos.pool.Pool.calibrate>` measures each
+configured channel without retuning the sensors. ``duration`` is the capture
+time per channel. When all sensors use one channel, the same measurement also
+updates the array-shaped CSI calibration used by backlogs and WiFi transmit
+schedules. Timestamp association is available when the sensors share one
+clock reference. Subset or multi-channel measurements retain separate groups.
 
 .. code-block:: python
 

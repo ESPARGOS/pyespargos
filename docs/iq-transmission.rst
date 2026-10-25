@@ -303,11 +303,11 @@ IQ Transmit Beamforming Demo
 
 From the pyespargos checkout, with the demo dependencies installed::
 
-   ./demos/iq-transmit-beamforming/iq-transmit-beamforming.py -s 192.168.1.2
+   ./demos/iq/transmit-beamforming/main.py -s 192.168.1.2
 
 For the aperture kit::
 
-   ./demos/iq-transmit-beamforming/iq-transmit-beamforming.py -c config/aperture-kit-8x4.yml
+   ./demos/iq/transmit-beamforming/main.py -c config/aperture-kit-8x4.yml
 
 The demo selects IQ TX on all sensors, calibrates at startup, then starts
 transmitting on the right antenna feed. Each beam tab controls one signal.

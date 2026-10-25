@@ -216,7 +216,7 @@ class AntennaSelection:
         For antenna paths, supply {(tx_antenna, rx_antenna): delay_seconds}.
         At least one calibrated IQ receiver and transmitter must be running.
         """
-        from .iq_tx_rx_delay_capture import measure
+        from ._iq_calibration.delay import measure
 
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive and finite")
@@ -283,7 +283,9 @@ class AntennaSelection:
         remain board-wide. With other IQ sensors on the same board, subgroup
         calibration needs an existing synchronized grid at 80 MSa/s.
         Existing calibration groups must be selected in full for recalibration.
-        WiFi groups retain their individual channels. Set per_board=False only
+        WiFi groups retain their individual channels. Calibrating the whole pool
+        on one WiFi channel also updates the CSI backlog corrections and
+        timestamp association. Set per_board=False only
         for boards connected to a common reference. Geometry does not select
         a reference domain. Stored corrections do not
         become valid again merely by restoring a previous configuration.
@@ -297,7 +299,7 @@ class AntennaSelection:
             raise ValueError("Monitor calibration requires the reference path")
         with owner._lock:
             owner.open()
-            configs = [b.iq.get_config() for b in owner.boards]
+            configs = [b.iq.get_config() if b.api_version[0] >= 4 else {"modes": ["wifi"] * 8} for b in owner.boards]
             owner._refresh_receivers(configs)
             selected = set(self.antennas)
             roles = {Antenna(b.host, a): c["modes"][a] for b, c in zip(owner.boards, configs) for a in range(8)}
@@ -321,8 +323,8 @@ class AntennaSelection:
             owner.calibrations._check_replacement(keys)
             result = Calibration()
             if iq_selected:
-                from .iq_calibration_scope import CalibrationScope
-                from .iq_tx_calibration import calibrate, snapshot
+                from ._iq_calibration.scope import CalibrationScope
+                from ._iq_calibration.orchestration import calibrate, snapshot
 
                 scope = CalibrationScope(owner.iq, iq_selected)
                 scope.check_sync(configs)
@@ -352,9 +354,23 @@ class AntennaSelection:
                 if owner._wifi is not None:
                     owner._wifi.invalidate_calibration(antennas=iq_selected)
             if wifi_selected:
-                result = result.merge(
-                    owner.wifi.calibrate_channels(antennas=wifi_selected, per_board=per_board, duration=duration, run_in_thread=not owner.wifi.processing, cable_lengths=owner._geometry.cables, cable_velocity_factors=owner._geometry.velocity_factors)
-                )
+                from .csi_scoped_calibration import calibrate_full_array
+
+                uniform_channel = len({(dict(current[a].settings)["primary"], dict(current[a].settings)["secondary"]) for a in wifi_selected}) == 1
+                if wifi_selected == set(owner.antennas) and uniform_channel:
+                    # Keep the full-array CSI correction and clock association
+                    # used by backlogs and WiFi TX schedules, from one capture.
+                    measured = calibrate_full_array(owner.wifi, per_board=per_board, duration=duration, cable_lengths=owner._geometry.cables, cable_velocity_factors=owner._geometry.velocity_factors)
+                else:
+                    measured = owner.wifi.calibrate_channels(
+                        antennas=wifi_selected,
+                        per_board=per_board,
+                        duration=duration,
+                        run_in_thread=not owner.wifi.processing,
+                        cable_lengths=None if per_board else owner._geometry.cables,
+                        cable_velocity_factors=None if per_board else owner._geometry.velocity_factors,
+                    )
+                result = result.merge(measured)
             owner.calibrations = owner.calibrations.merge(result)
             if owner._tx is not None and not owner._tx.closed:
                 owner._tx.read()
@@ -518,7 +534,7 @@ class Pool(AntennaSelection):
         Configure radios through this pool while using retained calibration.
         Changes from another client or direct board calls require recalibration.
         """
-        from .iq_calibration import refresh
+        from ._iq_calibration.refresh import refresh
 
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive and finite")
