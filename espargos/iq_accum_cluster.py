@@ -42,6 +42,7 @@ class IQAccumCluster(SensorCluster):
         self._host_timestamp = time.time()
         section_shape = self.shape + (self.vector_chunks,)
         self._sections = np.full(section_shape + (IQ_CHUNK_SAMPLE_WORDS,), np.nan, dtype=np.complex64)
+        self._adc_peak = np.full(section_shape, np.nan, dtype=np.float32)
         self._counts = np.full(section_shape, -1, dtype=np.int32)
         self._coverage_hashes = np.zeros(section_shape, dtype=np.uint32)
         self._flags = np.zeros(section_shape, dtype=np.uint32)
@@ -62,8 +63,8 @@ class IQAccumCluster(SensorCluster):
             or int(payload.center_freq_hz) != self.center_freq_hz
         ):
             raise ClusterCollisionError("inconsistent IQ accumulation window metadata")
-        # Generations are controller-local; only lanes on the same board
-        # must agree. Different boards can share one synchronized window.
+        # Each controller has its own generation counter, so only lanes on the
+        # same board must agree. Different boards can share a synchronized window.
         section_present = np.any(self._section_completion[board_index], axis=-1)
         generations = self.config_generation[board_index][section_present]
         if generations.size and int(generations[0]) != int(payload.config_generation):
@@ -75,6 +76,7 @@ class IQAccumCluster(SensorCluster):
             self._completion[board_index] = False
             self._section_completion[board_index] = False
             self._sections[board_index] = np.nan
+            self._adc_peak[board_index] = np.nan
             self._counts[board_index] = -1
             self._coverage_hashes[board_index] = 0
             self._flags[board_index] = 0
@@ -85,6 +87,7 @@ class IQAccumCluster(SensorCluster):
         position = self.get_sensor_position(board_index, int(sensor_message.antenna_id))
         slot = position + (lane,)
         iq = payload.decode_iq()
+        adc_peak = max(np.max(np.abs(iq.real)), np.max(np.abs(iq.imag)))
         if self._gain_phase_enabled:
             rx_gain = payload.sample_rx_gain()
             # The scalar wire gain is sampled from the live AGC register and
@@ -103,6 +106,7 @@ class IQAccumCluster(SensorCluster):
             ):
                 return False
             raise ClusterCollisionError("different IQ accumulation data for an existing section")
+        self._adc_peak[slot] = adc_peak
         self._sections[slot] = iq
         self.config_generation[position] = int(payload.config_generation)
         self._counts[slot] = int(payload.accumulated_chunks)
@@ -126,6 +130,15 @@ class IQAccumCluster(SensorCluster):
         """Normalized, concatenated accumulation vector for each sensor."""
 
         return self._sections.reshape(self.shape + (self.vector_chunks * IQ_CHUNK_SAMPLE_WORDS,))
+
+    @property
+    def adc_peak(self):
+        """Peak I/Q component of each averaged section, before phase correction.
+
+        Use this to estimate ADC headroom. Averaging can hide brief clipping.
+        Shape is ``sensor_shape + (vector_chunks,)``.
+        """
+        return self._adc_peak
 
     @property
     def counts(self):

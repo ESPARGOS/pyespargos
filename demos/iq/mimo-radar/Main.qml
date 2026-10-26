@@ -18,6 +18,47 @@ Common.ESPARGOSApplication {
     property bool fullVelocityRange: false
     readonly property real velocitySpan: fullVelocityRange ? backend.velocityLimit : Math.min(2, backend.velocityLimit)
 
+    Common.ConfigManager {
+        id: settings
+        endpoint: appconfig
+        Component.onCompleted: fetchAndApply()
+    }
+    QtObject {
+        property string configKey: "floor_db"
+        property string configProp: "value"
+        property alias value: window.floorDb
+        Component.onCompleted: settings.register(this)
+        onValueChanged: settings.onControlChanged(this)
+    }
+    QtObject {
+        property string configKey: "ceiling_db"
+        property string configProp: "value"
+        property alias value: window.ceilingDb
+        Component.onCompleted: settings.register(this)
+        onValueChanged: settings.onControlChanged(this)
+    }
+    QtObject {
+        property string configKey: "linear_scale"
+        property string configProp: "value"
+        property alias value: window.linearScale
+        Component.onCompleted: settings.register(this)
+        onValueChanged: settings.onControlChanged(this)
+    }
+    QtObject {
+        property string configKey: "automatic_maximum"
+        property string configProp: "value"
+        property alias value: window.automaticMaximum
+        Component.onCompleted: settings.register(this)
+        onValueChanged: settings.onControlChanged(this)
+    }
+    QtObject {
+        property string configKey: "full_velocity_range"
+        property string configProp: "value"
+        property alias value: window.fullVelocityRange
+        Component.onCompleted: settings.register(this)
+        onValueChanged: settings.onControlChanged(this)
+    }
+
     footer: ToolBar {
         background: Rectangle { color: "#19252b" }
         Label {
@@ -46,6 +87,83 @@ Common.ESPARGOSApplication {
                 enabled: !backend.busy
                 onClicked: backend.command("run", backend.transmitting ? 0 : 1)
             }
+            Label { text: "TX calibration" }
+            ComboBox {
+                objectName: "txCalibrationSelector"
+                Layout.fillWidth: true
+                model: ["Automatic", "Monitor", "Reciprocity"]
+                enabled: !backend.busy
+                property string configKey: "tx_calibration"
+                property string configProp: "currentIndex"
+                function decode(value) { return ["auto", "monitor", "reciprocity"].indexOf(value) }
+                function encode(value) { return ["auto", "monitor", "reciprocity"][value] }
+                Component.onCompleted: settings.register(this)
+                onActivated: settings.onControlChanged(this)
+            }
+            Label { text: "Frequency (MHz)" }
+            TextField {
+                objectName: "frequencyInput"
+                Layout.fillWidth: true
+                enabled: !backend.busy
+                selectByMouse: true
+                validator: DoubleValidator { bottom: 1e-06; top: 1000000000.0; decimals: 6; locale: "C"; notation: DoubleValidator.StandardNotation }
+                property string configKey: "frequency"
+                property string configProp: "text"
+                function decode(value) { return String(value) }
+                function encode(value) { return Number(value) }
+                Component.onCompleted: settings.register(this)
+                onEditingFinished: {
+                    if (acceptableInput) settings.onControlChanged(this)
+                }
+            }
+            Label { text: "TX amplitude" }
+            TextField {
+                objectName: "amplitudeInput"
+                Layout.fillWidth: true
+                enabled: !backend.busy
+                selectByMouse: true
+                validator: DoubleValidator { bottom: 1e-06; top: 1; decimals: 6; locale: "C"; notation: DoubleValidator.StandardNotation }
+                property string configKey: "amplitude"
+                property string configProp: "text"
+                function decode(value) { return String(value) }
+                function encode(value) { return Number(value) }
+                Component.onCompleted: settings.register(this)
+                onEditingFinished: {
+                    if (acceptableInput) settings.onControlChanged(this)
+                }
+            }
+            Label { text: "Integration time (s)" }
+            TextField {
+                objectName: "integration_timeInput"
+                Layout.fillWidth: true
+                enabled: !backend.busy
+                selectByMouse: true
+                validator: DoubleValidator { bottom: 0.1; top: 2; decimals: 6; locale: "C"; notation: DoubleValidator.StandardNotation }
+                property string configKey: "integration_time"
+                property string configProp: "text"
+                function decode(value) { return String(value) }
+                function encode(value) { return Number(value) }
+                Component.onCompleted: settings.register(this)
+                onEditingFinished: {
+                    if (acceptableInput) settings.onControlChanged(this)
+                }
+            }
+            Label { text: "RX gain" }
+            TextField {
+                objectName: "rx_gainInput"
+                Layout.fillWidth: true
+                enabled: !backend.busy
+                selectByMouse: true
+                validator: DoubleValidator { bottom: 0; top: 76; decimals: 0; locale: "C"; notation: DoubleValidator.StandardNotation }
+                property string configKey: "rx_gain"
+                property string configProp: "text"
+                function decode(value) { return String(value) }
+                function encode(value) { return Number(value) }
+                Component.onCompleted: settings.register(this)
+                onEditingFinished: {
+                    if (acceptableInput) settings.onControlChanged(this)
+                }
+            }
             Label { text: "RX sample rate" }
             ComboBox {
                 objectName: "sampleRateSelector"
@@ -53,7 +171,12 @@ Common.ESPARGOSApplication {
                 model: backend.sampleRates
                 currentIndex: backend.sampleRateIndex
                 enabled: !backend.busy
-                onActivated: backend.command("sample_rate", currentIndex)
+                property string configKey: "sample_rate"
+                property string configProp: "currentIndex"
+                function decode(value) { return backend.sampleRateValues.indexOf(value) }
+                function encode(value) { return backend.sampleRateValues[value] }
+                Component.onCompleted: settings.register(this)
+                onActivated: settings.onControlChanged(this)
             }
             Label { text: "TX antenna feed" }
             ComboBox {
@@ -62,7 +185,12 @@ Common.ESPARGOSApplication {
                 model: ["Left", "Right"]
                 currentIndex: backend.txFeed
                 enabled: !backend.busy
-                onActivated: backend.command("tx_feed", currentIndex)
+                property string configKey: "tx_feed"
+                property string configProp: "currentIndex"
+                function decode(value) { return value }
+                function encode(value) { return value }
+                Component.onCompleted: settings.register(this)
+                onActivated: settings.onControlChanged(this)
             }
             Label { text: "RX antenna feed" }
             ComboBox {
@@ -71,7 +199,12 @@ Common.ESPARGOSApplication {
                 model: ["Left", "Right"]
                 currentIndex: backend.rxFeed
                 enabled: !backend.busy
-                onActivated: backend.command("rx_feed", currentIndex)
+                property string configKey: "rx_feed"
+                property string configProp: "currentIndex"
+                function decode(value) { return value }
+                function encode(value) { return value }
+                Component.onCompleted: settings.register(this)
+                onActivated: settings.onControlChanged(this)
             }
             Button {
                 objectName: "calibrateButton"
@@ -161,6 +294,7 @@ Common.ESPARGOSApplication {
             ComboBox {
                 Layout.fillWidth: true
                 model: ["±2 m/s", "Full range"]
+                currentIndex: window.fullVelocityRange ? 1 : 0
                 onActivated: window.fullVelocityRange = currentIndex === 1
             }
         }

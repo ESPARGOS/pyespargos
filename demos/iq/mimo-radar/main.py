@@ -2,6 +2,7 @@
 """MIMO radar with two OFDM transmitters and a configurable receive array."""
 
 import os
+import math
 import copy
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
@@ -13,7 +14,7 @@ import sys
 import threading
 import time
 
-# Avoid BLAS threads competing with packet reception.
+# Keep BLAS threads from competing with packet reception.
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
@@ -41,7 +42,7 @@ class RadarImages(QtQuick.QQuickImageProvider):
         images = {}
         maximum_db = -32.0
         for name, values in zip(("doppler", "azimuth"), maps_db):
-            # Red/green hold 16-bit power.
+            # Store the 16-bit power value in the red and green channels.
             values = np.nan_to_num(values, nan=-32, neginf=-32, posinf=96)
             if name == "doppler":
                 maximum_db = float(np.clip(values.max(), -32, 96))
@@ -88,25 +89,102 @@ class MIMORadar(ESPARGOSApplication):
         source.add_argument("-s", "--single-array", help="IP or hostname of one ESPARGOS array")
         source.add_argument("-c", "--config", help="Combined-array YAML configuration")
 
+    DEFAULT_CONFIG = {
+        "tx_calibration": "auto",
+        "frequency": 2385.0,  # MHz
+        "amplitude": 0.4,
+        "integration_time": DOPPLER_WINDOWS * INTERVAL * SAMPLES / RATE,
+        "sample_rate": 80.0,  # MSa/s
+        "rx_gain": 25,
+        "tx_feed": 1,
+        "rx_feed": 1,
+        "floor_db": 12.0,
+        "ceiling_db": 24.0,
+        "linear_scale": True,
+        "automatic_maximum": True,
+        "full_velocity_range": False,
+    }
+    RECALIBRATION_SETTINGS = ("frequency", "sample_rate", "tx_calibration")
+    RADAR_SETTINGS = (
+        "tx_calibration",
+        "frequency",
+        "amplitude",
+        "integration_time",
+        "sample_rate",
+        "rx_gain",
+        "tx_feed",
+        "rx_feed",
+    )
+
     def _add_argparse_arguments(self, parser):
-        parser.add_argument("--tx-calibration", choices=("monitor", "reciprocity"), help="Default: monitor for one board, reciprocity for combined arrays")
-        parser.add_argument("--frequency", type=float, default=2385, help="Carrier frequency in MHz (default: 2385)")
-        parser.add_argument("--amplitude", type=float, default=0.4, help="Digital TX amplitude (default: 0.4)")
-        parser.add_argument("--integration-time", type=float, default=DOPPLER_WINDOWS * INTERVAL * SAMPLES / RATE, help="Observation window in seconds, 0.1–2 (default: 0.41). Shorter windows follow rapid motion better.")
-        parser.add_argument("--sample-rate", type=float, choices=[rate / 1e6 for rate in SAMPLE_RATES], default=80, help="RX sample rate in MSa/s (default: 80)")
-        parser.add_argument("--rx-gain", type=int, default=25, help="Receiver gain index (default: 25)")
+        # Use YAML and -o for radar settings.
+        pass
+
+    @classmethod
+    def validate_config(cls, config):
+        unknown = config.keys() - cls.DEFAULT_CONFIG.keys()
+        if unknown:
+            raise ValueError(f"Unknown radar app settings: {', '.join(sorted(unknown))}")
+        for key in ("frequency", "amplitude", "integration_time", "sample_rate", "rx_gain", "tx_feed", "rx_feed", "floor_db", "ceiling_db"):
+            value = config[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"app.{key} must be a finite number")
+        if config["frequency"] <= 0:
+            raise ValueError("app.frequency must be positive (MHz)")
+        if not 0 < config["amplitude"] <= 1:
+            raise ValueError("app.amplitude must be >0 and ≤1")
+        if not 0.1 <= config["integration_time"] <= 2:
+            raise ValueError("app.integration_time must be between 0.1 and 2 seconds")
+        if config["sample_rate"] * 1e6 not in SAMPLE_RATES:
+            raise ValueError(f"app.sample_rate must be one of {[r / 1e6 for r in SAMPLE_RATES]} MSa/s")
+        if config["rx_gain"] != int(config["rx_gain"]) or not 0 <= config["rx_gain"] <= 76:
+            raise ValueError("app.rx_gain must be an integer from 0 to 76")
+        if any(config[key] not in (0, 1) for key in ("tx_feed", "rx_feed")):
+            raise ValueError("Antenna feeds must be 0 (left) or 1 (right)")
+        if config["tx_calibration"] not in ("auto", "monitor", "reciprocity"):
+            raise ValueError("app.tx_calibration must be auto, monitor, or reciprocity")
+        if not 0 <= config["floor_db"] < config["ceiling_db"] <= 70:
+            raise ValueError("Color limits must satisfy 0 ≤ floor_db < ceiling_db ≤ 70")
+        for key in ("linear_scale", "automatic_maximum", "full_velocity_range"):
+            if not isinstance(config[key], bool):
+                raise ValueError(f"app.{key} must be a boolean")
+
+    def _apply_radar_settings(self, config):
+        self._settings = dict(config)
+        self._sampling = Sampling(config["sample_rate"] * 1e6)
+        self._tx_feed, self._rx_feed = int(config["tx_feed"]), int(config["rx_feed"])
+
+    def _on_update_app_state(self, newcfg):
+        config = self.appconfig.get()
+        try:
+            self.validate_config(config)
+            changed = any(config[key] != self._requested_settings[key] for key in self.RADAR_SETTINGS)
+            if changed:
+                if self._busy:
+                    raise ValueError("Wait for the current radar operation to finish before changing radar settings.")
+                self._busy = True
+                self.stateChanged.emit()
+                if self.worker.is_alive():
+                    self.commands.put(("config", dict(config)))
+                else:
+                    self.worker = threading.Thread(target=self._work, args=(dict(config),), name="mimo-radar")
+                    self.worker.start()
+            self._requested_settings = dict(config)
+        except ValueError as error:
+            self.appconfig.set(self._requested_settings)
+            self.appconfig.emitShowError("Invalid radar settings", str(error))
+        finally:
+            super()._on_update_app_state(newcfg)
 
     def __init__(self, argv):
         os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Material")
         super().__init__(argv)
         if os.environ.get("QT_QUICK_BACKEND") == "software":
             raise RuntimeError("The radar plots require Qt shaders. Unset QT_QUICK_BACKEND=software before starting the demo.")
-        if not 0 < self.args.amplitude <= 1 or not 0 <= self.args.rx_gain <= 76:
-            raise ValueError("Use TX amplitude >0 and ≤1, and RX gain 0–76")
-
-        if not 0.1 <= self.args.integration_time <= 2:
-            raise ValueError("Use an integration time between 0.1 and 2 seconds")
-        self._sampling = Sampling(self.args.sample_rate * 1e6)
+        config = self.appconfig.get()
+        self.validate_config(config)
+        self._requested_settings = dict(config)
+        self._apply_radar_settings(config)
 
         self._status = "Connecting…"
         self._running = False
@@ -114,7 +192,6 @@ class MIMORadar(ESPARGOSApplication):
         self._revision = 0
         self._maximum_db = 30.0
         self._beamspace_period = 2.0
-        self._tx_feed = self._rx_feed = 1
 
         self.commands = queue.Queue()
         self.stopping = threading.Event()
@@ -181,11 +258,15 @@ class MIMORadar(ESPARGOSApplication):
 
     @property
     def _history(self):
-        return self._sampling.history(self.args.integration_time)
+        return self._sampling.history(self._settings["integration_time"])
 
     @QtCore.pyqtProperty("QStringList", constant=True)
     def sampleRates(self):
         return [f"{rate / 1e6:g} MSa/s" for rate in SAMPLE_RATES]
+
+    @QtCore.pyqtProperty("QVariantList", constant=True)
+    def sampleRateValues(self):
+        return [rate / 1e6 for rate in SAMPLE_RATES]
 
     @QtCore.pyqtProperty(int, notify=stateChanged)
     def sampleRateIndex(self):
@@ -197,7 +278,7 @@ class MIMORadar(ESPARGOSApplication):
 
     @QtCore.pyqtProperty(float, notify=stateChanged)
     def velocityLimit(self):
-        return C / (4 * self.args.frequency * 1e6 * self._sampling.dt)
+        return C / (4 * self._settings["frequency"] * 1e6 * self._sampling.dt)
 
     @QtCore.pyqtProperty(float, notify=stateChanged)
     def velocityMinimum(self):
@@ -215,32 +296,25 @@ class MIMORadar(ESPARGOSApplication):
     def command(self, name, value):
         if self._busy:
             return
-        if name == "sample_rate":
-            if not value.is_integer() or not 0 <= value < len(SAMPLE_RATES):
-                return
-            rate = SAMPLE_RATES[int(value)]
-            if rate == self._sampling.rate:
-                return
-            value = Sampling(rate)
-        if name in ("tx_feed", "rx_feed") and value not in (0, 1):
+        if name not in ("run", "calibrate"):
             return
         if not self.worker.is_alive():
-            if name not in ("calibrate", "sample_rate"):
+            if name != "calibrate":
                 self._error("Calibrate RX + TX to restart the radar.")
                 return
             self._busy = True
             self.stateChanged.emit()
-            self.worker = threading.Thread(target=self._work, args=(value if name == "sample_rate" else None,), name="mimo-radar")
+            self.worker = threading.Thread(target=self._work, name="mimo-radar")
             self.worker.start()
             return
-        if name in ("run", "calibrate", "sample_rate", "tx_feed", "rx_feed"):
-            self._busy = True
-            self.stateChanged.emit()
+        self._busy = True
+        self.stateChanged.emit()
         self.commands.put((name, value))
 
     def _open_radar(self):
-        self._frequency = self.args.frequency * 1e6
+        self._frequency = self._settings["frequency"] * 1e6
         self._captures = queue.Queue(maxsize=256)
+        self._peak_dbfs = None
         self._coverage = 0
         self._capturing = False
         self._callback = None
@@ -250,7 +324,7 @@ class MIMORadar(ESPARGOSApplication):
             self.workerState.emit(text, False, True)
 
         if self.args.config:
-            self._pool = Pool.from_config(self.args.config)
+            self._pool = Pool.from_config(self.initial_config)
         else:
             self._pool = Pool(self.args.single_array)
         self._pool.open()
@@ -268,7 +342,7 @@ class MIMORadar(ESPARGOSApplication):
         self._tx_antennas = [antennas[i] for i in self._processor.tx_indices]
         self._rx_antennas = [antennas[i] for i in self._processor.rx_indices]
 
-        # Incoming IQ uses board/row/column order. Select the receiving antennas.
+        # Select the receiving antennas from IQ data ordered by board, row, and column.
         boards = {board.host: (i, board) for i, board in enumerate(self._pool.boards)}
         rx_positions = []
         for antenna in self._rx_antennas:
@@ -282,7 +356,7 @@ class MIMORadar(ESPARGOSApplication):
             mode="iq_rx",
             frequency_hz=self._frequency,
             sample_rate_hz=self._sampling.rate,
-            rx_gain=self.args.rx_gain,
+            rx_gain=self._settings["rx_gain"],
             output=("antenna_l", "antenna_r")[self._rx_feed],
         )
         self._pool.iq.apply_config({"filter_bw_mhz": 0})
@@ -297,10 +371,10 @@ class MIMORadar(ESPARGOSApplication):
         )
         with tx.update(samples=self._processor.tx_samples):
             for antenna, waveform in zip(self._tx_antennas, pilots(self._sampling.rate)):
-                tx.signals.add(waveform=waveform, amplitude=self.args.amplitude, antennas=[antenna])
+                tx.signals.add(waveform=waveform, amplitude=self._settings["amplitude"], antennas=[antenna])
 
-        tx_method = self.args.tx_calibration
-        if tx_method is None:
+        tx_method = self._settings["tx_calibration"]
+        if tx_method == "auto":
             tx_method = "reciprocity" if len(self._pool.hosts) > 1 else "monitor"
         status(f"Calibrating RX and TX through Reference ({tx_method})…")
         self._pool.calibrate(tx_method=tx_method)
@@ -386,6 +460,8 @@ class MIMORadar(ESPARGOSApplication):
         if not np.all(np.isfinite(iq)):
             return
 
+        peak = float(np.max(cluster.adc_peak[idx]))
+        self._peak_dbfs = 20 * math.log10(peak / 512) if peak > 0 else -math.inf
         self._coverage = float(counts[0, 0]) / self._processor.interval_chunks
         try:
             self._captures.put_nowait((cluster.source_chunk_start, iq))
@@ -406,6 +482,7 @@ class MIMORadar(ESPARGOSApplication):
         self._capturing = running
 
     def _clear_history(self):
+        self._peak_dbfs = None
         for _ in range(self._captures.qsize()):
             self._captures.get_nowait()
         self._processor.reset()
@@ -434,6 +511,42 @@ class MIMORadar(ESPARGOSApplication):
         self._clear_history()
         self._capturing = running
 
+    def _update_live_settings(self, config):
+        changed = {key for key in self.RADAR_SETTINGS if config[key] != self._settings[key]}
+        running = self._capturing
+        self._capturing = False
+        if "amplitude" in changed:
+            with self._pool.tx.update():
+                for tx_signal in self._pool.tx.signals:
+                    tx_signal.amplitude = config["amplitude"]
+            if not running:
+                self._transmitters.stop_transmission()
+            self._check_transmitters()
+        if "rx_gain" in changed:
+            self._pool.select(antennas=self._rx_antennas).configure(rx_gain=int(config["rx_gain"]))
+        for direction in ("tx", "rx"):
+            if direction + "_feed" in changed:
+                self._set_feed(direction, ("antenna_l", "antenna_r")[int(config[direction + "_feed"])])
+        self._apply_radar_settings(config)
+        if "integration_time" in changed:
+            previous = self._processor
+            self._processor = MIMOProcessor(
+                self._pool.tx.positions.reshape(-1, 2),
+                self._frequency,
+                history=self._history,
+                sample_rate=self._sampling.rate,
+            )
+            self._processor.range_weights = previous.range_weights.copy()
+        if changed - {"integration_time"}:
+            self._capture_boundary()
+        self._clear_history()
+        self._capturing = running
+
+    def _headroom_text(self):
+        if self._peak_dbfs is None:
+            return "Est. RX headroom: —"
+        return f"Est. RX headroom {-self._peak_dbfs:.1f} dB (peak {self._peak_dbfs:.1f} dBFS)"
+
     def _next_frame(self, timeout=1):
         index, iq = self._captures.get(timeout=timeout)
         channels = self._processor.channels(iq, self._correction) * self._timing_correction
@@ -450,10 +563,10 @@ class MIMORadar(ESPARGOSApplication):
             finally:
                 pool.close()
 
-    def _work(self, sampling=None):
-        # Configuration changes belong to this worker, alongside hardware I/O.
-        if sampling is not None:
-            self._sampling = sampling
+    def _work(self, config=None):
+        # Apply settings in the worker that handles hardware I/O.
+        if config is not None:
+            self._apply_radar_settings(config)
         self._pool = None
         plot_worker = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
         pending_plot = None
@@ -477,24 +590,22 @@ class MIMORadar(ESPARGOSApplication):
                     plot_valid = False
                     if name == "run":
                         self._set_running(bool(value))
-                    elif name in ("tx_feed", "rx_feed"):
-                        self._set_feed(name[:2], ("antenna_l", "antenna_r")[int(value)])
-                        if name == "tx_feed":
-                            self._tx_feed = int(value)
-                        else:
-                            self._rx_feed = int(value)
-                    elif name in ("calibrate", "sample_rate"):
+                    elif name in ("calibrate", "config"):
                         self.provider.clear()
                         running = self._capturing
-                        self._close_radar()
-                        if name == "sample_rate":
-                            self._sampling = value
-                        self._open_radar()
+                        recalibrate = name == "calibrate" or any(value[key] != self._settings[key] for key in self.RECALIBRATION_SETTINGS)
+                        if recalibrate:
+                            self._close_radar()
+                            if name == "config":
+                                self._apply_radar_settings(value)
+                            self._open_radar()
+                            if not running:
+                                self._set_running(False)
+                        else:
+                            self._update_live_settings(value)
                         p = self._processor
                         plot_times.clear()
-                        if not running:
-                            self._set_running(False)
-                    if name in ("run", "tx_feed", "rx_feed", "calibrate", "sample_rate"):
+                    if name in ("run", "calibrate", "config"):
                         last_capture = time.monotonic()
                         self.workerState.emit("Collecting…" if self._capturing else "Transmission paused", self._capturing, False)
 
@@ -532,7 +643,7 @@ class MIMORadar(ESPARGOSApplication):
 
                 if now - last_status >= 0.5:
                     fps = (len(plot_times) - 1) / max(plot_times[-1] - plot_times[0], 0.01) if len(plot_times) > 1 else 0
-                    self.workerState.emit(f"Input coverage {self._coverage:.1%} · {fps:.0f} plots/s · {p.missing} missing windows", True, False)
+                    self.workerState.emit(f"Input coverage {self._coverage:.1%} · {fps:.0f} plots/s · {p.missing} missing windows · {self._headroom_text()}", True, False)
                     last_status = now
         except Exception as error:
             self.logger.exception("Radar stopped")
