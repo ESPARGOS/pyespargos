@@ -74,6 +74,17 @@ class Sampling:
     def range_maximum(self):
         return 15 * RATE / self.rate
 
+    @property
+    def unambiguous_range(self):
+        # Each transmitter occupies every second pilot tone.
+        return C * SAMPLES / (4 * self.bin_stride * self.rate)
+
+    def display_range(self, requested=0):
+        if isinstance(requested, bool) or not math.isfinite(requested) or requested < 0:
+            raise ValueError("Range maximum must be a finite nonnegative number (metres)")
+        # Keep the endpoint below the repeated zero-delay response.
+        return min(requested or self.range_maximum, math.floor(self.unambiguous_range))
+
     def history(self, seconds):
         return round(seconds / self.dt)
 
@@ -125,7 +136,7 @@ def pilots(sample_rate=RATE):
 class MIMOProcessor:
     """Channel estimation and radar maps for the two OFDM transmitters."""
 
-    def __init__(self, positions, frequency=2385e6, history=DOPPLER_WINDOWS, sample_rate=RATE):
+    def __init__(self, positions, frequency=2385e6, history=DOPPLER_WINDOWS, sample_rate=RATE, range_maximum=0):
         positions = np.asarray(positions).reshape(-1, 2)
         self.tx_indices = corner_transmitters(positions)
         self.rx_indices = np.array([i for i in range(len(positions)) if i not in self.tx_indices])
@@ -139,7 +150,7 @@ class MIMOProcessor:
         self.interval_chunks = self.sampling.interval_chunks
         self.history = history
         self.dt = self.sampling.dt
-        self.ranges = np.linspace(0, self.sampling.range_maximum, 121)
+        self.ranges = np.linspace(0, self.sampling.display_range(range_maximum), 121)
         self.doppler_bins = history * DOPPLER_OVERSAMPLING
         self.processing_doppler_bins = 2 * history
         self.velocities = -np.fft.fftshift(np.fft.fftfreq(self.doppler_bins, self.dt)) * C / (2 * frequency)

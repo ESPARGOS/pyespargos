@@ -223,6 +223,35 @@ Common.ESPARGOSApplication {
             title: "Radar display"
             contentLayout.width: Math.max(0, displayDrawer.width - 40)
             Label {
+                text: "Max range (m)"
+                Layout.preferredWidth: 105
+                Layout.maximumWidth: 105
+                wrapMode: Text.WordWrap
+            }
+            TextField {
+                objectName: "rangeMaximumInput"
+                Layout.fillWidth: true
+                enabled: !backend.busy
+                selectByMouse: true
+                validator: DoubleValidator { bottom: 0; decimals: 3; locale: "C"; notation: DoubleValidator.StandardNotation }
+                property string configKey: "range_maximum"
+                property string configProp: "text"
+                function decode(value) { return String(value) }
+                function encode(value) { return Number(value) }
+                Component.onCompleted: settings.register(this)
+                onEditingFinished: { if (acceptableInput) settings.onControlChanged(this) }
+            }
+            Label {
+                Layout.columnSpan: 2
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: "0 = automatic. Showing 0–" + backend.rangeMaximum.toFixed(1)
+                    + " m. Limited to the unambiguous range ("
+                    + backend.unambiguousRange.toFixed(1) + " m)."
+                font.pixelSize: 12
+            }
+
+            Label {
                 Layout.preferredWidth: 105
                 Layout.maximumWidth: 105
                 text: "Color scale"

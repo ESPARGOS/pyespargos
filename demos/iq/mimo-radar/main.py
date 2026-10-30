@@ -95,6 +95,7 @@ class MIMORadar(ESPARGOSApplication):
         "amplitude": 0.4,
         "integration_time": DOPPLER_WINDOWS * INTERVAL * SAMPLES / RATE,
         "sample_rate": 80.0,  # MSa/s
+        "range_maximum": 0.0,  # metres; 0 selects the sample-rate default
         "rx_gain": 25,
         "tx_feed": 1,
         "rx_feed": 1,
@@ -111,6 +112,7 @@ class MIMORadar(ESPARGOSApplication):
         "amplitude",
         "integration_time",
         "sample_rate",
+        "range_maximum",
         "rx_gain",
         "tx_feed",
         "rx_feed",
@@ -125,7 +127,7 @@ class MIMORadar(ESPARGOSApplication):
         unknown = config.keys() - cls.DEFAULT_CONFIG.keys()
         if unknown:
             raise ValueError(f"Unknown radar app settings: {', '.join(sorted(unknown))}")
-        for key in ("frequency", "amplitude", "integration_time", "sample_rate", "rx_gain", "tx_feed", "rx_feed", "floor_db", "ceiling_db"):
+        for key in ("frequency", "amplitude", "integration_time", "sample_rate", "range_maximum", "rx_gain", "tx_feed", "rx_feed", "floor_db", "ceiling_db"):
             value = config[key]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                 raise ValueError(f"app.{key} must be a finite number")
@@ -137,6 +139,8 @@ class MIMORadar(ESPARGOSApplication):
             raise ValueError("app.integration_time must be between 0.1 and 2 seconds")
         if config["sample_rate"] * 1e6 not in SAMPLE_RATES:
             raise ValueError(f"app.sample_rate must be one of {[r / 1e6 for r in SAMPLE_RATES]} MSa/s")
+        if config["range_maximum"] < 0:
+            raise ValueError("app.range_maximum must be nonnegative (metres; 0 = automatic)")
         if config["rx_gain"] != int(config["rx_gain"]) or not 0 <= config["rx_gain"] <= 76:
             raise ValueError("app.rx_gain must be an integer from 0 to 76")
         if any(config[key] not in (0, 1) for key in ("tx_feed", "rx_feed")):
@@ -274,7 +278,11 @@ class MIMORadar(ESPARGOSApplication):
 
     @QtCore.pyqtProperty(float, notify=stateChanged)
     def rangeMaximum(self):
-        return self._sampling.range_maximum
+        return self._sampling.display_range(self._settings["range_maximum"])
+
+    @QtCore.pyqtProperty(float, notify=stateChanged)
+    def unambiguousRange(self):
+        return self._sampling.unambiguous_range
 
     @QtCore.pyqtProperty(float, notify=stateChanged)
     def velocityLimit(self):
@@ -337,7 +345,7 @@ class MIMORadar(ESPARGOSApplication):
                 raise PermissionError(f"Enable transmit authorization on {board.host} before starting this demo.")
 
         tx = self._pool.tx
-        self._processor = MIMOProcessor(tx.positions.reshape(-1, 2), self._frequency, history=self._history, sample_rate=self._sampling.rate)
+        self._processor = MIMOProcessor(tx.positions.reshape(-1, 2), self._frequency, history=self._history, sample_rate=self._sampling.rate, range_maximum=self._settings["range_maximum"])
         antennas = list(self._pool.antennas)
         self._tx_antennas = [antennas[i] for i in self._processor.tx_indices]
         self._rx_antennas = [antennas[i] for i in self._processor.rx_indices]
@@ -528,16 +536,17 @@ class MIMORadar(ESPARGOSApplication):
             if direction + "_feed" in changed:
                 self._set_feed(direction, ("antenna_l", "antenna_r")[int(config[direction + "_feed"])])
         self._apply_radar_settings(config)
-        if "integration_time" in changed:
+        if changed & {"integration_time", "range_maximum"}:
             previous = self._processor
             self._processor = MIMOProcessor(
                 self._pool.tx.positions.reshape(-1, 2),
                 self._frequency,
                 history=self._history,
                 sample_rate=self._sampling.rate,
+                range_maximum=self._settings["range_maximum"],
             )
             self._processor.range_weights = previous.range_weights.copy()
-        if changed - {"integration_time"}:
+        if changed - {"integration_time", "range_maximum"}:
             self._capture_boundary()
         self._clear_history()
         self._capturing = running
