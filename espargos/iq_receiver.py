@@ -159,6 +159,7 @@ class IQReceiver(ClusterAssembler):
         self._signal_capture_consumers = []
         self._signal_auto_maintenance = True
         self._signal_assembler = None
+        self._signal_pending_ack = None
         if len(self.boards) == 1:
             self._signal_assembler = IQSignalAssembler(on_rejected_event=self._signal_event_rejected)
             self.add_callback(
@@ -225,9 +226,12 @@ class IQReceiver(ClusterAssembler):
         for attempt in range(3):
             try:
                 self.boards[0].iq.acknowledge_signal_capture(int(generation), int(capture_id))
+                self._signal_pending_ack = None
                 return True
             except Exception as error:
                 if attempt == 2:
+                    self._signal_pending_ack = (generation, capture_id, context)
+                    self._signal_ack_retry_at = time.monotonic() + 0.2
                     self._logger.warning(
                         "Could not retire Signal event %d:%d after %s: %s",
                         generation,
@@ -237,6 +241,15 @@ class IQReceiver(ClusterAssembler):
                     )
                     return False
                 time.sleep(0.01 * (attempt + 1))
+
+    def _expire_cluster_caches(self):
+        super()._expire_cluster_caches()
+        # A failed final ACK can fill the sensors' retained-event queue: no
+        # later capture then arrives to trigger another cumulative ACK.
+        # Retry from the normal processing loop, including when it is idle.
+        pending = self._signal_pending_ack
+        if pending is not None and not self.calibrating and time.monotonic() >= self._signal_ack_retry_at:
+            self._auto_acknowledge_signal_identity(*pending)
 
     def _signal_capture_accepted(self):
         with self._signal_recovery_lock:
