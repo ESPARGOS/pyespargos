@@ -95,7 +95,7 @@ STREAM_MAGIC = bytes([0xE5, 0xA7, 0x60, 0x00])
 
 # Supported controller API major versions (inclusive).
 SUPPORTED_API_MAJOR_MIN = 3
-SUPPORTED_API_MAJOR_MAX = 4
+SUPPORTED_API_MAJOR_MAX = 5
 
 
 class BoardControl:
@@ -314,7 +314,7 @@ class Board(object):
         if not SUPPORTED_API_MAJOR_MIN <= api_major <= SUPPORTED_API_MAJOR_MAX:
             raise EspargosAPIVersionError(
                 f"ESPARGOS controller at {self.host} runs API version {api_major}.{api_minor}, "
-                f"but this version of pyespargos supports CSI with API majors {SUPPORTED_API_MAJOR_MIN}–{SUPPORTED_API_MAJOR_MAX} and IQ with major 4. "
+                f"but this version of pyespargos supports CSI with API majors {SUPPORTED_API_MAJOR_MIN}–{SUPPORTED_API_MAJOR_MAX} and IQ with majors 4–5. "
                 + ("Please update pyespargos." if api_major > SUPPORTED_API_MAJOR_MAX else "Please update the controller firmware.")
             )
 

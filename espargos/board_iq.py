@@ -27,10 +27,10 @@ class IQCapability(BoardCapability):
     """Board capability for IQ-sampling capture control and chunk reception."""
 
     def __init__(self, board):
-        if board.api_version[0] != 4:
+        if board.api_version[0] not in (4, 5):
             from espargos.board import EspargosAPIVersionError
 
-            raise EspargosAPIVersionError("IQ mode requires controller API major 4 and matching sensor firmware. Update the array firmware!")
+            raise EspargosAPIVersionError("IQ mode requires controller API major 4 or 5 and matching sensor firmware. Update the array firmware!")
         super().__init__(board)
 
     def set_config(self, config: dict):

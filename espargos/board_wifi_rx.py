@@ -14,6 +14,7 @@ from . import csi_packet
 from . import sensor
 from .board import (
     BoardCapability,
+    EspargosHTTPStatusError,
     EspargosUnexpectedResponseError,
     SensorMessageSubscription,
 )
@@ -101,21 +102,39 @@ class WiFiRxCapability(BoardCapability):
         self._board.control.command("set_mac_filter", {"enable": False})
 
     def set_config(self, config: dict):
-        """Update the board's WiFi receive and calibration configuration.
+        """Update the board's live WiFi receive and calibration configuration.
 
         Supported keys include ``channel-primary``, ``channel-secondary``,
         ``country-code``, and the ``calib-*`` reference-signal settings. Only
         provided fields are changed by the controller. This command also
         resets sensor channel overrides to the board's primary/secondary
         channel. Use :meth:`set_reference_config` to leave sensors tuned.
+
+        On firmware with ``set_wifi_runtime``, this leaves settings saved for
+        the next boot unchanged. Older firmware without that endpoint also
+        saves the settings when applying them.
         """
 
-        self._board.control.command("set_wificonf", config)
+        try:
+            self._board.control.command("set_wifi_runtime", config)
+        except EspargosHTTPStatusError as error:
+            if error.status != 404 or self._board.api_version[0] >= 5:
+                raise
+            self._board.control.command("set_wificonf", config)
 
     def get_config(self) -> dict:
-        """Return the board's WiFi receive and calibration configuration."""
+        """Return the live WiFi receive and calibration configuration.
 
-        return self._board.control.get_json("get_wificonf")
+        Read ``get_wifi_runtime``, or ``get_wificonf`` on older firmware
+        without that endpoint. Saved boot defaults are not used for measurements.
+        """
+
+        try:
+            return self._board.control.get_json("get_wifi_runtime")
+        except EspargosHTTPStatusError as error:
+            if error.status != 404 or self._board.api_version[0] >= 5:
+                raise
+            return self._board.control.get_json("get_wificonf")
 
     def set_reference_config(self, config: dict):
         """Update the controller's WiFi reference without retuning sensors.
