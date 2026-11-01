@@ -2,6 +2,10 @@
 
 <img src="img/espargos-logo.png" width="40%" align="right">
 
+[![Documentation](https://img.shields.io/badge/docs-online-blue)](https://espargos.net/docs/)
+[![Python ≥ 3.11](https://img.shields.io/badge/python-%E2%89%A5%203.11-blue?logo=python&logoColor=white)](#installation)
+[![License: LGPLv3](https://img.shields.io/badge/license-LGPLv3-blue)](LICENSE)
+
 *pyespargos* is the Python library for working with [ESPARGOS](https://espargos.net/), a low-cost digital phased array built from Espressif ESP32 chips.
 An ESPARGOS array contains eight phase-synchronized ESP32 radio front-ends, one per antenna, that are orchestrated by a central controller.
 The current hardware, [ESPARGOS One](https://espargos.net/espargos-one/), is a 4 &times; 2 array of dual-polarized patch antennas for the 2.4 GHz band and is controlled and powered over Ethernet (PoE) or USB-C.
