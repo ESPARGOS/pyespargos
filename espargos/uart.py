@@ -220,12 +220,17 @@ class UARTClient:
             return
 
         self._stop_event.clear()
-        self._serial = self._open_serial(self.baudrate)
-
+        self._rx_buffer.clear()
         try:
-            self.hello(timeout=min(1.0, self.timeout))
-        except (UARTProtocolError, UARTTimeoutError, serial.SerialException):
-            self._activate_transport_mode()
+            self._serial = self._open_serial(self.baudrate)
+            try:
+                self.hello(timeout=min(1.0, self.timeout))
+            except (UARTProtocolError, UARTTimeoutError, serial.SerialException):
+                self._activate_transport_mode()
+        except Exception:
+            # Failed activation must not leave an exclusively opened port behind.
+            self.close()
+            raise
 
         self._logger.info(f"Connected to ESPARGOS UART on {self.device}")
         self._connected = True
@@ -236,6 +241,7 @@ class UARTClient:
             raise UARTProtocolError("UART is not connected")
 
         self._serial.baudrate = self.boot_baudrate
+        self._rx_buffer.clear()
         self._serial.reset_input_buffer()
         self._serial.reset_output_buffer()
 
@@ -606,13 +612,19 @@ class UARTClient:
 
         if frame_type == FRAME_TYPE_SENSOR_DATA:
             for callback in list(self._stream_callbacks):
-                callback(payload)
+                try:
+                    callback(payload)
+                except Exception:
+                    self._logger.exception("UART sensor stream callback failed")
             return
 
         if frame_type == FRAME_TYPE_LOG:
             text = payload.decode("utf-8", errors="replace")
             for callback in list(self._log_callbacks):
-                callback(text)
+                try:
+                    callback(text)
+                except Exception:
+                    self._logger.exception("UART log callback failed")
             return
 
         self._logger.debug(f"Ignoring UART frame type 0x{frame_type:02x}")
