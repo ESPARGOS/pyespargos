@@ -1,4 +1,5 @@
 import "." as IQ
+import "../../common" as Common
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
@@ -51,7 +52,7 @@ GridLayout {
 		{ name: "Signal", mode: "signal", fields: [
 			{k: "threshold", l: "Threshold", v: "64"},
 			{k: "antennas", l: "Trigger antennas", v: "0,1,2,3,4,5,6,7"},
-			{k: "holdoff_ms", l: "Holdoff ms", v: "300"},
+			{k: "holdoff_ms", l: "Holdoff ms", v: "10"},
 			{k: "capture_chunks", l: "Capture chunks (56–112)", v: "56"},
 			{k: "quiet_threshold", l: "Quiet threshold", v: "0"}
 		]}
@@ -83,14 +84,14 @@ GridLayout {
 			"gain_mode": agcSwitch.checked ? 0 : 1,
 			"rx_gain": Math.round(rxGainSlider.value),
 			"trigger": trigger,
-			"rf_switch": rfSwitchCombo.currentIndex
+			"rf_switch": rfSwitchCombo.value
 		}
 	}
 
 	function pushConfig() {
 		if (_loading || !controller)
 			return
-		controller.apply_config_json(JSON.stringify(collectConfig()))
+		controller.queue_config_json(JSON.stringify(collectConfig()))
 	}
 
 	function loadFromController() {
@@ -113,7 +114,7 @@ GridLayout {
 					lpfBwSlider.value = Math.min(Math.max(cfg.filter_bw_mhz, lpfBwSlider.from), lpfBwSlider.to)
 			}
 			if (cfg.rf_switch !== undefined)
-				rfSwitchCombo.currentIndex = cfg.rf_switch
+				rfSwitchCombo.value = cfg.rf_switch
 			if (rx.gain_mode !== undefined)
 				agcSwitch.checked = rx.gain_mode === "auto"
 			if (rx.rx_gain !== undefined)
@@ -222,14 +223,11 @@ GridLayout {
 		}
 	}
 
-	Label { text: "RF switch"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-	ComboBox {
-		id: rfSwitchCombo
-		implicitWidth: 210
-		model: ["Isolation", "Reference", "Antenna R", "Antenna L"]
-		currentIndex: 2
-		onActivated: pushConfig()
-	}
+	Label { text: "RF input"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+    Common.RFSwitchControl {
+        id: rfSwitchCombo
+        onActivated: pushConfig()
+    }
 
 	// Gain like the WiFi settings: AGC switch + manual RX gain slider (the
 	// firmware's expert mode, gain_mode 2, is deliberately not exposed here;
@@ -244,20 +242,12 @@ GridLayout {
 	}
 
 	Label { text: "RX Gain"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-	RowLayout {
-		spacing: 14
-		Slider {
-			id: rxGainSlider
-			from: 0; to: 76; stepSize: 1; value: 60
-			implicitWidth: 160
-			enabled: !agcSwitch.checked
-			onPressedChanged: if (!pressed) pushConfig()
-		}
-		Label {
-			text: Math.round(rxGainSlider.value)
-			color: agcSwitch.checked ? "#808080" : "#ffffff"
-		}
-	}
+    Common.GainSlider {
+        id: rxGainSlider
+        value: 60
+        enabled: !agcSwitch.checked
+        onEdited: pushConfig()
+    }
 
 	Label { text: "Trigger"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 	ComboBox {

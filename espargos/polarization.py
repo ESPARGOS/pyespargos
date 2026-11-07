@@ -52,3 +52,31 @@ def inverse_jones_response(orientations, frequencies):
         raise ValueError("Expected 2D antenna orientations and a 1D subcarrier frequency grid")
     rotations = np.stack([orientation.rotation_matrix() for orientation in orientations.flat]).reshape(*orientations.shape, 2, 2)
     return np.einsum("mnpo,sof->mnspf", rotations, np.linalg.inv(matrices))
+
+
+def polarization_ellipse(coherency, previous=None):
+    """Dominant Jones vectors with a continuous animation phase.
+
+    Independent sources are represented by their summed 2x2 coherency matrices.
+    Vector lengths encode the square root of the degree of polarization. The
+    arbitrary common phase is transported from the previous frame, rather than
+    changing whenever H and V exchange which component is strongest.
+    """
+    coherency = np.asarray(coherency)
+    values, vectors = np.linalg.eigh(coherency)
+    power = np.maximum(values.sum(axis=-1), 0)
+    field = vectors[..., :, -1]
+    seed = field.reshape(-1, 2)[np.argmax(power)]
+    seed = seed * np.exp(-1j*np.angle(seed[np.argmax(abs(seed))]))
+    overlap = np.einsum("p,...p->...", seed.conj(), field)
+    if previous is not None and np.shape(previous) == field.shape:
+        old_overlap = np.sum(np.asarray(previous).conj()*field, axis=-1)
+        overlap = np.where(abs(old_overlap) > 1e-6, old_overlap, overlap)
+    # At a polarization orthogonal to the seed the common phase is undefined.
+    # Only those new/unsupported pixels need a local initial phase convention.
+    fallback = np.take_along_axis(field, np.argmax(abs(field), axis=-1)[...,None], axis=-1)[...,0]
+    overlap = np.where(abs(overlap) > 1e-6, overlap, fallback)
+    field = field * np.exp(-1j*np.angle(overlap))[...,None]
+    degree = np.divide(values[..., -1]-values[..., 0], power,
+                       out=np.zeros_like(power), where=power > 0)
+    return field * np.sqrt(np.clip(degree, 0, 1))[...,None]

@@ -9,7 +9,7 @@ from demos.wifi.common.application import ESPARGOSCSIApplication, CSIBacklogMixi
 from demos.common.application import CombinedArrayMixin
 
 import numpy as np
-import matplotlib
+from demos.common.phase_arrays import phase_arrays, sample_covariances
 import espargos
 import argparse
 
@@ -17,7 +17,8 @@ import PyQt6.QtCore
 
 
 class EspargosDemoPhasesByAntenna(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
-    updateColors = PyQt6.QtCore.pyqtSignal(list)
+    updatePhases = PyQt6.QtCore.pyqtSignal(list)
+    backlog_cli_option = False
 
     DEFAULT_CONFIG = {}
 
@@ -39,27 +40,20 @@ class EspargosDemoPhasesByAntenna(CSIBacklogMixin, CombinedArrayMixin, SingleCSI
 
     @PyQt6.QtCore.pyqtSlot()
     def updateRequest(self):
-        if (result := self.get_backlog_csi("rx_gain", "fft_gain")) is None:
+        route = self.pooldrawer.configManager().get("rf_switch") if self.pooldrawer is not None else 2
+        split = route == 4
+        if (result := self.get_backlog_csi("rx_gain", "fft_gain", "rf_switch_state", allow_incomplete=True)) is None:
+            self.updatePhases.emit([{}] * (2 if split else 1))
             return
 
-        csi_backlog, rx_gain_backlog, fft_gain_backlog = result
-        csi_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, csi_backlog)
-        rx_gain_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, rx_gain_backlog)
-        fft_gain_largearray = espargos.combined_array.build_combined_array_data(self.indexing_matrix, fft_gain_backlog)
-        csi_largearray = espargos.csi_processing.scale_csi_by_reported_gain(csi_largearray, rx_gain_largearray, fft_gain_largearray)
-
-        R = np.einsum("dnis,dmjs->nimj", csi_largearray, np.conj(csi_largearray))
-        R = np.reshape(R, (R.shape[0] * R.shape[1], R.shape[2] * R.shape[3]))
-        w, v = np.linalg.eig(R)
-        csi_smoothed = v[:, np.argmax(w)]
-        offsets_current = csi_smoothed.flatten()
-
-        phases = np.angle(offsets_current * np.exp(-1.0j * np.angle(offsets_current[0]))).tolist()
-
-        norm = matplotlib.colors.Normalize(vmin=-np.pi, vmax=np.pi, clip=True)
-        mapper = matplotlib.cm.ScalarMappable(norm=norm, cmap="twilight")
-
-        self.updateColors.emit(mapper.to_rgba(phases).tolist())
+        csi, rx_gain, fft_gain, feeds = (
+            espargos.combined_array.build_combined_array_data(self.indexing_matrix, data)
+            for data in result)
+        csi = espargos.csi_processing.scale_csi_by_reported_gain(csi, rx_gain, fft_gain)
+        if not split:
+            csi = np.where(feeds[..., None] == route, csi, np.nan)
+        covariances, counts = sample_covariances(csi.reshape(len(csi), -1, csi.shape[-1]))
+        self.updatePhases.emit(phase_arrays(covariances, counts, feeds.reshape(len(csi), -1), split))
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def numberOfRows(self):

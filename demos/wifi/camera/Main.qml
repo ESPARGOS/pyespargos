@@ -6,6 +6,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Controls.Material
 import "../../common" as Common
+import "../../common/camera" as Camera
 
 Common.ESPARGOSApplication {
 	id: window
@@ -32,90 +33,7 @@ Common.ESPARGOSApplication {
 				indicator.height: 18
 			}
 
-			Label { Layout.columnSpan: 2; text: "Camera Input"; color: "#9fb3c8" }
-			Label { text: "Device"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			ComboBox {
-				id: cameraDevice
-				property string configKey: "camera.device"
-				property string configProp: "currentIndex"
-				property var encode: function(v) { return cameraDevice.model[v] }
-				property var decode: function(v) {
-					let idx = cameraDevice.model.indexOf(v)
-					return idx >= 0 ? idx : 0
-				}
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onCurrentIndexChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 210
-				model: WebCam.availableDevices
-				currentIndex: 0
-				function isUserActive() { return pressed || popup.visible }
-				delegate: ItemDelegate {
-					width: cameraDevice.width
-					text: modelData
-
-					ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
-					ToolTip.text: modelData
-				}
-			}
-
-			Label { text: "Format"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			ComboBox {
-				id: cameraFormat
-				property string configKey: "camera.format"
-				property string configProp: "currentIndex"
-				property var encode: function(v) { return cameraFormat.model[v] }
-				property var decode: function(v) {
-					let idx = cameraFormat.model.indexOf(v)
-					return idx >= 0 ? idx : 0
-				}
-				Component.onCompleted: {
-					appDrawer.configManager.register(this)
-
-					// Populate formats for initial device
-					cameraFormat.model = WebCam.availableFormats
-				}
-				onCurrentIndexChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 210
-				// Initially empty, populated when device changes or when component is completed
-				model: []
-				currentIndex: 0
-				function isUserActive() { return pressed || popup.visible }
-
-				Connections {
-					target: WebCam
-					function onAvailableFormatsChanged() {
-						// Update formats when available formats change, always pick last available format by default
-						cameraFormat.model = WebCam.availableFormats
-						cameraFormat.currentIndex = cameraFormat.model.length - 1
-					}
-				}
-			}
-
-			Label { text: "Flip camera"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Switch {
-				id: flipCamera
-				property string configKey: "camera.flip_camera"
-				property string configProp: "checked"
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 80
-				checked: false
-				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
-				ToolTip.text: "Flip the camera image horizontally."
-			}
-
-			Label { text: "Flip overlay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Switch {
-				id: flipOverlay
-				property string configKey: "camera.flip_overlay"
-				property string configProp: "checked"
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 80
-				checked: false
-				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
-				ToolTip.text: "Flip the spatial overlay horizontally."
-			}
+            Camera.CameraSettings { configManager: appDrawer.configManager }
 			Label { Layout.columnSpan: 2; text: "Receiver"; color: "#9fb3c8" }
 			Label { text: "MAC List"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {
@@ -127,83 +45,6 @@ Common.ESPARGOSApplication {
 				implicitWidth: 80
 				checked: false
 			}
-
-			Label { text: "FOV Azi"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
-			Slider {
-				id: fovAzimuth
-				property string configKey: "camera.fov_azimuth"
-				property string configProp: "value"
-				property var encode: function(v) { return Math.round(v) }
-				property var decode: function(v) { return Number(v) }
-				from: 10
-				to: 179
-				stepSize: 1
-				implicitWidth: 210
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onValueChanged: appDrawer.configManager.onControlChanged(this)
-				value: 72
-				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
-				ToolTip.text: "" + Math.round(value) + "°"
-				visible: advancedSettings.checked
-			}
-
-			Label { text: "FOV Ele"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
-			Slider {
-				id: fovElevation
-				property string configKey: "camera.fov_elevation"
-				property string configProp: "value"
-				property var encode: function(v) { return Math.round(v) }
-				property var decode: function(v) { return Number(v) }
-				from: 10
-				to: 120
-				stepSize: 1
-				implicitWidth: 210
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onValueChanged: appDrawer.configManager.onControlChanged(this)
-				value: 41
-				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
-				ToolTip.text: "" + Math.round(value) + "°"
-				visible: advancedSettings.checked
-			}
-
-			Label { text: "Azi Shift"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
-			Slider {
-				id: azimuthCorrection
-				property string configKey: "visualization.azimuth_correction"
-				property string configProp: "value"
-				property var encode: function(v) { return v }
-				property var decode: function(v) { return Number(v) }
-				from: -90.0
-				to: 90.0
-				stepSize: 1.0
-				implicitWidth: 210
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onValueChanged: appDrawer.configManager.onControlChanged(this)
-				value: 0.0
-				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
-				ToolTip.text: "Angle: " + value.toFixed(1) + "°"
-				visible: advancedSettings.checked
-			}
-
-			Label { text: "Ele Shift"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: advancedSettings.checked }
-			Slider {
-				id: elevationCorrection
-				property string configKey: "visualization.elevation_correction"
-				property string configProp: "value"
-				property var encode: function(v) { return v }
-				property var decode: function(v) { return Number(v) }
-				from: -90.0
-				to: 90.0
-				stepSize: 1.0
-				implicitWidth: 210
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onValueChanged: appDrawer.configManager.onControlChanged(this)
-				value: 0.0
-				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
-				ToolTip.text: "Angle: " + value.toFixed(1) + "°"
-				visible: advancedSettings.checked
-			}
-			
 
 			Label { Layout.columnSpan: 2; text: "Beamforming"; color: "#9fb3c8" }
 			Label { text: "Method"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -320,43 +161,10 @@ Common.ESPARGOSApplication {
 				ToolTip.text: "When enabled, all polarization dots oscillate with the same amplitude. When disabled, amplitude scales with received power."
 			}
 
-			Label { text: "Grid Spacing"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show" }
-			Slider {
-				id: gridSpacing
-				property string configKey: "beamformer.grid_spacing"
-				property string configProp: "value"
-				property var encode: function(v) { return Math.round(v) }
-				property var decode: function(v) { return Number(v) }
-				from: 8
-				to: 128
-				stepSize: 1
-				implicitWidth: 210
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onValueChanged: appDrawer.configManager.onControlChanged(this)
-				value: 64
-				visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show"
-				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
-				ToolTip.text: "Grid spacing for polarization dots in pixels. Current value: " + value.toFixed(0)
-			}
-
-			Label { text: "Phasor Speed"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show" }
-			Slider {
-				id: polarizationSpeed
-				property string configKey: "beamformer.polarization_speed"
-				property string configProp: "value"
-				property var encode: function(v) { return v }
-				property var decode: function(v) { return Number(v) }
-				from: 0.0
-				to: 8.0
-				stepSize: 0.25
-				implicitWidth: 210
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onValueChanged: appDrawer.configManager.onControlChanged(this)
-				value: 4.0
-				visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show"
-				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
-				ToolTip.text: value === 0.0 ? "Paused" : "Electric-field phasor speed: " + value.toFixed(2) + " Hz"
-			}
+            Common.PolarizationDisplaySettings {
+                configManager: appDrawer.configManager
+                visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show"
+            }
 
 			Label { text: "Max Delay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && colorizeDelay.currentIndex === 1 }
 			Slider {
@@ -394,22 +202,6 @@ Common.ESPARGOSApplication {
 			}
 
 			Label { Layout.columnSpan: 2; text: "Visualization"; color: "#9fb3c8" }
-			Label { text: "Space"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			ComboBox {
-				id: spaceMode
-				property string configKey: "visualization.space"
-				property string configProp: "currentValue"
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onCurrentValueChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 210
-				model: [
-					{ value: "camera", text: "Camera"},
-					{ value: "beamspace", text: "Beamspace"}
-				]
-				textRole: "text"
-				valueRole: "value"
-				currentValue: "camera"
-			}
 
 			Label { text: "Overlay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			ComboBox {

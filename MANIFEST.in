@@ -1,2 +1,8 @@
 include README.md
 include LICENSE
+recursive-include external/espargos-packet-decoders/include *.h
+recursive-include external/espargos-packet-decoders/src *.h *.c
+recursive-include external/espargos-packet-decoders/bindings *.h *.c
+recursive-include external/espargos-packet-decoders/python *.py
+include external/espargos-packet-decoders/COPYING
+include external/espargos-packet-decoders/COPYING.LESSER

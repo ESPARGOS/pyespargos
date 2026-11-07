@@ -57,38 +57,12 @@ Common.ESPARGOSApplication {
 		}
 	}
 
-	Item {
-		anchors.centerIn: parent
-		width: childrenRect.width
-		height: childrenRect.height
-
-		ColumnLayout {
-			id: antennaArray
-			Layout.alignment: Qt.AlignHCenter
-			spacing: -2
-
-			Repeater {
-				model: backend.numberOfRows
-
-				RowLayout {
-					spacing: -2
-
-					Repeater {
-						model: backend.numberOfColumns
-
-						Rectangle {
-							id: antennaRect
-							implicitWidth: window.width / (Math.max(backend.numberOfRows, backend.numberOfColumns) + 2)
-							implicitHeight: window.width / (Math.max(backend.numberOfRows, backend.numberOfColumns) + 2)
-							color: "#cd4141"
-							border.width: 2
-							border.color: "#ffffff"
-						}
-					}
-				}
-			}
-		}
-	}
+    Common.PhaseArrays {
+        id: antennaArray
+        anchors.fill: parent
+        rowCount: backend.numberOfRows
+        columns: backend.numberOfColumns
+    }
 
 	Timer {
 		interval: 1 / 60 * 1000
@@ -102,15 +76,6 @@ Common.ESPARGOSApplication {
 	Connections {
 		target: backend
 
-		function onUpdateColors(colors) {
-			for (var row = 0; row < backend.numberOfRows; row++) {
-				for (var col = 0; col < backend.numberOfColumns; col++) {
-					let phaseRect = antennaArray.children[row].children[col]
-					if (phaseRect instanceof Rectangle) {
-						phaseRect.color = Qt.rgba(...colors[row * backend.numberOfColumns + col])
-					}
-				}
-			}
-		}
-	}
+        function onUpdatePhases(panels) { antennaArray.panels = panels }
+    }
 }

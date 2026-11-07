@@ -80,7 +80,7 @@ def refresh(owner, timeout):
         if any((x["boot_id"], x["origin_ns"]) != (y["boot_id"], y["origin_ns"]) for old, new in zip(after, final) for x, y in zip(old["sensors"], new["sensors"])):
             raise RuntimeError("Sensor restarted while transferring calibration")
         owner.calibrations = updated
-        receiver = owner._iq
+        receiver = owner._receivers.get("iq")
         if receiver is not None and receiver._calibration is not None:
             epochs = np.zeros((len(boards), 2, 4), np.uint64)
             grid = np.zeros_like(epochs, dtype=np.int64)

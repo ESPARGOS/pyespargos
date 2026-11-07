@@ -5,28 +5,18 @@ from __future__ import annotations
 import matplotlib.colors
 import numpy as np
 import PyQt6.QtCore
+from demos.common.camera.overlay import CameraOverlayModel
 
 
-class CSIOverlay(PyQt6.QtCore.QObject):
+class CSIOverlay(CameraOverlayModel):
     receiverPowerChanged = PyQt6.QtCore.pyqtSignal(float)
     receiverPowerUnitChanged = PyQt6.QtCore.pyqtSignal()
     activeAntennasChanged = PyQt6.QtCore.pyqtSignal(float)
-    beamspacePowerImagedataChanged = PyQt6.QtCore.pyqtSignal(list)
-    polarizationImagedataChanged = PyQt6.QtCore.pyqtSignal(list)
     macListChanged = PyQt6.QtCore.pyqtSignal(list)
-    visualizationSpaceChanged = PyQt6.QtCore.pyqtSignal()
-    polarizationVisibleChanged = PyQt6.QtCore.pyqtSignal()
-    gridSpacingChanged = PyQt6.QtCore.pyqtSignal()
-    polarizationSpeedChanged = PyQt6.QtCore.pyqtSignal()
-    resolutionAzimuthChanged = PyQt6.QtCore.pyqtSignal()
-    resolutionElevationChanged = PyQt6.QtCore.pyqtSignal()
     macListEnabledChanged = PyQt6.QtCore.pyqtSignal()
-    azimuthCorrectionChanged = PyQt6.QtCore.pyqtSignal()
-    elevationCorrectionChanged = PyQt6.QtCore.pyqtSignal()
 
     def __init__(self, appconfig, parent=None, update_signal=None):
-        super().__init__(parent)
-        self.appconfig = appconfig
+        super().__init__(appconfig, parent, update_signal)
         self.mean_receiver_power = -np.inf
         self.receiver_power_unit = "dB"
         self.mean_active_antennas = 0.0
@@ -48,17 +38,6 @@ class CSIOverlay(PyQt6.QtCore.QObject):
         if addresses != self.recent_macs:
             self.recent_macs = addresses
             self.macListChanged.emit(list(self.recent_macs))
-
-    def publish_polarization(self, vertical, horizontal):
-        # Two opaque RGB tiles retain all four Jones components without using
-        # alpha for data (Qt Canvas textures use premultiplied alpha).
-        components = np.concatenate([horizontal.T, vertical.T], axis=1)
-        image = np.empty((*components.shape, 4), dtype=np.uint8)
-        image[..., 0] = np.rint(np.clip((components.real + 1) / 2, 0, 1) * 255)
-        image[..., 1] = np.rint(np.clip((components.imag + 1) / 2, 0, 1) * 255)
-        image[..., 2] = 0
-        image[..., 3] = 255
-        self.polarizationImagedataChanged.emit(image.ravel().tolist())
 
     def publish_spatial_spectrum(self, power, frequency_space=None):
         power = np.asarray(power)
@@ -112,7 +91,7 @@ class CSIOverlay(PyQt6.QtCore.QObject):
                 image[1::4] = np.clip(np.swapaxes(color_value, 0, 1).ravel(), 0, 1) * 255
                 image[3::4] = 255
 
-        self.beamspacePowerImagedataChanged.emit(image.tolist())
+        self.publish_image("spatial", image.reshape(power.shape[1], power.shape[0], 4))
 
     @staticmethod
     def _viridis(values):
@@ -133,44 +112,9 @@ class CSIOverlay(PyQt6.QtCore.QObject):
         return colormap[low] * (1 - fraction[:, :, np.newaxis]) + colormap[high] * fraction[:, :, np.newaxis]
 
     @PyQt6.QtCore.pyqtSlot(dict)
-    def _on_update_app_state(self, newcfg):
-        receiver_cfg = newcfg.get("receiver", {}) if isinstance(newcfg, dict) else {}
-        if isinstance(receiver_cfg, dict) and "mac_list_enabled" in receiver_cfg:
+    def _on_update_app_state(self, changes):
+        if "mac_list_enabled" in changes.get("receiver", {}):
             self.macListEnabledChanged.emit()
-
-        beamformer_cfg = newcfg.get("beamformer", {}) if isinstance(newcfg, dict) else {}
-        if isinstance(beamformer_cfg, dict):
-            if "polarization_mode" in beamformer_cfg or "type" in beamformer_cfg:
-                self.polarizationVisibleChanged.emit()
-            if "grid_spacing" in beamformer_cfg:
-                self.gridSpacingChanged.emit()
-            if "polarization_speed" in beamformer_cfg:
-                self.polarizationSpeedChanged.emit()
-            if "resolution_azimuth" in beamformer_cfg:
-                self.resolutionAzimuthChanged.emit()
-            if "resolution_elevation" in beamformer_cfg:
-                self.resolutionElevationChanged.emit()
-
-        visualization_cfg = newcfg.get("visualization", {}) if isinstance(newcfg, dict) else {}
-        if isinstance(visualization_cfg, dict):
-            if "space" in visualization_cfg:
-                self.visualizationSpaceChanged.emit()
-            if "azimuth_correction" in visualization_cfg:
-                self.azimuthCorrectionChanged.emit()
-            if "elevation_correction" in visualization_cfg:
-                self.elevationCorrectionChanged.emit()
-
-    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=resolutionAzimuthChanged)
-    def resolutionAzimuth(self):
-        return self.appconfig.get("beamformer", "resolution_azimuth")
-
-    @PyQt6.QtCore.pyqtProperty(int, constant=False, notify=resolutionElevationChanged)
-    def resolutionElevation(self):
-        return self.appconfig.get("beamformer", "resolution_elevation")
-
-    @PyQt6.QtCore.pyqtProperty(str, constant=False, notify=visualizationSpaceChanged)
-    def visualizationSpace(self):
-        return self.appconfig.get("visualization", "space")
 
     @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=receiverPowerChanged)
     def receiverPower(self):
@@ -191,23 +135,3 @@ class CSIOverlay(PyQt6.QtCore.QObject):
     @PyQt6.QtCore.pyqtProperty(list, constant=False, notify=macListChanged)
     def macList(self):
         return list(self.recent_macs)
-
-    @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=polarizationVisibleChanged)
-    def polarizationVisible(self):
-        return self.appconfig.get("beamformer", "type") == "FFT" and self.appconfig.get("beamformer", "polarization_mode") == "show"
-
-    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=gridSpacingChanged)
-    def gridSpacing(self):
-        return float(self.appconfig.get("beamformer", "grid_spacing"))
-
-    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=polarizationSpeedChanged)
-    def polarizationSpeed(self):
-        return float(self.appconfig.get("beamformer", "polarization_speed"))
-
-    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=azimuthCorrectionChanged)
-    def azimuth_correction(self):
-        return float(self.appconfig.get("visualization", "azimuth_correction"))
-
-    @PyQt6.QtCore.pyqtProperty(float, constant=False, notify=elevationCorrectionChanged)
-    def elevation_correction(self):
-        return float(self.appconfig.get("visualization", "elevation_correction"))

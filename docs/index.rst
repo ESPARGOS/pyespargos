@@ -14,6 +14,8 @@ Table of contents
    pool
    combined-arrays
    calibration
+   measurement-architecture
+   ble-reception
    wifi-reception
    wifi-transmission
    iq-reception

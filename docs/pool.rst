@@ -78,9 +78,10 @@ For per-sensor WiFi channels and their calibration, see :doc:`wifi-reception`.
 Receive and transmit
 ---------------------
 
-:attr:`pool.iq <espargos.pool.Pool.iq>` and :attr:`pool.wifi <espargos.pool.Pool.wifi>` provide shared :class:`IQReceiver <espargos.iq_receiver.IQReceiver>` and :class:`WiFiTransceiver <espargos.wifi_transceiver.WiFiTransceiver>` objects.
+:attr:`pool.iq <espargos.pool.Pool.iq>`, :attr:`pool.wifi <espargos.pool.Pool.wifi>` and
+:attr:`pool.ble <espargos.pool.Pool.ble>` provide shared receivers.
 Use their callbacks and backlogs, with :class:`Pool <espargos.pool.Pool>` driving processing, as described in
-:doc:`iq-reception` and :doc:`wifi-reception`. Both use the same board connections,
+:doc:`iq-reception`, :doc:`wifi-reception` and :doc:`ble-reception`. They use the same board connections,
 and :class:`Pool <espargos.pool.Pool>` manages their lifetime. Default callbacks wait for antennas in the
 corresponding mode. Other antennas remain missing in the returned data. A
 selection does not change the shape of receiver data.
@@ -130,13 +131,15 @@ references, subset selection and validity checks.
 Connection ownership
 --------------------
 
-Only :class:`Pool <espargos.pool.Pool>` starts, reconnects and closes board streams. Its CSI and IQ
+Only :class:`Pool <espargos.pool.Pool>` starts, reconnects and closes board streams. Its registered
 receivers assemble incoming messages. :meth:`pool.start_processing() <espargos.pool.Pool.start_processing>` runs their
 callbacks on one shared worker, including receivers first accessed after the
 worker starts. :meth:`pool.stop_processing() <espargos.pool.Pool.stop_processing>` stops that worker without closing
 connections. Receivers have no independent start, stop or close operation.
-Backlog ``close()`` only removes its callback. Calibration results live in
-:attr:`pool.calibrations <espargos.pool.Pool.calibrations>`.
+Backlog ``close()`` only removes its callback. IQ/WiFi calibration groups live in
+:attr:`pool.calibrations <espargos.pool.Pool.calibrations>`. Narrowband BLE phase
+calibration is managed by ``pool.ble``, as described in :doc:`ble-reception`.
+See :doc:`measurement-architecture` for receiver registration and extension.
 
 CSI getters that return one pool-wide value raise ``ValueError`` when boards
 disagree. They never change settings. Read individual :class:`Board <espargos.board.Board>` capabilities

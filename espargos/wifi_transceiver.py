@@ -150,6 +150,13 @@ class WiFiTransceiver(ClusterAssembler):
 
         return states(self)
 
+    def modes_changed(self, board_index, before, after):
+        from .calibration import Antenna
+        changed = [Antenna(self.boards[board_index].host, a) for a, (old, new) in enumerate(zip(before, after))
+                   if old != new and "wifi" in (old, new)]
+        if changed:
+            self.invalidate_calibration(antennas=changed)
+
     def invalidate_calibration(self, *, antennas=None):
         """Invalidate all WiFi corrections, or only the specified antennas."""
         if antennas is not None:
@@ -336,20 +343,33 @@ class WiFiTransceiver(ClusterAssembler):
             "WiFi channel overrides",
         )
 
-    def set_wifi_channel_overrides(self, settings: dict):
+    def set_wifi_channel_overrides(self, settings: dict, *, board_index=None, antennas=None):
         """
         Set per-sensor WiFi channel overrides on all boards in this pool and sanity-check that all boards end up with the same settings.
 
         This is forwarded to :meth:`pyespargos.board_wifi_rx.WiFiRxCapability.set_channel_overrides` for each board.
         For the expected JSON/dict format, refer to that method's documentation.
 
+        ``board_index`` optionally scopes the write to one board. ``antennas``
+        identifies the hardware IDs changed by a prepared per-sensor update.
+        Other entries in settings must retain their previous channel values.
+        Calibration is invalidated even when a write loses its reply.
+
         :param settings: Per-sensor WiFi channel override settings dict to apply to all boards.
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
-        for b in self.boards:
-            b.wifi_rx.set_channel_overrides(settings)
-        _ = self.get_wifi_channel_overrides()
-        self._invalidate_association_timebase("per-sensor Wi-Fi channels changed")
+        from .calibration import Antenna
+        indices = range(len(self.boards)) if board_index is None else [board_index]
+        ids = tuple(range(8) if antennas is None else antennas)
+        if any(type(a) is not int or not 0 <= a < 8 for a in ids):
+            raise ValueError("Use hardware antenna IDs 0–7")
+        for bi in indices:
+            try:
+                self.boards[bi].wifi_rx.set_channel_overrides(settings)
+            finally:
+                self.invalidate_calibration(antennas=[Antenna(self.boards[bi].host, a) for a in ids])
+        if board_index is None:
+            _ = self.get_wifi_channel_overrides()
 
     def get_tx_configs(self) -> list[dict]:
         """

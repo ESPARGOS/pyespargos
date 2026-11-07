@@ -10,11 +10,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable
 from weakref import WeakKeyDictionary
 import logging
-import queue
 import threading
 import time
 
 from . import board
+from .receiver_buffer import ReceiverBuffer, BufferPolicy
 from . import constants
 from . import sensor
 from .sensor_cluster import ClusterCollisionError, SensorCluster
@@ -22,7 +22,6 @@ from .sensor_cluster import ClusterCollisionError, SensorCluster
 __all__ = ["ClusterAssembler"]
 
 _DEFAULT_RUN_TIMEOUT = 0.005
-_RUN_BATCH_BOUNDARY = object()
 _CLUSTER_COLLISION_WARNING_INTERVAL = 5.0
 
 
@@ -73,7 +72,7 @@ class ClusterAssembler(ABC):
         self.boards = list(boards)
         self.board_revisions = tuple(board_obj.revision for board_obj in self.boards)
 
-        self._input_queue = queue.Queue()
+        self._input_queue = ReceiverBuffer()
         self._run_lock = threading.Lock()
         self._cluster_lock = threading.Lock()
         self._cluster_caches: dict[str, dict[Hashable, SensorCluster]] = {}
@@ -101,10 +100,31 @@ class ClusterAssembler(ABC):
     def _close(self):
         """Detach this receiver from its boards without stopping the boards."""
 
+        self._input_queue.close()
         subscriptions = self._sensor_message_subscriptions
         self._sensor_message_subscriptions = []
         for capability, subscription in subscriptions:
             capability.unsubscribe(subscription)
+
+    def configure_buffering(self, policy: BufferPolicy):
+        """Set pending-report retention without changing hardware or callbacks."""
+        self._input_queue.configure(policy)
+
+    @property
+    def buffer_policy(self):
+        return self._input_queue.policy
+
+    @property
+    def buffer_stats(self):
+        """Snapshot pending reports, overflow loss, age expiry and high watermark."""
+        return self._input_queue.stats
+
+    def modes_changed(self, board_index, before, after):
+        """Notify a receiver after an attempted sensor-role change.
+
+        Receivers with mode-sensitive calibration override this hook. Configuration
+        of their own radio settings remains their responsibility.
+        """
 
     @property
     def processing(self):
@@ -197,16 +217,10 @@ class ClusterAssembler(ABC):
     def _run(self, timeout: float | None = _DEFAULT_RUN_TIMEOUT) -> int:
         """Process one bounded batch of pending sensor messages.
 
-        If no message is immediately available, wait up to ``timeout`` seconds
-        for the first one. Once a message is available, all messages ahead of a
-        FIFO batch boundary are processed together. Messages arriving after the
-        boundary remain queued for the next call. In the CSI case, one batch
-        commonly contains reports from several sensors for the same Wi-Fi
-        packet, possibly together with reports for other packets.
-
-        Completion checks are performed once per updated cluster after the
-        batch, rather than after every individual sensor report. Calls must not
-        overlap; concurrent or reentrant calls raise :class:`RuntimeError`.
+        Wait up to timeout for input, then process at most the configured batch
+        size. This keeps a busy receiver from monopolizing the shared worker.
+        Retention limits and drop counts are exposed through the buffering API.
+        Calls must not overlap.
 
         :return: Number of sensor messages processed.
         """
@@ -217,19 +231,10 @@ class ClusterAssembler(ABC):
             raise RuntimeError("Receiver processing must not be called concurrently or reentrantly")
 
         try:
-            try:
-                first_message = self._input_queue.get(timeout=timeout)
-            except queue.Empty:
+            messages = self._input_queue.take(timeout)
+            if not messages:
                 self._expire_cluster_caches()
                 return 0
-
-            messages = [first_message]
-            self._input_queue.put_nowait(_RUN_BATCH_BOUNDARY)
-            while True:
-                message = self._input_queue.get_nowait()
-                if message is _RUN_BATCH_BOUNDARY:
-                    break
-                messages.append(message)
 
             # A cluster commonly receives several sensor messages in one
             # batch. Coalesce those updates by object identity so the
