@@ -68,8 +68,19 @@ def reference_session(pool, center_hz=None, rx_gain=None, scope=None):
     if not pool._reference_lock.acquire(blocking=False):
         raise RuntimeError("Synchronization or calibration is already running")
     try:
-        with _reference_session(pool, center_hz, rx_gain, scope) as state:
-            yield state
+        board = pool.master_board
+        previous_mode = board.control.get_json("get_controller_mode")
+        changed_mode = previous_mode["mode"] != "iq"
+        if changed_mode:
+            board.control.post_json("set_controller_mode", {"mode": "iq"})
+        try:
+            with _reference_session(pool, center_hz, rx_gain, scope) as state:
+                yield state
+        finally:
+            # The reference session stops IQ generation before restoring the
+            # controller personality, including when acquisition fails.
+            if changed_mode:
+                board.control.post_json("set_controller_mode", previous_mode)
     finally:
         pool._reference_lock.release()
 
@@ -135,6 +146,38 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None):
 
 
 def acquire_grid(pool, center, timeout=3.0, scope=None):
+    """Acquire the wideband onset, then restore the operating receive filters.
+
+    The firmware onset qualifier distinguishes REF from WiFi by its energy
+    near the edges of the 36 MHz reference band. A narrow analog filter
+    prevents that qualifier from firing even when REF has ample amplitude.
+    Restore filters before collecting the fine phase/delay calibration so
+    that its response is measured in the user's operating configuration.
+    """
+    from .scope import CalibrationScope
+
+    scope = scope or CalibrationScope(pool)
+    changed = []
+    try:
+        for bi in scope.active:
+            board = pool.boards[bi]
+            bandwidth = board.iq.get_config().get("filter_bw_mhz", 0)
+            if 0 < bandwidth < 40:
+                changed.append((board, bandwidth))
+                board.iq.set_config({"filter_bw_mhz": 40})
+        return _acquire_grid(pool, center, timeout, scope)
+    finally:
+        errors = []
+        for board, bandwidth in changed:
+            try:
+                board.iq.set_config({"filter_bw_mhz": bandwidth})
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise RuntimeError(f"Failed to restore analog filters after synchronization: {errors}")
+
+
+def _acquire_grid(pool, center, timeout=3.0, scope=None):
     """Capture one common RF onset without prior synchronization or Wi-Fi."""
     from .scope import CalibrationScope
 

@@ -64,6 +64,11 @@ class IQController(PyQt6.QtCore.QObject):
         self._tone_busy = False
         self._reference_busy = False
         self._sync_needed = True
+        self._config_state_lock = threading.Lock()
+        self._config_pending = None
+        self._config_worker = None
+        self._io_workers = []
+        self._closing = False
         self.receiver.add_callback(self._observe_capture)
         self.receiver.add_accumulation_callback(self._observe_capture)
 
@@ -93,7 +98,7 @@ class IQController(PyQt6.QtCore.QObject):
             self._set_sync_needed(True)
 
     def _begin_reference(self):
-        if self._reference_busy:
+        if self._reference_busy or self._closing:
             return False
         self._reference_busy = True
         self._set_sync_needed(True)
@@ -113,8 +118,61 @@ class IQController(PyQt6.QtCore.QObject):
     # ---- capture configuration ----
 
     @PyQt6.QtCore.pyqtSlot(str)
+    def queue_config_json(self, config_json):
+        """Coalesce interactive receiver edits without blocking video or QML."""
+        try:
+            config = json.loads(config_json)
+            if not isinstance(config, dict):
+                raise ValueError("Receiver configuration must be an object")
+        except (ValueError, TypeError) as error:
+            self.logger.error("Invalid receiver configuration: %s", error)
+            return
+        with self._config_state_lock:
+            if self._closing or self._reference_busy:
+                return
+            # Top-level patches merge, while a trigger replaces the whole
+            # trigger object so fields from an old mode cannot leak through.
+            self._config_pending = {**(self._config_pending or {}), **config}
+            if self._config_worker is None:
+                self._config_worker = threading.Thread(target=self._drain_config, daemon=True)
+                self._config_worker.start()
+
+    def _drain_config(self):
+        while True:
+            with self._config_state_lock:
+                config = self._config_pending
+                self._config_pending = None
+                if self._closing or config is None:
+                    self._config_worker = None
+                    return
+            self.apply_config_json(json.dumps(config))
+
+    def close(self):
+        """Finish owned I/O workers before the application closes the pool."""
+        with self._config_state_lock:
+            self._closing = True
+            self._config_pending = None
+            worker = self._config_worker
+            io_workers = tuple(self._io_workers)
+        with self._tone_state_lock:
+            self._tone_pending = None
+        if worker is not None:
+            worker.join()
+        for worker in io_workers:
+            worker.join()
+
+    def _start_io_worker(self, target):
+        with self._config_state_lock:
+            if self._closing:
+                return
+            self._io_workers = [worker for worker in self._io_workers if worker.is_alive()]
+            worker = threading.Thread(target=target, daemon=True)
+            self._io_workers.append(worker)
+            worker.start()
+
+    @PyQt6.QtCore.pyqtSlot(str)
     def apply_config_json(self, config_json):
-        if self._reference_busy:
+        if self._reference_busy or self._closing:
             return
         try:
             config = json.loads(config_json)
@@ -129,10 +187,15 @@ class IQController(PyQt6.QtCore.QObject):
                 radio["sample_rate_hz"] = DECIM_TO_FS[capture.pop("adc_decimation")]
             if "rf_switch" in capture:
                 radio["output"] = ("isolation", "reference", "antenna_r", "antenna_l")[capture.pop("rf_switch")]
-            if radio:
-                self.pool.configure(**radio)
-            if capture:
-                self.receiver.apply_config(capture)
+            # Serialize user edits with reference operations and automatic
+            # capture management (feed selection / trigger thresholds).
+            with self._reference_io_lock:
+                if self._reference_busy or self._closing:
+                    return
+                if radio:
+                    self.pool.configure(**radio)
+                if capture:
+                    self.receiver.apply_config(capture)
             self._check_calibration_config(config)
             self._correction_cache.clear()
             self.configChanged.emit(config)
@@ -173,14 +236,15 @@ class IQController(PyQt6.QtCore.QObject):
             succeeded = False
             try:
                 with self._reference_io_lock:
-                    self.pool.calibrate()
-                    succeeded = True
+                    if not self._closing:
+                        self.pool.calibrate()
+                        succeeded = True
             except Exception as e:
                 self.logger.error(f"sync/calibration failed: {e}")
             finally:
                 self._end_reference(succeeded)
 
-        threading.Thread(target=run, daemon=True).start()
+        self._start_io_worker(run)
 
     @PyQt6.QtCore.pyqtSlot(bool)
     def set_apply_calibration(self, enable):
@@ -215,14 +279,14 @@ class IQController(PyQt6.QtCore.QObject):
         """Queue the latest Off/CW/noise request without blocking the GUI."""
         if mode not in ("off", "cw", "iq"):
             raise ValueError("Unknown reference mode")
-        if self._reference_busy:
+        if self._reference_busy or self._closing:
             return
         with self._tone_state_lock:
             self._tone_pending = (mode, float(freq_mhz), float(atten_db))
             if self._tone_busy:
                 return  # in-flight worker will pick up the latest
             self._tone_busy = True
-        threading.Thread(target=self._tone_drain, daemon=True).start()
+        self._start_io_worker(self._tone_drain)
 
     def _tone_drain(self):
         while True:
@@ -236,7 +300,7 @@ class IQController(PyQt6.QtCore.QObject):
                 # Finish an in-flight tone write before reference acquisition;
                 # discard queued edits once Sync or Calibrate has been clicked.
                 with self._reference_io_lock:
-                    if not self._reference_busy:
+                    if not self._reference_busy and not self._closing:
                         self._apply_tone_request(*request)
             except Exception as e:
                 self.logger.error(f"reference control failed: {e}")
@@ -289,7 +353,10 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
         # Ctrl+C must take the regular shutdown path, which returns the array
         # to WiFi mode. Python only notices the signal while it executes, hence
         # the idle timer.
-        signal.signal(signal.SIGINT, lambda *_: self.quit())
+        # A Python signal can run inside a Qt video-frame callback. Calling
+        # quit() there synchronously emits aboutToQuit and can tear down the
+        # camera while its FFmpeg socket notifier is still delivering a frame.
+        signal.signal(signal.SIGINT, lambda *_: PyQt6.QtCore.QMetaObject.invokeMethod(self, "quit", PyQt6.QtCore.Qt.ConnectionType.QueuedConnection))
         self._interrupt_timer = PyQt6.QtCore.QTimer(self)
         self._interrupt_timer.timeout.connect(lambda: None)
         self._interrupt_timer.start(200)
@@ -306,9 +373,15 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
 
     def create_iq_controller(self) -> IQController:
         """Create the QML adapter for this application's pool."""
-        return IQController(self.pool, logger=self.logger, parent=self)
+        controller = IQController(self.pool, logger=self.logger, parent=self)
+        if not hasattr(self, "_iq_controllers"):
+            self._iq_controllers = []
+        self._iq_controllers.append(controller)
+        return controller
 
     def onAboutToQuit(self):
+        for controller in getattr(self, "_iq_controllers", []):
+            controller.close()
         if hasattr(self, "pool"):
             # No callback may outlive the Qt objects it updates. The common
             # application teardown stops the transport, but IQ applications

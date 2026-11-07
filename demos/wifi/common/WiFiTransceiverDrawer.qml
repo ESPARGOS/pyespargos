@@ -11,7 +11,7 @@ Drawer {
 	property bool calibrationInProgress: false
 	property real calibrationStart: 0.0
 	property real calibrationProgress: 0.0
-	readonly property int rfSwitchMode: rfSwitchInput.currentIndex
+	readonly property int rfSwitchMode: rfSwitchInput.value
 	readonly property bool tooltipsEnabled: ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true
 	readonly property string gainTooltipText: "RX gain is configured in 1 dB units. FFT gain is configured in 0.25 dB units."
 
@@ -44,7 +44,7 @@ Drawer {
 
 	implicitHeight: parent ? parent.height - headerHeight : 0
 	y: headerHeight
-	implicitWidth: 350
+	implicitWidth: 400
 	edge: Qt.LeftEdge
 	dragMargin: 50
 	modal: false
@@ -167,20 +167,16 @@ Drawer {
 			}
 			// Section: Signal Path
 			Label { Layout.columnSpan: 2; text: "Signal Path / Format"; color: "#9fb3c8" }
-			Label { text: "RF Switch"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			ComboBox {
-				id: rfSwitchInput
-				property string configKey: "rf_switch"
-				property string configProp: "currentIndex"
-				property var encode: function(v) { return v }
-				property var decode: function(v) { return Math.max(0, Math.min(4, parseInt(v||0))) }
-				Component.onCompleted: poolConfigManager.register(this)
-				onCurrentIndexChanged: poolConfigManager.onControlChanged(this)
-				implicitWidth: 180
-				model: [ "Isolated", "Reference", "45° Right", "45° Left", "Random" ]
-				currentIndex: 0
-				function isUserActive() { return pressed || popup.visible }
-			}
+			Label { text: "RF input"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+            Common.RFSwitchControl {
+                id: rfSwitchInput
+                property string configKey: "rf_switch"
+                property string configProp: "value"
+                property var decode: function(v) { return Math.max(0, Math.min(4, Number(v))) }
+                modes: [0, 2, 3, 4, 1]
+                Component.onCompleted: poolConfigManager.register(this)
+                onActivated: poolConfigManager.onControlChanged(this)
+            }
 
 			Label { text: "Show Reference"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			Switch {
@@ -330,48 +326,36 @@ Drawer {
 			}
 
 			Label { text: "RX Gain"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			RowLayout {
-				spacing: 14
-				ToolTip.visible: root.tooltipsEnabled && rxGainHover.hovered
-				ToolTip.text: root.gainTooltipText
-				HoverHandler { id: rxGainHover }
-				Slider {
-					id: lnaGainSlider
-					property string configKey: "gain.rx_gain_value"
-					property string configProp: "value"
-					property var encode: function(v) { return Math.round(v) }
-					property var decode: function(v) { return Math.max(0, Math.min(76, parseInt((v === undefined || v === null || v === "") ? 32 : v))) }
-					Component.onCompleted: poolConfigManager.register(this)
-					onValueChanged: poolConfigManager.onControlChanged(this)
-					from: 0; to: 76; value: 32; stepSize: 1
-					implicitWidth: 120
-					enabled: !gainSwitch.checked
-					function isUserActive() { return pressed }
-				}
-				Label { text: lnaGainSlider.value; color: "#ffffff" }
-			}
+            Common.GainSlider {
+                id: lnaGainSlider
+                property string configKey: "gain.rx_gain_value"
+                property string configProp: "value"
+                property var encode: function(v) { return Math.round(v) }
+                property var decode: function(v) { return Math.max(0, Math.min(76, Number(v ?? 32))) }
+                Component.onCompleted: poolConfigManager.register(this)
+                onValueChanged: poolConfigManager.onControlChanged(this)
+                from: 0
+                to: 76
+                value: 32
+                enabled: !gainSwitch.checked
+                toolTipText: root.tooltipsEnabled ? root.gainTooltipText : ""
+            }
 
 			Label { text: "FFT Gain"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			RowLayout {
-				spacing: 14
-				ToolTip.visible: root.tooltipsEnabled && fftGainHover.hovered
-				ToolTip.text: root.gainTooltipText
-				HoverHandler { id: fftGainHover }
-				Slider {
-					id: fftGainSlider
-					property string configKey: "gain.fft_gain_value"
-					property string configProp: "value"
-					property var encode: function(v) { return Math.round(v) }
-					property var decode: function(v) { return Math.max(-128, Math.min(127, parseInt(v||0))) }
-					Component.onCompleted: poolConfigManager.register(this)
-					onValueChanged: poolConfigManager.onControlChanged(this)
-					from: -128; to: 127; value: 0; stepSize: 1
-					implicitWidth: 120
-					enabled: !gainSwitch.checked
-					function isUserActive() { return pressed }
-				}
-				Label { text: fftGainSlider.value; color: "#ffffff" }
-			}
+            Common.GainSlider {
+                id: fftGainSlider
+                property string configKey: "gain.fft_gain_value"
+                property string configProp: "value"
+                property var encode: function(v) { return Math.round(v) }
+                property var decode: function(v) { return Math.max(-128, Math.min(127, Number(v ?? 0))) }
+                Component.onCompleted: poolConfigManager.register(this)
+                onValueChanged: poolConfigManager.onControlChanged(this)
+                from: -128
+                to: 127
+                value: 0
+                enabled: !gainSwitch.checked
+                toolTipText: root.tooltipsEnabled ? root.gainTooltipText : ""
+            }
 
 			// Section MAC filter
 			Label { Layout.columnSpan: 2; text: "Firmware MAC Filter"; color: "#9fb3c8" }

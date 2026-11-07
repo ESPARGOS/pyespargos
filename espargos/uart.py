@@ -239,7 +239,9 @@ class UARTClient:
         self._serial.reset_input_buffer()
         self._serial.reset_output_buffer()
 
-        self._serial.write(f"ESPARGOS-UART-MODE:{self.baudrate}\n".encode("ascii"))
+        # The initial binary probe can leave a partial line at the console baud.
+        # Terminate it before sending the activation command.
+        self._serial.write(f"\nESPARGOS-UART-MODE:{self.baudrate}\n".encode("ascii"))
         self._serial.flush()
         time.sleep(max(self.activation_retry_interval, 0.1))
 

@@ -13,8 +13,6 @@ from .array_geometry import ArrayGeometry
 from .board import Board
 from . import board as board_module
 from .calibration import Antenna, Calibration
-from .wifi_transceiver import WiFiTransceiver
-from .iq_receiver import IQReceiver, DECIM_TO_FS
 from .iq_transmitter import IQTransmitter
 from .iq_tx_control import _rpc, _wait
 
@@ -72,139 +70,11 @@ class AntennaSelection:
         WiFi tuning uses channel/secondary_channel (or a channel-center frequency).
         WiFi gain controls remain available through board.wifi_rx.
         """
-        owner = self._pool
-        if mode not in (None, "wifi", "iq_rx", "iq_tx"):
-            raise ValueError("mode must be wifi, iq_rx or iq_tx")
-        if frequency_hz is not None and (not math.isfinite(frequency_hz) or frequency_hz <= 0):
-            raise ValueError("frequency_hz must be positive and finite")
-        rates = {v: k for k, v in DECIM_TO_FS.items()}
-        if sample_rate_hz is not None and sample_rate_hz not in rates:
-            raise ValueError(f"sample_rate_hz must be one of {tuple(rates)}")
-        routes = {"isolation": 0, "reference": 1, "antenna_r": 2, "antenna_l": 3}
-        if output is not None and output not in routes:
-            raise ValueError(f"output must be one of {tuple(routes)}")
-        with owner._lock:
-            owner.open()
-            plans = []
-            invalidated = set()
-            switched = False
-            for board in owner.boards:
-                ids = [a.antid for a in self.antennas if a.host == board.host]
-                if not ids:
-                    continue
-                config = board.iq.get_config()
-                modes = list(config["modes"])
-                before = modes.copy()
-                tx_state = _rpc(board, "get_iq_tx") if mode in ("iq_rx", "iq_tx") or owner.calibrations.groups else None
-                if mode is not None:
-                    for a in ids:
-                        modes[a] = mode
-                rx = [a for a in ids if modes[a] == "iq_rx"]
-                tx = [a for a in ids if modes[a] == "iq_tx"]
-                wifi = [a for a in ids if modes[a] == "wifi"]
-                if (rx_gain is not None or gain_mode is not None) and (tx or wifi):
-                    raise ValueError("rx_gain/gain_mode require an IQ RX selection")
-                if (rf_gain is not None or bandwidth_mhz is not None) and (rx or wifi):
-                    raise ValueError("rf_gain/bandwidth_mhz require an IQ TX selection")
-                if (channel is not None or secondary_channel is not None) and (rx or tx):
-                    raise ValueError("channel settings require a WiFi selection")
-                if sample_rate_hz is not None and (tx or wifi):
-                    raise ValueError("sample_rate_hz currently configures IQ RX only")
-                if (sample_rate_hz is not None or output is not None and (rx or wifi)) and len(ids) != 8:
-                    raise ValueError("RX sample rate and routing are board-wide; select all eight antennas")
-                iq = {"modes": modes} if mode is not None else {}
-                receiver = {}
-                if frequency_hz is not None:
-                    receiver["rf_freq_hz"] = frequency_hz
-                if rx_gain is not None:
-                    receiver.update(rx_gain=rx_gain, gain_mode=gain_mode or "manual")
-                elif gain_mode is not None:
-                    receiver["gain_mode"] = gain_mode
-                if receiver and rx:
-                    iq["receivers"] = [dict(antid=a, **receiver) for a in rx]
-                if mode == "iq_rx" and frequency_hz is None:
-                    updates = {r["antid"]: r for r in iq.get("receivers", [])}
-                    for a in rx:
-                        if before[a] == "iq_tx":
-                            updates.setdefault(a, {"antid": a})["rf_freq_hz"] = tx_state["sensors"][a]["frequency_hz"]
-                    if updates:
-                        iq["receivers"] = list(updates.values())
-                if sample_rate_hz is not None:
-                    iq["adc_decimation"] = rates[sample_rate_hz]
-                if output is not None and rx:
-                    iq["rf_switch"] = routes[output]
-                transmitters = []
-                for a in tx:
-                    settings = {k: v for k, v in dict(frequency_hz=frequency_hz, rf_gain=rf_gain, bandwidth_mhz=bandwidth_mhz, output=output).items() if v is not None}
-                    # A previously prepared waveform must not become audible
-                    # merely because an antenna changes into TX mode.
-                    if before[a] != "iq_tx":
-                        settings["amplitude"] = 0
-                        if before[a] == "iq_rx" and frequency_hz is None:
-                            settings["frequency_hz"] = config["receivers"][a]["rf_freq_hz"]
-                    if settings:
-                        transmitters.append(dict(antid=a, **settings))
-                channels = None
-                if wifi and any(v is not None for v in (frequency_hz, channel, secondary_channel)):
-                    primary = channel
-                    if frequency_hz is not None:
-                        frequencies = {i: (2484e6 if i == 14 else (2407 + 5 * i) * 1e6) for i in range(1, 15)}
-                        found = next((i for i, f in frequencies.items() if f == frequency_hz), None)
-                        if found is None or primary is not None and primary != found:
-                            raise ValueError("WiFi frequency must match the primary channel center")
-                        primary = found
-                    if primary is not None and (type(primary) is not int or not 1 <= primary <= 14):
-                        raise ValueError("WiFi channel must be 1–14")
-                    if secondary_channel not in (None, -1, 0, 1):
-                        raise ValueError("secondary_channel must be -1, 0 or 1")
-                    channels = board.wifi_rx.get_channel_overrides()
-                    if not channels["override_active"]:
-                        base = board.wifi_rx.get_config()
-                        channels = {"override_active": True, "channel-primary": [base["channel-primary"]] * 8, "channel-secondary": [base["channel-secondary"]] * 8}
-                    for a in wifi:
-                        if primary is not None:
-                            channels["channel-primary"][a] = primary
-                        if secondary_channel is not None:
-                            channels["channel-secondary"][a] = 2 if secondary_channel == -1 else secondary_channel
-                for a in ids:
-                    antenna = Antenna(board.host, a)
-                    switched |= before[a] != modes[a] and before[a] != "wifi" and modes[a] != "wifi"
-                    previous_frequency = tx_state["sensors"][a]["frequency_hz"] if before[a] == "iq_tx" and tx_state else config["receivers"][a]["rf_freq_hz"]
-                    if (before[a] != modes[a] and "wifi" in (before[a], modes[a])) or (frequency_hz is not None and frequency_hz != previous_frequency) or (sample_rate_hz is not None and rates[sample_rate_hz] != config["adc_decimation"]) or channels:
-                        invalidated.add(antenna)
-                plans.append((board, iq, transmitters, channels, bool(wifi)))
-            # All scope checks precede writes, including across multiple boards.
-            owner.calibrations = owner.calibrations.without(invalidated)
-            try:
-                for board, iq, transmitters, channels, wifi in plans:
-                    if transmitters:
-                        _rpc(board, "set_iq_tx", {"transmitters": transmitters})
-                    if iq:
-                        board.iq.set_config(iq)
-                    if mode is not None:
-                        _wait(board, lambda s, modes=iq["modes"]: all(x["applied_mode"] == modes[a] for a, x in enumerate(s["sensors"])), 10)
-                    if channels:
-                        board.wifi_rx.set_channel_overrides(channels)
-                    if wifi and output is not None:
-                        board.wifi_rx.set_rf_switch(routes[output])
-            except Exception:
-                owner.calibrations = owner.calibrations.without(self.antennas)
-                for board, *_ in plans:
-                    try:
-                        _rpc(board, "set_iq_tx", {"muted": True})
-                    except Exception:
-                        pass
-                raise
-            finally:
-                if owner._wifi is not None and any(mode is not None or p[3] for p in plans):
-                    owner._wifi.invalidate_calibration(antennas=self.antennas)
-                if mode is not None:
-                    owner._refresh_receivers()
-                if owner._tx is not None and not owner._tx.closed:
-                    owner._tx.read()
-            if switched and owner.calibrations.groups:
-                owner.refresh_calibration()
-        return self
+        from .configuration import configure
+        return configure(self, mode=mode, frequency_hz=frequency_hz, sample_rate_hz=sample_rate_hz,
+                         rx_gain=rx_gain, gain_mode=gain_mode, rf_gain=rf_gain,
+                         bandwidth_mhz=bandwidth_mhz, output=output, channel=channel,
+                         secondary_channel=secondary_channel)
 
     def calibrate_tx_rx_delay(self, *, path="reference", reference_delays_s=None, timeout=5.0):
         """Measure each IQ transmitter's delay relative to calibrated receivers.
@@ -303,6 +173,8 @@ class AntennaSelection:
             owner._refresh_receivers(configs)
             selected = set(self.antennas)
             roles = {Antenna(b.host, a): c["modes"][a] for b, c in zip(owner.boards, configs) for a in range(8)}
+            if any(roles[a] == "ble" for a in selected):
+                raise ValueError("Use pool.ble.calibrate() for narrowband BLE phase calibration")
             iq_selected = {a for a in selected if roles[a] != "wifi"}
             wifi_selected = selected - iq_selected
             # Validate every role before either IQ or WiFi acquisition starts.
@@ -351,8 +223,8 @@ class AntennaSelection:
                     owner.calibrations = owner.calibrations.without(iq_selected)
                     raise
                 result = result.merge(measured)
-                if owner._wifi is not None:
-                    owner._wifi.invalidate_calibration(antennas=iq_selected)
+                if owner._receivers.get("wifi") is not None:
+                    owner._receivers.get("wifi").invalidate_calibration(antennas=iq_selected)
             if wifi_selected:
                 from .csi_scoped_calibration import calibrate_full_array
 
@@ -406,7 +278,8 @@ class Pool(AntennaSelection):
         self.boards = []
         self._provided = {}
         self._opened = False
-        self._iq = self._wifi = self._tx = None
+        self._receivers = {}
+        self._tx = None
         self._monitor = None
         self._iq_tx_boards = set()
         self._wifi_tx_boards = set()
@@ -487,12 +360,13 @@ class Pool(AntennaSelection):
 
     def _refresh_receivers(self, configs=None):
         """Snapshot operating roles outside the callback thread."""
-        if self._iq is None and self._wifi is None:
+        if not self._receivers:
             return
         if configs is None:
             configs = [b.iq.get_config() if b.api_version[0] >= 4 else {"modes": ["wifi"] * 8} for b in self.boards]
-        for receiver, mode in ((self._iq, "iq_rx"), (self._wifi, "wifi")):
-            if receiver is None:
+        for name, receiver in tuple(self._receivers.items()):
+            mode = self._receiver_factories[name][1]
+            if mode is None:
                 continue
             expected = np.zeros((len(self.boards), 2, 4), dtype=bool)
             for i, (board, config) in enumerate(zip(self.boards, configs)):
@@ -500,23 +374,64 @@ class Pool(AntennaSelection):
                     expected[i, *board.revision.antenna_id_to_row_col(antenna)] = role == mode
             receiver._expected = expected
 
+    _receiver_factories = {}
+    _receiver_factories_lock = RLock()
+
+    @staticmethod
+    def register_configuration(mode, planner):
+        """Register a read-only planner returning a prepared ConfigurationUpdate."""
+        from .configuration import register_configuration
+        register_configuration(mode, planner)
+
+    @classmethod
+    def register_receiver(cls, name, factory, *, sensor_mode=None):
+        """Register a lazy pool-owned receiver, like Board.register_capability.
+
+        The factory takes this Pool and returns a ClusterAssembler. The pool
+        owns processing and subscription cleanup. Registration never changes
+        hardware. sensor_mode optionally supplies the active-antenna mask.
+        """
+        if not isinstance(name, str) or not name.isidentifier() or name.startswith("_"):
+            raise ValueError("Receiver name must be a public Python identifier")
+        if not callable(factory):
+            raise TypeError("Receiver factory must be callable")
+        with cls._receiver_factories_lock:
+            previous = cls._receiver_factories.get(name)
+            entry = factory, sensor_mode
+            if previous is not None and previous != entry:
+                raise ValueError(f"Receiver {name!r} is already registered")
+            cls._receiver_factories[name] = entry
+
+    def get_receiver(self, name):
+        """Get a receiver without changing sensor modes or radio configuration."""
+        with self._lock:
+            with self._receiver_factories_lock:
+                entry = self._receiver_factories.get(name)
+            if entry is None:
+                raise KeyError(f"Unknown receiver {name!r}")
+            self.open()
+            if name not in self._receivers:
+                receiver = entry[0](self)
+                self._receivers[name] = receiver
+                try:
+                    self._refresh_receivers()
+                except Exception:
+                    self._receivers.pop(name)
+                    receiver._close()
+                    raise
+            return self._receivers[name]
+
     @property
     def iq(self):
-        with self._lock:
-            self.open()
-            if self._iq is None:
-                self._iq = IQReceiver(self)
-                self._refresh_receivers()
-            return self._iq
+        return self.get_receiver("iq")
 
     @property
     def wifi(self):
-        with self._lock:
-            self.open()
-            if self._wifi is None:
-                self._wifi = WiFiTransceiver(self)
-                self._refresh_receivers()
-            return self._wifi
+        return self.get_receiver("wifi")
+
+    @property
+    def ble(self):
+        return self.get_receiver("ble")
 
     @property
     def tx(self):
@@ -573,10 +488,10 @@ class Pool(AntennaSelection):
         return not self._processing_stop.is_set()
 
     def start_processing(self):
-        """Process CSI and IQ callbacks in one background thread.
+        """Process all instantiated receivers in one background thread.
 
         Receivers created later participate automatically. Callbacks should
-        return promptly, since a slow callback delays both receive paths.
+        return promptly, since a slow callback delays the other receive paths.
         """
         with self._lock:
             self.open()
@@ -608,7 +523,7 @@ class Pool(AntennaSelection):
 
     def _process(self):
         count = 0
-        for receiver in (self._wifi, self._iq):
+        for receiver in tuple(self._receivers.values()):
             if self._closed:
                 break
             if receiver is not None:
@@ -616,7 +531,7 @@ class Pool(AntennaSelection):
         return count
 
     def run(self, timeout=0.005):
-        """Process queued CSI and IQ once, for programs without a worker.
+        """Process all instantiated receivers once, for programs without a worker.
 
         Do not call this while background processing is active. A timeout
         bounds the wait for data, not the time spent executing callbacks.
@@ -668,7 +583,7 @@ class Pool(AntennaSelection):
             attempt(lambda b=b: b.wifi_tx.set_config({"active_by_antid": [False] * 8}))
         for b in self._reference_boards:
             attempt(b.iq.set_reference)
-        for pool in (self._iq, self._wifi):
+        for pool in tuple(self._receivers.values()):
             if pool is not None:
                 attempt(pool._close)
         for b in self.boards:

@@ -8,6 +8,7 @@ import espargos
 import espargos.combined_array
 
 import subprocess
+import os
 import sys
 import threading
 import argparse
@@ -106,6 +107,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         argv: list[str],
         argparse_parent: argparse.ArgumentParser = None,
     ):
+        # Shared controls must use the same Material style as the demo shell.
+        os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Material")
         super().__init__(argv)
 
         # Basic app initialization

@@ -23,13 +23,20 @@ GAIN_PHASE_SHIFT_BY_GAIN_RAD = (0.2185,) * 11 + (0.4332,) * 21 + (0.0000,) * 9 +
 
 _PHASE = np.asarray(GAIN_PHASE_SHIFT_BY_GAIN_RAD)
 _REFERENCE_GAIN = 40
+_CORRECTION = np.exp(-1j * _PHASE).astype(np.complex64)
 
 
 def apply(values, rx_gain):
     """Apply the phase correction, broadcasting gains over trailing axes."""
 
     values = np.asarray(values)
-    gains = np.asarray(rx_gain, dtype=np.float64)
+    gains = np.asarray(rx_gain)
+    # Packet gain metadata is already integral. Avoid building float masks and
+    # recomputing phasors for each 256-sample sensor packet.
+    if gains.ndim <= values.ndim and np.issubdtype(gains.dtype, np.integer) and np.all(gains >= 0) and np.all(gains < len(_PHASE)):
+        shape = gains.shape + (1,) * (values.ndim - gains.ndim)
+        return values * _CORRECTION[gains].reshape(shape)
+    gains = np.asarray(gains, dtype=np.float64)
     if gains.ndim > values.ndim:
         raise ValueError(f"gain shape {gains.shape} is incompatible with data shape {values.shape}")
 
@@ -46,5 +53,5 @@ def apply(values, rx_gain):
     if np.any(~valid_for_data & np.isfinite(values)):
         raise ValueError("gain metadata is invalid for finite data")
 
-    correction = np.exp(-1j * _PHASE[indices]).astype(np.complex64).reshape(shape)
+    correction = _CORRECTION[indices].reshape(shape)
     return values * correction

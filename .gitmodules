@@ -1,0 +1,3 @@
+[submodule "external/espargos-packet-decoders"]
+	path = external/espargos-packet-decoders
+	url = git@github.com:ESPARGOS/espargos-packet-decoders.git

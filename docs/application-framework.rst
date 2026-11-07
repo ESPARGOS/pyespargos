@@ -193,3 +193,59 @@ Use ``Pool.configure()`` and ``Pool.calibrate()`` for radio configuration and
 calibration. Receiver-specific capture options and data callbacks remain on
 ``pool.iq`` and ``pool.wifi``. Reference cable properties come from the pool’s
 array configuration.
+
+Shared receiver controls
+------------------------
+
+``demos/common/RFSwitchControl.qml`` renders the RF-input buttons using the same
+polarization and shuffle icons as the web UI. Its ``value`` is the firmware
+route number, independent of button order. ``modes`` selects the available
+routes, and ``activated(value)`` reports a user choice. Assigning ``value`` from
+a controller snapshot does not emit that signal.
+
+``demos/common/GainSlider.qml`` supplies a slider and numeric readout. It exposes
+``value``, ``from``, ``to``, ``stepSize`` and ``pressed``. The ``edited()`` signal
+fires after a drag or keyboard edit. WiFi and IQ retain their existing update
+policies while sharing the visual control with BLE.
+
+``demos/ble/common/BLERxDrawer.qml`` provides BLE channel, PHY, input, gain and
+capture controls without importing the camera or calling a backend itself.
+Bind ``receiverConfig`` and handle ``configurationRequested(settings)`` for live
+edits. Bind ``busy``, ``calibrating``, ``needsCalibration`` and
+``calibrationSupported`` to the operation state. Handle ``calibrationRequested()``
+separately. Progress and the calibration-needed highlight reflect the backend.
+
+The shared camera overlay uses ``demos/common/camera/img/beamspace_transform.svg``
+for the azimuth and elevation grid in beamspace mode. All three demos use the
+same diagram, scaled to the spectrum bounds. The editable TikZ source lives
+alongside the SVG.
+
+Camera-specific startup settings use the common configuration mechanism. For
+example, ``--no-camera`` (or ``-o app.camera.enable=false``) disables video in
+any camera demo, and
+``-o 'app.receiver.advertisers=["00:01:02:03:04:05"]'`` selects an initial BLE
+advertiser. The same keys can be supplied in the YAML configuration file.
+
+Live BLE processing
+-------------------
+
+The BLE camera submits selected complete measurements to
+``demos/common/latest_worker.py``. It retains one pending measurement per source,
+replacing superseded work without blocking the pool's packet processing thread.
+This policy complements the receiver input BufferPolicy, which bounds work
+before association and exposes overflow/expiry counters. Recording applications
+choose their own queue and backlog limits.
+
+``espargos.BLEBeamformer`` combines ``BLEPhaseHistory`` and shared spatial
+estimators without Qt or demo dependencies. It provides Bartlett, MUSIC and
+Root-MUSIC numerical results. ``demos/ble/common/beamforming.py`` only translates
+UI options and draws fitted paths into an overlay spectrum. The reusable
+``BeamformingSettings.qml`` exposes method and history limits through the normal
+configuration endpoint.
+
+``demos/ble/common/controller.py`` supplies ``BLEController`` for any BLE Qt demo.
+Bind the RX drawer to its properties and connect the configuration/calibration
+signals to its slots. Call ``start(lambda: pool)`` and ``close()`` to acquire and
+restore receiver settings. Its pool remains owned by the application. The shared
+``Advertisers`` Qt model lives alongside this controller. Camera-specific frame
+selection, steering grids, image blending and markers remain in the camera.

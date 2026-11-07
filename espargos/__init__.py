@@ -98,6 +98,24 @@ board.Board.register_capability("wifi_rx", board_wifi_rx.WiFiRxCapability)
 board.Board.register_capability("wifi_tx", board_wifi_tx.WiFiTxCapability)
 board.Board.register_capability("iq", board_iq.IQCapability)
 
+from .board_ble import BLECapability
+from .ble_packet import BLEPacket
+from .ble_cluster import BLECluster
+from .ble_backlog import BLEBacklog
+from .ble_phase_history import BLEPhaseHistory
+from .ble_receiver import BLEReceiver, BLECalibrationError
+from .ble_calibration import BLECalibration
+from .ble_processing import BLEPhase
+from .ble_iq import BLEPacketIQ, BLEChannelResponse
+from .ble_beamforming import BLEBeamformer, BLEBeamformingConfig, BLEBeamformingResult
+from .receiver_buffer import BufferPolicy, BufferStats
+from .configuration import ConfigurationContext, ConfigurationUpdate
+
+board.Board.register_capability("ble", BLECapability)
+Pool.register_receiver("wifi", WiFiTransceiver, sensor_mode="wifi")
+Pool.register_receiver("iq", IQReceiver, sensor_mode="iq_rx")
+Pool.register_receiver("ble", BLEReceiver, sensor_mode="ble")
+
 __version__ = "0.1.1"
 __title__ = "pyespargos"
 __description__ = "Python library for working with the ESPARGOS WiFi channel sounder"

@@ -181,7 +181,6 @@ class MIMORadar(ESPARGOSApplication):
             super()._on_update_app_state(newcfg)
 
     def __init__(self, argv):
-        os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Material")
         super().__init__(argv)
         if os.environ.get("QT_QUICK_BACKEND") == "software":
             raise RuntimeError("The radar plots require Qt shaders. Unset QT_QUICK_BACKEND=software before starting the demo.")

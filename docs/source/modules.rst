@@ -348,3 +348,78 @@ espargos.reference_monitor
    :members:
    :undoc-members:
    :show-inheritance:
+
+espargos.board_ble
+------------------
+
+.. automodule:: espargos.board_ble
+   :members:
+   :show-inheritance:
+
+espargos.ble_packet
+-------------------
+
+.. automodule:: espargos.ble_packet
+   :members:
+   :show-inheritance:
+
+espargos.ble_cluster
+--------------------
+
+.. automodule:: espargos.ble_cluster
+   :members:
+   :show-inheritance:
+
+espargos.ble_backlog
+-------------------
+
+.. automodule:: espargos.ble_backlog
+   :members:
+   :undoc-members:
+
+espargos.ble_receiver
+---------------------
+
+.. automodule:: espargos.ble_receiver
+   :members:
+   :show-inheritance:
+
+espargos.ble_processing
+-----------------------
+
+.. automodule:: espargos.ble_processing
+   :members:
+   :show-inheritance:
+
+espargos.ble_calibration
+------------------------
+
+.. automodule:: espargos.ble_calibration
+   :members:
+   :show-inheritance:
+
+espargos.ble_phase_history module
+--------------------------------
+
+.. automodule:: espargos.ble_phase_history
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+espargos.ble_beamforming
+------------------------
+
+.. automodule:: espargos.ble_beamforming
+   :members:
+
+espargos.receiver_buffer
+------------------------
+
+.. automodule:: espargos.receiver_buffer
+   :members:
+
+espargos.configuration
+----------------------
+
+.. automodule:: espargos.configuration
+   :members:

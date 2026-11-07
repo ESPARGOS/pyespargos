@@ -9,8 +9,8 @@ import logging
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[3]))
 
 from demos.wifi.common.application import CSIBacklogMixin, ESPARGOSCSIApplication, SingleCSIFormatMixin
-from camera_view import CameraView
-from video_camera import CameraUnavailableError
+from demos.common.camera.view import CameraView
+from demos.common.camera.video import CameraUnavailableError
 from demos.common.application import CombinedArrayMixin
 import numpy as np
 from demos.wifi.common.polarization import PolarizationMixin
@@ -30,7 +30,7 @@ class CSICameraDemo(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, Sing
     """Acquire CSI, compute its spatial spectrum, and publish it to the camera UI."""
 
     DEFAULT_CONFIG = {
-        "receiver": {"mac_list_enabled": False},
+        "receiver": {"mac_list_enabled": False, "additional_calibration": "", "csi_completion_timeout": 0.2},
         "camera": CameraView.DEFAULT_CONFIG,
         "beamformer": {
             "type": "FFT",
@@ -56,34 +56,17 @@ class CSICameraDemo(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, Sing
 
     def _add_argparse_arguments(self, parser):
         super()._add_argparse_arguments(parser)
-        parser.add_argument(
-            "--no-camera",
-            default=False,
-            help="Do not use a video camera; show only the spatial visualization",
-            action="store_true",
-        )
-        parser.add_argument(
-            "-a",
-            "--additional-calibration",
-            type=str,
-            default="",
-            help="File to read additional phase calibration results from",
-        )
-        parser.add_argument(
-            "--csi-completion-timeout",
-            type=float,
-            default=0.2,
-            help="Time after which a CSI cluster is accepted with missing receivers; zero disables incomplete clusters",
-        )
+        parser.add_argument("--no-camera", action="store_true", help="Show the radio overlay without a video camera")
 
     def __init__(self, argv):
+        CameraView.configure_rendering()
         super().__init__(argv)
         if self.args.no_camera:
             self.appconfig.set({"camera": {"enable": False}})
 
         self.additional_calibration = None
-        if self.args.additional_calibration:
-            self.additional_calibration = np.load(self.args.additional_calibration)
+        if self.appconfig.get("receiver", "additional_calibration"):
+            self.additional_calibration = np.load(self.appconfig.get("receiver", "additional_calibration"))
 
         # Check video input before opening hardware connections or starting workers.
         self.camera_view = CameraView(self.appconfig, parent=self, update_signal=self.appConfigChanged)
@@ -91,6 +74,7 @@ class CSICameraDemo(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, Sing
         self.initialize_pool(backlog_cb_predicate=self._cb_predicate)
         self._update_steering_vectors()
         self.overlay = CSIOverlay(self.appconfig, parent=self, update_signal=self.appConfigChanged)
+        self.overlay.attach_to_engine(self.engine)
         self.initialize_qml(
             pathlib.Path(__file__).resolve().parent / "Main.qml",
             {
@@ -343,8 +327,8 @@ class CSICameraDemo(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, Sing
     def _cb_predicate(self, cluster):
         csi_completion_state = cluster.completion
         timeout_condition = False
-        if self.args.csi_completion_timeout > 0:
-            timeout_condition = np.sum(csi_completion_state) >= 2 and cluster.age > self.args.csi_completion_timeout
+        if self.appconfig.get("receiver", "csi_completion_timeout") > 0:
+            timeout_condition = np.sum(csi_completion_state) >= 2 and cluster.age > self.appconfig.get("receiver", "csi_completion_timeout")
 
         return np.all(csi_completion_state) or timeout_condition
 

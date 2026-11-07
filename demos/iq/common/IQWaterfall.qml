@@ -4,6 +4,7 @@ import QtQuick.Controls
 Rectangle {
 	id: root
 	property var model
+	property string timeDescription: ""
 	property string providerName: "iq-camera-waterfall"
 
 	color: "#dc07090b"
@@ -25,10 +26,20 @@ Rectangle {
 		elide: Text.ElideRight
 	}
 
+    Text {
+        id: timeLabel
+        anchors.left: title.left
+        anchors.top: title.bottom
+        height: text ? implicitHeight : 0
+        text: root.timeDescription
+        color: "#b5c3cf"
+        font.pixelSize: 10
+    }
+
 	Image {
 		anchors.left: parent.left
 		anchors.right: parent.right
-		anchors.top: title.bottom
+		anchors.top: timeLabel.bottom
 		anchors.bottom: frequencyLabels.top
 		anchors.margins: 7
 		cache: false

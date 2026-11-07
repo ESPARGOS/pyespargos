@@ -132,12 +132,16 @@ class CSIBacklogMixin:
     - Automatic backlog creation during pool initialization
     """
 
+    backlog_cli_option = True
+
     def _extend_default_config(self, config):
         super()._extend_default_config(config)
         deep_update(config, copy.deepcopy({"backlog": CSIBacklogSettings.DEFAULT_CONFIG}))
 
     def _add_argparse_arguments(self, parser):
         super()._add_argparse_arguments(parser)
+        if not self.backlog_cli_option:
+            return
         parser.add_argument(
             "-b",
             "--backlog-size",
@@ -148,7 +152,7 @@ class CSIBacklogMixin:
 
     def _process_args(self):
         super()._process_args()
-        if self.args.backlog_size is not None:
+        if getattr(self.args, "backlog_size", None) is not None:
             self.initial_config["backlog"]["size"] = self.args.backlog_size
 
     def _init_config_managers(self):
