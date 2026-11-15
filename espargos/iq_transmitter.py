@@ -181,7 +181,7 @@ class IQTransmitter:
 
     @property
     def samples(self):
-        """Shared replay length in complex samples (80 MSa/s)."""
+        """Shared replay length in complex samples at the configured transmit rate."""
         return self.signals._samples
 
     @samples.setter

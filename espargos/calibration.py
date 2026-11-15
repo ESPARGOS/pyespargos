@@ -59,7 +59,10 @@ class CalibrationState:
     def from_tx_status(cls, host, sensor):
         if sensor.get("applied_mode") != "iq_tx" or not sensor.get("enabled") or not sensor.get("origin_ns"):
             raise ValueError("Sensor is not running timestamped IQ TX")
-        return cls(Antenna(host, sensor["antid"]), "tx", sensor["frequency_hz"], 80e6, sensor["boot_id"], sensor["origin_ns"], (("samples", sensor["samples"]),))
+        rate = sensor.get("sample_rate_hz", 80e6)
+        if sensor.get("applied_sample_rate_hz", rate) != rate:
+            raise ValueError("Transmit sample rate is still changing")
+        return cls(Antenna(host, sensor["antid"]), "tx", sensor["frequency_hz"], rate, sensor["boot_id"], sensor["origin_ns"], (("samples", sensor["samples"]),))
 
     @classmethod
     def from_iq_packet(cls, host, antid, packet, boot_id):
@@ -206,6 +209,10 @@ class Calibration:
                     wrap = round((1 << 24) * 256e9 / old.sample_rate_hz)
                     delta = (delta + wrap // 2) % wrap - wrap // 2
                 else:
+                    # At 40 MSa/s the start timestamp does not resolve a
+                    # replay-start sample ambiguity. Measure the final epoch.
+                    if old.sample_rate_hz != 80e6:
+                        continue
                     delta = new.epoch - old.epoch
                 # Timestamps truncate half nanoseconds. Elapsed starts on
                 # the unchanged 80 MHz clock are whole 12.5 ns ticks.

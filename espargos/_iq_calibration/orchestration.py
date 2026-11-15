@@ -45,7 +45,7 @@ def snapshot(pool, tx_result=None, method="rx", scope=None):
                     raise RuntimeError(f"{antenna}: configuration changed while publishing calibration")
                 state = CalibrationState.from_tx_status(board.host, sensor)
                 correction = tx_result["calibration"][bi]
-                tx.append(AntennaCorrection(state, np.deg2rad(correction["phase_deg"][a]), correction["delay_samples"][a] / 80e6))
+                tx.append(AntennaCorrection(state, np.deg2rad(correction["phase_deg"][a]), correction["delay_samples"][a] / state.sample_rate_hz))
     groups = tuple(CalibrationGroup(tuple(corrections)) for corrections in (rx, tx) if corrections)
     diagnostics = {k: v for k, v in (tx_result or {}).items() if k != "calibration" and not k.startswith("_")}
     result = Calibration(groups, {"method": method, **diagnostics})

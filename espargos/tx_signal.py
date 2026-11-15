@@ -163,7 +163,7 @@ class TXSignals:
     def _compile(self):
         tx = self.transmitter
         self._check_beam_calibration(preparing=True)
-        recipes, targets = {}, set()
+        targets = set()
         for signal in tx.signals:
             s = signal._settings
             if not isinstance(s.waveform, Waveform):
@@ -173,10 +173,10 @@ class TXSignals:
                 raise ValueError("amplitude must lie between 0 and 1")
             if s.steering is not None and not isinstance(s.steering, (Beamspace, Weights)):
                 raise TypeError("steering must be Beamspace, Weights, or None")
-            recipes[signal] = {**s.waveform.recipe(self._samples), "amplitude": 1.0}
             targets.update(s.antennas)
         plans = []
         for i, board in enumerate(tx.boards):
+            rate = tx.states[i].get("sample_rate_hz", SAMPLE_RATE)
             groups = {}
             for a in range(8):
                 antenna = Antenna(board.host, a)
@@ -200,16 +200,16 @@ class TXSignals:
                         antenna = Antenna(board.host, a)
                         if isinstance(s.steering, Beamspace):
                             position = None if tx.positions is None else tx.positions[i, a]
-                            weights[a], delays[a] = s.steering.coefficients(position, tx.states[i]["sensors"][a]["frequency_hz"], s.waveform)
+                            weights[a], delays[a] = s.steering.coefficients(position, tx.states[i]["sensors"][a]["frequency_hz"], s.waveform, rate)
                         elif isinstance(s.steering, Weights):
                             weights[a] = s.steering.values.get(antenna, 1)
-                            delays[a] = s.steering.delays_s.get(antenna, 0) * SAMPLE_RATE
+                            delays[a] = s.steering.delays_s.get(antenna, 0) * rate
                         else:
                             weights[a] = 1
                     weights *= s.amplitude
                     if np.any(abs(delays) > 8192):
                         raise ValueError("Additional delays must fit within ±8192 samples")
-                    records.append((s.waveform, dict(waveform={**recipes[signal], "antennas": antennas}, real=weights.real.tolist(), imag=weights.imag.tolist(), delay_samples=delays.tolist())))
+                    records.append((s.waveform, dict(waveform={**s.waveform.recipe(self._samples, sample_rate_hz=rate), "amplitude": 1.0, "antennas": antennas}, real=weights.real.tolist(), imag=weights.imag.tolist(), delay_samples=delays.tolist())))
                 if records:
                     total = sum(np.hypot(record["real"], record["imag"]) for _, record in records)
                     if np.any(total > 1.000001):

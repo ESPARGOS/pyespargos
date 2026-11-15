@@ -19,7 +19,7 @@ IQ Transmission
    experimental and can produce high EIRP. Use this feature at your own risk.
 
 We can transmit repeating IQ waveforms from selected ESPARGOS sensors. Each
-sensor replays its buffer continuously at 80 MSa/s. A **signal** combines a
+sensor replays its buffer continuously at 80 or 40 MSa/s. A **signal** combines a
 waveform, an amplitude, an antenna selection and optional steering. We can
 steer it across an array as a beam, or send unrelated signals from individual
 antennas. Each antenna transmits the sum of the signals assigned to it.
@@ -58,9 +58,26 @@ Without steering, all selected antennas use unit weights and zero additional
 delay. Calibration corrections still apply.
 
 The default replay length is 1024 samples. We can set :attr:`tx.samples <espargos.iq_transmitter.IQTransmitter.samples>` to a power
-of two from 256 to 8192. All signals share this length and the 80 MSa/s sample
-rate. The replay period is ``tx.samples / 80e6``, independent of the receive
-capture interval. Changing the length can invalidate calibration.
+of two from 256 to 8192. All signals on an array share this length and the
+selected sample rate. Select 40 MSa/s with ``pool.configure(sample_rate_hz=40_000_000)``
+while the array is in IQ TX mode; the default is 80 MSa/s. The setting applies
+to all transmitters on an array. For mixed RX/TX roles, select every active
+IQ TX sensor when changing the TX rate; receivers retain their own rate.
+Changing it mutes transmission and invalidates TX calibration. Reapply the signals and calibrate before restarting transmission.
+
+The replay period is ``tx.samples / sample_rate_hz``, independent of the receive
+capture interval. At 8192 samples it is 204.8 µs at 40 MSa/s, or 102.4 µs at
+80 MSa/s. Changing the length can also invalidate calibration. Waveform
+frequencies, durations and steering delays retain their physical units at both
+rates. Raw IQ sample arrays are played at the selected rate without resampling.
+At 40 MSa/s, use ``pool.calibrate(tx_method="monitor")``. Reciprocal
+calibration and reuse of calibration across replay restarts require 80 MSa/s:
+the half-rate replay start has a sample ambiguity that its timestamp does not
+resolve. The monitor measures the final running transmitters directly.
+
+Rates below 40 MSa/s are not supported by the current C61 replay implementation;
+repeating samples in software would not extend the physical buffer duration.
+This remains a repeating-buffer interface, not a streaming upload interface.
 
 An individual array can also use ``tx_method="monitor"`` for calibration.
 See :doc:`calibration` for the two methods and their requirements.
@@ -101,7 +118,9 @@ radio configuration.
      - :class:`IQSamples(complex_samples) <espargos.waveforms.IQSamples>` or :meth:`IQSamples.from_file("signal.npy") <espargos.waveforms.IQSamples.from_file>`
 
 Two tones have equal amplitude. Their offsets are independent and measured
-relative to the radio's center frequency, each within ±40 MHz.
+relative to the radio's center frequency, each within half the selected sample
+rate (±40 MHz at 80 MSa/s, ±20 MHz at 40 MSa/s). The examples above use
+the default 80 MSa/s rate.
 
 We can replace a signal's waveform directly::
 
@@ -109,7 +128,8 @@ We can replace a signal's waveform directly::
 
    tone.waveform = LFM(duration_s=0.4e-6, delay_s=1e-6)
 
-Chirp duration and delay must use whole samples, in steps of 12.5 ns, and fit
+Chirp duration and delay must use whole samples (12.5 ns at 80 MSa/s,
+25 ns at 40 MSa/s) and fit
 inside the replay buffer. The remainder of the buffer is silent.
 
 :class:`IQSamples <espargos.waveforms.IQSamples>` copies a one-dimensional complex array and quantizes it once.
@@ -138,9 +158,11 @@ file::
    np.save("chirp.npy", iq)
 
 The result is a complex NumPy array in full-scale units, before signal
-amplitude, steering and calibration. Synthesis follows the sensor's frequency
+amplitude, steering and calibration. Pass ``sample_rate_hz=40e6`` to
+``synthesize`` for a 40 MSa/s offline preview (the default is 80 MSa/s).
+Synthesis follows the sensor's frequency
 rounding and sample quantization. Tone and chirp frequencies are rounded to
-multiples of ``80e6 / samples``. Noise and QPSK use the same seeded sequence as
+multiples of ``sample_rate_hz / samples``. Noise and QPSK use the same seeded sequence as
 the sensor. :meth:`IQSamples.synthesize() <espargos.waveforms.Waveform.synthesize>` returns the quantized uploaded samples.
 
 .. figure:: _static/iq-lfm.svg

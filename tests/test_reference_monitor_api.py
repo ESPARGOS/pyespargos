@@ -9,7 +9,7 @@ class MonitorTests(unittest.TestCase):
         self.pool = Pool("localhost")
         self.pool.open = Mock(return_value=self.pool)
         self.board = SimpleNamespace(host="localhost")
-        self.pool._iq = SimpleNamespace(master_board=self.board)
+        self.pool._receivers["iq"] = SimpleNamespace(master_board=self.board)
 
     def test_monitor_does_not_create_transmitter(self):
         with patch("espargos.pool._rpc") as rpc, patch("espargos.reference_monitor.ReferenceMonitor") as capture:
@@ -33,7 +33,7 @@ class MonitorTests(unittest.TestCase):
     def test_pool_close_stops_monitor(self):
         self.pool._monitor = Mock(board=self.board)
         monitor = self.pool._monitor
-        self.pool._iq = None
+        self.pool._receivers.clear()
         with patch("espargos.pool._rpc") as rpc:
             self.pool.close()
             rpc.assert_called_once_with(self.board, "set_iq_monitor", {"enabled": False})

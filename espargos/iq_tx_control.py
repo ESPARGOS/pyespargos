@@ -88,7 +88,7 @@ class TXStatus:
             offset += 3
             if offset + size > len(data):
                 return
-            if tag == 6 and size in (100, 108):
+            if tag == 6 and size in (100, 108, 112):
                 v = struct.unpack_from("<9I3f" + str((size - 48) // 4) + "I", data, offset)
                 if v[13] > 2:
                     return
@@ -111,7 +111,7 @@ class TXStatus:
                         v[:12],
                     )
                 )
-                state.update(applied_mode=("wifi", "iq_rx", "iq_tx")[v[13]], epoch=v[15], origin_ns=(v[25] | v[26] << 32) if size == 108 else 0)
+                state.update(applied_mode=("wifi", "iq_rx", "iq_tx")[v[13]], epoch=v[15], origin_ns=(v[25] | v[26] << 32) if size >= 108 else 0, sample_rate_hz=v[27] if size >= 112 else 80000000)
             if tag == 255:
                 if size != 4 or offset + size != len(data) or zlib.crc32(data[:start]) != struct.unpack_from("<I", data, offset)[0]:
                     return

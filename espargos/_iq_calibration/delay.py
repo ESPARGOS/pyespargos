@@ -80,7 +80,7 @@ def measure(owner, antennas, path, reference_delays_s, timeout):
                     "adc_decimation": decimation,
                     "rf_switch": routes[path],
                     "receivers": [{"antid": a.antid, "rx_gain": 24, "gain_mode": "manual"} for a in rx if a.host == b.host],
-                    "trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 4},
+                    "trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 8},
                 }
             )
         for transmitter in tx:
@@ -96,10 +96,12 @@ def measure(owner, antennas, path, reference_delays_s, timeout):
             # Discard buffered captures from before the pilot started.
             # Firmware repeats a 1024-sample pilot in longer replay buffers.
             period = min(length, 1024)
-            capture.collect(ids, period, 2, timeout, generations)
-            frames = capture.collect(ids, period, 16, timeout, generations)
+            rate = tx_states[bi]["sensors"][transmitter.antid].get("sample_rate_hz", 80000000)
+            capture_period = period * (80000000 // rate)
+            capture.collect(ids, capture_period, 2, timeout, generations)
+            frames = capture.collect(ids, capture_period, 16, timeout, generations)
             bins, spectrum, _ = pilots(period, peak=128, mask=255)[0]
-            frequencies = np.fft.fftfreq(period, 1 / 80e6)
+            frequencies = np.fft.fftfreq(capture_period, 1 / 80e6)
             responses = []
             for receiver, i in zip(rx, ids):
                 correction = corrections[receiver, "rx"]
@@ -115,13 +117,13 @@ def measure(owner, antennas, path, reference_delays_s, timeout):
                 if max(abs(z.real).max(), abs(z.imag).max()) >= 500:
                     raise ValueError("Timing calibration clips the receiver")
                 h = np.zeros(z.shape, complex)
-                h[:, bins % period] = np.fft.fft(z, axis=-1)[:, bins % period] / spectrum[bins % period]
+                h[:, bins % capture_period] = np.fft.fft(z, axis=-1)[:, bins % capture_period] / spectrum[bins % period]
                 h *= correction.response(correction.state.frequency_hz + frequencies) * np.exp(-2j * np.pi * frequencies * shift_s)
                 h *= np.exp(2j * np.pi * frequencies * delays[transmitter, receiver])
                 responses.append(h)
-            first, second = np.asarray(responses).reshape(len(rx), 2, 8, period).mean(axis=2).transpose(1, 0, 2)
+            first, second = np.asarray(responses).reshape(len(rx), 2, 8, capture_period).mean(axis=2).transpose(1, 0, 2)
             delay, checked = _delay(first, 80e6), _delay(second, 80e6)
-            ambiguity = period / 80e6
+            ambiguity = capture_period / 80e6
             if abs((checked - delay + ambiguity / 2) % ambiguity - ambiguity / 2) > 1 / 80e6:
                 raise ValueError("TX–RX timing changed between reference captures")
             measured[transmitter] = delay

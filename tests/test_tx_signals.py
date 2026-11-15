@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 
 from espargos import Antenna
+from espargos.calibration import Calibration
 from espargos.steering import Beamspace, Weights
 from espargos.waveforms import CW, LFM, Noise, IQSamples
 from espargos.iq_transmitter import IQTransmitter
@@ -15,6 +16,7 @@ from espargos.tx_signal import TXSignals
 def transmitter(boards=1):
     tx = IQTransmitter.__new__(IQTransmitter)
     tx.closed = False
+    tx.owner = SimpleNamespace(calibrations=Calibration(()))
     tx.boards = [SimpleNamespace(host=f"board{i}") for i in range(boards)]
     tx.states = [dict(modes=["iq_tx"] * 8, sensors=[dict(frequency_hz=2380e6, samples=1024, enabled=True, boot_id=1) for _ in range(8)], schedule_epoch=42) for _ in range(boards)]
     tx.positions = np.zeros((boards, 8, 2))

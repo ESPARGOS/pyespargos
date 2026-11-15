@@ -61,6 +61,10 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
     if len(targets) < 2:
         raise ValueError("Reciprocity calibration requires at least two selected IQ transmitters")
     source = [saved_tx[bi]["sensors"][a] for bi, a in targets]
+    if any(s.get("sample_rate_hz", 80000000) != 80000000 for s in source):
+        # Half-rate replay starts have an unresolved sample ambiguity after
+        # RX/TX transitions. A good reciprocal fit cannot detect the later jump.
+        raise ValueError("Reciprocity calibration requires 80 MSa/s; use tx_method='monitor' at 40 MSa/s")
     length = source[0]["samples"]
     center = source[0]["frequency_hz"]
     if not length or any(s["samples"] != length for s in source):
