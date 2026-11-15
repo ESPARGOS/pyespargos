@@ -33,8 +33,8 @@ def estimate(samples, models, oversampling=1):
     to the first model. Reject clipped captures and inconsistent pilot fits.
     """
     n = len(models[0][2])
-    size = n * oversampling
-    if oversampling not in (1, 2, 4):
+    size = round(n * oversampling)
+    if oversampling not in (1, 2, 2.5, 4, 5) or size != n * oversampling:
         raise ValueError("Unsupported monitor/TX rate ratio")
     if len(samples) < size or max(abs(samples.real).max(), abs(samples.imag).max()) > 470:
         raise ValueError("Monitor capture is too short or clips")

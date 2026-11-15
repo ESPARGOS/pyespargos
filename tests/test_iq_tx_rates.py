@@ -11,7 +11,7 @@ from espargos._iq_calibration.monitor_fit import estimate
 from test_tx_signals import transmitter
 
 
-@pytest.mark.parametrize('rate', [80_000_000, 40_000_000])
+@pytest.mark.parametrize('rate', [80_000_000, 40_000_000, 32_000_000, 16_000_000])
 def test_waveform_frequency_and_time_units(rate):
     z = CW(1.25e6).synthesize(1024, sample_rate_hz=rate)
     assert np.argmax(abs(np.fft.fft(z))) == round(1.25e6 * 1024 / rate)
@@ -37,11 +37,11 @@ def test_beam_compilation_uses_board_rate():
     assert recipe['delay_samples'][2] == 1
 
 
-@pytest.mark.parametrize('ratio', [1, 2, 4])
+@pytest.mark.parametrize('ratio', [1, 2, 2.5, 4, 5])
 def test_oversampled_monitor_uses_main_band_without_aliasing(ratio):
     n = 256
     model = pilots(n)
-    size = n * ratio
+    size = int(n * ratio)
     bins = np.arange(-n//2, n//2)
     spectrum = np.zeros(size, complex)
     for a, (_, reference, _) in enumerate(model):

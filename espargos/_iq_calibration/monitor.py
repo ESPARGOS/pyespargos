@@ -136,7 +136,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                 "gain_mode": "manual",
                 # Resolve the wideband pilots above monitor quantization noise.
                 "gain": 12,
-                "samples": 4096,
+                "samples": max(4096, min(length, 1024) * monitor_rate // rate),
                 "interval_us": 20000,
                 "offset_us": 0,
             },
@@ -174,7 +174,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                         break
                     gain = adjusted
                     _rpc(pool.master_board, "set_iq_monitor", {"gain": gain})
-                phase, delay = measure(monitor, [models[slot] for _, _, slot in group], timeout, monitor_rate // rate)
+                phase, delay = measure(monitor, [models[slot] for _, _, slot in group], timeout, monitor_rate / rate)
                 phase = np.angle(np.exp(1j * (phase - phase[index] + 2 * np.pi * center * delays)))
                 delay = delay - delay[index] - rate * delays
                 indices = [j for j, (bi, a, _) in enumerate(group) if (bi, a) in adjust]

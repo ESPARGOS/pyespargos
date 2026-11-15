@@ -209,7 +209,7 @@ class Calibration:
                     wrap = round((1 << 24) * 256e9 / old.sample_rate_hz)
                     delta = (delta + wrap // 2) % wrap - wrap // 2
                 else:
-                    # At 40 MSa/s the start timestamp does not resolve a
+                    # Below 80 MSa/s the start timestamp does not resolve a
                     # replay-start sample ambiguity. Measure the final epoch.
                     if old.sample_rate_hz != 80e6:
                         continue

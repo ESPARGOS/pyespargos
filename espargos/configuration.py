@@ -185,7 +185,7 @@ def _iq_tx(ctx, options):
     if "sample_rate_hz" in options:
         if any(mode == "iq_tx" and a not in ctx.antennas for a, mode in enumerate(ctx.modes)):
             raise ValueError("Transmit sample rate is board-wide; select every IQ TX sensor on the board")
-        if options["sample_rate_hz"] not in (80000000, 40000000):
+        if options["sample_rate_hz"] not in (80000000, 40000000, 32000000, 16000000):
             raise ValueError("Unsupported transmit sample rate")
         common = {"sample_rate_hz": options["sample_rate_hz"]}
         if options["sample_rate_hz"] != tx.get("sample_rate_hz", 80000000):
