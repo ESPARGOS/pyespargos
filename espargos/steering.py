@@ -18,7 +18,7 @@ class Beamspace:
     elevation_deg: float = 0
     squint: bool = False
 
-    def coefficients(self, position, frequency, waveform):
+    def coefficients(self, position, frequency, waveform, sample_rate_hz=SAMPLE_RATE):
         az = _finite(self.azimuth_deg, "azimuth_deg")
         el = _finite(self.elevation_deg, "elevation_deg")
         if abs(az) > 90 or abs(el) > 90:
@@ -29,7 +29,7 @@ class Beamspace:
         delay = (position[0] * np.sin(az) * np.cos(el) + position[1] * np.sin(el)) / SPEED_OF_LIGHT
         if not self.squint and isinstance(waveform, CW):
             frequency += waveform.offset_hz
-        return np.exp(-2j * np.pi * frequency * delay), delay * SAMPLE_RATE if self.squint else 0.0
+        return np.exp(-2j * np.pi * frequency * delay), delay * sample_rate_hz if self.squint else 0.0
 
 
 @dataclass(frozen=True)

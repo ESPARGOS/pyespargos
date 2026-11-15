@@ -182,8 +182,10 @@ independent groups coherently, calibrate their union together.
 
 WiFi calibration can visit several channels in one call. Selected IQ sensors
 need one center frequency and RX sample rate. TX sensors also need prepared
-waveforms of equal replay length. Reciprocity requires at least two selected
-transmitters.
+waveforms of equal replay length and rate. Reciprocity requires at least two
+selected transmitters at 80 MSa/s. At 40 MSa/s, use ``tx_method="monitor"``
+and recalibrate after any replay restart; timestamps alone do not resolve
+the half-rate replay start ambiguity.
 
 IQ calibration changes modes and tuning only within the selection. Shared
 reference and capture controls briefly interrupt normal reception and pause

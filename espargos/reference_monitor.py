@@ -46,7 +46,7 @@ class ReferenceMonitor:
         deadline = time.monotonic() + timeout
         with self.changed:
             while True:
-                frames = [z for generation, capture, rate, z in self.bursts if generation == config["generation"] and rate == 80000000 and 0 < (capture - config["captures"]) % (1 << 32) < (1 << 31)]
+                frames = [z for generation, capture, rate, z in self.bursts if generation == config["generation"] and rate == config["sample_rate_hz"] and 0 < (capture - config["captures"]) % (1 << 32) < (1 << 31)]
                 if len(frames) >= count:
                     return frames[:count]
                 left = deadline - time.monotonic()

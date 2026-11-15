@@ -45,6 +45,12 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
     length, center = sources[0]["samples"], sources[0]["frequency_hz"]
     if not length or any(s["samples"] != length or s["frequency_hz"] != center for s in sources):
         raise ValueError("Prepare transmitters with one common frequency and sample count")
+    rate = sources[0].get("sample_rate_hz", 80000000)
+    if any(s.get("sample_rate_hz", 80000000) != rate for s in sources):
+        raise ValueError("Transmitters must share a sample rate")
+    # Capture at the DAC clock: monitor subsampling would alias replay images
+    # into the pilots, with phase depending on the ADC's subsample alignment.
+    monitor_rate = 80000000
     active = [bi for bi, ants in enumerate(targets) if ants]
     base = next((bi for bi in active if len(targets[bi]) >= 2), active[0])
     if len(active) > 1 and len(targets[base]) < 2:
@@ -86,7 +92,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
         def prepare(bi):
             b = boards[bi]
             _rpc(b, "set_iq_monitor", {"enabled": False})
-            # The pilots span ±30 MHz, regardless of the user's waveform.
+            # The pilots span ±3/8 of the replay rate.
             # A narrower TX filter bends their phase enough to hide the origin.
             modes = scope.modes(bi, saved_rx[bi]["modes"])
             _rpc(b, "set_iq_tx", {"muted": True, "modes": modes, "transmitters": [{"antid": a, "rf_gain": {"a": 0, "b": 0}, "bandwidth_mhz": 60} for a in targets[bi]]})
@@ -125,7 +131,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             {
                 "enabled": True,
                 "frequency_hz": center,
-                "sample_rate_hz": 80000000,
+                "sample_rate_hz": monitor_rate,
                 "bandwidth_mhz": 60,
                 "gain_mode": "manual",
                 # Resolve the wideband pilots above monitor quantization noise.
@@ -150,27 +156,27 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             for bi in active:
                 _rpc(boards[bi], "set_iq_tx", {"muted": False, "transmitters": [{"antid": a, "amplitude": int((bi, a) in emitting)} for a in targets[bi]]})
                 status.wait(boards[bi], lambda s, bi=bi: all(abs(s["sensors"][a]["applied_amplitude"] - int((bi, a) in emitting)) < 1e-6 for a in targets[bi]), timeout)
-            # Dense pilots need enough ADC resolution per tone. Set gain from
-            # the received peak, leaving headroom when several TXs add together.
-            monitor_config = _rpc(pool.master_board, "get_iq_monitor")
-            gain = monitor_config["gain"]
-            for _ in range(6):
-                captures = monitor.collect(3, timeout)
-                peak = float(np.median([max(abs(z.real).max(), abs(z.imag).max()) for z in captures]))
-                if 64 <= peak <= 400:
-                    break
-                adjusted = int(np.clip(gain + (6 if peak < 64 else -6), 0, monitor_config["gain_max"]))
-                if adjusted == gain:
-                    break
-                gain = adjusted
-                _rpc(pool.master_board, "set_iq_monitor", {"gain": gain})
             index = next(j for j, (bi, a, _) in enumerate(group) if (bi, a) == reference)
             delays = np.array([path((bi, a)) for bi, a, _ in group])
             delays -= delays[index]
             for iteration in range(3):
-                phase, delay = measure(monitor, [models[slot] for _, _, slot in group], timeout)
+                # Dense pilots need enough ADC resolution per tone. Set gain from
+                # the received peak, leaving headroom when several TXs add together.
+                monitor_config = _rpc(pool.master_board, "get_iq_monitor")
+                gain = monitor_config["gain"]
+                for _ in range(10):
+                    captures = monitor.collect(3, timeout)
+                    peak = float(np.median([max(abs(z.real).max(), abs(z.imag).max()) for z in captures]))
+                    if 100 <= peak <= 400:
+                        break
+                    adjusted = int(np.clip(gain + (4 if peak < 100 else -4), 0, monitor_config["gain_max"]))
+                    if adjusted == gain:
+                        break
+                    gain = adjusted
+                    _rpc(pool.master_board, "set_iq_monitor", {"gain": gain})
+                phase, delay = measure(monitor, [models[slot] for _, _, slot in group], timeout, monitor_rate // rate)
                 phase = np.angle(np.exp(1j * (phase - phase[index] + 2 * np.pi * center * delays)))
-                delay = delay - delay[index] - 80e6 * delays
+                delay = delay - delay[index] - rate * delays
                 indices = [j for j, (bi, a, _) in enumerate(group) if (bi, a) in adjust]
                 pe = float(np.max(abs(np.rad2deg(phase[indices]))))
                 de = float(np.max(abs(delay[indices])))

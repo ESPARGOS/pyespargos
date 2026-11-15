@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from espargos.iq_tx_reciprocity_fit import (
+from espargos._iq_calibration.reciprocity_fit import (
     DisconnectedLinks,
     _fit_link,
     additional_reference,

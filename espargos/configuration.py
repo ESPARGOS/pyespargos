@@ -176,13 +176,23 @@ def _iq_rx(ctx, options):
 
 
 def _iq_tx(ctx, options):
-    _validate(options, ("frequency_hz", "rf_gain", "bandwidth_mhz", "output"))
+    _validate(options, ("frequency_hz", "sample_rate_hz", "rf_gain", "bandwidth_mhz", "output"))
     if options.get("output") == "random":
         raise ValueError("Random RF input is a receiver setting")
     transmitters, invalidated = [], set()
-    tx = _rpc(ctx.board, "get_iq_tx") if "frequency_hz" in options else None
+    common = {}
+    tx = _rpc(ctx.board, "get_iq_tx") if options.keys() & {"frequency_hz", "sample_rate_hz"} else None
+    if "sample_rate_hz" in options:
+        if any(mode == "iq_tx" and a not in ctx.antennas for a, mode in enumerate(ctx.modes)):
+            raise ValueError("Transmit sample rate is board-wide; select every IQ TX sensor on the board")
+        if options["sample_rate_hz"] not in (80000000, 40000000):
+            raise ValueError("Unsupported transmit sample rate")
+        common = {"sample_rate_hz": options["sample_rate_hz"]}
+        if options["sample_rate_hz"] != tx.get("sample_rate_hz", 80000000):
+            common["muted"] = True
+            invalidated.update(_identities(ctx))
     for a in ctx.antennas:
-        settings = dict(options)
+        settings = {k: v for k, v in options.items() if k != "sample_rate_hz"}
         if ctx.before[a] != "iq_tx":
             settings["amplitude"] = 0
             if ctx.before[a] == "iq_rx" and "frequency_hz" not in options:
@@ -193,7 +203,11 @@ def _iq_tx(ctx, options):
                 invalidated.add(Antenna(ctx.board.host, a))
         if settings:
             transmitters.append(dict(antid=a, **settings))
-    return ConfigurationUpdate(before_modes=(lambda: _rpc(ctx.board, "set_iq_tx", {"transmitters": transmitters})) if transmitters else None, invalidated=invalidated)
+    payload = {**common, **({"transmitters": transmitters} if transmitters else {})}
+    return ConfigurationUpdate(
+        before_modes=(lambda: _rpc(ctx.board, "set_iq_tx", payload)) if payload else None,
+        invalidated=invalidated,
+    )
 
 
 for _mode, _planner in {"ble": _ble, "wifi": _wifi, "iq_rx": _iq_rx, "iq_tx": _iq_tx}.items():

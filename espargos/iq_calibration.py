@@ -55,7 +55,7 @@ def refresh(owner, timeout):
                     continue
                 c = updated.correction(state)
                 a = state.antenna.antid
-                phase, delay = float(np.rad2deg(c.phase_rad)), c.delay_s * 80e6
+                phase, delay = float(np.rad2deg(c.phase_rad)), c.delay_s * c.state.sample_rate_hz
                 if abs(correction["phase_deg"][a] - phase) > 1e-5 or abs(correction["delay_samples"][a] - delay) > 1e-5:
                     correction["phase_deg"][a], correction["delay_samples"][a] = phase, delay
                     touched.append(a)

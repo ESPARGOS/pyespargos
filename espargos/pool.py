@@ -65,8 +65,9 @@ class AntennaSelection:
     def configure(self, *, mode=None, frequency_hz=None, sample_rate_hz=None, rx_gain=None, gain_mode=None, rf_gain=None, bandwidth_mhz=None, output=None, channel=None, secondary_channel=None):
         """Update only selected antennas; mode changes do not calibrate or start TX.
 
-        RX sample rate and RX output routing are board-wide hardware controls:
-        select all eight antennas on an affected board to change those fields.
+        RX sample rate and RX output routing require all eight antennas on a
+        board. TX sample rate is shared by all transmitters: select every IQ TX
+        antenna on each affected board to change it.
         WiFi tuning uses channel/secondary_channel (or a channel-center frequency).
         WiFi gain controls remain available through board.wifi_rx.
         """

@@ -20,7 +20,7 @@ def _phase_fit(k, phase, n):
     return center + intercept, rough - slope * n / (2 * np.pi), float(np.sqrt(np.mean((residual - slope * k - intercept) ** 2)))
 
 
-def estimate(samples, models):
+def estimate(samples, models, oversampling=1):
     """Estimate relative TX phase and delay from a controller-monitor capture.
 
     ``samples`` contains the summed received pilots; ``models`` contains their
@@ -33,10 +33,13 @@ def estimate(samples, models):
     to the first model. Reject clipped captures and inconsistent pilot fits.
     """
     n = len(models[0][2])
-    if len(samples) < n or max(abs(samples.real).max(), abs(samples.imag).max()) > 470:
+    size = n * oversampling
+    if oversampling not in (1, 2, 4):
+        raise ValueError("Unsupported monitor/TX rate ratio")
+    if len(samples) < size or max(abs(samples.real).max(), abs(samples.imag).max()) > 470:
         raise ValueError("Monitor capture is too short or clips")
-    spectrum = np.fft.fft(samples[: len(samples) // n * n].reshape(-1, n).mean(axis=0))
-    points = [(k, np.angle(spectrum[k % n] / model[k % n])) for k, model, _ in models]
+    spectrum = np.fft.fft(samples[: len(samples) // size * size].reshape(-1, size).mean(axis=0))
+    points = [(k, np.angle(spectrum[k % size] / model[k % n])) for k, model, _ in models]
     k, phase = points[0]
     selected = k % 8 == 0
     _, rough, _ = _phase_fit(k[selected], phase[selected], n)
@@ -65,12 +68,12 @@ def estimate(samples, models):
     return phase, delay
 
 
-def measure(monitor, models, timeout):
+def measure(monitor, models, timeout, oversampling=1):
     fits, last_error = [], None
     for _ in range(3):
         for samples in monitor.collect(6, timeout):
             try:
-                fits.append(estimate(samples, models))
+                fits.append(estimate(samples, models, oversampling))
             except ValueError as error:
                 last_error = error
         if len(fits) >= 6:
