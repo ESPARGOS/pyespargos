@@ -482,7 +482,7 @@ bursts without a gap. Absolute indices keep packet loss from changing the phase
 of all subsequent symbols.
 
 The controller's **TX Streaming** page configures IQ8 sample rates, constellation
-presets, symbol rates and arbitrary complex pulses. Presets include BPSK, QPSK,
+presets, symbol rates and pulse shapes. Presets include BPSK, QPSK,
 8-PSK, 16-QAM, RRC, raised cosine, rectangular, Gaussian and PSK31 pulses.
 Settings are saved on the controller; the browser never sends signal data.
 
