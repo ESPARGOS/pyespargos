@@ -115,7 +115,10 @@ class IQStream:
             now = time.monotonic()
             time.sleep(max(0, self._next_send.get(board, now) - now))
             board.send_stream_data(header + payload)
-            self._next_send[board] = time.monotonic() + (len(header) + len(payload) + 32) / 120000
+            # Small live blocks also need a packet-rate bound when a file or
+            # pipe can supply them faster than the configured source clock.
+            spacing = max(0.002, (len(header) + len(payload) + 32) / 120000)
+            self._next_send[board] = time.monotonic() + spacing
             return None
         return board.control.fetch("iq_tx_stream", header + payload)
 

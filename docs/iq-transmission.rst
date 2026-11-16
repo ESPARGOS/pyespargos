@@ -481,12 +481,42 @@ in the host encoder across writes; do not concatenate independently encoded
 bursts without a gap. Absolute indices keep packet loss from changing the phase
 of all subsequent symbols.
 
-The controller's IQ transmission page exposes **Stream** as a beam source. It
-streams an IQ8 or index file over the shared WebSocket while retaining the other
-beams. Indexed mode also takes a JSON file with ``constellation`` and ``pulse``
-arrays of ``[I,Q]`` pairs, ``symbol_rate_hz``, ``samples_per_symbol`` and
-``missing_index``. Files are read in small chunks, not loaded entirely into
-browser memory. Live audio and other producers use the same Python API.
+The controller's **TX Streaming** page configures IQ8 sample rates, constellation
+points, symbol rates and arbitrary complex pulses. Presets include BPSK, QPSK,
+8-PSK, 16-QAM, RRC, raised cosine, rectangular, Gaussian and PSK31 pulses.
+Settings are saved on the controller; the browser never sends signal data.
+
+On **IQ Transmission**, select **Stream** for one beam, apply the scene and
+calibrate at 16 MSa/s. That beam supplies the stream's amplitude, direction
+and delays. Other stored beams remain additive contributions. The stream beam
+binding is checked against sensor boot IDs and the prepared scene's CRC; after
+a restart or scene replacement, reapply it before connecting a client.
+
+With the updated SDK installed, feed a file or live producer through stdin::
+
+   python -m espargos.tx_stream 192.168.1.2 --transport udp < samples.iq8
+   python -m espargos.tx_stream 192.168.1.2 --transport websocket < symbols.u8
+
+IQ8 input is interleaved signed I8/Q8; indexed input is one unsigned byte per
+constellation point. The client loads the saved settings and beam weights,
+prefills, unmutes and starts synchronized transmission. EOF finishes the stream;
+exiting the client mutes TX. It leaves RF settings and the prepared scene intact.
+The browser can be closed after saving.
+
+Applications can call ``pool.tx.open_configured_stream()`` instead of supplying
+modulation and steering arguments to ``open_stream()``. Prefill and explicitly
+unmute before ``start()``, as in the examples above. On multiple controllers,
+save matching modulation settings on each controller; each retains its own
+prepared stream beam.
+
+``GET /get_iq_tx_stream_config`` returns the saved mode, sample rate, exact
+Q15 ``table_hex``, UI preset metadata and volatile beam binding. Configuration
+uses ``POST /set_iq_tx_stream_config`` with five little-endian u32 words:
+``0x31504654, format, input_rate_hz, ui_bytes, table_bytes``; then UTF-8 JSON UI
+metadata (at most 1024 bytes), padding to four-byte alignment, and the existing
+single-carrier TABLE bytes. IQ8 uses no table. An explicit save writes bounded
+chunks into NVS; it never starts a stream. Active sessions must close before
+settings change. The existing streaming wire protocol is unchanged.
 
 SSB audio
 ~~~~~~~~~

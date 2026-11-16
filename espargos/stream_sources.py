@@ -136,6 +136,38 @@ class SingleCarrier:
         self.missing_index = missing_index
 
     @classmethod
+    def from_payload(cls, payload):
+        """Load the controller's exact Q15 table without requantizing it."""
+        import math
+        import struct
+
+        data = bytes(payload)
+        if len(data) < 12:
+            raise ValueError("Incomplete single-carrier table")
+        period, phases, span, count, missing = struct.unpack_from("<I4H", data)
+        if (not 40960 <= period <= 4096000000 or phases not in (16, 32, 64, 128)
+                or not 1 <= span <= 8 or not 1 <= count <= 64 or missing >= count
+                or len(data) != 12 + 4 * (count + span * phases + 1)
+                or (span > 1 and period < 256000)):
+            raise ValueError("Invalid single-carrier table")
+        pairs = np.frombuffer(data, dtype="<i2", offset=12).reshape(-1, 2).astype(float)
+        points, pulse = pairs[:count], pairs[count:]
+        if (np.any(np.hypot(points[:, 0], points[:, 1]) > 32768) or np.any(points[missing])
+                or np.any(np.hypot(pulse[:, 0], pulse[:, 1]) > 32768)
+                or max(sum(np.linalg.norm(pulse[k * phases + phase]) for k in range(span))
+                       for phase in range(phases + 1)) > 1.9 * 32768
+                or (period < 256000 and 4 * count * (period // math.gcd(period, 8192)) > 256 * 1024)):
+            raise ValueError("Invalid constellation or pulse coefficients")
+        result = cls.__new__(cls)
+        result.payload = data
+        result.symbol_rate_hz = 4096000000 / period
+        result.samples_per_symbol = phases
+        result.missing_index = missing
+        result.constellation = (points[:, 0] + 1j * points[:, 1]) / 32768
+        result.pulse = (pulse[:, 0] + 1j * pulse[:, 1]) / 32768
+        return result
+
+    @classmethod
     def psk31(cls):
         """BPSK31: absolute signs with a two-symbol raised-cosine pulse."""
         t = np.arange(65) / 32
