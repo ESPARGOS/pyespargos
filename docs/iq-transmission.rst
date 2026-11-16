@@ -75,7 +75,8 @@ calibration and reuse of calibration across replay restarts require 80 MSa/s:
 the slower replay start has a sample ambiguity that its timestamp does not
 resolve. The monitor measures the final running transmitters directly.
 
-This remains a repeating-buffer interface, not a streaming upload interface.
+These signals repeat. The buffered streaming interface below adds one
+continuing source without replacing the stored beam scene.
 
 An individual array can also use ``tx_method="monitor"`` for calibration.
 See :doc:`calibration` for the two methods and their requirements.
@@ -303,6 +304,98 @@ sent if a later device fails.
 Calls are blocking. Use one control thread for configuration, signal edits and
 calibration. In a GUI, that should be a worker thread. Capture callbacks should
 queue data for processing rather than reconfigure hardware.
+
+Buffered transmission
+---------------------
+
+``tx.open_stream()`` adds one independently weighted source to the existing
+cyclic beams. It requires calibrated, running 16 MSa/s IQ TX and a replay length
+of 256, 512, 1024 or 2048 samples. Start and close preserve the running sample
+counter and calibration. Keep RF settings, calibration and stored signals
+fixed until the stream is closed.
+
+Raw IQ accepts signed interleaved I8/Q8 bytes, an ``(N, 2)`` NumPy ``int8``
+array, or normalized complex samples. Input rates are 8 or 16 kSa/s; use
+8 kSa/s when mixing with nonzero stored waveforms. The firmware rejects
+16 kSa/s with a nonzero static mixture before changing replay. Sensors interpolate,
+apply their own complex weight and fractional delay, and expand to 16 MSa/s.
+The analog TX filter is still required to suppress RF replay images; it does
+not replace this digital reconstruction.
+
+Prepare the array using the normal configuration and monitor-calibration flow.
+For stream-only transmission, prepare a silent cyclic source first with
+``tx.signals.add(waveform=CW(), amplitude=0)``. Set the common digital scale to
+one with ``tx.settings({"amplitude": 1})`` before calibration, then start
+transmission. A finite raw-IQ transfer looks like this::
+
+   # tx is already prepared, calibrated and unmuted.
+   # iq contains normalized complex samples at 8 kSa/s.
+   with tx.open_stream(mode="iq8", sample_rate_hz=8000,
+                       amplitude=0.1, steering=Beamspace(azimuth_deg=20)) as stream:
+       stream.write(iq[:4096])
+       stream.start()
+       for offset in range(4096, len(iq), 4096):
+           stream.write(iq[offset:offset + 4096])
+       stream.finish()
+       stream.wait(timeout=30)
+
+``antennas`` and ``steering`` have the same meanings as for stored signals.
+The streamed source can form a beam or use explicit per-antenna ``Weights``;
+other stored beams retain their own waveforms and weights. Leave amplitude
+headroom for the sum. The sensor limits the streamed contribution to the
+stored mixture's remaining I/Q headroom and reports clipping.
+
+Prefill at least 1024 IQ samples (or four BPSK31 bits) before ``start()``.
+Each sensor buffers 32768 input units, giving about two seconds at 16 kSa/s
+or four seconds at 8 kSa/s. ``write()`` applies backpressure and returns after
+all selected sensors acknowledge the data. Call it from a producer thread,
+not an audio callback. Stop producing at ``finish()``; ``wait()`` acknowledges
+that the finite signal and its filter tail have passed the RF reader.
+Closing the context removes the streamed contribution and retains the cyclic
+scene. An underrun or missed bank deadline stops replay and reports a fault;
+it never silently repeats the last streamed block. Closing a faulted session
+leaves that reader stopped; explicitly restart and recalibrate before resuming
+coherent transmission.
+
+The transport broadcasts each chunk once over the 3 Mbaud UART. Status includes
+accepted/consumed counters, clipping, maximum render time and interrupt lateness.
+A failed partial write closes the session so a caller cannot accidentally reuse
+its offsets for different samples. Sensor restarts and changed sessions are
+errors. Use a new stream after recovering and, if replay restarted, recalibrating.
+
+BPSK31 and SSB audio
+~~~~~~~~~~~~~~~~~~~
+
+BPSK31 sends individual bits rather than expanded IQ. Differential phase and
+cosine pulse shaping run on each sensor at 31.25 baud::
+
+   from espargos.stream_sources import psk31_bits
+
+   with tx.open_stream(mode="bpsk31", amplitude=0.1) as stream:
+       stream.write(psk31_bits("cq test"))
+       stream.finish()
+       stream.start()
+       stream.wait(timeout=30)
+
+``psk31_bits`` encodes ASCII Varicode and adds an idle preamble and steady
+postamble. When writing successive pieces, request the preamble only for the
+first piece and the postamble only for the last.
+
+For SSB, ``SSBEncoder(sideband="upper")`` or ``sideband="lower"`` converts
+normalized, zero-mean audio to complex IQ on the host. Use audio at the raw
+stream's input rate. Its Hilbert-filter state spans calls, so upload chunk
+boundaries do not produce discontinuities::
+
+   from espargos.stream_sources import SSBEncoder
+
+   encoder = SSBEncoder(sideband="upper")
+   # Prefill/start as above, then feed successive audio blocks:
+   stream.write(encoder.encode(audio_block))
+   # At the end, before stream.finish():
+   stream.write(encoder.flush())
+
+The encoder delays audio by 128 samples and reserves quadrature headroom.
+Other modulation formats can use the same raw-IQ interface with host synthesis.
 
 Reference monitor
 -----------------

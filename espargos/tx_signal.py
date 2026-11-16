@@ -114,6 +114,8 @@ class TXSignals:
         with self._lock:
             if tx.closed:
                 raise RuntimeError("Transmitter is closed")
+            if getattr(tx, "_stream", None) is not None and not tx._stream.closed:
+                raise RuntimeError("Close the stream before changing the stored beam scene")
             if self._editing:
                 if samples is not None or start_sample is not None:
                     raise ValueError("Set timing and replay length on the outer update")
