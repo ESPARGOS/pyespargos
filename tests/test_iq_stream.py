@@ -209,10 +209,29 @@ class StreamTests(TestCase):
             stream.finish()
         frames = [f for f in self.device.frames if f[1] in (2, 4)]
         self.assertEqual(frames, [("data", 2, 1024), ("data", 2, 976), ("data", 4, 0)])
-        for points, pulse, rate in [([0]*65, [1]*33, 1000), ([0], [1]*289, 1000),
+        for points, pulse, rate in [([0]*66, [1]*33, 1000), ([0], [1]*289, 1000),
                                      ([0], [1]*65, 50000), ([.5, 0], [1]*33, 99900)]:
             with self.subTest(points=len(points), pulse=len(pulse), rate=rate), self.assertRaises(ValueError):
                 SingleCarrier(points, pulse, symbol_rate_hz=rate)
+
+    def test_64qam_with_zero_entry_streams_index_64(self):
+        from espargos.stream_sources import SingleCarrier
+
+        points = [complex(i, q) / 98**.5 for i in range(-7, 8, 2) for q in range(-7, 8, 2)] + [0]
+        modulation = SingleCarrier(points, [.1] * 129, symbol_rate_hz=1000)
+        self.assertEqual(modulation.missing_index, 64)
+        with IQStream(self.device.tx, mode="single_carrier", modulation=modulation) as stream:
+            data = bytes(range(65))
+            stream.write(data)
+            self.assertEqual(self.device.received[0], data)
+            with self.assertRaises(ValueError):
+                stream.write(bytes([65]))
+        largest = SingleCarrier(points, [0] * 1025, symbol_rate_hz=1000, samples_per_symbol=128)
+        self.assertEqual(len(largest.payload), 4372)
+        loaded = SingleCarrier.from_payload(largest.payload)
+        self.assertEqual(len(loaded.constellation), 65)
+        self.assertEqual(loaded.missing_index, 64)
+        self.assertEqual(loaded.payload, largest.payload)
 
     def test_stale_feedback_stops_uploads(self):
         d = self.device

@@ -398,13 +398,13 @@ There are no special pause packets: include a zero constellation point and send
 its index. ``missing_index`` selects that same zero point for packet loss.
 
 ``SingleCarrier(constellation, pulse, symbol_rate_hz=..., samples_per_symbol=32,
-missing_index=...)`` supports 1–64 points of magnitude at most one, 1–8 symbols
+missing_index=...)`` supports 1 to 65 points of magnitude at most one, 1–8 symbols
 of pulse history, and 16/32/64/128 table samples per symbol. The pulse includes
 both endpoints (``span * samples_per_symbol + 1`` complex coefficients). Its
 first sample corresponds to the symbol's origin; center a symmetric filter by
 including its causal delay. The overlapping pulse magnitudes must sum to at
 most 1.899. Coefficients and constellation points are quantized to complex Q15.
-The 64-point limit includes the zero entry used for missing packets.
+The 65-entry limit allows 64-QAM plus a zero entry for pauses and missing packets.
 
 One-symbol pulses use a precomputed PSRAM bank when its timing phases fit
 within 256 KiB. The bank includes the constellation multiplication, per-sensor
@@ -415,11 +415,11 @@ rate can reach 100000 baud; for example 32000, 50000, 64000, 80000 and 100000
 have compact timing banks. Arbitrary fractional periods may need a much larger
 bank and are rejected above 16000 baud. The host validates this memory bound.
 For a period ``P`` in Q8 replay samples and ``N`` constellation points, the bank
-needs ``4 * N * P / gcd(P, 8192)`` bytes. For example, 64 points need 1.25 KiB at
-100 kbaud or 31.25 KiB at 16 kbaud. The FIFO separately reserves 128 KiB of PSRAM
+needs ``4 * N * P / gcd(P, 8192)`` bytes. For example, 65 entries need 1.27 KiB at
+100 kbaud or 31.74 KiB at 16 kbaud. The FIFO separately reserves 128 KiB of PSRAM
 for up to 65536 IQ8 samples or indices. Pulse-bank memory is released on close.
 Static mixing also limits the bank to 12 KiB to leave cache
-space for the mixer and UART processing. For example, all 64 points fit this
+space for the mixer and UART processing. For example, all 65 entries fit this
 mixed-scene limit at 50, 80 and 100 kbaud, but not at 16, 32 or 64 kbaud. Such
 configurations can still run alone; slower general reconstruction is another
 option when it meets the limits below.
@@ -483,7 +483,7 @@ of all subsequent symbols.
 
 The controller's **TX Streaming** page configures IQ8 sample rates, constellation
 presets, symbol rates and pulse shapes. Presets include BPSK, QPSK,
-8-PSK, 16-QAM, RRC, raised cosine, rectangular, Gaussian and PSK31 pulses.
+8-PSK, 16-QAM, 64-QAM, RRC, raised cosine, rectangular, Gaussian and PSK31 pulses.
 Settings are saved on the controller; the browser never sends signal data.
 
 On **IQ Transmission**, select **Stream** for one beam, apply the scene and

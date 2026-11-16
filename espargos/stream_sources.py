@@ -99,12 +99,12 @@ class SingleCarrier:
         c = np.asarray(constellation, dtype=complex)
         p = np.asarray(pulse, dtype=complex)
         phases = samples_per_symbol
-        if c.ndim != 1 or not 1 <= len(c) <= 64 or not np.all(np.isfinite(c)) or np.any(abs(c) > 1):
-            raise ValueError("Use 1..64 finite constellation points of magnitude <=1")
+        if c.ndim != 1 or not 1 <= len(c) <= 65 or not np.all(np.isfinite(c)) or np.any(abs(c) > 1 + 1e-12):
+            raise ValueError("Use 1..65 finite constellation points of magnitude <=1")
         if phases not in (16, 32, 64, 128) or p.ndim != 1 or (len(p) - 1) % phases or not 1 < len(p) <= 8 * phases + 1:
             raise ValueError("Pulse needs span * samples_per_symbol + 1 samples; span 1..8")
         span = (len(p) - 1) // phases
-        if not np.all(np.isfinite(p)) or np.any(abs(p) > 1):
+        if not np.all(np.isfinite(p)) or np.any(abs(p) > 1 + 1e-12):
             raise ValueError("Pulse coefficients must be finite with magnitude <=1")
         if not np.isfinite(symbol_rate_hz) or not 1 <= symbol_rate_hz <= (100000 if span == 1 else 16000):
             raise ValueError("Symbol rate must be 1..16000 baud, or up to 100000 for a one-symbol pulse")
@@ -146,7 +146,7 @@ class SingleCarrier:
             raise ValueError("Incomplete single-carrier table")
         period, phases, span, count, missing = struct.unpack_from("<I4H", data)
         if (not 40960 <= period <= 4096000000 or phases not in (16, 32, 64, 128)
-                or not 1 <= span <= 8 or not 1 <= count <= 64 or missing >= count
+                or not 1 <= span <= 8 or not 1 <= count <= 65 or missing >= count
                 or len(data) != 12 + 4 * (count + span * phases + 1)
                 or (span > 1 and period < 256000)):
             raise ValueError("Invalid single-carrier table")
