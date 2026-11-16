@@ -42,7 +42,8 @@ class Device:
         self.stuck = False
         self.muted = False
         self.received = [bytearray(), bytearray()]
-        self.sensors = [dict(available=True, boot_id=10 + a, session=0, state="closed", error=0, accepted=0, consumed=0, end=None, missing=0, late=0, table_received=0) for a in range(2)]
+        self.frames = []
+        self.sensors = [dict(available=True, boot_id=10 + a, session=0, state="closed", error=0, accepted=0, consumed=0, capacity=IQStream.CAPACITY, end=None, missing=0, late=0, table_received=0) for a in range(2)]
         self.board = SimpleNamespace(host="test", control=SimpleNamespace(fetch=self.send), send_stream_data=lambda data: self.send("data", data), subscribe_controller_messages=self.subscribe, unsubscribe_controller_messages=lambda sub: None)
 
         # IQStream keys feedback by Board identity, as real Board objects do.
@@ -92,6 +93,7 @@ class Device:
         magic, version, command, mask, reserved, session, offset, count = struct.unpack_from("<IBBBBIII", data)
         assert magic == 0x31535449 and version == 2 and not reserved
         payload = data[20:]
+        self.frames.append((path, command, count))
         for a, s in enumerate(self.sensors):
             if not mask & (1 << a):
                 continue
@@ -197,6 +199,20 @@ class StreamTests(TestCase):
                 stream.write(bytes([3]))
         with self.assertRaises(ValueError):
             SingleCarrier([1, -1], [1] * 33, symbol_rate_hz=1000)
+
+    def test_fast_pulse_limits_and_ordered_finish(self):
+        from espargos.stream_sources import SingleCarrier
+
+        mod = SingleCarrier([.5, 0], [1] * 33, symbol_rate_hz=100000)
+        with IQStream(self.device.tx, mode="single_carrier", modulation=mod) as stream:
+            stream.write(bytes(2000))
+            stream.finish()
+        frames = [f for f in self.device.frames if f[1] in (2, 4)]
+        self.assertEqual(frames, [("data", 2, 1024), ("data", 2, 976), ("data", 4, 0)])
+        for points, pulse, rate in [([0]*65, [1]*33, 1000), ([0], [1]*289, 1000),
+                                     ([0], [1]*65, 50000), ([.5, 0], [1]*33, 99900)]:
+            with self.subTest(points=len(points), pulse=len(pulse), rate=rate), self.assertRaises(ValueError):
+                SingleCarrier(points, pulse, symbol_rate_hz=rate)
 
     def test_stale_feedback_stops_uploads(self):
         d = self.device

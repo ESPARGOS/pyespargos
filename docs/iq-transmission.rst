@@ -350,8 +350,8 @@ headroom for the sum. The sensor limits the streamed contribution to the
 stored mixture's remaining I/Q headroom and reports clipping.
 
 Prefill at least 1024 IQ samples (or four constellation indices) before ``start()``.
-Each sensor buffers 32768 input units, giving about two seconds at 16 kSa/s
-or about 0.66 seconds at 50 kSa/s. ``write()`` applies backpressure using the slowest
+Each sensor buffers 65536 input units, giving about four seconds at 16 kSa/s
+or about 0.66 seconds at 100 ksymbols/s. ``write()`` applies backpressure using the slowest
 sensor's FIFO credit and returns after submitting data to the transport. It
 does not guarantee delivery over UDP. Call it from a producer thread,
 not an audio callback. Stop producing at ``finish()``; ``wait()`` acknowledges
@@ -363,8 +363,11 @@ leaves that reader stopped; explicitly restart and recalibrate before resuming
 coherent transmission.
 
 Data travels over the board's existing UDP or WebSocket stream connection;
-select it when opening the pool. OPEN, table configuration, ARM, FINISH and
-CLOSE use HTTP. Each data chunk is broadcast once over the 3 Mbaud UART.
+select it when opening the pool. OPEN, table configuration, ARM and CLOSE use
+HTTP. DATA and FINISH use the same stream transport, so the end marker follows
+the final data without waiting for potentially stale sensor snapshots. Each
+packet is broadcast once over the 3 Mbaud UART. Packets carry up to 512 IQ8
+samples or 1024 indices (1044 bytes including the header).
 Periodic downlink reports supply accepted/consumed counters and FIFO capacity,
 missing/late units, rejected chunks, clipping and processing time. No HTTP
 status polling is required. ``stream.transport_status()`` reports controller
@@ -373,7 +376,8 @@ packet/rejection counters as well.
 UDP is best effort, with no retransmission or reorder buffer. Offsets preserve
 the source timeline: a gap is filled with zero IQ or the configured zero symbol;
 an already accepted range is never rewritten. FINISH also fills a missing final
-range. A zero symbol adds no new pulse; tails of earlier symbols still decay
+range. A lost UDP FINISH packet eventually causes an underrun; it is not
+retransmitted. A zero symbol adds no new pulse; tails of earlier symbols still decay
 normally, so it is not an instantaneous RF mute. A prolonged interruption that
 exhausts the FIFO stops replay. Different sensors can lose different UART chunks;
 inspect their individual counters when coherent transmission matters.
@@ -394,21 +398,70 @@ There are no special pause packets: include a zero constellation point and send
 its index. ``missing_index`` selects that same zero point for packet loss.
 
 ``SingleCarrier(constellation, pulse, symbol_rate_hz=..., samples_per_symbol=32,
-missing_index=...)`` supports 1–256 points of magnitude at most one, 1–16 symbols
+missing_index=...)`` supports 1–64 points of magnitude at most one, 1–8 symbols
 of pulse history, and 16/32/64/128 table samples per symbol. The pulse includes
 both endpoints (``span * samples_per_symbol + 1`` complex coefficients). Its
 first sample corresponds to the symbol's origin; center a symmetric filter by
 including its causal delay. The overlapping pulse magnitudes must sum to at
 most 1.899. Coefficients and constellation points are quantized to complex Q15.
+The 64-point limit includes the zero entry used for missing packets.
 
-Reconstruction uses an 8/16/32/64 kSa/s grid: the smallest rate giving eight
-samples per symbol, clamped to that range, followed by interpolation to the
-500 kSa/s renderer. Choose band-limited pulses appropriate for that grid. The
-symbol clock is rounded to 1/256 of a 16 MSa/s sample; the configuration's
-``symbol_rate_hz`` property reports the resulting rate. To meet refill deadlines,
-``grid_rate * (span + 2)`` must not exceed 256000 for a silent static scene or
-96000 for a nonzero static mix. Unsupported combinations fail before replay
-changes. The nominal symbol-rate range is 1–16000 baud, subject to that budget.
+One-symbol pulses use a precomputed PSRAM bank when its timing phases fit
+within 256 KiB. The bank includes the constellation multiplication, per-sensor
+complex beam weight, fractional steering delay and clipping. It is arranged in
+output traversal order for sequential PSRAM reads. These pulses are evaluated
+directly on the 500 kSa/s rendering grid and repeated to 16 MSa/s. Their symbol
+rate can reach 100000 baud; for example 32000, 50000, 64000, 80000 and 100000
+have compact timing banks. Arbitrary fractional periods may need a much larger
+bank and are rejected above 16000 baud. The host validates this memory bound.
+For a period ``P`` in Q8 replay samples and ``N`` constellation points, the bank
+needs ``4 * N * P / gcd(P, 8192)`` bytes. For example, 64 points need 1.25 KiB at
+100 kbaud or 31.25 KiB at 16 kbaud. The FIFO separately reserves 128 KiB of PSRAM
+for up to 65536 IQ8 samples or indices. Pulse-bank memory is released on close.
+Static mixing also limits the bank to 12 KiB to leave cache
+space for the mixer and UART processing. For example, all 64 points fit this
+mixed-scene limit at 50, 80 and 100 kbaud, but not at 16, 32 or 64 kbaud. Such
+configurations can still run alone; slower general reconstruction is another
+option when it meets the limits below.
+
+Other shapes use an 8/16/32/64 kSa/s reconstruction grid: the smallest rate
+giving eight samples per symbol, clamped to that range, followed by interpolation
+to the 500 kSa/s renderer. Choose band-limited pulses appropriate for that grid.
+The symbol clock is rounded to 1/256 of a 16 MSa/s sample; the configuration's
+``symbol_rate_hz`` property reports the resulting rate. General synthesis is
+limited to 16000 baud. With a nonzero static mix, general reconstruction is
+limited to 32 kSa/s for spans one and two, or 16 kSa/s for spans three through
+eight; these correspond to symbol-rate ceilings of 4000 and 2000 baud.
+Unsupported combinations fail before replay changes. The precomputed path
+supports higher rates with static beams because it avoids convolution.
+The table resolution describes the pulse in symbol-relative time and does not
+restrict the symbol clock to integer divisors of the rendering rate.
+
+The resulting symbol-rate ceilings are:
+
+.. list-table:: Indexed stream rates (symbols/s)
+   :header-rows: 1
+
+   * - Pulse span
+     - Stream alone
+     - With static beams
+   * - 1, fitting precomputed bank
+     - 100000
+     - 100000
+   * - 2
+     - 16000
+     - 4000
+   * - 4
+     - 16000
+     - 2000
+   * - 8
+     - 16000
+     - 2000
+
+Pulse bandwidth must fit the reconstruction grid. The final renderer still
+holds samples for 32 DAC clocks, so images around multiples of 500 kHz remain;
+the faster one-symbol path improves throughput without adding an interpolation
+filter between that grid and the DAC.
 
 PSK31 is one configuration of this interface; differential encoding and Varicode
 run on the host, while sensors shape the absolute constellation points::
