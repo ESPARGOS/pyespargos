@@ -65,7 +65,7 @@ class IQTransmitter:
         return self.states
 
     def open_stream(self, **settings):
-        """Open one buffered IQ8 or BPSK31 source over the prepared beam scene.
+        """Open one buffered IQ8 or indexed source over the prepared beam scene.
 
         See IQStream for prefill, synchronized start, backpressure and close.
         """
@@ -77,6 +77,46 @@ class IQTransmitter:
                 raise RuntimeError("Close the current stream before opening another")
             self._stream = IQStream(self, **settings)
             return self._stream
+
+    def open_configured_stream(self):
+        """Use the web UI's saved modulation and prepared stream beam.
+
+        Prepare and calibrate the scene in IQ Transmission first. This method
+        preserves its other beams; the caller unmutes TX before start().
+        """
+        from .calibration import Antenna
+        from .steering import Weights
+        from .stream_sources import SingleCarrier
+
+        with self.owner._lock:
+            profiles = [_rpc(board, "get_iq_tx_stream_config") for board in self.boards]
+            self.read()
+            first = profiles[0]
+            antennas, values, delays = [], {}, {}
+            for bi, (board, profile) in enumerate(zip(self.boards, profiles)):
+                if any(profile.get(k) != first.get(k) for k in ("mode", "sample_rate_hz", "table_hex")):
+                    raise ValueError("Save matching stream modulation settings on every controller")
+                beam = profile.get("beam", {})
+                if not beam.get("ready") or not beam.get("antennas"):
+                    raise ValueError(f"{board.host}: apply a Stream beam on IQ Transmission first")
+                ids = beam["antennas"]
+                if len(set(ids)) != len(ids) or any(not isinstance(a, int) or not 0 <= a < 8 for a in ids):
+                    raise ValueError("Invalid saved stream antenna selection")
+                for key in ("real", "imag", "delay_samples", "boot_id", "crc32", "samples"):
+                    if len(beam.get(key, [])) != 8:
+                        raise ValueError("Incomplete saved stream beam")
+                for a in ids:
+                    state = self.states[bi]["sensors"][a]
+                    if any(state.get(k) != beam[k][a] for k in ("boot_id", "crc32", "samples")):
+                        raise ValueError(f"{board.host}: stream beam changed; reapply it in the web interface")
+                    antenna = Antenna(board.host, a)
+                    antennas.append(antenna)
+                    values[antenna] = complex(beam["real"][a], beam["imag"][a])
+                    delays[antenna] = beam["delay_samples"][a] / 16_000_000
+            modulation = SingleCarrier.from_payload(bytes.fromhex(first["table_hex"])) if first["mode"] == "single_carrier" else None
+            return self.open_stream(mode=first["mode"], sample_rate_hz=first["sample_rate_hz"],
+                                    modulation=modulation, amplitude=1, antennas=antennas,
+                                    steering=Weights(values, delays_s=delays))
 
     def authorized(self):
         return self._parallel(lambda i, b: _rpc(b, "get_transmit_authorization")["authorized"])
