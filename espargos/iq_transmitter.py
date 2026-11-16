@@ -30,6 +30,7 @@ class IQTransmitter:
         self.boards = []
         self.receiver = self.capture = None
         self.uploaded = {}
+        self._stream = None
         self.signals = TXSignals(self)
         self.workers = concurrent.futures.ThreadPoolExecutor(max_workers=len(geometry.hosts))
         try:
@@ -63,6 +64,20 @@ class IQTransmitter:
         self.states = self._parallel(lambda i, b: _rpc(b, "get_iq_tx"))
         return self.states
 
+    def open_stream(self, **settings):
+        """Open one buffered IQ8 or BPSK31 source over the prepared beam scene.
+
+        See IQStream for prefill, synchronized start, backpressure and close.
+        """
+        from .iq_stream import IQStream
+        with self.owner._lock:
+            if self.closed:
+                raise RuntimeError("Transmitter is closed")
+            if self._stream is not None and not self._stream.closed:
+                raise RuntimeError("Close the current stream before opening another")
+            self._stream = IQStream(self, **settings)
+            return self._stream
+
     def authorized(self):
         return self._parallel(lambda i, b: _rpc(b, "get_transmit_authorization")["authorized"])
 
@@ -78,6 +93,12 @@ class IQTransmitter:
         return self.read()
 
     def mute(self, muted):
+        stream_error = None
+        if muted and self._stream is not None and not self._stream.closed:
+            try:
+                self._stream.close()
+            except Exception as error:
+                stream_error = error
         if not muted:
             self.read()
             self.signals._check_beam_calibration()
@@ -92,16 +113,22 @@ class IQTransmitter:
                 return self.capture.wait(b, lambda s: all(not x["enabled"] or abs(x["applied_amplitude"]) < 1e-8 for x in s["sensors"]), 10) if muted and self.capture is not None else None
 
             self._parallel(apply)
+            if stream_error is not None:
+                raise stream_error
         except Exception:
             if not muted:
                 self._parallel(lambda i, b: _rpc(b, "set_iq_tx", {"muted": True}))
             raise
 
     def settings(self, payload):
+        if self._stream is not None and not self._stream.closed:
+            raise RuntimeError("Close the stream before changing TX settings")
         self._parallel(lambda i, b: _rpc(b, "set_iq_tx", payload))
         return self.read()
 
     def modes(self, modes):
+        if self._stream is not None and not self._stream.closed:
+            raise RuntimeError("Close the stream before changing sensor modes")
         def apply(i, b):
             _rpc(b, "set_iq_tx", {"muted": True, "modes": modes[i]})
             self.capture.wait(b, lambda s: all(x["applied_mode"] == modes[i][a] for a, x in enumerate(s["sensors"])), 10)
@@ -243,6 +270,8 @@ class IQTransmitter:
             raise
 
     def calibrate(self, *, method="reciprocity", path="reference"):
+        if self._stream is not None and not self._stream.closed:
+            raise RuntimeError("Close the stream before calibrating")
         try:
             return self.owner.calibrate(tx_method=method, path=path)
         finally:
