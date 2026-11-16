@@ -18,8 +18,8 @@ class IQStream:
     """One streamed source, weighted independently on every selected antenna.
 
     Use ``Pool.tx.open_stream()``. IQ8 accepts interleaved signed I8/Q8 bytes,
-    an (N, 2) int8 array, or normalized complex samples. BPSK31 accepts bytes
-    containing individual 0/1 bits; pulse shaping runs on the sensors.
+    an (N, 2) int8 array, or normalized complex samples. Single-carrier mode
+    accepts one byte per constellation index; pulse shaping runs on the sensors.
 
     Existing cyclic beams remain additive contributions. Their configuration,
     RF settings and calibration must stay fixed until close(). Streaming
@@ -28,10 +28,9 @@ class IQStream:
 
     RATE = 16_000_000
     CAPACITY = 32768
-    CHUNK = 1024
+    CHUNK = 512
 
-    def __init__(self, transmitter, *, mode="iq8", sample_rate_hz=16000,
-                 amplitude=0.1, antennas=None, steering=None):
+    def __init__(self, transmitter, *, mode="iq8", sample_rate_hz=16000, amplitude=0.1, antennas=None, steering=None, modulation=None):
         self.transmitter = transmitter
         self.closed = False
         self.started = self.finished = False
@@ -39,34 +38,44 @@ class IQStream:
         self.session = secrets.randbits(32) or 1
         self._lock = threading.RLock()
         self.targets = []
-        if mode not in ("iq8", "bpsk31"):
-            raise ValueError("mode must be iq8 or bpsk31")
-        if mode == "iq8" and sample_rate_hz not in (8000, 16000):
-            raise ValueError("IQ8 sample rate must be 8000 or 16000 Sa/s")
+        self._feedback = {}
+        self._subscriptions = []
+        self._next_send = {}
+        self._feedback_changed = threading.Condition()
+        self.modulation = modulation
+        if mode not in ("iq8", "single_carrier"):
+            raise ValueError("mode must be iq8 or single_carrier")
+        if mode == "iq8" and sample_rate_hz not in (8000, 16000, 32000, 40000, 50000):
+            raise ValueError("IQ8 sample rate must be 8000, 16000, 32000, 40000 or 50000 Sa/s")
         if not math.isfinite(amplitude) or not 0 <= amplitude <= 1:
             raise ValueError("amplitude must lie between 0 and 1")
         if steering is not None and not isinstance(steering, (Beamspace, Weights)):
             raise TypeError("steering must be Beamspace, Weights, or None")
+        from .stream_sources import SingleCarrier
+
+        if mode == "single_carrier" and not isinstance(modulation, SingleCarrier):
+            raise ValueError("single_carrier mode requires a SingleCarrier configuration")
+        if mode == "iq8" and modulation is not None:
+            raise ValueError("Raw IQ does not take a modulation table")
         self.mode = mode
         self.steering = steering
-        self.sample_rate_hz = int(sample_rate_hz) if mode == "iq8" else 31.25
+        self.sample_rate_hz = int(sample_rate_hz) if mode == "iq8" else modulation.symbol_rate_hz
         self.stride = 2 if mode == "iq8" else 1
         transmitter.read()
         transmitter.signals._check_beam_calibration()
         self.antennas = transmitter.signals._antennas(antennas)
         if isinstance(steering, Beamspace):
-            states = [CalibrationState.from_tx_status(a.host, transmitter.states[bi]["sensors"][a.antid])
-                      for bi, b in enumerate(transmitter.boards) for a in self.antennas if a.host == b.host]
+            states = [CalibrationState.from_tx_status(a.host, transmitter.states[bi]["sensors"][a.antid]) for bi, b in enumerate(transmitter.boards) for a in self.antennas if a.host == b.host]
             transmitter.owner.calibrations.require_coherent(states)
         try:
             for bi, board in enumerate(transmitter.boards):
                 ids = [a.antid for a in self.antennas if a.host == board.host]
                 if not ids:
                     continue
+                subscription = board.subscribe_controller_messages(0x32535449, lambda data, b=board: self._receive_feedback(b, data))
+                self._subscriptions.append((board, subscription))
                 state = transmitter.states[bi]
-                if any(state["sensors"][a]["applied_mode"] != "iq_tx" or
-                       state["sensors"][a].get("applied_sample_rate_hz", state.get("sample_rate_hz")) != self.RATE or
-                       not state["sensors"][a]["samples"] for a in ids):
+                if any(state["sensors"][a]["applied_mode"] != "iq_tx" or state["sensors"][a].get("applied_sample_rate_hz", state.get("sample_rate_hz")) != self.RATE or not state["sensors"][a]["samples"] for a in ids):
                     raise ValueError("Prepare a waveform and configure selected sensors for 16 MSa/s IQ TX first")
                 if any(state["sensors"][a]["samples"] > 2048 for a in ids):
                     raise ValueError("Streaming requires a replay length of at most 2048 samples")
@@ -86,36 +95,98 @@ class IQStream:
                     raise ValueError("Stream weights must have magnitude ≤1 and delays within ±8192 replay samples")
                 target = (board, ids, tuple(state["sensors"][a]["boot_id"] for a in ids))
                 self.targets.append(target)
-                payload = struct.pack("<II24f", 1 if mode == "iq8" else 2,
-                                      int(sample_rate_hz) if mode == "iq8" else 0,
-                                      *weights.real, *weights.imag, *delays)
+                payload = struct.pack("<4I24f", 1 if mode == "iq8" else 2, int(sample_rate_hz) if mode == "iq8" else 0, 1, len(modulation.payload) if modulation else 0, *weights.real, *weights.imag, *delays)
                 self._send(target, 1, payload=payload)
             self._wait(lambda states: all(s.get("session") == self.session and s["state"] == "buffering" for s in states), 5, opening=True)
+            if modulation:
+                for offset in range(0, len(modulation.payload), 1024):
+                    chunk = modulation.payload[offset : offset + 1024]
+                    for target in self.targets:
+                        self._send(target, 6, offset, len(chunk), chunk)
+                    self._wait(lambda states: all(s["table_received"] >= offset + len(chunk) for s in states), 5)
         except BaseException as error:
             self._abort(error)
             raise
 
     def _send(self, target, command, offset=0, units=0, payload=b""):
         board, ids, _ = target
-        header = struct.pack("<IBBBBIII", 0x31535449, 1, command,
-                             sum(1 << a for a in ids), 0, self.session, offset, units)
+        header = struct.pack("<IBBBBIII", 0x31535449, 2, command, sum(1 << a for a in ids), 0, self.session, offset, units)
+        if command == 2:
+            now = time.monotonic()
+            time.sleep(max(0, self._next_send.get(board, now) - now))
+            board.send_stream_data(header + payload)
+            self._next_send[board] = time.monotonic() + (len(header) + len(payload) + 32) / 120000
+            return None
         return board.control.fetch("iq_tx_stream", header + payload)
+
+    def _receive_feedback(self, board, data):
+        if len(data) != 728:
+            return
+        words = struct.unpack("<182I", data)
+        if words[:2] != (0x32535449, 2):
+            return
+        names = (
+            "session",
+            "state",
+            "error",
+            "accepted",
+            "consumed",
+            "end",
+            "format",
+            "input_rate_hz",
+            "capacity",
+            "rejected",
+            "rendered_blocks",
+            "max_render_us",
+            "max_late_us",
+            "clipped",
+            "sequence",
+            "max_source_us",
+            "max_expand_us",
+            "missing",
+            "late",
+            "table_received",
+        )
+        sensors = []
+        for a in range(8):
+            pos = 6 + 22 * a
+            state = dict(zip(names, words[pos + 2 : pos + 22]))
+            state.update(antid=a, boot_id=words[pos], available=bool(words[pos + 1]))
+            state["state"] = ("closed", "buffering", "armed", "running", "drained", "fault")[state["state"]] if state["state"] < 6 else "unknown"
+            if state["end"] == 0xFFFFFFFF:
+                state["end"] = None
+            sensors.append(state)
+        with self._feedback_changed:
+            old = self._feedback.get(board)
+            if old and not 0 < (words[2] - old[2]) % 2**32 < 2**31:
+                return
+            self._feedback[board] = (time.monotonic(), sensors, words[2], words[3:6])
+            self._feedback_changed.notify_all()
 
     def _states(self, *, opening=False, allow_fault=False):
         result = []
         for board, ids, boots in self.targets:
-            states = _rpc(board, "get_iq_tx_stream")["sensors"]
+            with self._feedback_changed:
+                deadline = time.monotonic() + 3
+                while True:
+                    feedback = self._feedback.get(board)
+                    if feedback and time.monotonic() - feedback[0] < 0.5:
+                        break
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        raise TimeoutError("Stream feedback is stale; uploads stopped")
+                    self._feedback_changed.wait(min(left, 0.1))
+                states = feedback[1]
             for a, boot in zip(ids, boots):
-                s = states[a]
-                if not s.get("available") or s.get("boot_id") != boot:
+                state = states[a]
+                if not state["available"] or state["boot_id"] != boot:
                     raise RuntimeError(f"{board.host}/{a}: sensor restarted or streaming status disappeared")
-                if not opening and s.get("session") != self.session:
+                if not opening and state["session"] != self.session:
                     raise RuntimeError(f"{board.host}/{a}: stream session changed")
-                if not allow_fault and s.get("session") == self.session and (s["state"] == "fault" or s.get("error")):
-                    detail = {0x106: "unsupported scene: use ≤2048 replay samples and 8 kSa/s when mixing",
-                              0x107: "replay refill deadline missed", 0x10C: "input FIFO underrun"}.get(s["error"], "stream configuration/state error")
-                    raise RuntimeError(f"{board.host}/{a}: {detail} ({s['error']:#x})")
-                result.append(s)
+                if not allow_fault and state["session"] == self.session and (state["state"] == "fault" or state["error"]):
+                    detail = {0x106: "unsupported scene/rate", 0x107: "replay refill deadline missed", 0x10C: "input FIFO underrun"}.get(state["error"], "stream configuration/state error")
+                    raise RuntimeError(f"{board.host}/{a}: {detail} ({state['error']:#x})")
+                result.append(dict(state))
         return result
 
     def _wait(self, predicate, timeout, *, opening=False):
@@ -127,20 +198,43 @@ class IQStream:
                 return states
             if time.monotonic() >= deadline:
                 raise TimeoutError("Timed out waiting for sensor stream acknowledgement")
-            time.sleep(.02)
+            time.sleep(0.02)
 
     def status(self):
-        """Return status and FIFO counters for the selected sensors."""
+        """Return sensor counters, or the last received snapshot after close()."""
         with self._lock:
+            if self.closed:
+                with self._feedback_changed:
+                    return [dict(self._feedback[board][1][a]) for board, ids, _ in self.targets if board in self._feedback for a in ids]
             return self._states()
+
+    def transport_status(self):
+        """Return controller counters from the existing downlink reports.
+
+        Counters are cumulative since controller boot. Sensor-specific missing
+        units and FIFO credit are available through :meth:`status`.
+        """
+        with self._lock:
+            if not self.closed:
+                self._states()
+            with self._feedback_changed:
+                return {
+                    board.host: dict(
+                        sequence=self._feedback[board][2],
+                        packets=self._feedback[board][3][0],
+                        rejected=self._feedback[board][3][1],
+                        last_error=self._feedback[board][3][2],
+                    )
+                    for board, _, _ in self.targets
+                }
 
     def _encode(self, samples):
         if isinstance(samples, (bytes, bytearray, memoryview)):
             data = bytes(samples)
-        elif self.mode == "bpsk31":
+        elif self.mode == "single_carrier":
             a = np.asarray(samples)
-            if a.ndim != 1 or not np.all((a == 0) | (a == 1)):
-                raise ValueError("BPSK31 input must contain individual 0/1 bits")
+            if a.ndim != 1 or not np.all(np.isfinite(a)) or np.any(a < 0) or np.any(a >= len(self.modulation.constellation)) or np.any(a != np.floor(a)):
+                raise ValueError("Input must contain valid constellation indices")
             data = a.astype(np.uint8).tobytes()
         else:
             a = np.asarray(samples)
@@ -152,14 +246,16 @@ class IQStream:
                 data = (np.column_stack((a.real, a.imag)) * 127).round().astype(np.int8).tobytes()
             else:
                 raise ValueError("Use complex samples, an (N, 2) int8 array, or interleaved IQ8 bytes")
-        if len(data) % self.stride or (self.mode == "bpsk31" and any(b > 1 for b in data)):
-            raise ValueError("Invalid sample/bit encoding")
+        if len(data) % self.stride or (self.mode == "single_carrier" and any(b >= len(self.modulation.constellation) for b in data)):
+            raise ValueError("Invalid sample/index encoding")
         return data
 
     def write(self, samples, *, timeout=10):
-        """Append samples/bits with backpressure; return once all sensors ACK.
+        """Send samples/indices subject to the slowest sensor's FIFO credit.
 
-        Before start(), prefill at least 1024 IQ samples or four BPSK31 bits.
+        Return after transport submission, not delivery acknowledgement. UDP
+        losses become zero-valued source units without retransmission.
+        Before start(), prefill at least 1024 IQ samples or four indices.
         After start(), keep calling write() before the FIFO runs empty.
         """
         with self._lock:
@@ -181,39 +277,30 @@ class IQStream:
 
     def _write_data(self, data, begin, end, count, timeout):
         deadline = time.monotonic() + timeout
-        sent, retry_at = begin, 0.0
-        while True:
+        sent = begin
+        while sent < end:
             states = self._states()
-            accepted = min(s["accepted"] for s in states)
             consumed = min(s["consumed"] for s in states)
-            if accepted >= end:
-                self.offset = end
-                return count
+            limit = min(end, consumed + self.CAPACITY, sent + 8 * self.CHUNK)
             if time.monotonic() >= deadline:
-                raise TimeoutError("Stream write timed out; sensor FIFO did not acknowledge or drain")
-            if accepted < sent and time.monotonic() >= retry_at:
-                # Repair the whole outstanding window in order. Retrying only
-                # one chunk per timeout would stall behind every packet that
-                # followed a lost chunk, even though the UART has spare capacity.
-                self._send_data(data, begin, max(begin, accepted), sent)
-                retry_at = time.monotonic() + .15
-            limit = min(end, consumed + self.CAPACITY, sent + 8*self.CHUNK)
+                raise TimeoutError("Stream write timed out waiting for FIFO credit")
             if sent < limit:
                 self._send_data(data, begin, sent, limit)
                 sent = limit
-                retry_at = time.monotonic() + .15
             else:
-                time.sleep(.01)
+                time.sleep(0.005)
+        self.offset = end
+        return count
 
     def _send_data(self, data, begin, offset, end):
         while offset < end:
-            units = min(self.CHUNK, end-offset)
-            payload = data[(offset-begin)*self.stride:(offset-begin+units)*self.stride]
+            units = min(self.CHUNK, end - offset)
+            payload = data[(offset - begin) * self.stride : (offset - begin + units) * self.stride]
             for target in self.targets:
                 self._send(target, 2, offset, units, payload)
             offset += units
 
-    def start(self, *, lead_time=.5):
+    def start(self, *, lead_time=0.5):
         """Arm a common future source origin on the calibrated replay grid.
 
         Unmute the prepared scene first. The reader joins the streaming ring
@@ -222,10 +309,11 @@ class IQStream:
         with self._lock:
             if self.closed or self.started:
                 raise RuntimeError("Stream is closed or already started")
-            if not math.isfinite(lead_time) or lead_time < .1:
+            if not math.isfinite(lead_time) or lead_time < 0.1:
                 raise ValueError("lead_time must be finite and at least 0.1 seconds")
             if self.offset < (1024 if self.mode == "iq8" else 4):
-                raise ValueError("Prefill at least 1024 IQ samples or four BPSK31 bits")
+                raise ValueError("Prefill at least 1024 IQ samples or four constellation indices")
+            self._wait(lambda states: all(s["accepted"] >= (1024 if self.mode == "iq8" else 4) for s in states), 3)
             plans, sequences, positions = [], set(), []
             for target in self.targets:
                 board, ids, _ = target
@@ -242,8 +330,7 @@ class IQStream:
                 plans.append((target, [s["epoch"] for s in sensors]))
             self.transmitter.signals._check_beam_calibration()
             if isinstance(self.steering, Beamspace):
-                states = [CalibrationState.from_tx_status(a.host, self.transmitter.states[bi]["sensors"][a.antid])
-                          for bi, b in enumerate(self.transmitter.boards) for a in self.antennas if a.host == b.host]
+                states = [CalibrationState.from_tx_status(a.host, self.transmitter.states[bi]["sensors"][a.antid]) for bi, b in enumerate(self.transmitter.boards) for a in self.antennas if a.host == b.host]
                 self.transmitter.owner.calibrations.require_coherent(states)
             if len(sequences) != 1:
                 raise ValueError("Selected sensors do not share a synchronization sequence")
@@ -266,6 +353,11 @@ class IQStream:
             if self.closed:
                 raise RuntimeError("Stream is closed")
             try:
+                # Let in-flight transport data reach UART first. A missing final
+                # datagram is then concealed by FINISH, never retransmitted.
+                deadline = time.monotonic() + 0.5
+                while min(s["accepted"] for s in self._states()) < self.offset and time.monotonic() < deadline:
+                    time.sleep(0.01)
                 for target in self.targets:
                     self._send(target, 4, self.offset)
                 self._wait(lambda states: all(s["end"] == self.offset for s in states), 5)
@@ -310,12 +402,9 @@ class IQStream:
                     deadline = time.monotonic() + 5
                     while True:
                         self._send(target, 5)
-                        time.sleep(.05)
-                        sensors = _rpc(board, "get_iq_tx_stream")["sensors"]
-                        if all(sensors[a].get("available") and
-                               (sensors[a].get("boot_id") != boot or
-                                (sensors[a].get("session") == self.session and sensors[a]["state"] == "closed"))
-                               for a, boot in zip(ids, boots)):
+                        time.sleep(0.05)
+                        sensors = self._feedback.get(board, (0, []))[1]
+                        if len(sensors) == 8 and all(sensors[a].get("available") and (sensors[a].get("boot_id") != boot or (sensors[a].get("session") == self.session and sensors[a]["state"] == "closed")) for a, boot in zip(ids, boots)):
                             break
                         if time.monotonic() >= deadline:
                             raise TimeoutError("Sensor did not acknowledge stream closure")
@@ -326,6 +415,9 @@ class IQStream:
                     except Exception as mute_error:
                         error.add_note(f"Fallback mute also failed: {mute_error}")
             self.closed = True
+            for board, subscription in self._subscriptions:
+                board.unsubscribe_controller_messages(subscription)
+            self._subscriptions.clear()
             if errors:
                 raise RuntimeError("Could not confirm every sensor stream stopped; requested fallback mute") from errors[0]
 

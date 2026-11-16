@@ -912,6 +912,7 @@ class Board(object):
             return
 
         with ws as websocket:
+            self._stream_websocket = websocket
             self._stream_connected = True
             self._stream_ready_event.set()
 
@@ -936,6 +937,19 @@ class Board(object):
                 if timeout_total > self._stream_timeout:
                     self._logger.warning("WebSocket timeout, disconnecting")
                     self._stream_connected = False
+
+    def send_stream_data(self, data: bytes):
+        """Send one bounded uplink packet on the established stream transport."""
+        if not self._stream_connected:
+            raise ConnectionError("Sensor stream is disconnected")
+        if len(data) > 1100:
+            raise ValueError("Uplink packet exceeds 1100 bytes")
+        if self._stream_transport == "udp":
+            self._udp_sock.sendto(data, self._udp_remote_addr)
+        elif self._stream_transport == "websocket":
+            self._stream_websocket.send(data)
+        else:
+            raise RuntimeError("Transmit streaming requires UDP or WebSocket")
 
     def _fetch(self, path: str, data: str | bytes | None = None) -> str:
         method = "GET" if data is None else "POST"

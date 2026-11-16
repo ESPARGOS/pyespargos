@@ -32,6 +32,24 @@ class ControllerStreamTests(unittest.TestCase):
         self.assertFalse(b.unsubscribe_controller_messages(s))
         self.assertEqual(b._controller_message_subscriptions, {})
 
+    def test_uplink_reuses_connected_transport_and_bounds_datagrams(self):
+        b = self.board()
+        b._stream_connected = True
+        b._stream_transport = "udp"
+        b._udp_sock = Mock()
+        b._udp_remote_addr = ("192.0.2.1", 53330)
+        b.send_stream_data(b"sample")
+        b._udp_sock.sendto.assert_called_once_with(b"sample", b._udp_remote_addr)
+        with self.assertRaises(ValueError):
+            b.send_stream_data(bytes(1101))
+        b._stream_transport = "websocket"
+        b._stream_websocket = Mock()
+        b.send_stream_data(b"indices")
+        b._stream_websocket.send.assert_called_once_with(b"indices")
+        b._stream_connected = False
+        with self.assertRaises(ConnectionError):
+            b.send_stream_data(b"sample")
+
     def test_http_accepted_is_not_completion_or_an_error(self):
         b = self.board()
         with patch("espargos.board.http.client.HTTPConnection") as factory:
