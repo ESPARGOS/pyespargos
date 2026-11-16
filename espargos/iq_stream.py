@@ -27,8 +27,7 @@ class IQStream:
     """
 
     RATE = 16_000_000
-    CAPACITY = 32768
-    CHUNK = 512
+    CAPACITY = 65536
 
     def __init__(self, transmitter, *, mode="iq8", sample_rate_hz=16000, amplitude=0.1, antennas=None, steering=None, modulation=None):
         self.transmitter = transmitter
@@ -61,6 +60,7 @@ class IQStream:
         self.steering = steering
         self.sample_rate_hz = int(sample_rate_hz) if mode == "iq8" else modulation.symbol_rate_hz
         self.stride = 2 if mode == "iq8" else 1
+        self.chunk = 1024 // self.stride
         transmitter.read()
         transmitter.signals._check_beam_calibration()
         self.antennas = transmitter.signals._antennas(antennas)
@@ -111,7 +111,7 @@ class IQStream:
     def _send(self, target, command, offset=0, units=0, payload=b""):
         board, ids, _ = target
         header = struct.pack("<IBBBBIII", 0x31535449, 2, command, sum(1 << a for a in ids), 0, self.session, offset, units)
-        if command == 2:
+        if command in (2, 4):
             now = time.monotonic()
             time.sleep(max(0, self._next_send.get(board, now) - now))
             board.send_stream_data(header + payload)
@@ -266,10 +266,10 @@ class IQStream:
             begin, end = self.offset, self.offset + count
             if end > 0x7FFFFFFF:
                 raise ValueError("Stream exceeds the protocol's sample counter range")
-            if not self.started and end > self.CAPACITY:
-                raise ValueError("Prefill exceeds FIFO capacity; start before writing more")
             self._timeout(timeout)
             try:
+                if not self.started and end > min(s["capacity"] for s in self._states()):
+                    raise ValueError("Prefill exceeds FIFO capacity; start before writing more")
                 return self._write_data(data, begin, end, count, timeout)
             except BaseException as error:
                 self._abort(error)
@@ -281,7 +281,8 @@ class IQStream:
         while sent < end:
             states = self._states()
             consumed = min(s["consumed"] for s in states)
-            limit = min(end, consumed + self.CAPACITY, sent + 8 * self.CHUNK)
+            capacity = min(s["capacity"] for s in states)
+            limit = min(end, consumed + capacity, sent + 8 * self.chunk)
             if time.monotonic() >= deadline:
                 raise TimeoutError("Stream write timed out waiting for FIFO credit")
             if sent < limit:
@@ -294,7 +295,7 @@ class IQStream:
 
     def _send_data(self, data, begin, offset, end):
         while offset < end:
-            units = min(self.CHUNK, end - offset)
+            units = min(self.chunk, end - offset)
             payload = data[(offset - begin) * self.stride : (offset - begin + units) * self.stride]
             for target in self.targets:
                 self._send(target, 2, offset, units, payload)
@@ -353,11 +354,8 @@ class IQStream:
             if self.closed:
                 raise RuntimeError("Stream is closed")
             try:
-                # Let in-flight transport data reach UART first. A missing final
-                # datagram is then concealed by FINISH, never retransmitted.
-                deadline = time.monotonic() + 0.5
-                while min(s["accepted"] for s in self._states()) < self.offset and time.monotonic() < deadline:
-                    time.sleep(0.01)
+                # Queue after the final DATA on the same transport. Waiting for
+                # all sensor snapshots can exhaust the FIFO at high rates.
                 for target in self.targets:
                     self._send(target, 4, self.offset)
                 self._wait(lambda states: all(s["end"] == self.offset for s in states), 5)

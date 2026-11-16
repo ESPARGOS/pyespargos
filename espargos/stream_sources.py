@@ -99,14 +99,15 @@ class SingleCarrier:
         c = np.asarray(constellation, dtype=complex)
         p = np.asarray(pulse, dtype=complex)
         phases = samples_per_symbol
-        if c.ndim != 1 or not 1 <= len(c) <= 256 or not np.all(np.isfinite(c)) or np.any(abs(c) > 1):
-            raise ValueError("Use 1..256 finite constellation points of magnitude <=1")
-        if phases not in (16, 32, 64, 128) or p.ndim != 1 or (len(p) - 1) % phases or not 1 < len(p) <= 16 * phases + 1:
-            raise ValueError("Pulse needs span * samples_per_symbol + 1 samples; span 1..16")
+        if c.ndim != 1 or not 1 <= len(c) <= 64 or not np.all(np.isfinite(c)) or np.any(abs(c) > 1):
+            raise ValueError("Use 1..64 finite constellation points of magnitude <=1")
+        if phases not in (16, 32, 64, 128) or p.ndim != 1 or (len(p) - 1) % phases or not 1 < len(p) <= 8 * phases + 1:
+            raise ValueError("Pulse needs span * samples_per_symbol + 1 samples; span 1..8")
+        span = (len(p) - 1) // phases
         if not np.all(np.isfinite(p)) or np.any(abs(p) > 1):
             raise ValueError("Pulse coefficients must be finite with magnitude <=1")
-        if not np.isfinite(symbol_rate_hz) or not 1 <= symbol_rate_hz <= 16000:
-            raise ValueError("Symbol rate must be between 1 and 16000 baud")
+        if not np.isfinite(symbol_rate_hz) or not 1 <= symbol_rate_hz <= (100000 if span == 1 else 16000):
+            raise ValueError("Symbol rate must be 1..16000 baud, or up to 100000 for a one-symbol pulse")
         if missing_index is None:
             zero = np.flatnonzero(c == 0)
             if not len(zero):
@@ -114,10 +115,15 @@ class SingleCarrier:
             missing_index = int(zero[0])
         if not isinstance(missing_index, int) or not 0 <= missing_index < len(c) or c[missing_index] != 0:
             raise ValueError("missing_index must select the zero constellation point")
-        span = (len(p) - 1) // phases
         if max(sum(abs(p[k * phases + phase]) for k in range(span)) for phase in range(phases + 1)) > 1.899:
             raise ValueError("Overlapping pulse magnitudes must sum to <=1.899")
         period = round(16_000_000 * 256 / symbol_rate_hz)
+        # Above the general renderer's limit, timing must fit the bounded
+        # sensor pulse bank. Include every phase visited by the 500 kSa/s grid.
+        import math
+        bank_bytes = period // math.gcd(period, 8192) * len(c) * 4
+        if symbol_rate_hz > 16000 and bank_bytes > 256 * 1024:
+            raise ValueError("Symbol timing exceeds the 256 KiB pulse bank; try 32000, 50000, 80000 or 100000 baud")
 
         def iq16(v):
             return np.column_stack((v.real, v.imag)).__mul__(32767).round().astype("<i2").tobytes()
