@@ -315,12 +315,16 @@ counter and calibration. Keep RF settings, calibration and stored signals
 fixed until the stream is closed.
 
 Raw IQ accepts signed interleaved I8/Q8 bytes, an ``(N, 2)`` NumPy ``int8``
-array, or normalized complex samples. Input rates are 8 or 16 kSa/s; use
-8 kSa/s when mixing with nonzero stored waveforms. The firmware rejects
-16 kSa/s with a nonzero static mixture before changing replay. Sensors interpolate,
+array, or normalized complex samples. Input rates are 8, 16, 32, 40 or 50 kSa/s; use
+8 kSa/s when mixing with nonzero stored waveforms. Higher mixed rates are
+rejected before changing replay. Sensors interpolate,
 apply their own complex weight and fractional delay, and expand to 16 MSa/s.
-The analog TX filter is still required to suppress RF replay images; it does
-not replace this digital reconstruction.
+Raw IQ uses a 24-tap, four-phase reconstruction filter, followed by linear
+interpolation to a 500 kSa/s rendering grid. Each rendered sample is held for
+32 DAC samples. This leaves residual images around multiples of 500 kHz; the
+MHz-wide analog filter cannot remove all of them. The analog TX filter also
+suppresses the wider RF replay images. Increasing source bandwidth does not
+increase the rendering grid's rate.
 
 Prepare the array using the normal configuration and monitor-calibration flow.
 For stream-only transmission, prepare a silent cyclic source first with
@@ -345,10 +349,11 @@ other stored beams retain their own waveforms and weights. Leave amplitude
 headroom for the sum. The sensor limits the streamed contribution to the
 stored mixture's remaining I/Q headroom and reports clipping.
 
-Prefill at least 1024 IQ samples (or four BPSK31 bits) before ``start()``.
+Prefill at least 1024 IQ samples (or four constellation indices) before ``start()``.
 Each sensor buffers 32768 input units, giving about two seconds at 16 kSa/s
-or four seconds at 8 kSa/s. ``write()`` applies backpressure and returns after
-all selected sensors acknowledge the data. Call it from a producer thread,
+or about 0.66 seconds at 50 kSa/s. ``write()`` applies backpressure using the slowest
+sensor's FIFO credit and returns after submitting data to the transport. It
+does not guarantee delivery over UDP. Call it from a producer thread,
 not an audio callback. Stop producing at ``finish()``; ``wait()`` acknowledges
 that the finite signal and its filter tail have passed the RF reader.
 Closing the context removes the streamed contribution and retains the cyclic
@@ -357,29 +362,81 @@ it never silently repeats the last streamed block. Closing a faulted session
 leaves that reader stopped; explicitly restart and recalibrate before resuming
 coherent transmission.
 
-The transport broadcasts each chunk once over the 3 Mbaud UART. Status includes
-accepted/consumed counters, clipping, maximum render time and interrupt lateness.
-A failed partial write closes the session so a caller cannot accidentally reuse
-its offsets for different samples. Sensor restarts and changed sessions are
-errors. Use a new stream after recovering and, if replay restarted, recalibrating.
+Data travels over the board's existing UDP or WebSocket stream connection;
+select it when opening the pool. OPEN, table configuration, ARM, FINISH and
+CLOSE use HTTP. Each data chunk is broadcast once over the 3 Mbaud UART.
+Periodic downlink reports supply accepted/consumed counters and FIFO capacity,
+missing/late units, rejected chunks, clipping and processing time. No HTTP
+status polling is required. ``stream.transport_status()`` reports controller
+packet/rejection counters as well.
 
-BPSK31 and SSB audio
-~~~~~~~~~~~~~~~~~~~
+UDP is best effort, with no retransmission or reorder buffer. Offsets preserve
+the source timeline: a gap is filled with zero IQ or the configured zero symbol;
+an already accepted range is never rewritten. FINISH also fills a missing final
+range. A zero symbol adds no new pulse; tails of earlier symbols still decay
+normally, so it is not an instantaneous RF mute. A prolonged interruption that
+exhausts the FIFO stops replay. Different sensors can lose different UART chunks;
+inspect their individual counters when coherent transmission matters.
 
-BPSK31 sends individual bits rather than expanded IQ. Differential phase and
-cosine pulse shaping run on each sensor at 31.25 baud::
+A failed partial write closes the session so offsets cannot be reused for
+other samples. Stale feedback, sensor restarts and changed sessions are errors.
+Use a new stream after recovering and, if replay restarted, recalibrating.
+Streaming protocol version 2 requires matching controller, sensor and client
+versions; the older non-streaming control interface is unchanged.
 
-   from espargos.stream_sources import psk31_bits
+Indexed single-carrier modulation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-   with tx.open_stream(mode="bpsk31", amplitude=0.1) as stream:
-       stream.write(psk31_bits("cq test"))
+Upload an indexed complex constellation and a finite complex pulse once. The
+stream then contains one unsigned byte per constellation index. Every sensor
+sums overlapping pulses locally, with its own beam weight and fractional delay.
+There are no special pause packets: include a zero constellation point and send
+its index. ``missing_index`` selects that same zero point for packet loss.
+
+``SingleCarrier(constellation, pulse, symbol_rate_hz=..., samples_per_symbol=32,
+missing_index=...)`` supports 1–256 points of magnitude at most one, 1–16 symbols
+of pulse history, and 16/32/64/128 table samples per symbol. The pulse includes
+both endpoints (``span * samples_per_symbol + 1`` complex coefficients). Its
+first sample corresponds to the symbol's origin; center a symmetric filter by
+including its causal delay. The overlapping pulse magnitudes must sum to at
+most 1.899. Coefficients and constellation points are quantized to complex Q15.
+
+Reconstruction uses an 8/16/32/64 kSa/s grid: the smallest rate giving eight
+samples per symbol, clamped to that range, followed by interpolation to the
+500 kSa/s renderer. Choose band-limited pulses appropriate for that grid. The
+symbol clock is rounded to 1/256 of a 16 MSa/s sample; the configuration's
+``symbol_rate_hz`` property reports the resulting rate. To meet refill deadlines,
+``grid_rate * (span + 2)`` must not exceed 256000 for a silent static scene or
+96000 for a nonzero static mix. Unsupported combinations fail before replay
+changes. The nominal symbol-rate range is 1–16000 baud, subject to that budget.
+
+PSK31 is one configuration of this interface; differential encoding and Varicode
+run on the host, while sensors shape the absolute constellation points::
+
+   from espargos.stream_sources import SingleCarrier, psk31_symbols
+
+   with tx.open_stream(mode="single_carrier", modulation=SingleCarrier.psk31(),
+                       amplitude=0.1) as stream:
+       stream.write(psk31_symbols("cq test"))
        stream.finish()
        stream.start()
        stream.wait(timeout=30)
 
-``psk31_bits`` encodes ASCII Varicode and adds an idle preamble and steady
-postamble. When writing successive pieces, request the preamble only for the
-first piece and the postamble only for the last.
+``psk31_symbols`` produces one complete ASCII burst with an acquisition preamble
+and steady postamble. For a continuous conversation, maintain differential state
+in the host encoder across writes; do not concatenate independently encoded
+bursts without a gap. Absolute indices keep packet loss from changing the phase
+of all subsequent symbols.
+
+The controller's IQ transmission page exposes **Stream** as a beam source. It
+streams an IQ8 or index file over the shared WebSocket while retaining the other
+beams. Indexed mode also takes a JSON file with ``constellation`` and ``pulse``
+arrays of ``[I,Q]`` pairs, ``symbol_rate_hz``, ``samples_per_symbol`` and
+``missing_index``. Files are read in small chunks, not loaded entirely into
+browser memory. Live audio and other producers use the same Python API.
+
+SSB audio
+~~~~~~~~~
 
 For SSB, ``SSBEncoder(sideband="upper")`` or ``sideband="lower"`` converts
 normalized, zero-mean audio to complex IQ on the host. Use audio at the raw

@@ -5,27 +5,27 @@ import numpy as np
 # ITU-R M.2034 (2013), Annex 2, ASCII Varicode code points:
 # https://www.itu.int/rec/R-REC-M.2034/en
 _VARICODE = (
-    '1010101011 1011011011 1011101101 1101110111 1011101011 1101011111 1011101111 1011111101 '
-    '1011111111 11101111 11101 1101101111 1011011101 11111 1101110101 1110101011 '
-    '1011110111 1011110101 1110101101 1110101111 1101011011 1101101011 1101101101 1101010111 '
-    '1101111011 1101111101 1110110111 1101010101 1101011101 1110111011 1011111011 1101111111 '
-    '1 111111111 101011111 111110101 111011011 1011010101 1010111011 101111111 '
-    '11111011 11110111 101101111 111011111 1110101 110101 1010111 110101111 '
-    '10110111 10111101 11101101 11111111 101110111 101011011 101101011 110101101 '
-    '110101011 110110111 11110101 110111101 111101101 1010101 111010111 1010101111 '
-    '1010111101 1111101 11101011 10101101 10110101 1110111 11011011 11111101 '
-    '101010101 1111111 111111101 101111101 11010111 10111011 11011101 10101011 '
-    '11010101 111011101 10101111 1101111 1101101 101010111 110110101 101011101 '
-    '101110101 101111011 1010101101 111110111 111101111 111111011 1010111111 101101101 '
-    '1011011111 1011 1011111 101111 101101 11 111101 1011011 '
-    '101011 1101 111101011 10111111 11011 111011 1111 111 '
-    '111111 110111111 10101 10111 101 110111 1111011 1101011 '
-    '11011111 1011101 111010101 1010110111 110111011 1010110101 1011010111 1110110101 '
+    "1010101011 1011011011 1011101101 1101110111 1011101011 1101011111 1011101111 1011111101 "
+    "1011111111 11101111 11101 1101101111 1011011101 11111 1101110101 1110101011 "
+    "1011110111 1011110101 1110101101 1110101111 1101011011 1101101011 1101101101 1101010111 "
+    "1101111011 1101111101 1110110111 1101010101 1101011101 1110111011 1011111011 1101111111 "
+    "1 111111111 101011111 111110101 111011011 1011010101 1010111011 101111111 "
+    "11111011 11110111 101101111 111011111 1110101 110101 1010111 110101111 "
+    "10110111 10111101 11101101 11111111 101110111 101011011 101101011 110101101 "
+    "110101011 110110111 11110101 110111101 111101101 1010101 111010111 1010101111 "
+    "1010111101 1111101 11101011 10101101 10110101 1110111 11011011 11111101 "
+    "101010101 1111111 111111101 101111101 11010111 10111011 11011101 10101011 "
+    "11010101 111011101 10101111 1101111 1101101 101010111 110110101 101011101 "
+    "101110101 101111011 1010101101 111110111 111101111 111111011 1010111111 101101101 "
+    "1011011111 1011 1011111 101111 101101 11 111101 1011011 "
+    "101011 1101 111101011 10111111 11011 111011 1111 111 "
+    "111111 110111111 10101 10111 101 110111 1111011 1101011 "
+    "11011111 1011101 111010101 1010110111 110111011 1010110101 1011010111 1110110101 "
 ).split()
 
 
 def psk31_bits(text, *, preamble=32, postamble=32):
-    """Encode ASCII text as BPSK31 bits for ``IQStream.write``.
+    """Encode ASCII text as differential BPSK31 bits (before index mapping).
 
     Zero bits reverse phase. The default idle preamble permits acquisition;
     the steady-carrier postamble lets decoders squelch. For successive pieces
@@ -44,14 +44,14 @@ def psk31_bits(text, *, preamble=32, postamble=32):
 class SSBEncoder:
     """Stateful audio-to-IQ conversion for the raw streaming mode.
 
-    Feed normalized, zero-mean real audio at the stream's 8/16 kSa/s rate.
+    Feed normalized, zero-mean real audio at the raw stream's sample rate.
     A 257-tap windowed Hilbert filter suppresses the other sideband without
     discontinuities between calls. The useful voice band starts around
     300 Hz; allow margin below Nyquist. Group delay is 128 audio samples.
     The default gain reserves headroom for the quadrature filter's overshoot.
     """
 
-    def __init__(self, *, sideband="upper", gain=.25):
+    def __init__(self, *, sideband="upper", gain=0.25):
         if sideband not in ("upper", "lower"):
             raise ValueError("sideband must be upper or lower")
         if not np.isfinite(gain) or not 0 < gain <= 1:
@@ -74,7 +74,7 @@ class SSBEncoder:
             return np.empty(0, complex)
         joined = np.concatenate((self._history, a))
         q = np.convolve(joined, self._filter, mode="valid")
-        iq = self.gain * (joined[128:128+len(a)] + 1j*self._sign*q)
+        iq = self.gain * (joined[128 : 128 + len(a)] + 1j * self._sign * q)
         if np.any(abs(iq.imag) > 1):
             raise ValueError("quadrature audio exceeds IQ8 range; reduce encoder gain")
         self._history = joined[-256:].copy()
@@ -83,3 +83,68 @@ class SSBEncoder:
     def flush(self):
         """Return the filter tail; feed it before finishing the IQ stream."""
         return self.encode(np.zeros(256))
+
+
+class SingleCarrier:
+    """Indexed constellation and finite complex pulse, sampled per symbol.
+
+    Pulse sample zero is the symbol's time origin. ``pulse`` contains
+    ``span * samples_per_symbol + 1`` coefficients, including both endpoints.
+    Missing UDP symbols use the specified zero-valued constellation entry.
+    """
+
+    def __init__(self, constellation, pulse, *, symbol_rate_hz, samples_per_symbol=32, missing_index=None):
+        import struct
+
+        c = np.asarray(constellation, dtype=complex)
+        p = np.asarray(pulse, dtype=complex)
+        phases = samples_per_symbol
+        if c.ndim != 1 or not 1 <= len(c) <= 256 or not np.all(np.isfinite(c)) or np.any(abs(c) > 1):
+            raise ValueError("Use 1..256 finite constellation points of magnitude <=1")
+        if phases not in (16, 32, 64, 128) or p.ndim != 1 or (len(p) - 1) % phases or not 1 < len(p) <= 16 * phases + 1:
+            raise ValueError("Pulse needs span * samples_per_symbol + 1 samples; span 1..16")
+        if not np.all(np.isfinite(p)) or np.any(abs(p) > 1):
+            raise ValueError("Pulse coefficients must be finite with magnitude <=1")
+        if not np.isfinite(symbol_rate_hz) or not 1 <= symbol_rate_hz <= 16000:
+            raise ValueError("Symbol rate must be between 1 and 16000 baud")
+        if missing_index is None:
+            zero = np.flatnonzero(c == 0)
+            if not len(zero):
+                raise ValueError("Include a zero constellation point for missing symbols")
+            missing_index = int(zero[0])
+        if not isinstance(missing_index, int) or not 0 <= missing_index < len(c) or c[missing_index] != 0:
+            raise ValueError("missing_index must select the zero constellation point")
+        span = (len(p) - 1) // phases
+        if max(sum(abs(p[k * phases + phase]) for k in range(span)) for phase in range(phases + 1)) > 1.899:
+            raise ValueError("Overlapping pulse magnitudes must sum to <=1.899")
+        period = round(16_000_000 * 256 / symbol_rate_hz)
+
+        def iq16(v):
+            return np.column_stack((v.real, v.imag)).__mul__(32767).round().astype("<i2").tobytes()
+
+        self.payload = struct.pack("<I4H", period, phases, span, len(c), missing_index) + iq16(c) + iq16(p)
+        self.symbol_rate_hz = 16_000_000 * 256 / period
+        self.constellation = c.copy()
+        self.pulse = p.copy()
+        self.samples_per_symbol = phases
+        self.missing_index = missing_index
+
+    @classmethod
+    def psk31(cls):
+        """BPSK31: absolute signs with a two-symbol raised-cosine pulse."""
+        t = np.arange(65) / 32
+        return cls([-1, 1, 0], 0.5 * (1 - np.cos(np.pi * t)), symbol_rate_hz=31.25, missing_index=2)
+
+
+def psk31_symbols(text, *, preamble=32, postamble=32):
+    """Encode one complete PSK31 burst as absolute constellation indices.
+
+    Use with ``SingleCarrier.psk31()``. Differential mapping is host-side;
+    packet loss therefore cannot corrupt the phase of later symbols.
+    """
+    sign = 1
+    result = bytearray([sign])
+    for bit in psk31_bits(text, preamble=preamble, postamble=postamble):
+        sign ^= not bit
+        result.append(sign)
+    return bytes(result)
