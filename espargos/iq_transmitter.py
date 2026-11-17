@@ -65,7 +65,7 @@ class IQTransmitter:
         return self.states
 
     def open_stream(self, **settings):
-        """Open one buffered IQ8 or indexed source over the prepared beam scene.
+        """Open one buffered CS8 or indexed source over the prepared beam scene.
 
         See IQStream for prefill, synchronized start, backpressure and close.
         """
