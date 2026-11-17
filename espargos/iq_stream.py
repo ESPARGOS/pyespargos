@@ -17,7 +17,7 @@ from .waveforms import CW
 class IQStream:
     """One streamed source, weighted independently on every selected antenna.
 
-    Use ``Pool.tx.open_stream()``. IQ8 accepts interleaved signed I8/Q8 bytes,
+    Use ``Pool.tx.open_stream()``. CS8 accepts interleaved signed I8/Q8 bytes,
     an (N, 2) int8 array, or normalized complex samples. Single-carrier mode
     accepts one byte per constellation index and packs indices on the wire;
     pulse shaping runs on the sensors. An input underrun becomes silence. A
@@ -31,7 +31,7 @@ class IQStream:
     RATE = 16_000_000
     CAPACITY = 65536
 
-    def __init__(self, transmitter, *, mode="iq8", sample_rate_hz=16000, amplitude=0.1, antennas=None, steering=None, modulation=None, packed=True):
+    def __init__(self, transmitter, *, mode="cs8", sample_rate_hz=16000, amplitude=0.1, antennas=None, steering=None, modulation=None):
         self.transmitter = transmitter
         self.closed = False
         self.started = self.finished = False
@@ -51,10 +51,10 @@ class IQStream:
         self._next_send = {}
         self._feedback_changed = threading.Condition()
         self.modulation = modulation
-        if mode not in ("iq8", "single_carrier"):
-            raise ValueError("mode must be iq8 or single_carrier")
-        if mode == "iq8" and sample_rate_hz not in (8000, 16000, 32000, 40000, 50000):
-            raise ValueError("IQ8 sample rate must be 8000, 16000, 32000, 40000 or 50000 Sa/s")
+        if mode not in ("cs8", "single_carrier"):
+            raise ValueError("mode must be cs8 or single_carrier")
+        if mode == "cs8" and sample_rate_hz not in (8000, 16000, 32000, 40000, 50000):
+            raise ValueError("CS8 sample rate must be 8000, 16000, 32000, 40000 or 50000 Sa/s")
         if not math.isfinite(amplitude) or not 0 <= amplitude <= 1:
             raise ValueError("amplitude must lie between 0 and 1")
         if steering is not None and not isinstance(steering, (Beamspace, Weights)):
@@ -63,18 +63,17 @@ class IQStream:
 
         if mode == "single_carrier" and not isinstance(modulation, SingleCarrier):
             raise ValueError("single_carrier mode requires a SingleCarrier configuration")
-        if mode == "iq8" and modulation is not None:
+        if mode == "cs8" and modulation is not None:
             raise ValueError("Raw IQ does not take a modulation table")
         self.mode = mode
         self.steering = steering
-        self.sample_rate_hz = int(sample_rate_hz) if mode == "iq8" else modulation.symbol_rate_hz
-        self.stride = 2 if mode == "iq8" else 1
-        self.capacity = self.CAPACITY if mode == "iq8" else 2 * self.CAPACITY
-        self.packed = mode == "single_carrier" and packed
-        self.bits = max(1, (len(modulation.constellation) - 1).bit_length()) if self.packed else 8 * self.stride
+        self.sample_rate_hz = int(sample_rate_hz) if mode == "cs8" else modulation.symbol_rate_hz
+        self.stride = 2 if mode == "cs8" else 1
+        self.capacity = self.CAPACITY if mode == "cs8" else 2 * self.CAPACITY
+        self.bits = max(1, (len(modulation.constellation) - 1).bit_length()) if mode == "single_carrier" else 16
         self.chunk = 8192 // self.bits
         self._settings = dict(mode=mode, sample_rate_hz=sample_rate_hz, amplitude=amplitude,
-                              antennas=antennas, steering=steering, modulation=modulation, packed=packed)
+                              antennas=antennas, steering=steering, modulation=modulation)
         transmitter.read()
         transmitter.signals._check_beam_calibration()
         self.antennas = transmitter.signals._antennas(antennas)
@@ -90,7 +89,7 @@ class IQStream:
                 subscription = board.subscribe_controller_messages(0x32535449, lambda data, b=board: self._receive_feedback(b, data))
                 self._subscriptions.append((board, subscription))
                 state = transmitter.states[bi]
-                if any(state["sensors"][a]["applied_mode"] != "iq_tx" or state["sensors"][a].get("applied_sample_rate_hz", state.get("sample_rate_hz")) != self.RATE or not state["sensors"][a]["samples"] for a in ids):
+                if any(state["sensors"][a]["applied_mode"] != "iq_tx" or state["sensors"][a]["applied_sample_rate_hz"] != self.RATE or not state["sensors"][a]["samples"] for a in ids):
                     raise ValueError("Prepare a waveform and configure selected sensors for 16 MSa/s IQ TX first")
                 if any(state["sensors"][a]["samples"] > 2048 for a in ids):
                     raise ValueError("Streaming requires a replay length of at most 2048 samples")
@@ -110,7 +109,7 @@ class IQStream:
                     raise ValueError("Stream weights must have magnitude ≤1 and delays within ±8192 replay samples")
                 target = (board, ids, tuple(state["sensors"][a]["boot_id"] for a in ids))
                 self.targets.append(target)
-                payload = struct.pack("<4I24f", 1 if mode == "iq8" else 2, int(sample_rate_hz) if mode == "iq8" else 0, 1 | (2 if self.packed else 0), len(modulation.payload) if modulation else 0, *weights.real, *weights.imag, *delays)
+                payload = struct.pack("<4I24f", 1 if mode == "cs8" else 2, int(sample_rate_hz) if mode == "cs8" else 0, 1, len(modulation.payload) if modulation else 0, *weights.real, *weights.imag, *delays)
                 self._send(target, 1, payload=payload)
             self._wait(lambda states: all(s.get("session") == self.session and s["state"] == "buffering" for s in states), 5, opening=True)
             if modulation:
@@ -263,7 +262,7 @@ class IQStream:
                     raise ValueError("Complex IQ components must be finite and within [-1, 1]")
                 data = (np.column_stack((a.real, a.imag)) * 127).round().astype(np.int8).tobytes()
             else:
-                raise ValueError("Use complex samples, an (N, 2) int8 array, or interleaved IQ8 bytes")
+                raise ValueError("Use complex samples, an (N, 2) int8 array, or interleaved CS8 bytes")
         if len(data) % self.stride or (self.mode == "single_carrier" and any(b >= len(self.modulation.constellation) for b in data)):
             raise ValueError("Invalid sample/index encoding")
         return data
@@ -309,7 +308,7 @@ class IQStream:
                 return count
             consumed = min(s["consumed"] for s in states)
             capacity = min(s["capacity"] for s in states)
-            prefill = min(capacity, max(1024 if self.mode == "iq8" else 4, math.ceil(self.sample_rate_hz * .1)))
+            prefill = min(capacity, max(1024 if self.mode == "cs8" else 4, math.ceil(self.sample_rate_hz * .1)))
             limit = min(end, consumed + capacity, sent + 8 * self.chunk)
             if self._auto_start and not self.started:
                 limit = min(limit, prefill)
@@ -340,7 +339,7 @@ class IQStream:
         while offset < end:
             units = min(self.chunk, end - offset)
             payload = data[(offset - begin) * self.stride : (offset - begin + units) * self.stride]
-            if self.packed:
+            if self.mode == "single_carrier":
                 indices = np.frombuffer(payload, dtype=np.uint8)
                 bits = ((indices[:, None] >> np.arange(self.bits, dtype=np.uint8)) & 1).reshape(-1)
                 payload = np.packbits(bits, bitorder="little").tobytes()
@@ -375,9 +374,9 @@ class IQStream:
                 raise RuntimeError("Stream is closed or already started")
             if not math.isfinite(lead_time) or lead_time < 0.1:
                 raise ValueError("lead_time must be finite and at least 0.1 seconds")
-            if self.offset < (1024 if self.mode == "iq8" else 4):
+            if self.offset < (1024 if self.mode == "cs8" else 4):
                 raise ValueError("Prefill at least 1024 IQ samples or four constellation indices")
-            self._wait(lambda states: all(s["accepted"] >= (1024 if self.mode == "iq8" else 4) for s in states), 3)
+            self._wait(lambda states: all(s["accepted"] >= (1024 if self.mode == "cs8" else 4) for s in states), 3)
             plans, sequences, positions = [], set(), []
             for target in self.targets:
                 board, ids, _ = target

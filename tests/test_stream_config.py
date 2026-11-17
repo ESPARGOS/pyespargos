@@ -16,7 +16,6 @@ class StreamConfigTests(TestCase):
         loaded = SingleCarrier.from_payload(original.payload)
         self.assertEqual(loaded.payload, original.payload)
         self.assertEqual(loaded.symbol_rate_hz, 31.25)
-        self.assertEqual(loaded.missing_index, 0xFFFF)
         for data in (b"", original.payload[:-1], struct.pack("<I", 0)+original.payload[4:],
                      original.payload[:10]+struct.pack("<H", 9)+original.payload[12:]):
             with self.assertRaises(ValueError):
@@ -92,7 +91,7 @@ class StreamConfigTests(TestCase):
     def test_cli_keeps_split_iq_pairs_and_rejects_an_odd_tail(self):
         writes=[]
         class Stream:
-            mode="iq8"
+            mode="cs8"
             stride=2
             sample_rate_hz=8000
             capacity=65536

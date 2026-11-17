@@ -12,7 +12,7 @@ def transmit(source, pool):
     tx = pool.tx
     with tx.open_configured_stream() as stream:
         stride = stream.stride
-        minimum = 1024 if stream.mode == "iq8" else 4
+        minimum = 1024 if stream.mode == "cs8" else 4
         prefill = max(minimum, min(stream.capacity // 2, int(stream.sample_rate_hz * .1)))
         initial = source.read(prefill * stride)
         if len(initial) < minimum * stride:
@@ -53,7 +53,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("host", help="Controller address; prepare and calibrate its Stream beam first")
     parser.add_argument("--transport", choices=("udp", "websocket"), default="udp")
-    parser.add_argument("--file", help="Input bytes; defaults to stdin (IQ8 pairs or symbol indices)")
+    parser.add_argument("--file", help="Input bytes; defaults to stdin (CS8 pairs or symbol indices)")
     args = parser.parse_args(argv)
     pool = Pool([args.host])
     try:

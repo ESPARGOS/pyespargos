@@ -101,14 +101,13 @@ class Device:
                 continue
             if command == 1:
                 s.update(session=session, state="buffering", accepted=0, consumed=0, end=None, missing=0, late=0, error=0, table_received=0)
-                self.packed = bool(struct.unpack_from("<I", payload, 8)[0] & 2)
                 self.bits = 8
                 self.stride = 2 if struct.unpack_from("<I", payload)[0] == 1 else 1
                 if self.stride == 1: s["capacity"] = 2 * IQStream.CAPACITY
                 elif s["capacity"] == 2 * IQStream.CAPACITY: s["capacity"] = IQStream.CAPACITY
             elif command == 2:
                 decoded = payload
-                if self.packed:
+                if self.stride == 1:
                     decoded = bytes(sum(((payload[(k*self.bits+j)//8] >> ((k*self.bits+j)%8)) & 1) << j for j in range(self.bits)) for k in range(count))
                 if self.drop == (a, offset):
                     self.drop = None
@@ -155,6 +154,14 @@ class StreamTests(TestCase):
             p = patch(target, value)
             p.start()
             self.addCleanup(p.stop)
+
+    def test_cs8_uses_raw_signed_byte_pairs(self):
+        with IQStream(self.device.tx, mode="cs8") as stream:
+            self.assertEqual(stream.stride, 2)
+            frame = next(f for f in reversed(self.device.wire_frames) if f[5] == 1)
+            self.assertEqual(struct.unpack_from("<I", frame, 20)[0], 1)
+            stream.write(bytes([1, 255]) * 16)
+            self.assertEqual(self.device.received[0], bytes([1, 255]) * 16)
 
     def test_udp_loss_preserves_offsets_without_retransmission(self):
         d = self.device
@@ -208,7 +215,6 @@ class StreamTests(TestCase):
             self.assertEqual(d.sensors[0]["table_received"], len(modulation.payload))
             with self.assertRaises(ValueError):
                 stream.write(bytes([3]))
-        self.assertEqual(SingleCarrier([1, -1], [1] * 33, symbol_rate_hz=1000).missing_index, 0xFFFF)
 
     def test_fast_pulse_limits_and_ordered_finish(self):
         from espargos.stream_sources import SingleCarrier
@@ -227,24 +233,22 @@ class StreamTests(TestCase):
             with self.subTest(points=len(points), pulse=len(pulse), rate=rate), self.assertRaises(ValueError):
                 SingleCarrier(points, pulse, symbol_rate_hz=rate)
 
-    def test_64qam_with_zero_entry_streams_index_64(self):
+    def test_64qam_uses_all_six_bit_indices(self):
         from espargos.stream_sources import SingleCarrier
 
-        points = [complex(i, q) / 98**.5 for i in range(-7, 8, 2) for q in range(-7, 8, 2)] + [0]
+        points = [complex(i, q) / 98**.5 for i in range(-7, 8, 2) for q in range(-7, 8, 2)]
         modulation = SingleCarrier(points, [.1] * 129, symbol_rate_hz=1000)
-        self.assertEqual(modulation.missing_index, 64)
         with IQStream(self.device.tx, mode="single_carrier", modulation=modulation) as stream:
-            data = bytes(range(65))
+            data = bytes(range(64))
             stream.write(data)
             self.assertEqual(self.device.received[0], data)
             with self.assertRaises(ValueError):
-                stream.write(bytes([65]))
+                stream.write(bytes([64]))
         largest = SingleCarrier(points, [0] * 1025, symbol_rate_hz=1000, samples_per_symbol=128)
-        self.assertEqual(len(largest.payload), 4372)
-        loaded = SingleCarrier.from_payload(largest.payload)
-        self.assertEqual(len(loaded.constellation), 65)
-        self.assertEqual(loaded.missing_index, 64)
-        self.assertEqual(loaded.payload, largest.payload)
+        self.assertEqual(len(largest.payload), 4368)
+        self.assertEqual(SingleCarrier.from_payload(largest.payload).payload, largest.payload)
+        with self.assertRaises(ValueError):
+            SingleCarrier(points + [0], [.1] * 129, symbol_rate_hz=1000)
 
     def test_packed_packets_restart_bit_alignment(self):
         from espargos.stream_sources import SingleCarrier

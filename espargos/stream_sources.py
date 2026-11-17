@@ -76,7 +76,7 @@ class SSBEncoder:
         q = np.convolve(joined, self._filter, mode="valid")
         iq = self.gain * (joined[128 : 128 + len(a)] + 1j * self._sign * q)
         if np.any(abs(iq.imag) > 1):
-            raise ValueError("quadrature audio exceeds IQ8 range; reduce encoder gain")
+            raise ValueError("quadrature audio exceeds CS8 range; reduce encoder gain")
         self._history = joined[-256:].copy()
         return iq
 
@@ -91,17 +91,16 @@ class SingleCarrier:
     Pulse sample zero is the symbol's time origin. ``pulse`` contains
     ``span * samples_per_symbol + 1`` coefficients, including both endpoints.
     Missing symbols contribute zero without consuming a constellation index.
-    An explicit zero-valued ``missing_index`` remains supported for saved tables.
     """
 
-    def __init__(self, constellation, pulse, *, symbol_rate_hz, samples_per_symbol=32, missing_index=None):
+    def __init__(self, constellation, pulse, *, symbol_rate_hz, samples_per_symbol=32):
         import struct
 
         c = np.asarray(constellation, dtype=complex)
         p = np.asarray(pulse, dtype=complex)
         phases = samples_per_symbol
-        if c.ndim != 1 or not 1 <= len(c) <= 65 or not np.all(np.isfinite(c)) or np.any(abs(c) > 1 + 1e-12):
-            raise ValueError("Use 1..65 finite constellation points of magnitude <=1")
+        if c.ndim != 1 or not 1 <= len(c) <= 64 or not np.all(np.isfinite(c)) or np.any(abs(c) > 1 + 1e-12):
+            raise ValueError("Use 1..64 finite constellation points of magnitude <=1")
         if phases not in (16, 32, 64, 128) or p.ndim != 1 or (len(p) - 1) % phases or not 1 < len(p) <= 8 * phases + 1:
             raise ValueError("Pulse needs span * samples_per_symbol + 1 samples; span 1..8")
         span = (len(p) - 1) // phases
@@ -109,12 +108,6 @@ class SingleCarrier:
             raise ValueError("Pulse coefficients must be finite with magnitude <=1")
         if not np.isfinite(symbol_rate_hz) or not 1 <= symbol_rate_hz <= (250000 if span == 1 else 32000 if span == 2 else 16000):
             raise ValueError("Use up to 250000 baud for one-symbol pulses, 32000 for two, or 16000 for longer pulses")
-        if missing_index is None:
-            zero = np.flatnonzero(c == 0)
-            missing_index = int(zero[0]) if len(zero) else 0xFFFF
-        if not isinstance(missing_index, int) or (missing_index != 0xFFFF and
-                (not 0 <= missing_index < len(c) or c[missing_index] != 0)):
-            raise ValueError("missing_index must select the zero constellation point")
         if max(sum(abs(p[k * phases + phase]) for k in range(span)) for phase in range(phases + 1)) > 1.899:
             raise ValueError("Overlapping pulse magnitudes must sum to <=1.899")
         period = round(16_000_000 * 256 / symbol_rate_hz)
@@ -128,12 +121,11 @@ class SingleCarrier:
         def iq16(v):
             return np.column_stack((v.real, v.imag)).__mul__(32767).round().astype("<i2").tobytes()
 
-        self.payload = struct.pack("<I4H", period, phases, span, len(c), missing_index) + iq16(c) + iq16(p)
+        self.payload = struct.pack("<I4H", period, phases, span, len(c), 0) + iq16(c) + iq16(p)
         self.symbol_rate_hz = 16_000_000 * 256 / period
         self.constellation = c.copy()
         self.pulse = p.copy()
         self.samples_per_symbol = phases
-        self.missing_index = missing_index
 
     @classmethod
     def from_payload(cls, payload):
@@ -144,15 +136,15 @@ class SingleCarrier:
         data = bytes(payload)
         if len(data) < 12:
             raise ValueError("Incomplete single-carrier table")
-        period, phases, span, count, missing = struct.unpack_from("<I4H", data)
+        period, phases, span, count, reserved = struct.unpack_from("<I4H", data)
         if (not 16384 <= period <= 4096000000 or phases not in (16, 32, 64, 128)
-                or not 1 <= span <= 8 or not 1 <= count <= 65 or (missing != 0xFFFF and missing >= count)
+                or not 1 <= span <= 8 or not 1 <= count <= 64 or reserved != 0
                 or len(data) != 12 + 4 * (count + span * phases + 1)
                 or ((span > 2 and period < 256000) or (span > 1 and period < 128000))):
             raise ValueError("Invalid single-carrier table")
         pairs = np.frombuffer(data, dtype="<i2", offset=12).reshape(-1, 2).astype(float)
         points, pulse = pairs[:count], pairs[count:]
-        if (np.any(np.hypot(points[:, 0], points[:, 1]) > 32768) or (missing != 0xFFFF and np.any(points[missing]))
+        if (np.any(np.hypot(points[:, 0], points[:, 1]) > 32768)
                 or np.any(np.hypot(pulse[:, 0], pulse[:, 1]) > 32768)
                 or max(sum(np.linalg.norm(pulse[k * phases + phase]) for k in range(span))
                        for phase in range(phases + 1)) > 1.9 * 32768
@@ -162,7 +154,6 @@ class SingleCarrier:
         result.payload = data
         result.symbol_rate_hz = 4096000000 / period
         result.samples_per_symbol = phases
-        result.missing_index = missing
         result.constellation = (points[:, 0] + 1j * points[:, 1]) / 32768
         result.pulse = (pulse[:, 0] + 1j * pulse[:, 1]) / 32768
         return result

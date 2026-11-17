@@ -334,7 +334,7 @@ transmission. A finite raw-IQ transfer looks like this::
 
    # tx is already prepared, calibrated and unmuted.
    # iq contains normalized complex samples at 8 kSa/s.
-   with tx.open_stream(mode="iq8", sample_rate_hz=8000,
+   with tx.open_stream(mode="cs8", sample_rate_hz=8000,
                        amplitude=0.1, steering=Beamspace(azimuth_deg=20)) as stream:
        stream.write(iq[:4096])
        stream.start()
@@ -350,7 +350,7 @@ headroom for the sum. The sensor limits the streamed contribution to the
 stored mixture's remaining I/Q headroom and reports clipping.
 
 Prefill at least 1024 IQ samples (or four constellation indices) before ``start()``.
-The same 128 KiB sensor FIFO holds 65536 IQ8 samples or 131072 decoded indices,
+The same 128 KiB sensor FIFO holds 65536 CS8 samples or 131072 decoded indices,
 giving about four seconds at 16 kSa/s or 0.52 seconds at 250 ksymbols/s. ``write()`` applies backpressure using the slowest
 sensor's FIFO credit and returns after submitting data to the transport. It
 does not guarantee delivery over UDP. Call it from a producer thread,
@@ -366,7 +366,7 @@ Data travels over the board's existing UDP or WebSocket stream connection;
 select it when opening the pool. OPEN, table configuration, ARM and CLOSE use
 HTTP. DATA and FINISH use the same stream transport, so the end marker follows
 the final data without waiting for potentially stale sensor snapshots. Each
-packet is broadcast once over the 3 Mbaud UART. Packets carry up to 512 IQ8
+packet is broadcast once over the 3 Mbaud UART. Packets carry up to 512 CS8
 samples or 1024 packed bytes (1044 bytes including the header).
 Periodic downlink reports supply accepted/consumed counters and FIFO capacity,
 missing/late units, rejected chunks, clipping and processing time. No HTTP
@@ -411,19 +411,16 @@ first; packing restarts in every packet.
 Every sensor sums overlapping pulses with its own beam weight and fractional delay.
 The web constellation presets use Gray labels and contain only modulation points.
 Missing symbols contribute zero without consuming a point. An explicit zero
-point is still allowed for deliberate pauses; legacy ``missing_index`` tables
-remain valid.
+point is allowed for deliberate pauses.
 
-``SingleCarrier(constellation, pulse, symbol_rate_hz=..., samples_per_symbol=32,
-missing_index=...)`` supports 1 to 65 points of magnitude at most one, 1–8 symbols
-of pulse history, and 16/32/64/128 table samples per symbol. The pulse includes
+``SingleCarrier(constellation, pulse, symbol_rate_hz=..., samples_per_symbol=32)``
+supports 1 to 64 points of magnitude at most one, 1–8 symbols of pulse history,
+and 16/32/64/128 table samples per symbol. The pulse includes
 both endpoints (``span * samples_per_symbol + 1`` complex coefficients). Its
 first sample corresponds to the symbol's origin; center a symmetric filter by
 including its causal delay. The overlapping pulse magnitudes must sum to at
 most 1.899. Coefficients and constellation points are quantized to complex Q15.
-The 65-entry limit still accepts saved 64-QAM tables with an explicit zero entry.
-New 64-QAM presets use 64 points and six bits per symbol. Omitting
-``missing_index`` uses implicit silence when the constellation has no zero point.
+64-QAM uses 64 points and six bits per symbol.
 The web UI chooses table resolution automatically; the Python API retains the
 resolution parameter for applications supplying their own pulse coefficients.
 Constellation and pulse tables are stored in PSRAM.
@@ -437,11 +434,11 @@ rate can reach 250000 baud; for example 50000, 100000, 125000, 200000 and 250000
 have compact timing banks. Arbitrary fractional periods may need a much larger
 bank and are rejected above 16000 baud. The host validates this memory bound.
 For a period ``P`` in Q8 replay samples and ``N`` constellation points, the bank
-needs ``4 * N * P / gcd(P, 8192)`` bytes. For example, 65 entries need 1.27 KiB at
-100 kbaud or 31.74 KiB at 16 kbaud. The FIFO separately reserves 128 KiB of PSRAM
-for 65536 IQ8 samples or 131072 decoded indices. Pulse-bank memory is released on close.
+needs ``4 * N * P / gcd(P, 8192)`` bytes. For example, 64 entries need 1.25 KiB at
+100 kbaud or 31.25 KiB at 16 kbaud. The FIFO separately reserves 128 KiB of PSRAM
+for 65536 CS8 samples or 131072 decoded indices. Pulse-bank memory is released on close.
 Static mixing also limits the bank to 12 KiB to leave cache
-space for the mixer and UART processing. For example, all 65 entries fit this
+space for the mixer and UART processing. For example, all 64 entries fit this
 mixed-scene limit at 50, 80 and 100 kbaud, but not at 16, 32 or 64 kbaud. Such
 configurations can still run alone; slower general reconstruction is another
 option when it meets the limits below.
@@ -517,7 +514,7 @@ in the host encoder across writes; do not concatenate independently encoded
 bursts without a gap. Absolute indices keep packet loss from changing the phase
 of all subsequent symbols.
 
-The controller's **TX Streaming** page configures IQ8 sample rates, constellation
+The controller's **TX Streaming** page configures CS8 sample rates, constellation
 presets, symbol rates and pulse shapes. Presets include BPSK, QPSK,
 8-PSK, 16-QAM, 64-QAM, RRC, raised cosine, rectangular, Gaussian and PSK31 pulses.
 Settings are saved on the controller; the browser never sends signal data.
@@ -530,11 +527,11 @@ a restart or scene replacement, reapply it before connecting a client.
 
 With the updated SDK installed, feed a file or live producer through stdin::
 
-   python -m espargos.tx_stream 192.168.1.2 --transport udp < samples.iq8
+   python -m espargos.tx_stream 192.168.1.2 --transport udp < samples.cs8
    python -m espargos.tx_stream 192.168.1.2 --transport websocket < symbols.u8
 
-IQ8 input is interleaved signed I8/Q8; indexed input is one unsigned byte per
-constellation point. The client loads the saved settings and beam weights,
+CS8 input is interleaved signed I8/Q8 (two bytes per complex sample); indexed
+input is one unsigned byte per constellation point. The client loads the saved settings and beam weights,
 prefills, unmutes and starts synchronized transmission. EOF finishes the stream;
 exiting the client mutes TX. It leaves RF settings and the prepared scene intact.
 The browser can be closed after saving.
@@ -550,9 +547,9 @@ Q15 ``table_hex``, UI preset metadata and volatile beam binding. Configuration
 uses ``POST /set_iq_tx_stream_config`` with five little-endian u32 words:
 ``0x31504654, format, input_rate_hz, ui_bytes, table_bytes``; then UTF-8 JSON UI
 metadata (at most 1024 bytes), padding to four-byte alignment, and the existing
-single-carrier TABLE bytes. IQ8 uses no table. An explicit save writes bounded
+single-carrier TABLE bytes. CS8 uses no table. An explicit save writes bounded
 chunks into NVS; it never starts a stream. Active sessions must close before
-settings change. The existing streaming wire protocol is unchanged.
+settings change.
 
 SSB audio
 ~~~~~~~~~
