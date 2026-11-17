@@ -90,7 +90,8 @@ class SingleCarrier:
 
     Pulse sample zero is the symbol's time origin. ``pulse`` contains
     ``span * samples_per_symbol + 1`` coefficients, including both endpoints.
-    Missing UDP symbols use the specified zero-valued constellation entry.
+    Missing symbols contribute zero without consuming a constellation index.
+    An explicit zero-valued ``missing_index`` remains supported for saved tables.
     """
 
     def __init__(self, constellation, pulse, *, symbol_rate_hz, samples_per_symbol=32, missing_index=None):
@@ -106,14 +107,13 @@ class SingleCarrier:
         span = (len(p) - 1) // phases
         if not np.all(np.isfinite(p)) or np.any(abs(p) > 1 + 1e-12):
             raise ValueError("Pulse coefficients must be finite with magnitude <=1")
-        if not np.isfinite(symbol_rate_hz) or not 1 <= symbol_rate_hz <= (100000 if span == 1 else 16000):
-            raise ValueError("Symbol rate must be 1..16000 baud, or up to 100000 for a one-symbol pulse")
+        if not np.isfinite(symbol_rate_hz) or not 1 <= symbol_rate_hz <= (250000 if span == 1 else 32000 if span == 2 else 16000):
+            raise ValueError("Use up to 250000 baud for one-symbol pulses, 32000 for two, or 16000 for longer pulses")
         if missing_index is None:
             zero = np.flatnonzero(c == 0)
-            if not len(zero):
-                raise ValueError("Include a zero constellation point for missing symbols")
-            missing_index = int(zero[0])
-        if not isinstance(missing_index, int) or not 0 <= missing_index < len(c) or c[missing_index] != 0:
+            missing_index = int(zero[0]) if len(zero) else 0xFFFF
+        if not isinstance(missing_index, int) or (missing_index != 0xFFFF and
+                (not 0 <= missing_index < len(c) or c[missing_index] != 0)):
             raise ValueError("missing_index must select the zero constellation point")
         if max(sum(abs(p[k * phases + phase]) for k in range(span)) for phase in range(phases + 1)) > 1.899:
             raise ValueError("Overlapping pulse magnitudes must sum to <=1.899")
@@ -122,8 +122,8 @@ class SingleCarrier:
         # sensor pulse bank. Include every phase visited by the 500 kSa/s grid.
         import math
         bank_bytes = period // math.gcd(period, 8192) * len(c) * 4
-        if symbol_rate_hz > 16000 and bank_bytes > 256 * 1024:
-            raise ValueError("Symbol timing exceeds the 256 KiB pulse bank; try 32000, 50000, 80000 or 100000 baud")
+        if span == 1 and symbol_rate_hz > 16000 and bank_bytes > 256 * 1024:
+            raise ValueError("Symbol timing exceeds the 256 KiB pulse bank; try 50000, 100000, 125000, 200000 or 250000 baud")
 
         def iq16(v):
             return np.column_stack((v.real, v.imag)).__mul__(32767).round().astype("<i2").tobytes()
@@ -145,18 +145,18 @@ class SingleCarrier:
         if len(data) < 12:
             raise ValueError("Incomplete single-carrier table")
         period, phases, span, count, missing = struct.unpack_from("<I4H", data)
-        if (not 40960 <= period <= 4096000000 or phases not in (16, 32, 64, 128)
-                or not 1 <= span <= 8 or not 1 <= count <= 65 or missing >= count
+        if (not 16384 <= period <= 4096000000 or phases not in (16, 32, 64, 128)
+                or not 1 <= span <= 8 or not 1 <= count <= 65 or (missing != 0xFFFF and missing >= count)
                 or len(data) != 12 + 4 * (count + span * phases + 1)
-                or (span > 1 and period < 256000)):
+                or ((span > 2 and period < 256000) or (span > 1 and period < 128000))):
             raise ValueError("Invalid single-carrier table")
         pairs = np.frombuffer(data, dtype="<i2", offset=12).reshape(-1, 2).astype(float)
         points, pulse = pairs[:count], pairs[count:]
-        if (np.any(np.hypot(points[:, 0], points[:, 1]) > 32768) or np.any(points[missing])
+        if (np.any(np.hypot(points[:, 0], points[:, 1]) > 32768) or (missing != 0xFFFF and np.any(points[missing]))
                 or np.any(np.hypot(pulse[:, 0], pulse[:, 1]) > 32768)
                 or max(sum(np.linalg.norm(pulse[k * phases + phase]) for k in range(span))
                        for phase in range(phases + 1)) > 1.9 * 32768
-                or (period < 256000 and 4 * count * (period // math.gcd(period, 8192)) > 256 * 1024)):
+                or (span == 1 and period < 256000 and 4 * count * (period // math.gcd(period, 8192)) > 256 * 1024)):
             raise ValueError("Invalid constellation or pulse coefficients")
         result = cls.__new__(cls)
         result.payload = data
@@ -171,7 +171,7 @@ class SingleCarrier:
     def psk31(cls):
         """BPSK31: absolute signs with a two-symbol raised-cosine pulse."""
         t = np.arange(65) / 32
-        return cls([-1, 1, 0], 0.5 * (1 - np.cos(np.pi * t)), symbol_rate_hz=31.25, missing_index=2)
+        return cls([-1, 1], 0.5 * (1 - np.cos(np.pi * t)), symbol_rate_hz=31.25)
 
 
 def psk31_symbols(text, *, preamble=32, postamble=32):

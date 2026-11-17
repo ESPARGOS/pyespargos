@@ -43,6 +43,7 @@ class Device:
         self.muted = False
         self.received = [bytearray(), bytearray()]
         self.frames = []
+        self.wire_frames = []
         self.sensors = [dict(available=True, boot_id=10 + a, session=0, state="closed", error=0, accepted=0, consumed=0, capacity=IQStream.CAPACITY, end=None, missing=0, late=0, table_received=0) for a in range(2)]
         self.board = SimpleNamespace(host="test", control=SimpleNamespace(fetch=self.send), send_stream_data=lambda data: self.send("data", data), subscribe_controller_messages=self.subscribe, unsubscribe_controller_messages=lambda sub: None)
 
@@ -67,14 +68,14 @@ class Device:
         if not self.callback:
             return
         self.sequence += 1
-        words = [0x32535449, 2, self.sequence, 0, 0, 0]
+        words = [0x32535449, 3, self.sequence, 0, 0, 0]
         for a in range(8):
             state = self.sensors[a] if a < 2 else dict(boot_id=10 + a, state="closed")
             words += [state["boot_id"], int(a < 2)]
             for key in self.fields:
                 value = state.get(key, 0)
                 if key == "state":
-                    value = ("closed", "buffering", "armed", "running", "drained", "fault").index(value)
+                    value = ("closed", "buffering", "armed", "running", "drained", "fault", "starved").index(value)
                 if key == "end" and value is None:
                     value = 0xFFFFFFFF
                 words.append(value)
@@ -91,24 +92,32 @@ class Device:
 
     def send(self, path, data):
         magic, version, command, mask, reserved, session, offset, count = struct.unpack_from("<IBBBBIII", data)
-        assert magic == 0x31535449 and version == 2 and not reserved
+        assert magic == 0x31535449 and version == 3 and not reserved
         payload = data[20:]
         self.frames.append((path, command, count))
+        self.wire_frames.append(bytes(data))
         for a, s in enumerate(self.sensors):
             if not mask & (1 << a):
                 continue
             if command == 1:
-                s.update(session=session, state="buffering", accepted=0, consumed=0, end=None)
+                s.update(session=session, state="buffering", accepted=0, consumed=0, end=None, missing=0, late=0, error=0, table_received=0)
+                self.packed = bool(struct.unpack_from("<I", payload, 8)[0] & 2)
+                self.bits = 8
                 self.stride = 2 if struct.unpack_from("<I", payload)[0] == 1 else 1
+                if self.stride == 1: s["capacity"] = 2 * IQStream.CAPACITY
+                elif s["capacity"] == 2 * IQStream.CAPACITY: s["capacity"] = IQStream.CAPACITY
             elif command == 2:
+                decoded = payload
+                if self.packed:
+                    decoded = bytes(sum(((payload[(k*self.bits+j)//8] >> ((k*self.bits+j)%8)) & 1) << j for j in range(self.bits)) for k in range(count))
                 if self.drop == (a, offset):
                     self.drop = None
                     continue
                 if offset >= s["accepted"]:
-                    assert offset + count - s["consumed"] <= IQStream.CAPACITY
+                    assert offset + count - s["consumed"] <= s["capacity"]
                     gap = offset - s["accepted"]
                     self.received[a].extend(bytes(gap * self.stride))
-                    self.received[a].extend(payload)
+                    self.received[a].extend(decoded)
                     s["missing"] += gap
                     s["accepted"] = offset + count
                 else:
@@ -124,6 +133,8 @@ class Device:
             elif command == 5:
                 s["state"] = "closed"
             elif command == 6:
+                if offset == 0:
+                    self.bits = max(1, (struct.unpack_from("<H", payload, 8)[0] - 1).bit_length())
                 s["table_received"] = offset + count
         self.publish()
         return b"sent"
@@ -182,7 +193,7 @@ class StreamTests(TestCase):
         stream.start()
         d.stuck = True
         with self.assertRaises(TimeoutError):
-            stream.write(bytes(100000), timeout=0.5)
+            stream.write(bytes(200000), timeout=0.5)
         self.assertTrue(stream.closed)
 
     def test_generic_symbols_and_pulse_table(self):
@@ -197,8 +208,7 @@ class StreamTests(TestCase):
             self.assertEqual(d.sensors[0]["table_received"], len(modulation.payload))
             with self.assertRaises(ValueError):
                 stream.write(bytes([3]))
-        with self.assertRaises(ValueError):
-            SingleCarrier([1, -1], [1] * 33, symbol_rate_hz=1000)
+        self.assertEqual(SingleCarrier([1, -1], [1] * 33, symbol_rate_hz=1000).missing_index, 0xFFFF)
 
     def test_fast_pulse_limits_and_ordered_finish(self):
         from espargos.stream_sources import SingleCarrier
@@ -208,9 +218,12 @@ class StreamTests(TestCase):
             stream.write(bytes(2000))
             stream.finish()
         frames = [f for f in self.device.frames if f[1] in (2, 4)]
-        self.assertEqual(frames, [("data", 2, 1024), ("data", 2, 976), ("data", 4, 0)])
+        self.assertEqual(frames, [("data", 2, 2000), ("data", 4, 0)])
+        two_symbols = SingleCarrier([-.5, .5], [.3] * 65, symbol_rate_hz=32000)
+        self.assertEqual(SingleCarrier.from_payload(two_symbols.payload).symbol_rate_hz, 32000)
         for points, pulse, rate in [([0]*66, [1]*33, 1000), ([0], [1]*289, 1000),
-                                     ([0], [1]*65, 50000), ([.5, 0], [1]*33, 99900)]:
+                                     ([0], [1]*65, 50000), ([.5, 0], [1]*33, 99900),
+                                     ([0], [.3]*65, 32001), ([0], [.1]*129, 16001)]:
             with self.subTest(points=len(points), pulse=len(pulse), rate=rate), self.assertRaises(ValueError):
                 SingleCarrier(points, pulse, symbol_rate_hz=rate)
 
@@ -232,6 +245,75 @@ class StreamTests(TestCase):
         self.assertEqual(len(loaded.constellation), 65)
         self.assertEqual(loaded.missing_index, 64)
         self.assertEqual(loaded.payload, largest.payload)
+
+    def test_packed_packets_restart_bit_alignment(self):
+        from espargos.stream_sources import SingleCarrier
+
+        mod = SingleCarrier([-0.5, 0.5], [1] * 33, symbol_rate_hz=250000)
+        with IQStream(self.device.tx, mode="single_carrier", modulation=mod) as stream:
+            stream.write(bytes([1, 0, 1]))
+            stream.write(bytes([0, 1, 1, 0, 1]))
+            data = [f for f in self.device.wire_frames if f[5] == 2]
+            self.assertEqual([f[20:] for f in data], [b"\x05", b"\x16"])
+            self.assertEqual([struct.unpack_from("<II", f, 12) for f in data], [(0, 3), (3, 5)])
+            self.assertEqual(self.device.received[0], bytes([1,0,1,0,1,1,0,1]))
+
+    def test_underrun_recovers_every_sensor_on_original_symbol_grid(self):
+        from espargos.stream_sources import SingleCarrier
+
+        d = self.device
+        mod = SingleCarrier([-.5, .5], [.25] * 65, symbol_rate_hz=1234.5)
+        with IQStream(d.tx, mode="single_carrier", modulation=mod) as stream:
+            stream.write(bytes(64));stream.start()
+            old_session, old_origin = stream.session, stream.start_sample * 256
+            original_lock = stream._lock
+            d.sensors[0].update(state="starved", missing=1234)
+            d.publish()
+            for sensor in d.tx_state["sensors"]:
+                sensor["sample_position"] += 13000000
+            stream.write(bytes([1]) * 256)
+            self.assertNotEqual(stream.session, old_session)
+            self.assertIs(stream._lock, original_lock)
+            self.assertEqual(stream.resumptions, 1)
+            self.assertEqual(stream.previous_missing, 1234)
+            period = struct.unpack_from("<I", mod.payload)[0]
+            self.assertEqual((stream.start_sample * 256 - stream.start_phase_q8 - old_origin) % period, 0)
+            self.assertEqual([s["state"] for s in d.sensors], ["running", "running"])
+            self.assertEqual(d.received[0][-256:], bytes([1]) * 256)
+            self.assertEqual(d.received[0], d.received[1])
+            arms = [f for f in d.wire_frames if f[5] == 3]
+            self.assertEqual(len(arms), 2)
+            self.assertEqual(struct.unpack_from("<I", arms[-1], 64)[0], stream.start_phase_q8)
+            stream.finish();stream.wait()
+
+    def test_bulk_writes_wait_for_full_packet_credit(self):
+        d = self.device
+        for sensor in d.sensors:
+            sensor["capacity"] = 5000
+        d.publish()
+        with IQStream(d.tx) as stream:
+            stream.write(bytes(4096));stream.start()
+            stream.write(bytes(60000))
+            frames = [count for _, command, count in d.frames if command == 2]
+            self.assertTrue(all(count == 512 for count in frames[:-1]))
+            self.assertEqual(d.received[0], bytes(64096))
+
+    def test_packed_bpsk_fills_payload_with_more_symbols(self):
+        from espargos.stream_sources import SingleCarrier
+
+        d = self.device
+        mod = SingleCarrier([-.5, .5], [1] * 33, symbol_rate_hz=250000)
+        for sensor in d.sensors:
+            sensor["capacity"] = 20000
+        d.publish()
+        with IQStream(d.tx, mode="single_carrier", modulation=mod) as stream:
+            stream.write(bytes([0, 1]) * 8192)
+            stream.start()
+            stream.write(bytes([1, 0]) * 20000)
+            packets = [f for f in d.wire_frames if f[5] == 2]
+            self.assertTrue(all(len(f) == 1044 for f in packets[:-1]))
+            self.assertTrue(all(struct.unpack_from("<I", f, 16)[0] == 8192 for f in packets[:-1]))
+            self.assertEqual(d.received[0], bytes([0, 1]) * 8192 + bytes([1, 0]) * 20000)
 
     def test_stale_feedback_stops_uploads(self):
         d = self.device
