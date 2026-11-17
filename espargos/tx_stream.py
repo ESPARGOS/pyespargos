@@ -13,18 +13,19 @@ def transmit(source, pool):
     with tx.open_configured_stream() as stream:
         stride = stream.stride
         minimum = 1024 if stream.mode == "iq8" else 4
-        prefill = max(minimum, min(16384, int(stream.sample_rate_hz * .1)))
+        prefill = max(minimum, min(stream.capacity // 2, int(stream.sample_rate_hz * .1)))
         initial = source.read(prefill * stride)
         if len(initial) < minimum * stride:
             raise ValueError(f"Input needs at least {minimum} complete samples or indices")
         stream.write(initial)
+        sent = len(initial) // stride
         tx.mute(False)
         stream.start()
         # read1 returns available bytes without waiting for a full block. It
         # batches files/pipes efficiently while keeping slow live sources
         # responsive. Retain a split IQ pair across arbitrary pipe reads.
         read = getattr(source, "read1", None)
-        size = 4096 if read is not None else max(1, min(4096 // stride, int(stream.sample_rate_hz * .02))) * stride
+        size = stream.chunk * stride if read is not None else max(1, min(stream.chunk, int(stream.sample_rate_hz * .02))) * stride
         read = read or source.read
         pending = b""
         while True:
@@ -37,14 +38,15 @@ def transmit(source, pool):
             complete = len(data) // stride * stride
             if complete:
                 stream.write(data[:complete])
+                sent += complete // stride
             pending = data[complete:]
         stream.finish()
-        timeout = max(10, (min(stream.offset, stream.CAPACITY) + 8) / stream.sample_rate_hz + 2)
+        timeout = max(10, (min(stream.offset, stream.capacity) + 8) / stream.sample_rate_hz + 2)
         stream.wait(timeout=timeout)
         states = stream.status()
-        missing = max(s["missing"] for s in states)
+        missing = stream.previous_missing + max(s["missing"] for s in states)
         clipped = max(s["clipped"] for s in states)
-        print(f"Sent {stream.offset} units; {missing} missing, {clipped} clipped.", file=sys.stderr)
+        print(f"Sent {sent} units; {missing} missing, {clipped} clipped; {stream.resumptions} resumptions.", file=sys.stderr)
 
 
 def main(argv=None):

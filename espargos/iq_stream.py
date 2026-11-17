@@ -19,7 +19,9 @@ class IQStream:
 
     Use ``Pool.tx.open_stream()``. IQ8 accepts interleaved signed I8/Q8 bytes,
     an (N, 2) int8 array, or normalized complex samples. Single-carrier mode
-    accepts one byte per constellation index; pulse shaping runs on the sensors.
+    accepts one byte per constellation index and packs indices on the wire;
+    pulse shaping runs on the sensors. An input underrun becomes silence. A
+    subsequent write prefills a new session and rejoins the shared symbol grid.
 
     Existing cyclic beams remain additive contributions. Their configuration,
     RF settings and calibration must stay fixed until close(). Streaming
@@ -29,13 +31,20 @@ class IQStream:
     RATE = 16_000_000
     CAPACITY = 65536
 
-    def __init__(self, transmitter, *, mode="iq8", sample_rate_hz=16000, amplitude=0.1, antennas=None, steering=None, modulation=None):
+    def __init__(self, transmitter, *, mode="iq8", sample_rate_hz=16000, amplitude=0.1, antennas=None, steering=None, modulation=None, packed=True):
         self.transmitter = transmitter
         self.closed = False
         self.started = self.finished = False
         self.offset = 0
+        self._auto_start = False
+        self._phase_origin = None
+        self.resumptions = 0
+        self.previous_missing = 0
         self.session = secrets.randbits(32) or 1
-        self._lock = threading.RLock()
+        # Recovery reinitializes the session while write() still owns this
+        # lock. Keep the same lock so concurrent callers remain serialized.
+        if not hasattr(self, "_lock"):
+            self._lock = threading.RLock()
         self.targets = []
         self._feedback = {}
         self._subscriptions = []
@@ -60,10 +69,16 @@ class IQStream:
         self.steering = steering
         self.sample_rate_hz = int(sample_rate_hz) if mode == "iq8" else modulation.symbol_rate_hz
         self.stride = 2 if mode == "iq8" else 1
-        self.chunk = 1024 // self.stride
+        self.capacity = self.CAPACITY if mode == "iq8" else 2 * self.CAPACITY
+        self.packed = mode == "single_carrier" and packed
+        self.bits = max(1, (len(modulation.constellation) - 1).bit_length()) if self.packed else 8 * self.stride
+        self.chunk = 8192 // self.bits
+        self._settings = dict(mode=mode, sample_rate_hz=sample_rate_hz, amplitude=amplitude,
+                              antennas=antennas, steering=steering, modulation=modulation, packed=packed)
         transmitter.read()
         transmitter.signals._check_beam_calibration()
         self.antennas = transmitter.signals._antennas(antennas)
+        self._settings["antennas"] = tuple(self.antennas)
         if isinstance(steering, Beamspace):
             states = [CalibrationState.from_tx_status(a.host, transmitter.states[bi]["sensors"][a.antid]) for bi, b in enumerate(transmitter.boards) for a in self.antennas if a.host == b.host]
             transmitter.owner.calibrations.require_coherent(states)
@@ -95,7 +110,7 @@ class IQStream:
                     raise ValueError("Stream weights must have magnitude ≤1 and delays within ±8192 replay samples")
                 target = (board, ids, tuple(state["sensors"][a]["boot_id"] for a in ids))
                 self.targets.append(target)
-                payload = struct.pack("<4I24f", 1 if mode == "iq8" else 2, int(sample_rate_hz) if mode == "iq8" else 0, 1, len(modulation.payload) if modulation else 0, *weights.real, *weights.imag, *delays)
+                payload = struct.pack("<4I24f", 1 if mode == "iq8" else 2, int(sample_rate_hz) if mode == "iq8" else 0, 1 | (2 if self.packed else 0), len(modulation.payload) if modulation else 0, *weights.real, *weights.imag, *delays)
                 self._send(target, 1, payload=payload)
             self._wait(lambda states: all(s.get("session") == self.session and s["state"] == "buffering" for s in states), 5, opening=True)
             if modulation:
@@ -110,14 +125,14 @@ class IQStream:
 
     def _send(self, target, command, offset=0, units=0, payload=b""):
         board, ids, _ = target
-        header = struct.pack("<IBBBBIII", 0x31535449, 2, command, sum(1 << a for a in ids), 0, self.session, offset, units)
+        header = struct.pack("<IBBBBIII", 0x31535449, 3, command, sum(1 << a for a in ids), 0, self.session, offset, units)
         if command in (2, 4):
             now = time.monotonic()
             time.sleep(max(0, self._next_send.get(board, now) - now))
             board.send_stream_data(header + payload)
             # Small live blocks also need a packet-rate bound when a file or
             # pipe can supply them faster than the configured source clock.
-            spacing = max(0.002, (len(header) + len(payload) + 32) / 120000)
+            spacing = max(0.002, (len(header) + len(payload) + 32) / 220000)
             self._next_send[board] = time.monotonic() + spacing
             return None
         return board.control.fetch("iq_tx_stream", header + payload)
@@ -126,7 +141,7 @@ class IQStream:
         if len(data) != 728:
             return
         words = struct.unpack("<182I", data)
-        if words[:2] != (0x32535449, 2):
+        if words[:2] != (0x32535449, 3):
             return
         names = (
             "session",
@@ -155,7 +170,7 @@ class IQStream:
             pos = 6 + 22 * a
             state = dict(zip(names, words[pos + 2 : pos + 22]))
             state.update(antid=a, boot_id=words[pos], available=bool(words[pos + 1]))
-            state["state"] = ("closed", "buffering", "armed", "running", "drained", "fault")[state["state"]] if state["state"] < 6 else "unknown"
+            state["state"] = ("closed", "buffering", "armed", "running", "drained", "fault", "starved")[state["state"]] if state["state"] < 7 else "unknown"
             if state["end"] == 0xFFFFFFFF:
                 state["end"] = None
             sensors.append(state)
@@ -259,19 +274,24 @@ class IQStream:
         Return after transport submission, not delivery acknowledgement. UDP
         losses become zero-valued source units without retransmission.
         Before start(), prefill at least 1024 IQ samples or four indices.
-        After start(), keep calling write() before the FIFO runs empty.
+        After an underrun, new writes buffer a replacement session. Old packets
+        are discarded; resumption is scheduled on a common symbol boundary.
         """
         with self._lock:
             if self.closed or self.finished:
                 raise RuntimeError("Stream is closed or already finished")
             data = self._encode(samples)
             count = len(data) // self.stride
+            if not count:
+                return 0
+            if self.started and any(s["state"] == "starved" for s in self._states()):
+                self._recover()
             begin, end = self.offset, self.offset + count
             if end > 0x7FFFFFFF:
                 raise ValueError("Stream exceeds the protocol's sample counter range")
             self._timeout(timeout)
             try:
-                if not self.started and end > min(s["capacity"] for s in self._states()):
+                if not self.started and not self._auto_start and end > min(s["capacity"] for s in self._states()):
                     raise ValueError("Prefill exceeds FIFO capacity; start before writing more")
                 return self._write_data(data, begin, end, count, timeout)
             except BaseException as error:
@@ -283,9 +303,26 @@ class IQStream:
         sent = begin
         while sent < end:
             states = self._states()
+            if self.started and any(s["state"] == "starved" for s in states):
+                self._recover()
+                self.write(data[(sent - begin) * self.stride:], timeout=max(.1, deadline - time.monotonic()))
+                return count
             consumed = min(s["consumed"] for s in states)
             capacity = min(s["capacity"] for s in states)
+            prefill = min(capacity, max(1024 if self.mode == "iq8" else 4, math.ceil(self.sample_rate_hz * .1)))
             limit = min(end, consumed + capacity, sent + 8 * self.chunk)
+            if self._auto_start and not self.started:
+                limit = min(limit, prefill)
+                if sent >= prefill:
+                    self.offset = sent
+                    self.start()
+                    self._auto_start = False
+                    continue
+            # Do not fragment bulk writes whenever a small credit update
+            # arrives. Wait for one full payload unless this is the write's
+            # final/live fragment or a recovery prefill boundary.
+            if limit < end and not (self._auto_start and not self.started):
+                limit = sent + (limit - sent) // self.chunk * self.chunk
             if time.monotonic() >= deadline:
                 raise TimeoutError("Stream write timed out waiting for FIFO credit")
             if sent < limit:
@@ -294,15 +331,38 @@ class IQStream:
             else:
                 time.sleep(0.005)
         self.offset = end
+        if self._auto_start and not self.started and end >= prefill:
+            self.start()
+            self._auto_start = False
         return count
 
     def _send_data(self, data, begin, offset, end):
         while offset < end:
             units = min(self.chunk, end - offset)
             payload = data[(offset - begin) * self.stride : (offset - begin + units) * self.stride]
+            if self.packed:
+                indices = np.frombuffer(payload, dtype=np.uint8)
+                bits = ((indices[:, None] >> np.arange(self.bits, dtype=np.uint8)) & 1).reshape(-1)
+                payload = np.packbits(bits, bitorder="little").tobytes()
             for target in self.targets:
                 self._send(target, 2, offset, units, payload)
             offset += units
+
+    def _recover(self):
+        """Discard stale packets and rejoin the original symbol grid together.
+
+        CLOSE keeps cyclic replay running. OPEN resets only the source FIFO;
+        ARM is sent after every sensor acknowledges the replacement prefill.
+        """
+        settings = self._settings
+        origin, resumptions = self._phase_origin, self.resumptions
+        missing = self.previous_missing + max((s["missing"] for s in self._states()), default=0)
+        self.close()
+        self.__init__(self.transmitter, **settings)
+        self._phase_origin = origin
+        self.resumptions = resumptions + 1
+        self.previous_missing = missing
+        self._auto_start = True
 
     def start(self, *, lead_time=0.5):
         """Arm a common future source origin on the calibrated replay grid.
@@ -339,12 +399,21 @@ class IQStream:
             if len(sequences) != 1:
                 raise ValueError("Selected sensors do not share a synchronization sequence")
             self.start_sample = int(max(positions)) + math.ceil(lead_time * self.RATE)
+            self.start_phase_q8 = 0
+            period = round(4096000000 / self.sample_rate_hz)
+            if self._phase_origin is not None:
+                symbol = max(0, (self.start_sample * 256 - self._phase_origin + period - 1) // period)
+                origin = self._phase_origin + symbol * period
+                self.start_sample = (origin + 255) // 256
+                self.start_phase_q8 = self.start_sample * 256 - origin
+            else:
+                self._phase_origin = self.start_sample * 256
             if self.start_sample >= 2**53:
                 raise ValueError("Scheduled start exceeds the sample-clock range")
             try:
                 for target, epochs in plans:
-                    self._send(target, 3, payload=struct.pack("<QI8I", self.start_sample, next(iter(sequences)), *epochs))
-                self._wait(lambda states: all(s["state"] in ("running", "drained") for s in states), lead_time)
+                    self._send(target, 3, payload=struct.pack("<QI8II", self.start_sample, next(iter(sequences)), *epochs, self.start_phase_q8))
+                self._wait(lambda states: all(s["state"] in ("running", "drained", "starved") for s in states), lead_time)
             except BaseException as error:
                 self._abort(error)
                 raise
@@ -357,6 +426,9 @@ class IQStream:
             if self.closed:
                 raise RuntimeError("Stream is closed")
             try:
+                if self._auto_start and not self.started:
+                    self.start()
+                    self._auto_start = False
                 # Queue after the final DATA on the same transport. Waiting for
                 # all sensor snapshots can exhaust the FIFO at high rates.
                 for target in self.targets:

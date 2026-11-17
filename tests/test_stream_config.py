@@ -16,7 +16,7 @@ class StreamConfigTests(TestCase):
         loaded = SingleCarrier.from_payload(original.payload)
         self.assertEqual(loaded.payload, original.payload)
         self.assertEqual(loaded.symbol_rate_hz, 31.25)
-        self.assertEqual(loaded.missing_index, 2)
+        self.assertEqual(loaded.missing_index, 0xFFFF)
         for data in (b"", original.payload[:-1], struct.pack("<I", 0)+original.payload[4:],
                      original.payload[:10]+struct.pack("<H", 9)+original.payload[12:]):
             with self.assertRaises(ValueError):
@@ -61,7 +61,10 @@ class StreamConfigTests(TestCase):
             mode="single_carrier"
             stride=1
             sample_rate_hz=31.25
-            CAPACITY=65536
+            capacity=65536
+            chunk=4096
+            previous_missing=0
+            resumptions=0
             offset=0
             def __enter__(self): return self
             def __exit__(self,*args): events.append("close")
@@ -92,7 +95,10 @@ class StreamConfigTests(TestCase):
             mode="iq8"
             stride=2
             sample_rate_hz=8000
-            CAPACITY=65536
+            capacity=65536
+            chunk=4096
+            previous_missing=0
+            resumptions=0
             offset=0
             def __enter__(self):return self
             def __exit__(self,*args):pass
