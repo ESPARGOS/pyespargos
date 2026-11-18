@@ -86,7 +86,7 @@ class IQTransmitter:
         """
         from .calibration import Antenna
         from .steering import Weights
-        from .stream_sources import SingleCarrier
+        from .stream_sources import SingleCarrier, GFSK
 
         with self.owner._lock:
             profiles = [_rpc(board, "get_iq_tx_stream_config") for board in self.boards]
@@ -113,10 +113,13 @@ class IQTransmitter:
                     antennas.append(antenna)
                     values[antenna] = complex(beam["real"][a], beam["imag"][a])
                     delays[antenna] = beam["delay_samples"][a] / 16_000_000
-            modulation = SingleCarrier.from_payload(bytes.fromhex(first["table_hex"])) if first["mode"] == "single_carrier" else None
-            return self.open_stream(mode=first["mode"], sample_rate_hz=first["sample_rate_hz"],
+            modulation = ({"single_carrier":SingleCarrier,"gfsk":GFSK}[first["mode"]].from_payload(bytes.fromhex(first["table_hex"]))
+                          if first["mode"] != "cs8" else None)
+            stream = self.open_stream(mode=first["mode"], sample_rate_hz=first["sample_rate_hz"],
                                     modulation=modulation, amplitude=1, antennas=antennas,
-                                    steering=Weights(values, delays_s=delays))
+                                    steering=Weights(values, delays_s=delays),
+                                    **({"packet_gap_us":first.get("ui",{}).get("gfsk_gap",20000)} if first["mode"]=="gfsk" else {}))
+            return stream
 
     def authorized(self):
         return self._parallel(lambda i, b: _rpc(b, "get_transmit_authorization")["authorized"])
