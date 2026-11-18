@@ -354,7 +354,7 @@ One reserved 512 KiB PSRAM workspace serves the mutually exclusive IQ modes:
 RX signal snapshots, TX FIFOs and packet recorder buffers. WiFi IQ uses it for
 capture slots before allocating any remaining records. The TX formats hold
 65536 CS8 samples (about four seconds at 16 kSa/s), 524288 Single Carrier indices,
-or 262144 GFSK symbol ticks. Sharing this workspace avoids large new contiguous
+or 524288 GFSK symbol ticks. Sharing this workspace avoids large new contiguous
 allocations after mode changes. ``write()`` applies backpressure using the slowest
 sensor's FIFO credit and returns after submitting data to the transport. It
 does not guarantee delivery over UDP. Call it from a producer thread,
@@ -523,12 +523,16 @@ Packet GFSK
 ~~~~~~~~~~~
 
 ``GFSK.le1m()`` selects 1 Mbaud, Gaussian BT 0.5, modulation index 0.5 and a
-four-symbol filter span. ``GFSK(...)`` also accepts exact divisors of 16 MSa/s
-from 125 kbaud through 1.6 Mbaud, BT 0.2 through 1, spans two/four, and modulation
+four-symbol filter span. ``GFSK.le2m()`` selects the same shaping at 2 Mbaud.
+``GFSK(...)`` also accepts exact divisors of 16 MSa/s
+from 125 kbaud through 2 Mbaud, BT 0.2 through 1, spans two/four, and modulation
 indices in steps of 1/16. The combination must fit the 8 KiB native pulse
-bank; for example lower symbol rates may require a shorter filter span or a
-larger modulation index. The phase/context waveform bank is precomputed once;
-RF rendering copies it with the same beam weight and delay rules as Single Carrier.
+bank and its 128-state encoder. Lower symbol rates may require a shorter filter
+span or a larger modulation index. The 2 Mbaud setting supports packet bursts
+with silent pauses, not sustained gapless 2 Mbit/s input. Use UDP for frequent
+packets, as WebSocket needs longer pauses. The phase/context
+waveform bank is precomputed once. RF rendering copies it with the same beam
+weight and delay rules as Single Carrier.
 The input encoder expands four bits per lookup and stores one byte per symbol
 clock tick. Its phase-independent lookup table occupies at most 1 KiB.
 
@@ -536,8 +540,8 @@ clock tick. Its phase-independent lookup table occupies at most 1 KiB.
 packet. It does not add protocol headers. Each transport datagram contains one
 whole RF packet and its following silent gap; loss produces silence rather
 than a partially transmitted packet. Packets reset their phase and Gaussian
-history deterministically. The sensor's 256 KiB PSRAM FIFO holds 262144 symbol
-clock ticks, including gaps (about 262 ms at LE 1M).
+history deterministically. The sensor's 512 KiB PSRAM FIFO holds 524288 symbol
+clock ticks, including gaps (about 524 ms at LE 1M or 262 ms at LE 2M).
 
 For BLE, ``ble_le1m_packet`` adds the preamble, access address, CRC and channel
 whitening to a supplied PDU. Defaults are for advertising; connection PDUs need
@@ -556,6 +560,12 @@ For example, after configuring the selected sensors at 2402 MHz::
        tx.mute(False)
        stream.start()
        stream.wait()
+
+For LE 2M, use ``GFSK.le2m()`` and ``ble_le2m_packet()``. The latter adds
+the required 16-bit preamble and defaults to channel 0 (2404 MHz). Supply an
+extended advertising or data-channel PDU on channels 0 through 36. LE 2M is
+not available for legacy advertising on channels 37 through 39. Connection
+PDUs need their own access address and CRC initializer, just as with LE 1M.
 
 The gap must fit, together with the packet, within 65536 symbol ticks. Prefill
 a substantial part of the FIFO for sustained live input, so the downlink FIFO

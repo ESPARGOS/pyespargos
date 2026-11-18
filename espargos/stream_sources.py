@@ -219,7 +219,7 @@ class GFSK:
     """Packet GFSK synthesized on sensors; LE 1M parameters by default.
 
     Supply complete air bits to IQStream.write_packet(). Symbol rates must
-    divide 16 MSa/s, from 125 kbaud to 1.6 Mbaud. Modulation index is specified
+    divide 16 MSa/s, from 125 kbaud to 2 Mbaud. Modulation index is specified
     in sixteenths. Packets reset phase deterministically and do not share FIR
     history, so dropped packets cannot corrupt their successors.
     """
@@ -229,8 +229,8 @@ class GFSK:
     ):
         import struct
 
-        if not np.isfinite(symbol_rate_hz) or not 125000 <= symbol_rate_hz <= 1600000:
-            raise ValueError("GFSK rate must be between 125000 and 1600000 baud")
+        if not np.isfinite(symbol_rate_hz) or not 125000 <= symbol_rate_hz <= 2000000:
+            raise ValueError("GFSK rate must be between 125000 and 2000000 baud")
         samples = round(16_000_000 / symbol_rate_hz)
         if abs(samples * symbol_rate_hz - 16_000_000) > 0.001:
             raise ValueError("GFSK rate must divide 16 MSa/s exactly")
@@ -248,6 +248,8 @@ class GFSK:
 
         span = int(span)
         states = (32 // math.gcd(round(modulation_index * 16), 32)) * (1 << (span + 1))
+        if states > 128:
+            raise ValueError("Use a larger modulation index or shorter Gaussian span")
         if states * samples * 4 > 8 * 1024:
             raise ValueError("GFSK configuration exceeds the 8 KiB native pulse bank")
         self.symbol_rate_hz = 16_000_000 / samples
@@ -261,6 +263,11 @@ class GFSK:
     @classmethod
     def le1m(cls):
         return cls()
+
+    @classmethod
+    def le2m(cls):
+        """LE 2M shaping at 2 Mbaud, BT 0.5 and modulation index 0.5."""
+        return cls(symbol_rate_hz=2_000_000)
 
     @classmethod
     def from_payload(cls, payload):
@@ -315,3 +322,17 @@ def ble_le1m_packet(pdu, *, channel=37, access_address=0x8E89BED6, crc_init=0x55
         + access_address.to_bytes(4, "little")
         + encoded
     )
+
+
+def ble_le2m_packet(pdu, *, channel=0, access_address=0x8E89BED6, crc_init=0x555555):
+    """Build LE 2M air bytes with a 16-bit preamble, CRC and whitening.
+
+    Use extended advertising or a connection's data-channel PDU. LE 2M is
+    not supported by legacy advertising. No scheduling or hopping is added.
+    """
+    if not isinstance(channel, int) or not 0 <= channel <= 36:
+        raise ValueError("LE 2M uses data or secondary advertising channels 0..36")
+    air = ble_le1m_packet(
+        pdu, channel=channel, access_address=access_address, crc_init=crc_init
+    )
+    return air[:1] + air

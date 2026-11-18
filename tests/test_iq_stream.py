@@ -104,7 +104,7 @@ class Device:
                 self.bits = 8
                 self.format=struct.unpack_from("<I",payload)[0]
                 self.stride = 1 if self.format==2 else 2
-                s["capacity"] = IQStream.CAPACITY * {1:1,2:8,3:4}[self.format]
+                s["capacity"] = IQStream.CAPACITY * {1:1,2:8,3:8}[self.format]
             elif command == 2:
                 decoded = payload
                 if self.stride == 1:
@@ -183,7 +183,7 @@ class StreamTests(TestCase):
     def test_gfsk_atomic_packets_and_loss(self):
         air=ble_le1m_packet(bytes.fromhex("0206475250534502"))
         with IQStream(self.device.tx,mode="gfsk",modulation=GFSK.le1m()) as stream:
-            self.assertEqual(stream.capacity,262144)
+            self.assertEqual(stream.capacity,524288)
             self.device.drop=(1,0)
             self.assertEqual(stream.write_packet(air,gap_us=1000),len(air)*8)
             units=len(air)*8+1000
@@ -215,8 +215,38 @@ class StreamTests(TestCase):
             self.assertEqual(packet.flags,3)
             self.assertEqual(packet.prefix,pdu)
 
+    def test_le2m_air_bytes_decode_independently(self):
+        from espargos.ble_decoder import decode
+        from espargos.stream_sources import ble_le2m_packet
+
+        pdu = bytes.fromhex("07080701475250534502")  # AUX_ADV_IND with AdvA.
+        for channel in [0, 12, 36]:
+            air = ble_le2m_packet(pdu, channel=channel)
+            one_m = ble_le1m_packet(pdu, channel=channel)
+            self.assertEqual(air, one_m[:1] + one_m)
+            bits = np.unpackbits(np.frombuffer(air, np.uint8), bitorder="little") * 2. - 1
+            t = np.arange(-16, 17) / 4
+            taps = np.exp(-2 * (np.pi * .5 * t) ** 2 / np.log(2))
+            taps /= taps.sum()
+            levels = np.pad(np.repeat(bits, 4), (16, 16), mode="edge")
+            frequency = np.convolve(levels, taps, "same")[16:-16]
+            phase = -np.cumsum(frequency) * 2 * np.pi * .25 / 4 + np.pi / 2 * np.arange(len(frequency))
+            z = np.pad(150 * np.exp(1j * phase), (160, 64))
+            raw = ((np.rint(z.real).astype(np.int32) & 1023) |
+                   ((np.rint(z.imag).astype(np.int32) & 1023) << 10)).astype(np.uint32)
+            packet = decode(raw, 4, channel, 1)
+            self.assertIsNotNone(packet)
+            self.assertEqual(packet.flags, 3)
+            self.assertEqual(packet.prefix, pdu)
+        self.assertEqual(GFSK.le2m().symbol_rate_hz, 2_000_000)
+        with self.assertRaises(ValueError):
+            ble_le2m_packet(pdu, channel=37)
+        for span, index in [(4, .25), (2, 1 / 16)]:
+            with self.assertRaises(ValueError):
+                GFSK(symbol_rate_hz=2_000_000, span=span, modulation_index=index)
+
     def test_gfsk_configuration_roundtrip(self):
-        for rate in [125000,250000,500000,1000000,16000000/12,1600000]:
+        for rate in [125000,250000,500000,1000000,16000000/12,1600000,2000000]:
             g=GFSK(symbol_rate_hz=rate,span=2,modulation_index=1)
             self.assertEqual(GFSK.from_payload(g.payload).payload,g.payload)
         for params in [dict(symbol_rate_hz=500000),dict(bt=float("nan")),dict(span=3),dict(symbol_rate_hz=900000),dict(modulation_index=.51),dict(symbol_rate_hz=125000,modulation_index=1/16)]:
@@ -235,7 +265,7 @@ class StreamTests(TestCase):
         with self.assertRaises(ValueError):
             SingleCarrier([-1, 1], np.ones(33), symbol_rate_hz=1600001)
         with self.assertRaises(ValueError):
-            GFSK(symbol_rate_hz=1600001)
+            GFSK(symbol_rate_hz=2000001)
 
     def test_cs8_uses_raw_signed_byte_pairs(self):
         with IQStream(self.device.tx, mode="cs8") as stream:
