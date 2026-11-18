@@ -350,9 +350,12 @@ headroom for the sum. The sensor limits the streamed contribution to the
 stored mixture's remaining I/Q headroom and reports clipping.
 
 Prefill at least 1024 IQ samples (or four constellation indices) before ``start()``.
-The raw FIFO uses 128 KiB of PSRAM for 65536 CS8 samples (about four seconds
-at 16 kSa/s). Digital FIFOs use 512 KiB: 524288 Single Carrier indices, or
-262144 GFSK symbol ticks. ``write()`` applies backpressure using the slowest
+One reserved 512 KiB PSRAM workspace serves the mutually exclusive IQ modes:
+RX signal snapshots, TX FIFOs and packet recorder buffers. WiFi IQ uses it for
+capture slots before allocating any remaining records. The TX formats hold
+65536 CS8 samples (about four seconds at 16 kSa/s), 524288 Single Carrier indices,
+or 262144 GFSK symbol ticks. Sharing this workspace avoids large new contiguous
+allocations after mode changes. ``write()`` applies backpressure using the slowest
 sensor's FIFO credit and returns after submitting data to the transport. It
 does not guarantee delivery over UDP. Call it from a producer thread,
 not an audio callback. Stop producing at ``finish()``; ``wait()`` acknowledges
@@ -436,16 +439,24 @@ this does not consume a user constellation point. The state count is ``N`` for
 one-symbol pulses and ``(N+1)**span`` for longer pulses.
 
 Rates through 250 kbaud use the 500 kSa/s rendering grid. Faster configurations,
-up to 1 Mbaud, render directly at the 16 MSa/s DAC clock. For Q8 period ``P``,
+up to 1.6 Mbaud, render directly at the 16 MSa/s DAC clock. For Q8 period ``P``,
 output step ``S`` (8192 or 256) and state count ``C``, the bank requires
 ``4 * C * P / gcd(P,S)`` bytes. Table size is an admission bound; UART throughput,
 render time and simultaneous static beams also constrain sustained operation.
 The device reports unsupported combinations before changing replay, and stops
-on a missed refill deadline.
+on a missed refill deadline. Rates above 1 Mbaud, or Single Carrier input
+above 1.6 Mbit/s, require a stream-only scene. Stored beams must contribute
+zero on those sensors. Other sensors can still transmit stored beams.
+The maximum symbol rate is not a guaranteed continuous data rate.
+For example, sustained BPSK at 1.6 Mbaud needs less input processing than
+packet GFSK at the same rate.
 
 Native rendering limits its pulse bank to an 8 KiB working set. The tables
 remain in PSRAM; the active bank is copied once into the IQ workspace already
-reserved for TX mode, adding no internal-heap allocation. A mixed native scene
+reserved for TX mode, adding no internal-heap allocation. Native BPSK/QPSK
+with overlapping pulses precomputes the pulse context as input arrives,
+so the refill loop copies the selected pulse directly. Small input lookup
+tables share the unused portion of that workspace. A mixed native scene
 must fit its pulse bank and repeating static template together in that 9 KiB
 workspace; larger scenes are rejected before replay changes. The slower
 500 kSa/s path supports banks up to 256 KiB; static mixing limits its bank
@@ -513,17 +524,19 @@ Packet GFSK
 
 ``GFSK.le1m()`` selects 1 Mbaud, Gaussian BT 0.5, modulation index 0.5 and a
 four-symbol filter span. ``GFSK(...)`` also accepts exact divisors of 16 MSa/s
-from 125 kbaud through 1 Mbaud, BT 0.2 through 1, spans two/four, and modulation
+from 125 kbaud through 1.6 Mbaud, BT 0.2 through 1, spans two/four, and modulation
 indices in steps of 1/16. The combination must fit the 8 KiB native pulse
 bank; for example lower symbol rates may require a shorter filter span or a
 larger modulation index. The phase/context waveform bank is precomputed once;
 RF rendering copies it with the same beam weight and delay rules as Single Carrier.
+The input encoder expands four bits per lookup and stores one byte per symbol
+clock tick. Its phase-independent lookup table occupies at most 1 KiB.
 
 ``write_packet()`` accepts complete, LSB-first air bytes, at most 1020 bytes per
 packet. It does not add protocol headers. Each transport datagram contains one
 whole RF packet and its following silent gap; loss produces silence rather
 than a partially transmitted packet. Packets reset their phase and Gaussian
-history deterministically. The sensor's 512 KiB PSRAM FIFO holds 262144 symbol
+history deterministically. The sensor's 256 KiB PSRAM FIFO holds 262144 symbol
 clock ticks, including gaps (about 262 ms at LE 1M).
 
 For BLE, ``ble_le1m_packet`` adds the preamble, access address, CRC and channel
@@ -559,15 +572,16 @@ Settings are saved on the controller; the browser never sends signal data.
 
 On **IQ Transmission**, select **Stream** for one beam, apply the scene and
 calibrate at 16 MSa/s. That beam supplies the stream's amplitude, direction
-and delays. Other stored beams remain additive contributions. The stream beam
-binding is checked against sensor boot IDs and the prepared scene's CRC; after
-a restart or scene replacement, reapply it before connecting a client.
+and delays. Other stored beams remain additive contributions within the rate
+limits above. The stream beam binding is checked against sensor boot IDs and
+the prepared scene's CRC. After a restart or scene replacement, reapply it
+before connecting a client.
 
 With the updated SDK installed, feed a file or live producer through stdin::
 
    python -m espargos.tx_stream 192.168.1.2 --transport udp < samples.cs8
    python -m espargos.tx_stream 192.168.1.2 --transport websocket < symbols.u8
-   python -m espargos.tx_stream 192.168.1.2 --transport udp < packets.gfsk
+   python -m espargos.tx_stream 192.168.1.2 --transport udp < air-packets.bin
 
 CS8 input is interleaved signed I8/Q8 (two bytes per complex sample); indexed
 input is one unsigned byte per constellation point. GFSK input repeats a two-byte

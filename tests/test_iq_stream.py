@@ -216,11 +216,26 @@ class StreamTests(TestCase):
             self.assertEqual(packet.prefix,pdu)
 
     def test_gfsk_configuration_roundtrip(self):
-        for rate in [125000,250000,500000,1000000]:
+        for rate in [125000,250000,500000,1000000,16000000/12,1600000]:
             g=GFSK(symbol_rate_hz=rate,span=2,modulation_index=1)
             self.assertEqual(GFSK.from_payload(g.payload).payload,g.payload)
         for params in [dict(symbol_rate_hz=500000),dict(bt=float("nan")),dict(span=3),dict(symbol_rate_hz=900000),dict(modulation_index=.51),dict(symbol_rate_hz=125000,modulation_index=1/16)]:
             with self.assertRaises(ValueError):GFSK(**params)
+
+    def test_high_rate_single_carrier_roundtrip(self):
+        from espargos.stream_sources import SingleCarrier
+
+        for rate in [1000000, 16000000 / 12, 1600000]:
+            for span in [1, 2, 4]:
+                t = np.arange(span * 32 + 1) / 32 - span / 2
+                pulse = .8 * np.exp(-.5 * (t / .4) ** 2)
+                modulation = SingleCarrier([-1, 1], pulse, symbol_rate_hz=rate)
+                self.assertEqual(SingleCarrier.from_payload(modulation.payload).payload,
+                                 modulation.payload)
+        with self.assertRaises(ValueError):
+            SingleCarrier([-1, 1], np.ones(33), symbol_rate_hz=1600001)
+        with self.assertRaises(ValueError):
+            GFSK(symbol_rate_hz=1600001)
 
     def test_cs8_uses_raw_signed_byte_pairs(self):
         with IQStream(self.device.tx, mode="cs8") as stream:
@@ -385,6 +400,37 @@ class StreamTests(TestCase):
             self.assertTrue(all(len(f) == 1044 for f in packets[:-1]))
             self.assertTrue(all(struct.unpack_from("<I", f, 16)[0] == 8192 for f in packets[:-1]))
             self.assertEqual(d.received[0], bytes([0, 1]) * 8192 + bytes([1, 0]) * 20000)
+
+    def test_mode_exit_stops_writes_without_waiting_for_fifo_credit(self):
+        d = self.device
+        with IQStream(d.tx) as stream:
+            stream.write(bytes(4096))
+            stream.start()
+            for sensor in d.sensors:
+                sensor.update(state="closed", consumed=0)
+            d.publish()
+            count = len(d.wire_frames)
+            with self.assertRaisesRegex(RuntimeError, "stream closed on sensor"):
+                stream.write(bytes(4096))
+            self.assertEqual(len(d.wire_frames), count)
+
+    def test_open_memory_failure_is_reported_and_closed(self):
+        d = self.device
+        original = d.board.control.fetch
+
+        def reject_open(path, frame):
+            result = original(path, frame)
+            if frame[5] == 1:
+                for sensor in d.sensors:
+                    sensor.update(state="fault", error=0x101)
+                d.publish()
+            return result
+
+        d.board.control.fetch = reject_open
+        with self.assertRaisesRegex(RuntimeError, "insufficient sensor memory"):
+            IQStream(d.tx)
+        self.assertTrue(all(sensor["state"] == "closed" for sensor in d.sensors))
+        self.assertFalse(d.muted)
 
     def test_stale_feedback_stops_uploads(self):
         d = self.device
