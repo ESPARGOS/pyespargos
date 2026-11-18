@@ -106,8 +106,8 @@ class SingleCarrier:
         span = (len(p) - 1) // phases
         if not np.all(np.isfinite(p)) or np.any(abs(p) > 1 + 1e-12):
             raise ValueError("Pulse coefficients must be finite with magnitude <=1")
-        if not np.isfinite(symbol_rate_hz) or not 1 <= symbol_rate_hz <= 1000000:
-            raise ValueError("Use a symbol rate from 1 to 1000000 baud")
+        if not np.isfinite(symbol_rate_hz) or not 1 <= symbol_rate_hz <= 1600000:
+            raise ValueError("Use a symbol rate from 1 to 1600000 baud")
         if (
             max(
                 sum(abs(p[k * phases + phase]) for k in range(span))
@@ -159,7 +159,7 @@ class SingleCarrier:
             raise ValueError("Incomplete single-carrier table")
         period, phases, span, count, reserved = struct.unpack_from("<I4H", data)
         if (
-            not 4096 <= period <= 4096000000
+            not 2560 <= period <= 4096000000
             or phases not in (16, 32, 64, 128)
             or not 1 <= span <= 8
             or not 1 <= count <= 64
@@ -219,7 +219,7 @@ class GFSK:
     """Packet GFSK synthesized on sensors; LE 1M parameters by default.
 
     Supply complete air bits to IQStream.write_packet(). Symbol rates must
-    divide 16 MSa/s, from 125 kbaud to 1 Mbaud. Modulation index is specified
+    divide 16 MSa/s, from 125 kbaud to 1.6 Mbaud. Modulation index is specified
     in sixteenths. Packets reset phase deterministically and do not share FIR
     history, so dropped packets cannot corrupt their successors.
     """
@@ -229,8 +229,8 @@ class GFSK:
     ):
         import struct
 
-        if not np.isfinite(symbol_rate_hz) or not 125000 <= symbol_rate_hz <= 1000000:
-            raise ValueError("GFSK rate must be between 125000 and 1000000 baud")
+        if not np.isfinite(symbol_rate_hz) or not 125000 <= symbol_rate_hz <= 1600000:
+            raise ValueError("GFSK rate must be between 125000 and 1600000 baud")
         samples = round(16_000_000 / symbol_rate_hz)
         if abs(samples * symbol_rate_hz - 16_000_000) > 0.001:
             raise ValueError("GFSK rate must divide 16 MSa/s exactly")

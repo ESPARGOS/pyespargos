@@ -136,12 +136,17 @@ class IQStream:
             board.send_stream_data(header + payload)
             # Small live blocks also need a packet-rate bound when a file or
             # pipe can supply them faster than the configured source clock.
-            spacing = max(0.002, (len(header) + len(payload) + 32) / 220000)
+            bit_rate = self.sample_rate_hz * (self.bits if self.mode == "single_carrier" else 1)
+            # The faster digital path reserves the sensors for the stream.
+            # Leave UART framing/control headroom below the 300 kB/s wire limit.
+            fast_stream = self.sample_rate_hz > 1_000_000 or bit_rate > 1_600_000
+            byte_budget = 280000 if self.mode != "cs8" and fast_stream else 220000
+            spacing = max(0.002, (len(header) + len(payload) + 32) / byte_budget)
             if command in (2, 7) and self.mode != "cs8":
                 # Packed bits expand into FIFO entries on the sensor. Bound
                 # CPU bursts as well as UART bytes, with 10% headroom above
-                # the fastest supported source clock.
-                spacing = max(spacing, units / 1_100_000)
+                # the selected source clock.
+                spacing = max(spacing, units / max(1_100_000, self.sample_rate_hz * 1.1))
             self._next_send[board] = time.monotonic() + spacing
             return None
         return board.control.fetch("iq_tx_stream", header + payload)
@@ -190,7 +195,7 @@ class IQStream:
             self._feedback[board] = (time.monotonic(), sensors, words[2], words[3:6])
             self._feedback_changed.notify_all()
 
-    def _states(self, *, opening=False, allow_fault=False):
+    def _states(self, *, opening=False):
         result = []
         for board, ids, boots in self.targets:
             with self._feedback_changed:
@@ -210,8 +215,10 @@ class IQStream:
                     raise RuntimeError(f"{board.host}/{a}: sensor restarted or streaming status disappeared")
                 if not opening and state["session"] != self.session:
                     raise RuntimeError(f"{board.host}/{a}: stream session changed")
-                if not allow_fault and state["session"] == self.session and (state["state"] == "fault" or state["error"]):
-                    detail = {0x106: "unsupported scene/rate", 0x107: "replay refill deadline missed", 0x10C: "input FIFO underrun"}.get(state["error"], "stream configuration/state error")
+                if not opening and state["state"] == "closed":
+                    raise RuntimeError(f"{board.host}/{a}: stream closed on sensor")
+                if state["session"] == self.session and (state["state"] == "fault" or state["error"]):
+                    detail = {0x101: "insufficient sensor memory", 0x106: "unsupported scene/rate", 0x107: "replay refill deadline missed", 0x10C: "input FIFO underrun"}.get(state["error"], "stream configuration/state error")
                     raise RuntimeError(f"{board.host}/{a}: {detail} ({state['error']:#x})")
                 result.append(dict(state))
         return result
@@ -273,7 +280,9 @@ class IQStream:
                 data = (np.column_stack((a.real, a.imag)) * 127).round().astype(np.int8).tobytes()
             else:
                 raise ValueError("Use complex samples, an (N, 2) int8 array, or interleaved CS8 bytes")
-        if len(data) % self.stride or (self.mode == "single_carrier" and any(b >= len(self.modulation.constellation) for b in data)):
+        invalid_index = (self.mode == "single_carrier" and data and
+                         np.frombuffer(data, dtype=np.uint8).max() >= len(self.modulation.constellation))
+        if len(data) % self.stride or invalid_index:
             raise ValueError("Invalid sample/index encoding")
         return data
 
@@ -411,7 +420,9 @@ class IQStream:
             payload = data[(offset - begin) * self.stride : (offset - begin + units) * self.stride]
             if self.mode == "single_carrier":
                 indices = np.frombuffer(payload, dtype=np.uint8)
-                bits = ((indices[:, None] >> np.arange(self.bits, dtype=np.uint8)) & 1).reshape(-1)
+                bits = indices if self.bits == 1 else (
+                    (indices[:, None] >> np.arange(self.bits, dtype=np.uint8)) & 1
+                ).reshape(-1)
                 payload = np.packbits(bits, bitorder="little").tobytes()
             for target in self.targets:
                 self._send(target, 2, offset, units, payload)
