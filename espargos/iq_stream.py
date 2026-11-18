@@ -335,7 +335,7 @@ class IQStream:
         After an underrun, new writes buffer a replacement session. Old packets
         are discarded; resumption is scheduled on a common symbol boundary.
         """
-        if self.mode=="gfsk":
+        if self.mode == "gfsk":
             raise ValueError("Use write_packet() for complete GFSK air packets")
         with self._lock:
             if self.closed or self.finished:
@@ -346,14 +346,15 @@ class IQStream:
                 return 0
             if self.started and any(s["state"] == "starved" for s in self._states()):
                 self._recover()
-            begin, end = self.offset, self.offset + count
+            end = self.offset + count
             if end > 0x7FFFFFFF:
                 raise ValueError("Stream exceeds the protocol's sample counter range")
             self._timeout(timeout)
             try:
                 if not self.started and not self._auto_start and end > min(s["capacity"] for s in self._states()):
                     raise ValueError("Prefill exceeds FIFO capacity; start before writing more")
-                return self._write_data(data, begin, end, count, timeout)
+                self._write_data(data, end, timeout)
+                return count
             except BaseException as error:
                 self._abort(error)
                 raise
@@ -408,17 +409,16 @@ class IQStream:
                 for target in self.targets:
                     self._send(target, _Command.PACKET, self.offset, units, payload)
                 self.offset += units
-                if self._auto_start and not self.started and self.offset >= self.capacity // 2:
+                if self._auto_start and self.offset >= self.capacity // 2:
                     self.start()
-                    self._auto_start = False
             except BaseException as error:
                 self._abort(error)
                 raise
         return bits
 
-    def _write_data(self, data, begin, end, count, timeout):
+    def _write_data(self, data, end, timeout):
         deadline = time.monotonic() + timeout
-        sent = begin
+        begin = sent = self.offset
         while sent < end:
             states = self._states()
             if self.started and any(s["state"] == "starved" for s in states):
@@ -432,17 +432,16 @@ class IQStream:
             capacity = min(s["capacity"] for s in states)
             prefill = min(capacity, max(1024 if self.mode == "cs8" else 4, math.ceil(self.sample_rate_hz * .1)))
             limit = min(end, consumed + capacity, sent + 8 * self.chunk)
-            if self._auto_start and not self.started:
+            if self._auto_start:
                 limit = min(limit, prefill)
                 if sent >= prefill:
                     self.offset = sent
                     self.start()
-                    self._auto_start = False
                     continue
             # Do not fragment bulk writes whenever a small credit update
             # arrives. Wait for one full payload unless this is the write's
             # final/live fragment or a recovery prefill boundary.
-            if limit < end and not (self._auto_start and not self.started):
+            if limit < end and not self._auto_start:
                 limit = sent + (limit - sent) // self.chunk * self.chunk
             if time.monotonic() >= deadline:
                 raise TimeoutError("Stream write timed out waiting for FIFO credit")
@@ -452,10 +451,8 @@ class IQStream:
             else:
                 time.sleep(0.005)
         self.offset = end
-        if self._auto_start and not self.started and end >= prefill:
+        if self._auto_start and end >= prefill:
             self.start()
-            self._auto_start = False
-        return count
 
     def _send_data(self, data, begin, offset, end):
         while offset < end:
@@ -560,6 +557,7 @@ class IQStream:
                 self._abort(error)
                 raise
             self.started = True
+            self._auto_start = False
             return self.start_sample
 
     def finish(self):
@@ -568,9 +566,8 @@ class IQStream:
             if self.closed:
                 raise RuntimeError("Stream is closed")
             try:
-                if self._auto_start and not self.started:
+                if self._auto_start:
                     self.start()
-                    self._auto_start = False
                 # Queue after the final DATA on the same transport. Waiting for
                 # all sensor snapshots can exhaust the FIFO at high rates.
                 for target in self.targets:
