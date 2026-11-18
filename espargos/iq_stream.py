@@ -74,7 +74,7 @@ class IQStream:
         self.steering = steering
         self.sample_rate_hz = int(sample_rate_hz) if mode == "cs8" else modulation.symbol_rate_hz
         self.stride = 2 if mode == "cs8" else 1
-        self.capacity = self.CAPACITY * {"cs8": 1, "single_carrier": 8, "gfsk": 4}[mode]
+        self.capacity = self.CAPACITY * {"cs8": 1, "single_carrier": 8, "gfsk": 8}[mode]
         self.bits = max(1, (len(modulation.constellation) - 1).bit_length()) if mode == "single_carrier" else 16
         self.chunk = 8192 // self.bits
         self._settings = dict(mode=mode, sample_rate_hz=sample_rate_hz, amplitude=amplitude,
@@ -141,7 +141,8 @@ class IQStream:
             # Leave UART framing/control headroom below the 300 kB/s wire limit.
             fast_stream = self.sample_rate_hz > 1_000_000 or bit_rate > 1_600_000
             byte_budget = 280000 if self.mode != "cs8" and fast_stream else 220000
-            spacing = max(0.002, (len(header) + len(payload) + 32) / byte_budget)
+            spacing = max(0.001 if fast_stream else 0.002,
+                          (len(header) + len(payload) + 32) / byte_budget)
             if command in (2, 7) and self.mode != "cs8":
                 # Packed bits expand into FIFO entries on the sensor. Bound
                 # CPU bursts as well as UART bytes, with 10% headroom above
