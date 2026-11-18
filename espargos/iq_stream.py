@@ -31,7 +31,7 @@ class IQStream:
     RATE = 16_000_000
     CAPACITY = 65536
 
-    def __init__(self, transmitter, *, mode="cs8", sample_rate_hz=16000, amplitude=0.1, antennas=None, steering=None, modulation=None):
+    def __init__(self, transmitter, *, mode="cs8", sample_rate_hz=16000, amplitude=0.1, antennas=None, steering=None, modulation=None, packet_gap_us=20000):
         self.transmitter = transmitter
         self.closed = False
         self.started = self.finished = False
@@ -50,30 +50,35 @@ class IQStream:
         self._subscriptions = []
         self._next_send = {}
         self._feedback_changed = threading.Condition()
+        if not math.isfinite(packet_gap_us) or packet_gap_us<0:
+            raise ValueError("Packet gap must be finite and nonnegative")
+        self.packet_gap_us=packet_gap_us
         self.modulation = modulation
-        if mode not in ("cs8", "single_carrier"):
-            raise ValueError("mode must be cs8 or single_carrier")
+        if mode not in ("cs8", "single_carrier", "gfsk"):
+            raise ValueError("mode must be cs8, single_carrier or gfsk")
         if mode == "cs8" and sample_rate_hz not in (8000, 16000, 32000, 40000, 50000):
             raise ValueError("CS8 sample rate must be 8000, 16000, 32000, 40000 or 50000 Sa/s")
         if not math.isfinite(amplitude) or not 0 <= amplitude <= 1:
             raise ValueError("amplitude must lie between 0 and 1")
         if steering is not None and not isinstance(steering, (Beamspace, Weights)):
             raise TypeError("steering must be Beamspace, Weights, or None")
-        from .stream_sources import SingleCarrier
+        from .stream_sources import SingleCarrier, GFSK
 
         if mode == "single_carrier" and not isinstance(modulation, SingleCarrier):
             raise ValueError("single_carrier mode requires a SingleCarrier configuration")
+        if mode == "gfsk" and not isinstance(modulation,GFSK):
+            raise ValueError("gfsk mode requires a GFSK configuration")
         if mode == "cs8" and modulation is not None:
             raise ValueError("Raw IQ does not take a modulation table")
         self.mode = mode
         self.steering = steering
         self.sample_rate_hz = int(sample_rate_hz) if mode == "cs8" else modulation.symbol_rate_hz
         self.stride = 2 if mode == "cs8" else 1
-        self.capacity = self.CAPACITY if mode == "cs8" else 2 * self.CAPACITY
+        self.capacity = self.CAPACITY * {"cs8": 1, "single_carrier": 8, "gfsk": 4}[mode]
         self.bits = max(1, (len(modulation.constellation) - 1).bit_length()) if mode == "single_carrier" else 16
         self.chunk = 8192 // self.bits
         self._settings = dict(mode=mode, sample_rate_hz=sample_rate_hz, amplitude=amplitude,
-                              antennas=antennas, steering=steering, modulation=modulation)
+                              antennas=antennas, steering=steering, modulation=modulation,packet_gap_us=packet_gap_us)
         transmitter.read()
         transmitter.signals._check_beam_calibration()
         self.antennas = transmitter.signals._antennas(antennas)
@@ -109,7 +114,7 @@ class IQStream:
                     raise ValueError("Stream weights must have magnitude ≤1 and delays within ±8192 replay samples")
                 target = (board, ids, tuple(state["sensors"][a]["boot_id"] for a in ids))
                 self.targets.append(target)
-                payload = struct.pack("<4I24f", 1 if mode == "cs8" else 2, int(sample_rate_hz) if mode == "cs8" else 0, 1, len(modulation.payload) if modulation else 0, *weights.real, *weights.imag, *delays)
+                payload = struct.pack("<4I24f", {"cs8":1,"single_carrier":2,"gfsk":3}[mode], int(sample_rate_hz) if mode == "cs8" else 0, 1, len(modulation.payload) if modulation else 0, *weights.real, *weights.imag, *delays)
                 self._send(target, 1, payload=payload)
             self._wait(lambda states: all(s.get("session") == self.session and s["state"] == "buffering" for s in states), 5, opening=True)
             if modulation:
@@ -125,13 +130,18 @@ class IQStream:
     def _send(self, target, command, offset=0, units=0, payload=b""):
         board, ids, _ = target
         header = struct.pack("<IBBBBIII", 0x31535449, 3, command, sum(1 << a for a in ids), 0, self.session, offset, units)
-        if command in (2, 4):
+        if command in (2, 4, 7):
             now = time.monotonic()
             time.sleep(max(0, self._next_send.get(board, now) - now))
             board.send_stream_data(header + payload)
             # Small live blocks also need a packet-rate bound when a file or
             # pipe can supply them faster than the configured source clock.
             spacing = max(0.002, (len(header) + len(payload) + 32) / 220000)
+            if command in (2, 7) and self.mode != "cs8":
+                # Packed bits expand into FIFO entries on the sensor. Bound
+                # CPU bursts as well as UART bytes, with 10% headroom above
+                # the fastest supported source clock.
+                spacing = max(spacing, units / 1_100_000)
             self._next_send[board] = time.monotonic() + spacing
             return None
         return board.control.fetch("iq_tx_stream", header + payload)
@@ -276,6 +286,8 @@ class IQStream:
         After an underrun, new writes buffer a replacement session. Old packets
         are discarded; resumption is scheduled on a common symbol boundary.
         """
+        if self.mode=="gfsk":
+            raise ValueError("Use write_packet() for complete GFSK air packets")
         with self._lock:
             if self.closed or self.finished:
                 raise RuntimeError("Stream is closed or already finished")
@@ -296,6 +308,64 @@ class IQStream:
             except BaseException as error:
                 self._abort(error)
                 raise
+
+    def write_packet(self, packet, *, bit_count=None, gap_us=20000, timeout=10):
+        """Submit one complete packet of LSB-first air bits, followed by silence.
+
+        Preamble, access address, whitening and CRC belong to the caller.
+        One datagram carries the complete RF packet; loss yields silence.
+        No retransmission or fragmentation is performed.
+        """
+        if self.mode != "gfsk":
+            raise ValueError("Packet writes require GFSK mode")
+        data = bytes(packet)
+        bits = len(data) * 8 if bit_count is None else bit_count
+        if (
+            not isinstance(bits, int)
+            or not 0 <= bits <= 8160
+            or len(data) != (bits + 7) // 8
+        ):
+            raise ValueError("Use at most 8160 complete air bits per packet")
+        if not math.isfinite(gap_us) or gap_us < 0:
+            raise ValueError("Packet gap must be finite and nonnegative")
+        units = bits + round(gap_us * self.sample_rate_hz / 1e6)
+        if not units or units > self.CAPACITY:
+            raise ValueError("Packet plus gap must fit 65536 symbol ticks")
+        self._timeout(timeout)
+        with self._lock:
+            if self.closed or self.finished:
+                raise RuntimeError("Stream is closed or finished")
+            try:
+                deadline = time.monotonic() + timeout
+                while True:
+                    states = self._states()
+                    if self.started and any(s["state"] == "starved" for s in states):
+                        self._recover()
+                        continue
+                    consumed = min(s["consumed"] for s in states)
+                    capacity = min(s["capacity"] for s in states)
+                    if self.offset + units - consumed <= capacity:
+                        break
+                    if not self.started:
+                        raise ValueError(
+                            "Prefill exceeds FIFO capacity; start before writing more"
+                        )
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Packet write timed out waiting for FIFO credit")
+                    time.sleep(0.002)
+                if self.offset + units > 0x7FFFFFFF:
+                    raise ValueError("Stream exceeds the symbol counter range")
+                payload = struct.pack("<HH", bits, 0) + data
+                for target in self.targets:
+                    self._send(target, 7, self.offset, units, payload)
+                self.offset += units
+                if self._auto_start and not self.started and self.offset >= self.capacity // 2:
+                    self.start()
+                    self._auto_start = False
+            except BaseException as error:
+                self._abort(error)
+                raise
+        return bits
 
     def _write_data(self, data, begin, end, count, timeout):
         deadline = time.monotonic() + timeout
@@ -376,10 +446,14 @@ class IQStream:
                 raise ValueError("lead_time must be finite and at least 0.1 seconds")
             if self.offset < (1024 if self.mode == "cs8" else 4):
                 raise ValueError("Prefill at least 1024 IQ samples or four constellation indices")
-            self._wait(lambda states: all(s["accepted"] >= (1024 if self.mode == "cs8" else 4) for s in states), 3)
+            # Prepare only after the complete prefill has crossed UART. Table
+            # construction can occupy the replay owner long enough to overflow
+            # UART RX if it starts while a large prefill is still in flight.
+            self._wait(lambda states: all(s["accepted"] >= self.offset for s in states), 3)
             plans, sequences, positions = [], set(), []
             for target in self.targets:
                 board, ids, _ = target
+                read_started = time.monotonic()
                 state = _rpc(board, "get_iq_tx")
                 self.transmitter.states[self.transmitter.boards.index(board)] = state
                 if state["muted"]:
@@ -389,7 +463,7 @@ class IQStream:
                     if not sensors[a]["enabled"] or not sensors[a]["sync_seq"]:
                         raise ValueError("Streaming requires running TX on a synchronized sample grid")
                     sequences.add(sensors[a]["sync_seq"])
-                    positions.append(sensors[a]["sample_position"])
+                    positions.append((sensors[a]["sample_position"], read_started))
                 plans.append((target, [s["epoch"] for s in sensors]))
             self.transmitter.signals._check_beam_calibration()
             if isinstance(self.steering, Beamspace):
@@ -397,7 +471,14 @@ class IQStream:
                 self.transmitter.owner.calibrations.require_coherent(states)
             if len(sequences) != 1:
                 raise ValueError("Selected sensors do not share a synchronization sequence")
-            self.start_sample = int(max(positions)) + math.ceil(lead_time * self.RATE)
+            # Controller replies are snapshots, not simultaneous clock reads.
+            # Project from request start, which conservatively includes the
+            # reply latency, so every board still has the requested lead.
+            now = time.monotonic()
+            self.start_sample = max(
+                int(position) + math.ceil((now - read_started + lead_time) * self.RATE)
+                for position, read_started in positions
+            )
             self.start_phase_q8 = 0
             period = round(4096000000 / self.sample_rate_hz)
             if self._phase_origin is not None:
@@ -410,9 +491,20 @@ class IQStream:
             if self.start_sample >= 2**53:
                 raise ValueError("Scheduled start exceeds the sample-clock range")
             try:
-                for target, epochs in plans:
-                    self._send(target, 3, payload=struct.pack("<QI8II", self.start_sample, next(iter(sequences)), *epochs, self.start_phase_q8))
-                self._wait(lambda states: all(s["state"] in ("running", "drained", "starved") for s in states), lead_time)
+                sequence = next(iter(sequences))
+                def arm(target, epochs):
+                    self._send(target, 3, payload=struct.pack(
+                        "<QI8II", self.start_sample, sequence, *epochs, self.start_phase_q8))
+                if len(plans) == 1:
+                    arm(*plans[0])
+                else:
+                    # Independent controllers arm concurrently. Join every
+                    # request before aborting, so a late ARM cannot race CLOSE.
+                    by_board = {target[0]: (target, epochs) for target, epochs in plans}
+                    self.transmitter._parallel(
+                        lambda _, board: arm(*by_board[board]) if board in by_board else None
+                    )
+                self._wait(lambda states: all(s["state"] in ("running", "drained", "starved") for s in states), lead_time + 1)
             except BaseException as error:
                 self._abort(error)
                 raise

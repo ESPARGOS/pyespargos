@@ -350,8 +350,9 @@ headroom for the sum. The sensor limits the streamed contribution to the
 stored mixture's remaining I/Q headroom and reports clipping.
 
 Prefill at least 1024 IQ samples (or four constellation indices) before ``start()``.
-The same 128 KiB sensor FIFO holds 65536 CS8 samples or 131072 decoded indices,
-giving about four seconds at 16 kSa/s or 0.52 seconds at 250 ksymbols/s. ``write()`` applies backpressure using the slowest
+The raw FIFO uses 128 KiB of PSRAM for 65536 CS8 samples (about four seconds
+at 16 kSa/s). Digital FIFOs use 512 KiB: 524288 Single Carrier indices, or
+262144 GFSK symbol ticks. ``write()`` applies backpressure using the slowest
 sensor's FIFO credit and returns after submitting data to the transport. It
 does not guarantee delivery over UDP. Call it from a producer thread,
 not an audio callback. Stop producing at ``finish()``; ``wait()`` acknowledges
@@ -364,7 +365,7 @@ coherent transmission.
 
 Data travels over the board's existing UDP or WebSocket stream connection;
 select it when opening the pool. OPEN, table configuration, ARM and CLOSE use
-HTTP. DATA and FINISH use the same stream transport, so the end marker follows
+HTTP. DATA, GFSK PACKET and FINISH use the same stream transport, so the end marker follows
 the final data without waiting for potentially stale sensor snapshots. Each
 packet is broadcast once over the 3 Mbaud UART. Packets carry up to 512 CS8
 samples or 1024 packed bytes (1044 bytes including the header).
@@ -388,7 +389,9 @@ The original symbol clock is retained, including its fractional-sample phase.
 A new session ID excludes delayed packets from the previous session. No data is
 retransmitted. ``stream.resumptions`` counts recoveries; ``previous_missing``
 retains the missing-unit counters from previous sessions. The default recovery
-prefill is 100 ms of input, followed by a scheduled start at least 500 ms ahead.
+prefill is 100 ms of samples/indices or half the GFSK FIFO, followed by a
+scheduled start at least 500 ms ahead. Start waits for acknowledgement of the
+entire prefill before preparing the replay renderer.
 Short writes accumulate until that prefill is reached; ``finish()`` can start a
 shorter final burst once the normal minimum prefill is present.
 
@@ -425,76 +428,37 @@ The web UI chooses table resolution automatically; the Python API retains the
 resolution parameter for applications supplying their own pulse coefficients.
 Constellation and pulse tables are stored in PSRAM.
 
-One-symbol pulses use a precomputed PSRAM bank when its timing phases fit
-within 256 KiB. The bank includes the constellation multiplication, per-sensor
-complex beam weight, fractional steering delay and clipping. It is arranged in
-output traversal order for sequential PSRAM reads. These pulses are evaluated
-directly on the 500 kSa/s rendering grid and repeated to 16 MSa/s. Their symbol
-rate can reach 250000 baud; for example 50000, 100000, 125000, 200000 and 250000
-have compact timing banks. Arbitrary fractional periods may need a much larger
-bank and are rejected above 16000 baud. The host validates this memory bound.
-For a period ``P`` in Q8 replay samples and ``N`` constellation points, the bank
-needs ``4 * N * P / gcd(P, 8192)`` bytes. For example, 64 entries need 1.25 KiB at
-100 kbaud or 31.25 KiB at 16 kbaud. The FIFO separately reserves 128 KiB of PSRAM
-for 65536 CS8 samples or 131072 decoded indices. Pulse-bank memory is released on close.
-Static mixing also limits the bank to 12 KiB to leave cache
-space for the mixer and UART processing. For example, all 64 entries fit this
-mixed-scene limit at 50, 80 and 100 kbaud, but not at 16, 32 or 64 kbaud. Such
-configurations can still run alone; slower general reconstruction is another
-option when it meets the limits below.
+Digital rendering uses a precomputed PSRAM bank whenever the constellation,
+pulse history and timing lattice fit within 256 KiB. Each entry includes the
+sum of overlapping pulses, complex beam weight, fractional steering delay and
+clipping. Overlapping pulses include an internal zero state for missing input;
+this does not consume a user constellation point. The state count is ``N`` for
+one-symbol pulses and ``(N+1)**span`` for longer pulses.
 
-Other shapes use an 8/16/32/64 kSa/s reconstruction grid, extended to 128 kSa/s
-for two-symbol pulses above 16000 baud. The smallest rate giving eight samples
-per symbol is chosen, up to the corresponding ceiling, followed by interpolation
-to the 500 kSa/s renderer. Choose band-limited pulses appropriate for that grid.
-The symbol clock is rounded to 1/256 of a 16 MSa/s sample; the configuration's
-``symbol_rate_hz`` property reports the resulting rate. General synthesis is
-limited to 32000 baud for two-symbol pulses and 16000 for longer pulses.
-With a nonzero static mix, general reconstruction is
-limited to 32 kSa/s for spans one and two, or 16 kSa/s for spans three through
-eight; these correspond to symbol-rate ceilings of 4000 and 2000 baud.
-Unsupported combinations fail before replay changes. The precomputed path
-supports higher rates with static beams because it avoids convolution.
-The table resolution describes the pulse in symbol-relative time and does not
-restrict the symbol clock to integer divisors of the rendering rate.
+Rates through 250 kbaud use the 500 kSa/s rendering grid. Faster configurations,
+up to 1 Mbaud, render directly at the 16 MSa/s DAC clock. For Q8 period ``P``,
+output step ``S`` (8192 or 256) and state count ``C``, the bank requires
+``4 * C * P / gcd(P,S)`` bytes. Table size is an admission bound; UART throughput,
+render time and simultaneous static beams also constrain sustained operation.
+The device reports unsupported combinations before changing replay, and stops
+on a missed refill deadline.
 
-The configuration limits are listed below. These are admission limits, not
-throughput guarantees for every constellation, transport, and simultaneous load.
-Hardware measurements and the static mix determine usable headroom. All rows
-were tested over UDP on eight sensors with rectangular/Gaussian one-symbol
-pulses, a cosine two-symbol pulse, and four/eight-symbol RRC pulses. The
-250000-baud path passed with BPSK, QPSK, 16-QAM and 64-QAM. Static-beam tests
-added a nonzero two-tone scene:
+Native rendering limits its pulse bank to an 8 KiB working set. The tables
+remain in PSRAM; the active bank is copied once into the IQ workspace already
+reserved for TX mode, adding no internal-heap allocation. A mixed native scene
+must fit its pulse bank and repeating static template together in that 9 KiB
+workspace; larger scenes are rejected before replay changes. The slower
+500 kSa/s path supports banks up to 256 KiB; static mixing limits its bank
+to 8 KiB. When no bank fits, general convolution supports up to 32 kbaud for
+two-symbol pulses and 16 kbaud for other spans. Mixing reduces those fallback limits to 4 kbaud
+for spans one/two and 2 kbaud for longer pulses.
 
-.. list-table:: Indexed stream rates (symbols/s)
-   :header-rows: 1
-
-   * - Pulse span
-     - Stream alone
-     - With static beams
-   * - 1, fitting precomputed bank
-     - 250000
-     - 250000
-   * - 2
-     - 32000
-     - 4000
-   * - 4
-     - 16000
-     - 2000
-   * - 8
-     - 16000
-     - 2000
-
-Use UDP for maximum throughput. A minute-long WebSocket test passed at 125000
-baud with 64-QAM; 200000 baud passed a short test but exhausted its input in
-the longer run. Short WebSocket tests also passed at 250000 baud with BPSK,
-QPSK and 16-QAM, and at 50000 Sa/s with raw IQ. These measurements used eight
-sensors and a stream without static beams.
-
-Pulse bandwidth must fit the reconstruction grid. The final renderer still
-holds samples for 32 DAC clocks, so images around multiples of 500 kHz remain;
-the faster one-symbol path improves throughput without adding an interpolation
-filter between that grid and the DAC.
+Choose pulse bandwidth for the output grid: at rates through 250 kbaud the
+renderer holds each output for 32 DAC clocks, leaving images at multiples of
+500 kHz. Higher-rate native rendering does not use that hold stage. The symbol
+clock has 1/256-DAC-sample resolution, independently of pulse table resolution.
+Use UDP for maximum throughput; larger constellations require more wire bits
+per symbol and can reach the UART limit before the synthesis limit.
 
 PSK31 is one configuration of this interface; differential encoding and Varicode
 run on the host, while sensors shape the absolute constellation points::
@@ -514,7 +478,81 @@ in the host encoder across writes; do not concatenate independently encoded
 bursts without a gap. Absolute indices keep packet loss from changing the phase
 of all subsequent symbols.
 
-The controller's **TX Streaming** page configures CS8 sample rates, constellation
+Streaming across arrays
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Use one ``Pool`` and one stream for the complete aperture. All selected sensors
+must use 16 MSa/s replay, share a physical clock and one jointly calibrated
+sample grid. A shared clock does not establish a common RF phase reference:
+calibrate the arrays together at the operating frequency and 16 MSa/s, with a
+measurement path that observes every participating transmitter. Calibration
+at 80 MSa/s cannot simply be reused at 16 MSa/s. The monitor method requires
+an appropriate return RF path; reciprocity calibration currently requires
+80 MSa/s. Load the aperture geometry and reference-cable lengths with
+``Pool.from_config("config/aperture-kit-8x4.yml")`` for geometric steering.
+
+A stream sends identical source offsets and one absolute start sample to all
+controllers, retaining each sensor's own epoch, calibration and steering delay.
+Network latency changes how early data must be buffered, not the transmitted
+sample clock. Lost datagrams produce holes at the same source positions;
+they do not shift later data. If one array underruns, the client opens a new
+session for all selected arrays and resumes on the original common symbol
+grid. Independent client processes choose independent start times.
+
+The command-line client can feed matching saved stream configurations on
+multiple controllers from a single input::
+
+   python -m espargos.tx_stream 192.168.1.3 192.168.1.4 --transport udp < samples.cs8
+
+Saved beam weights remain per-controller settings. For geometric steering
+across an aperture, supply ``Beamspace`` to ``pool.tx.open_stream()`` using the
+same geometry-aware pool that performed the joint calibration.
+
+Packet GFSK
+~~~~~~~~~~~
+
+``GFSK.le1m()`` selects 1 Mbaud, Gaussian BT 0.5, modulation index 0.5 and a
+four-symbol filter span. ``GFSK(...)`` also accepts exact divisors of 16 MSa/s
+from 125 kbaud through 1 Mbaud, BT 0.2 through 1, spans two/four, and modulation
+indices in steps of 1/16. The combination must fit the 8 KiB native pulse
+bank; for example lower symbol rates may require a shorter filter span or a
+larger modulation index. The phase/context waveform bank is precomputed once;
+RF rendering copies it with the same beam weight and delay rules as Single Carrier.
+
+``write_packet()`` accepts complete, LSB-first air bytes, at most 1020 bytes per
+packet. It does not add protocol headers. Each transport datagram contains one
+whole RF packet and its following silent gap; loss produces silence rather
+than a partially transmitted packet. Packets reset their phase and Gaussian
+history deterministically. The sensor's 512 KiB PSRAM FIFO holds 262144 symbol
+clock ticks, including gaps (about 262 ms at LE 1M).
+
+For BLE, ``ble_le1m_packet`` adds the preamble, access address, CRC and channel
+whitening to a supplied PDU. Defaults are for advertising; connection PDUs need
+their own access address and CRC initializer. Channel hopping, connection
+scheduling, responses and the BLE link layer are the client's responsibility.
+For example, after configuring the selected sensors at 2402 MHz::
+
+   from espargos.stream_sources import GFSK, ble_le1m_packet
+
+   # A complete advertising PDU, including its header and advertiser address.
+   air = ble_le1m_packet(pdu, channel=37)
+   with tx.open_stream(mode="gfsk", modulation=GFSK.le1m(), amplitude=0.1) as stream:
+       for _ in range(8):
+           stream.write_packet(air, gap_us=20000)
+       stream.finish()
+       tx.mute(False)
+       stream.start()
+       stream.wait()
+
+The gap must fit, together with the packet, within 65536 symbol ticks. Prefill
+a substantial part of the FIFO for sustained live input, so the downlink FIFO
+credit can make a complete round trip before more input is needed.
+
+Web configuration and clients
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The controller's **TX Streaming** page configures CS8, Single Carrier and GFSK
+modes, including raw sample rates, constellation
 presets, symbol rates and pulse shapes. Presets include BPSK, QPSK,
 8-PSK, 16-QAM, 64-QAM, RRC, raised cosine, rectangular, Gaussian and PSK31 pulses.
 Settings are saved on the controller; the browser never sends signal data.
@@ -529,9 +567,12 @@ With the updated SDK installed, feed a file or live producer through stdin::
 
    python -m espargos.tx_stream 192.168.1.2 --transport udp < samples.cs8
    python -m espargos.tx_stream 192.168.1.2 --transport websocket < symbols.u8
+   python -m espargos.tx_stream 192.168.1.2 --transport udp < packets.gfsk
 
 CS8 input is interleaved signed I8/Q8 (two bytes per complex sample); indexed
-input is one unsigned byte per constellation point. The client loads the saved settings and beam weights,
+input is one unsigned byte per constellation point. GFSK input repeats a two-byte
+little-endian packet byte length followed by that many complete air bytes. The saved
+packet gap applies after each packet. The client loads the saved settings and beam weights,
 prefills, unmutes and starts synchronized transmission. EOF finishes the stream;
 exiting the client mutes TX. It leaves RF settings and the prepared scene intact.
 The browser can be closed after saving.
@@ -547,7 +588,8 @@ Q15 ``table_hex``, UI preset metadata and volatile beam binding. Configuration
 uses ``POST /set_iq_tx_stream_config`` with five little-endian u32 words:
 ``0x31504654, format, input_rate_hz, ui_bytes, table_bytes``; then UTF-8 JSON UI
 metadata (at most 1024 bytes), padding to four-byte alignment, and the existing
-single-carrier TABLE bytes. CS8 uses no table. An explicit save writes bounded
+Single Carrier or 16-byte GFSK TABLE bytes. CS8 uses no table. Settings apply
+automatically and write bounded
 chunks into NVS; it never starts a stream. Active sessions must close before
 settings change.
 

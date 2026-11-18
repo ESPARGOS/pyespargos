@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 from espargos.calibration import Antenna
 from espargos.iq_stream import IQStream
-from espargos.stream_sources import psk31_bits
+from espargos.stream_sources import psk31_bits, GFSK, ble_le1m_packet
 
 
 class Device:
@@ -102,9 +102,9 @@ class Device:
             if command == 1:
                 s.update(session=session, state="buffering", accepted=0, consumed=0, end=None, missing=0, late=0, error=0, table_received=0)
                 self.bits = 8
-                self.stride = 2 if struct.unpack_from("<I", payload)[0] == 1 else 1
-                if self.stride == 1: s["capacity"] = 2 * IQStream.CAPACITY
-                elif s["capacity"] == 2 * IQStream.CAPACITY: s["capacity"] = IQStream.CAPACITY
+                self.format=struct.unpack_from("<I",payload)[0]
+                self.stride = 1 if self.format==2 else 2
+                s["capacity"] = IQStream.CAPACITY * {1:1,2:8,3:4}[self.format]
             elif command == 2:
                 decoded = payload
                 if self.stride == 1:
@@ -121,6 +121,14 @@ class Device:
                     s["accepted"] = offset + count
                 else:
                     s["late"] += count
+            elif command == 7:
+                bits,reserved=struct.unpack_from("<HH",payload)
+                assert self.format==3 and not reserved and len(payload)==4+(bits+7)//8
+                if self.drop==(a,offset):self.drop=None;continue
+                if offset>=s["accepted"]:
+                    gap=offset-s["accepted"];s["missing"]+=gap
+                    self.received[a].extend(payload[4:]);s["accepted"]=offset+count
+                else:s["late"]+=count
             elif command == 3:
                 s["state"] = "running"
             elif command == 4:
@@ -154,6 +162,65 @@ class StreamTests(TestCase):
             p = patch(target, value)
             p.start()
             self.addCleanup(p.stop)
+
+    def test_start_waits_for_the_entire_prefill(self):
+        with IQStream(self.device.tx) as stream:
+            stream.write(bytes(8192))
+            self.device.sensors[1]["accepted"] = 1024
+            self.device.publish()
+            original_send = self.device.board.control.fetch
+            def send(path, data):
+                if data[5] == 3:
+                    self.assertEqual(self.device.sensors[1]["accepted"], 4096)
+                return original_send(path, data)
+            def deliver(seconds):
+                self.device.sensors[1]["accepted"] = 4096
+                self.device.sleep(seconds)
+            self.device.board.control.fetch = send
+            with patch("espargos.iq_stream.time.sleep", deliver):
+                stream.start()
+
+    def test_gfsk_atomic_packets_and_loss(self):
+        air=ble_le1m_packet(bytes.fromhex("0206475250534502"))
+        with IQStream(self.device.tx,mode="gfsk",modulation=GFSK.le1m()) as stream:
+            self.assertEqual(stream.capacity,262144)
+            self.device.drop=(1,0)
+            self.assertEqual(stream.write_packet(air,gap_us=1000),len(air)*8)
+            units=len(air)*8+1000
+            stream.write_packet(air,gap_us=1000)
+            self.assertEqual(self.device.sensors[1]["missing"],units)
+            self.assertEqual(self.device.received[1],air)
+            self.assertEqual(stream.offset,2*units)
+            self.assertTrue(all(path=="data" for path,command,_ in self.device.frames if command==7))
+            with self.assertRaises(ValueError):stream.write(b"not a packet")
+            with self.assertRaises(ValueError):stream.write_packet(bytes(1021))
+            with self.assertRaises(ValueError):stream.write_packet(air,gap_us=70000)
+            stream.finish()
+
+    def test_ble_air_bytes_decode_independently(self):
+        from espargos.ble_decoder import decode
+        pdu=bytes.fromhex("0206475250534502")
+        for channel in [37,38,39]:
+            air=ble_le1m_packet(pdu,channel=channel)
+            bits=np.unpackbits(np.frombuffer(air,np.uint8),bitorder="little")*2.-1
+            t=np.arange(-16,17)/4
+            taps=np.exp(-2*(np.pi*.5*t)**2/np.log(2));taps/=taps.sum()
+            levels=np.pad(np.repeat(bits,4),(16,16),mode="edge")
+            f=np.convolve(levels,taps,"same")[16:-16]
+            phase=-np.cumsum(f)*2*np.pi*.25/4+np.pi*np.arange(len(f))
+            z=np.pad(150*np.exp(1j*phase),(160,64))
+            raw=((np.rint(z.real).astype(np.int32)&1023)|((np.rint(z.imag).astype(np.int32)&1023)<<10)).astype(np.uint32)
+            packet=decode(raw,8,channel,0)
+            self.assertIsNotNone(packet)
+            self.assertEqual(packet.flags,3)
+            self.assertEqual(packet.prefix,pdu)
+
+    def test_gfsk_configuration_roundtrip(self):
+        for rate in [125000,250000,500000,1000000]:
+            g=GFSK(symbol_rate_hz=rate,span=2,modulation_index=1)
+            self.assertEqual(GFSK.from_payload(g.payload).payload,g.payload)
+        for params in [dict(symbol_rate_hz=500000),dict(bt=float("nan")),dict(span=3),dict(symbol_rate_hz=900000),dict(modulation_index=.51),dict(symbol_rate_hz=125000,modulation_index=1/16)]:
+            with self.assertRaises(ValueError):GFSK(**params)
 
     def test_cs8_uses_raw_signed_byte_pairs(self):
         with IQStream(self.device.tx, mode="cs8") as stream:
@@ -380,3 +447,180 @@ class SSBTests(TestCase):
             lower = SSBEncoder(sideband="lower").encode(audio)
             np.testing.assert_allclose(lower, whole.conj())
             self.assertEqual(len(encoder.flush()), 256)
+
+
+class MultiArrayStreamTests(TestCase):
+    """Controllers have unrelated boot/epoch IDs but one calibrated grid."""
+
+    def setUp(self):
+        import concurrent.futures
+        from types import MethodType
+        from espargos.iq_transmitter import IQTransmitter
+        from espargos.calibration import Calibration, CalibrationGroup, CalibrationState, AntennaCorrection
+
+        self.now = 0.0
+        self.devices = [Device(), Device()]
+        self.devices[0].board.host = "array-a"
+        self.devices[1].board.host = "array-b"
+        self.by_board = {d.board: d for d in self.devices}
+        self.latencies = {d.board: latency for d, latency in zip(self.devices, (.013, .18))}
+        self.antennas = [Antenna(d.board.host, a) for d in self.devices for a in range(2)]
+        corrections = []
+        for bi, d in enumerate(self.devices):
+            for a, sensor in enumerate(d.tx_state["sensors"]):
+                sensor.update(antid=a, sample_rate_hz=16000000, boot_id=100 * bi + 10 + a,
+                              epoch=1000 * bi + a + 1, origin_ns=1000000 * (bi + 1) + a,
+                              sample_position=1000000 + 1000 * bi)
+                if a < 2:
+                    d.sensors[a]["boot_id"] = sensor["boot_id"]
+                    state = CalibrationState.from_tx_status(d.board.host, sensor)
+                    corrections.append(AntennaCorrection(state, .1 * (bi + a), 1e-9 * a))
+        self.tx = SimpleNamespace(
+            boards=[d.board for d in self.devices], states=[d.tx_state for d in self.devices],
+            read=lambda: None,
+            signals=SimpleNamespace(_antennas=lambda _: self.antennas, _check_beam_calibration=lambda: None),
+            owner=SimpleNamespace(calibrations=Calibration((CalibrationGroup(tuple(corrections)),))),
+            positions=np.array([[[bi + a * .06, 0, 0] for a in range(8)] for bi in range(2)]),
+            workers=concurrent.futures.ThreadPoolExecutor(max_workers=2),
+        )
+        self.tx._parallel = MethodType(IQTransmitter._parallel, self.tx)
+        self.addCleanup(self.tx.workers.shutdown)
+        for target, value in [("espargos.iq_stream._rpc", self.rpc),
+                              ("espargos.iq_stream.time.monotonic", lambda: self.now),
+                              ("espargos.iq_stream.time.sleep", self.sleep)]:
+            p = patch(target, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def sleep(self, seconds):
+        step = max(seconds, .001)
+        self.now += step
+        for d in self.devices:
+            for sensor in d.tx_state["sensors"]:
+                sensor["sample_position"] += round(step * IQStream.RATE)
+            d.sleep(step)
+
+    def rpc(self, board, path, data=None):
+        import copy
+        d = self.by_board[board]
+        if path == "get_iq_tx":
+            # A reply contains the clock at request processing, but arrives
+            # later. Different network delays must not shorten the lead.
+            snapshot = copy.deepcopy(d.tx_state)
+            self.sleep(self.latencies[board])
+            return snapshot
+        return d.rpc(board, path, data)
+
+    def arms(self, device):
+        return [struct.unpack_from("<QI8II", f, 20) for f in device.wire_frames if f[5] == 3]
+
+    def test_all_formats_share_origin_epochs_and_geometry_across_arrays(self):
+        from espargos.steering import Beamspace
+        from espargos.stream_sources import SingleCarrier
+
+        modes = [dict(mode="cs8"),
+                 dict(mode="single_carrier", modulation=SingleCarrier.psk31()),
+                 dict(mode="gfsk", modulation=GFSK.le1m())]
+        for settings in modes:
+            with self.subTest(mode=settings["mode"]):
+                steering = Beamspace(azimuth_deg=17, squint=True)
+                with IQStream(self.tx, steering=steering, **settings) as stream:
+                    if stream.mode == "gfsk":
+                        stream.write_packet(b"abcd", gap_us=20000)
+                    else:
+                        stream.write(bytes(4096))
+                    stream.start(lead_time=.5)
+                    arms = [self.arms(d)[-1] for d in self.devices]
+                    self.assertEqual(arms[0][0:2], arms[1][0:2])
+                    self.assertEqual(arms[0][-1], arms[1][-1])
+                    self.assertEqual(arms[0][0], stream.start_sample)
+                    latest = max(s["sample_position"] for d in self.devices for s in d.tx_state["sensors"][:2])
+                    self.assertGreaterEqual(stream.start_sample - latest, .5 * IQStream.RATE)
+                    for d, arm in zip(self.devices, arms):
+                        self.assertEqual(arm[2:10], tuple(s["epoch"] for s in d.tx_state["sensors"]))
+                        opened = [f for f in d.wire_frames if f[5] == 1][-1]
+                        config = struct.unpack_from("<4I24f", opened, 20)
+                        bi = self.devices.index(d)
+                        for a in range(2):
+                            weight, delay = steering.coefficients(self.tx.positions[bi, a], 2437000000, None, stream.RATE)
+                            self.assertAlmostEqual(config[4 + a], weight.real * .1, places=6)
+                            self.assertAlmostEqual(config[12 + a], weight.imag * .1, places=6)
+                            self.assertAlmostEqual(config[20 + a], delay, places=5)
+                    self.assertNotEqual(arms[0][2:10], arms[1][2:10])
+                    self.assertEqual(self.devices[0].received[0], self.devices[1].received[0])
+
+    def test_arm_requests_are_concurrent(self):
+        import threading
+        barrier = threading.Barrier(2)
+        for d in self.devices:
+            original = d.board.control.fetch
+            def send(path, data, original=original):
+                if data[5] == 3:
+                    barrier.wait(timeout=2)
+                return original(path, data)
+            d.board.control.fetch = send
+        with IQStream(self.tx) as stream:
+            stream.write(bytes(4096))
+            stream.start()
+        self.assertEqual(self.arms(self.devices[0])[-1][0], self.arms(self.devices[1])[-1][0])
+
+    def test_incompatible_grids_are_rejected_before_any_arm(self):
+        self.devices[1].tx_state["sensors"][0]["sync_seq"] = 99
+        with IQStream(self.tx) as stream:
+            stream.write(bytes(4096))
+            with self.assertRaisesRegex(ValueError, "synchronization sequence"):
+                stream.start()
+            self.assertFalse(any(self.arms(d) for d in self.devices))
+
+    def test_one_array_underrun_recovers_every_array_on_the_original_grid(self):
+        from espargos.stream_sources import SingleCarrier
+        modulation = SingleCarrier([-.5, .5], [.25] * 65, symbol_rate_hz=1234.5)
+        with IQStream(self.tx, mode="single_carrier", modulation=modulation) as stream:
+            stream.write(bytes(128))
+            stream.start()
+            origin, session = stream._phase_origin, stream.session
+            self.devices[1].sensors[0].update(state="starved", missing=77)
+            self.devices[1].publish()
+            stream.write(bytes([1]) * 256)
+            self.assertNotEqual(stream.session, session)
+            self.assertEqual(stream.resumptions, 1)
+            self.assertEqual(stream.previous_missing, 77)
+            arms = [self.arms(d)[-1] for d in self.devices]
+            self.assertEqual(arms[0][0:2], arms[1][0:2])
+            self.assertEqual(arms[0][-1], arms[1][-1])
+            period = struct.unpack_from("<I", modulation.payload)[0]
+            self.assertEqual((stream.start_sample * 256 - stream.start_phase_q8 - origin) % period, 0)
+            self.assertTrue(all(s["state"] == "running" for d in self.devices for s in d.sensors))
+
+    def test_independently_calibrated_arrays_cannot_form_a_geometric_beam(self):
+        from espargos.calibration import Calibration, CalibrationGroup
+        from espargos.steering import Beamspace
+        corrections = self.tx.owner.calibrations.groups[0].corrections
+        self.tx.owner.calibrations = Calibration(tuple(
+            CalibrationGroup(tuple(c for c in corrections if c.state.antenna.host == d.board.host))
+            for d in self.devices
+        ))
+        with self.assertRaisesRegex(ValueError, "independent calibration references"):
+            IQStream(self.tx, steering=Beamspace())
+        self.assertFalse(any(d.wire_frames for d in self.devices))
+
+    def test_failed_arm_joins_other_arrays_before_closing_them(self):
+        import threading
+        barrier = threading.Barrier(2)
+        for bi, d in enumerate(self.devices):
+            original = d.board.control.fetch
+            def send(path, data, original=original, bi=bi):
+                if data[5] == 3:
+                    barrier.wait(timeout=2)
+                    if bi == 0:
+                        raise ConnectionError("array A disconnected")
+                return original(path, data)
+            d.board.control.fetch = send
+        with IQStream(self.tx) as stream:
+            stream.write(bytes(4096))
+            with self.assertRaisesRegex(ConnectionError, "disconnected"):
+                stream.start()
+            self.assertTrue(stream.closed)
+        self.assertTrue(all(s["state"] == "closed" for d in self.devices for s in d.sensors))
+        commands = [frame[5] for frame in self.devices[1].wire_frames]
+        self.assertLess(commands.index(3), commands.index(5))

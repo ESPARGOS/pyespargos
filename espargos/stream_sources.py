@@ -106,22 +106,43 @@ class SingleCarrier:
         span = (len(p) - 1) // phases
         if not np.all(np.isfinite(p)) or np.any(abs(p) > 1 + 1e-12):
             raise ValueError("Pulse coefficients must be finite with magnitude <=1")
-        if not np.isfinite(symbol_rate_hz) or not 1 <= symbol_rate_hz <= (250000 if span == 1 else 32000 if span == 2 else 16000):
-            raise ValueError("Use up to 250000 baud for one-symbol pulses, 32000 for two, or 16000 for longer pulses")
-        if max(sum(abs(p[k * phases + phase]) for k in range(span)) for phase in range(phases + 1)) > 1.899:
+        if not np.isfinite(symbol_rate_hz) or not 1 <= symbol_rate_hz <= 1000000:
+            raise ValueError("Use a symbol rate from 1 to 1000000 baud")
+        if (
+            max(
+                sum(abs(p[k * phases + phase]) for k in range(span))
+                for phase in range(phases + 1)
+            )
+            > 1.899
+        ):
             raise ValueError("Overlapping pulse magnitudes must sum to <=1.899")
         period = round(16_000_000 * 256 / symbol_rate_hz)
         # Above the general renderer's limit, timing must fit the bounded
-        # sensor pulse bank. Include every phase visited by the 500 kSa/s grid.
+        # sensor pulse bank. Include every phase visited by its output grid.
         import math
-        bank_bytes = period // math.gcd(period, 8192) * len(c) * 4
-        if span == 1 and symbol_rate_hz > 16000 and bank_bytes > 256 * 1024:
-            raise ValueError("Symbol timing exceeds the 256 KiB pulse bank; try 50000, 100000, 125000, 200000 or 250000 baud")
+
+        states = len(c) if span == 1 else (len(c) + 1) ** span
+        step = 256 if period < 16384 else 8192
+        bank_bytes = period // math.gcd(period, step) * states * 4
+        if symbol_rate_hz > (32000 if span == 2 else 16000) and bank_bytes > (
+            8 * 1024 if period < 16384 else 256 * 1024
+        ):
+            raise ValueError(
+                "Symbol timing exceeds the pulse bank (8 KiB native, 256 KiB staged); lower the rate or shorten the pulse"
+            )
 
         def iq16(v):
-            return np.column_stack((v.real, v.imag)).__mul__(32767).round().astype("<i2").tobytes()
+            return (
+                np.column_stack((v.real, v.imag))
+                .__mul__(32767)
+                .round()
+                .astype("<i2")
+                .tobytes()
+            )
 
-        self.payload = struct.pack("<I4H", period, phases, span, len(c), 0) + iq16(c) + iq16(p)
+        self.payload = (
+            struct.pack("<I4H", period, phases, span, len(c), 0) + iq16(c) + iq16(p)
+        )
         self.symbol_rate_hz = 16_000_000 * 256 / period
         self.constellation = c.copy()
         self.pulse = p.copy()
@@ -137,18 +158,33 @@ class SingleCarrier:
         if len(data) < 12:
             raise ValueError("Incomplete single-carrier table")
         period, phases, span, count, reserved = struct.unpack_from("<I4H", data)
-        if (not 16384 <= period <= 4096000000 or phases not in (16, 32, 64, 128)
-                or not 1 <= span <= 8 or not 1 <= count <= 64 or reserved != 0
-                or len(data) != 12 + 4 * (count + span * phases + 1)
-                or ((span > 2 and period < 256000) or (span > 1 and period < 128000))):
+        if (
+            not 4096 <= period <= 4096000000
+            or phases not in (16, 32, 64, 128)
+            or not 1 <= span <= 8
+            or not 1 <= count <= 64
+            or reserved != 0
+            or len(data) != 12 + 4 * (count + span * phases + 1)
+        ):
             raise ValueError("Invalid single-carrier table")
         pairs = np.frombuffer(data, dtype="<i2", offset=12).reshape(-1, 2).astype(float)
         points, pulse = pairs[:count], pairs[count:]
-        if (np.any(np.hypot(points[:, 0], points[:, 1]) > 32768)
-                or np.any(np.hypot(pulse[:, 0], pulse[:, 1]) > 32768)
-                or max(sum(np.linalg.norm(pulse[k * phases + phase]) for k in range(span))
-                       for phase in range(phases + 1)) > 1.9 * 32768
-                or (span == 1 and period < 256000 and 4 * count * (period // math.gcd(period, 8192)) > 256 * 1024)):
+        if (
+            np.any(np.hypot(points[:, 0], points[:, 1]) > 32768)
+            or np.any(np.hypot(pulse[:, 0], pulse[:, 1]) > 32768)
+            or max(
+                sum(np.linalg.norm(pulse[k * phases + phase]) for k in range(span))
+                for phase in range(phases + 1)
+            )
+            > 1.9 * 32768
+            or (
+                period < (128000 if span == 2 else 256000)
+                and 4
+                * (count if span == 1 else (count + 1) ** span)
+                * (period // math.gcd(period, 256 if period < 16384 else 8192))
+                > (8 * 1024 if period < 16384 else 256 * 1024)
+            )
+        ):
             raise ValueError("Invalid constellation or pulse coefficients")
         result = cls.__new__(cls)
         result.payload = data
@@ -177,3 +213,105 @@ def psk31_symbols(text, *, preamble=32, postamble=32):
         sign ^= not bit
         result.append(sign)
     return bytes(result)
+
+
+class GFSK:
+    """Packet GFSK synthesized on sensors; LE 1M parameters by default.
+
+    Supply complete air bits to IQStream.write_packet(). Symbol rates must
+    divide 16 MSa/s, from 125 kbaud to 1 Mbaud. Modulation index is specified
+    in sixteenths. Packets reset phase deterministically and do not share FIR
+    history, so dropped packets cannot corrupt their successors.
+    """
+
+    def __init__(
+        self, *, symbol_rate_hz=1_000_000, bt=0.5, modulation_index=0.5, span=4
+    ):
+        import struct
+
+        if not np.isfinite(symbol_rate_hz) or not 125000 <= symbol_rate_hz <= 1000000:
+            raise ValueError("GFSK rate must be between 125000 and 1000000 baud")
+        samples = round(16_000_000 / symbol_rate_hz)
+        if abs(samples * symbol_rate_hz - 16_000_000) > 0.001:
+            raise ValueError("GFSK rate must divide 16 MSa/s exactly")
+        if not np.isfinite(bt) or not 0.2 <= bt <= 1 or span not in (2, 4):
+            raise ValueError("Use BT from 0.2 to 1 and a span of 2 or 4 symbols")
+        if (
+            not np.isfinite(modulation_index)
+            or not 1 <= modulation_index * 16 <= 16
+            or modulation_index * 16 != round(modulation_index * 16)
+        ):
+            raise ValueError(
+                "Modulation index must be 1/16 through 1, in steps of 1/16"
+            )
+        import math
+
+        span = int(span)
+        states = (32 // math.gcd(round(modulation_index * 16), 32)) * (1 << (span + 1))
+        if states * samples * 4 > 8 * 1024:
+            raise ValueError("GFSK configuration exceeds the 8 KiB native pulse bank")
+        self.symbol_rate_hz = 16_000_000 / samples
+        self.bt = float(bt)
+        self.modulation_index = float(modulation_index)
+        self.span = int(span)
+        self.payload = struct.pack(
+            "<IfHHI", samples * 256, self.bt, span, round(modulation_index * 16), 0
+        )
+
+    @classmethod
+    def le1m(cls):
+        return cls()
+
+    @classmethod
+    def from_payload(cls, payload):
+        import struct
+
+        if len(payload) != 16:
+            raise ValueError("Invalid GFSK configuration length")
+        period, bt, span, index, reserved = struct.unpack("<IfHHI", payload)
+        if reserved or not period or period % 256:
+            raise ValueError("Invalid GFSK configuration")
+        return cls(
+            symbol_rate_hz=4096000000 / period,
+            bt=bt,
+            span=span,
+            modulation_index=index / 16,
+        )
+
+
+def ble_le1m_packet(pdu, *, channel=37, access_address=0x8E89BED6, crc_init=0x555555):
+    """Build LE 1M air bytes from a PDU, including CRC and whitening.
+
+    Defaults are for advertising. Data-channel PDUs need their connection's
+    access address and CRC initializer. Bit order is LSB first in each byte.
+    This helper does not implement connection scheduling or channel hopping.
+    """
+    data = bytes(pdu)
+    if not 2 <= len(data) <= 257:
+        raise ValueError("Use a complete BLE PDU of 2..257 bytes")
+    if not isinstance(channel, int) or not 0 <= channel <= 39:
+        raise ValueError("BLE channel must be 0..39")
+    if (
+        not isinstance(access_address, int)
+        or not 0 <= access_address < 2**32
+        or not isinstance(crc_init, int)
+        or not 0 <= crc_init < 2**24
+    ):
+        raise ValueError("Invalid access address or CRC initializer")
+    crc = int(f"{crc_init:024b}"[::-1], 2)
+    for byte in data:
+        for k in range(8):
+            crc = (crc >> 1) ^ (0xDA6000 if (crc ^ (byte >> k)) & 1 else 0)
+    whitening = channel | 64
+    encoded = bytearray()
+    for byte in data + crc.to_bytes(3, "little"):
+        out = 0
+        for k in range(8):
+            out |= (((byte >> k) ^ whitening) & 1) << k
+            whitening = (whitening >> 1) ^ (0x44 if whitening & 1 else 0)
+        encoded.append(out)
+    return (
+        bytes([0x55 if access_address & 1 else 0xAA])
+        + access_address.to_bytes(4, "little")
+        + encoded
+    )
