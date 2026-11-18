@@ -402,6 +402,32 @@ class StreamTests(TestCase):
             self.assertEqual(struct.unpack_from("<I", arms[-1], 64)[0], stream.start_phase_q8)
             stream.finish();stream.wait()
 
+    def test_underrun_mid_write_resumes_from_unsent_samples(self):
+        device = self.device
+        prefill = bytes(2048)
+        payload = np.arange(12000, dtype="<u2").tobytes()
+        with IQStream(device.tx) as stream:
+            stream.write(prefill)
+            stream.start()
+            original_session = stream.session
+            stock_send = device.board.send_stream_data
+
+            def send_then_starve(frame):
+                stock_send(frame)
+                _, _, command, _, _, session, offset, count = struct.unpack_from("<IBBBBIII", frame)
+                if command == 2 and session == original_session and offset + count == 5120:
+                    device.sensors[0].update(state="starved", missing=12)
+                    device.publish()
+
+            device.board.send_stream_data = send_then_starve
+            self.assertEqual(stream.write(payload), 12000)
+            self.assertEqual(stream.resumptions, 1)
+            self.assertEqual(stream.offset, 12000 - 4096)
+            self.assertEqual(device.received[0], prefill + payload)
+            self.assertEqual(device.received[1], prefill + payload)
+            stream.finish()
+            stream.wait()
+
     def test_bulk_writes_wait_for_full_packet_credit(self):
         d = self.device
         for sensor in d.sensors:
