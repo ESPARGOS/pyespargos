@@ -3,7 +3,7 @@ import threading
 import unittest
 from types import SimpleNamespace
 
-from espargos.iq_receiver import IQReceiver
+from espargos.iq_receiver import IQReceiver, _BoardSignalTransport
 
 
 def _snapshot(count=3, uptime=1000, wifi_count=20, missing=None):
@@ -46,13 +46,8 @@ def _pool(board):
 class IQPoolReadyTests(unittest.TestCase):
     @staticmethod
     def _recovery_pool():
-        pool = object.__new__(IQReceiver)
-        pool._signal_recovery_lock = threading.Lock()
-        pool._signal_epoch_mismatch_streak = 0
-        pool._signal_recovery_running = False
-        pool._logger = logging.getLogger("test.iq_signal_recovery")
-        pool.boards = [SimpleNamespace(iq=SimpleNamespace())]
-        return pool
+        receiver = SimpleNamespace(_logger=logging.getLogger(__name__))
+        return _BoardSignalTransport(receiver, SimpleNamespace(iq=SimpleNamespace()))
 
     def test_state_requires_every_sensor(self):
         board = _Board([_snapshot(missing=7)])
@@ -113,7 +108,7 @@ class IQPoolReadyTests(unittest.TestCase):
 
         pool.sync = sync
         rearmed = []
-        pool.boards[0].iq.rearm_signal_capture = lambda: rearmed.append(True)
+        pool.board.iq.rearm_signal_capture = lambda: rearmed.append(True)
         reason = "array source epoch mismatch in Signal event 12"
         pool._signal_capture_rejected(reason)
         pool._signal_capture_rejected(reason)
@@ -145,7 +140,7 @@ class IQPoolReadyTests(unittest.TestCase):
         synced = threading.Event()
         reset = threading.Event()
         pool.sync = synced.set
-        pool.boards[0].iq.rearm_signal_capture = reset.set
+        pool.board.iq.rearm_signal_capture = reset.set
         pool._signal_capture_rejected("settled incomplete sensor set in Signal event 7, offset 0")
         self.assertTrue(reset.wait(1.0))
         self.assertFalse(synced.is_set())
@@ -153,7 +148,7 @@ class IQPoolReadyTests(unittest.TestCase):
     def test_superseded_incomplete_signal_event_resets_barrier(self):
         pool = self._recovery_pool()
         reset = threading.Event()
-        pool.boards[0].iq.rearm_signal_capture = reset.set
+        pool.board.iq.rearm_signal_capture = reset.set
         pool._signal_capture_rejected("Signal event 187 incomplete when event 188 completed")
         self.assertTrue(reset.wait(1.0))
 

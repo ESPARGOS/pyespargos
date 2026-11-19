@@ -186,7 +186,7 @@ class IQController(PyQt6.QtCore.QObject):
             if "adc_decimation" in capture:
                 radio["sample_rate_hz"] = DECIM_TO_FS[capture.pop("adc_decimation")]
             if "rf_switch" in capture:
-                radio["output"] = ("isolation", "reference", "antenna_r", "antenna_l")[capture.pop("rf_switch")]
+                radio["output"] = ("isolated", "reference", "antenna_r", "antenna_l")[capture.pop("rf_switch")]
             # Serialize user edits with reference operations and automatic
             # capture management (feed selection / trigger thresholds).
             with self._reference_io_lock:

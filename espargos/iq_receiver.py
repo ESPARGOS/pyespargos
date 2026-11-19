@@ -68,164 +68,35 @@ class _SignalCaptureCallbackHandle:
         self.signal_assembler = assembler
 
 
-class IQReceiver(ClusterAssembler):
-    """Manage IQ capture and assemble synchronized chunk clusters.
+class _BoardSignalTransport:
+    """Validate and retire events in one controller's capture-ID namespace."""
 
-    :param owner: The owning Pool. Obtain this receiver through ``pool.iq``.
-    :param chunk_settle_timeout: Seconds an incomplete cluster may wait for
-        stragglers before it is offered to ordinary raw-IQ partial-snapshot
-        consumers.
-    :param signal_settle_timeout: Seconds a Signal chunk offset may wait for
-        all eight sensors. Signal admits only one event until the host accepts
-        or rejects it, so its shorter bounded transport deadline is also the
-        recovery time from a mismatched or lost event identity.
-    :param master_index: Index of the master board (the one whose reference TX
-        feeds the shared reference network); autodetected when None
-    :param gain_phase_compensation: Correct deterministic phase jumps caused
-        by changes between analog gain states (enabled by default)
-    """
-
-    def __init__(
-        self,
-        owner,
-        chunk_settle_timeout=15.0,
-        signal_settle_timeout=2.0,
-        master_index=None,
-        gain_phase_compensation=True,
-    ):
-        super().__init__(owner)
-        self._expected = np.ones(self.shape, dtype=bool)
-        self.chunk_settle_timeout = float(chunk_settle_timeout)
-        self.signal_settle_timeout = float(signal_settle_timeout)
-        self._master_index = master_index
-        self._gain_phase_enabled = bool(gain_phase_compensation)
-
-        # 24-bit chunk-index unwrap state (module docstring); the grid is
-        # common to all boards by construction, so one global tracker
-        # suffices — inter-board arrival skew (<~ms) is far below the 2^23
-        # wrap threshold. Post-sync stragglers from the old time base briefly
-        # inflate the epoch, keeping the unwrapped index monotonic through
-        # the transition; their spurious clusters age out via the settle
-        # timeout.
-        self._unwrap_lock = threading.Lock()
-        self._unwrap_epoch = 0
-        self._unwrap_last = None
-
-        # BOOT can occasionally reach one sensor just after its bank boundary,
-        # putting that sensor one whole bank ahead for an event. The assembler
-        # catches this before delivery. Coalesce repeated mismatches into one
-        # capture-generation reset instead of rejecting every later event
-        # until a user happens to change a setting. The IQ engines' anchored
-        # sample grids remain synchronized, so a WiFi/REFTX round-trip would be
-        # unnecessary and would create a much longer visible pause.
+    def __init__(self, receiver, board):
+        self.receiver = receiver
+        self.board = board
+        self._logger = receiver._logger
         self._signal_recovery_lock = threading.Lock()
         self._signal_epoch_mismatch_streak = 0
         self._signal_recovery_running = False
         self._signal_recovery_not_before = 0.0
-
-        # Liveness watchdog for SILENT Signal stalls. The drop-based recovery
-        # above needs at least one observable rejected event; a stall in which
-        # no chunk arrives at all (e.g. a wedged fail-closed barrier) would
-        # otherwise persist until a user happens to change a setting.
-        self._signal_last_signal_monotonic = None
+        self.last_chunk_at = None
         self._signal_watchdog_stop = threading.Event()
         self._signal_watchdog_thread = None
-
-        self._calibration: SensorCalibration | None = None
-        # capture parameters the stored calibration was computed at (needed to
-        # place its corrections on an absolute frequency grid)
-        self._calibration_sample_rate = None
-        self._calibration_center_frequency = None
-        self._calibration_epoch = None
-        self._calibration_grid_origin = None
-        self._calibrating = False
-        self._reference_lock = threading.Lock()
-        self._reference_sequence = time.monotonic_ns() & 0xFFFFFFFF
-
-        for board_index, board_obj in enumerate(self.boards):
-            iq = board_obj.iq
-            self._subscribe_sensor_messages(board_index, iq, iq.subscribe_chunks)
-            self._subscribe_sensor_messages(board_index, iq, iq.subscribe_accumulations)
-
-        # Pool-level Signal transport maintenance. The sensors retain every
-        # emitted Signal event until the host acknowledges it, so SOME host
-        # entity must assemble and acknowledge events even when the
-        # application only consumes the raw chunk stream (e.g. a waterfall
-        # display) — otherwise the bounded per-sensor snapshot queues fill
-        # after four events and the whole array stalls. One internal
-        # assembler per (single-board) pool performs that duty, feeds the
-        # drop-based recovery and the liveness watchdog, and dispatches
-        # complete captures to add_signal_capture_callback() consumers.
-        self._signal_capture_consumers = []
-        self._signal_auto_maintenance = True
-        self._signal_assembler = None
+        self.auto_maintenance = True
         self._signal_pending_ack = None
-        if len(self.boards) == 1:
-            self._signal_assembler = IQSignalAssembler(on_rejected_event=self._signal_event_rejected)
-            self.add_callback(
-                self._signal_feed,
-                callback_predicate=lambda cluster: cluster.is_complete or cluster.settled,
-            )
-            self._signal_watchdog_start()
+        self.assembler = IQSignalAssembler(on_rejected_event=self._signal_event_rejected)
 
-    # ---- data plane: chunk clustering ----
-
-    def _complete(self, cluster):
-        expected = self._expected
-        return bool(np.any(expected) and np.all(cluster.completion[expected]))
-
-    def add_callback(self, callback, callback_predicate=None, include_partial=False):
-        """Register a callback for assembled :class:`.IQCluster` objects.
-
-        By default only clusters containing every antenna currently in IQ RX mode are delivered, immediately on completion. With
-        ``include_partial``, settled incomplete clusters are delivered as well
-        (after ``chunk_settle_timeout``, once no more chunks are expected) —
-        such consumers must tolerate out-of-order chunk indices between the
-        immediate complete and the delayed partial deliveries. A custom
-        ``callback_predicate`` overrides both behaviors; it can consult
-        ``cluster.settled`` to recognize the settled-incomplete case.
-
-        :param callback: The function to call, gets the :class:`.IQCluster`
-        :param callback_predicate: Cluster completion predicate, see :meth:`espargos.clustering.ClusterAssembler.add_cluster_callback`
-        :param include_partial: Also deliver settled incomplete clusters (ignored if ``callback_predicate`` is given)
-        :return: A callback handle for :meth:`remove_callback`
-        """
-        predicate = callback_predicate
-        if predicate is None:
-            predicate = (lambda cluster: cluster.settled or self._complete(cluster)) if include_partial else self._complete
-
-        # Pool callback completion is tracked globally. Treat clusters of the
-        # other IQ data type as an immediate no-op so a raw callback cannot
-        # keep accumulation clusters cached forever (and vice versa).
-        def typed_callback(cluster):
-            if isinstance(cluster, IQCluster):
-                callback(cluster)
-
-        return self.add_cluster_callback(
-            typed_callback,
-            callback_predicate=lambda cluster: not isinstance(cluster, IQCluster) or predicate(cluster),
-        )
-
-    def remove_callback(self, callback) -> bool:
-        """Remove a callback previously returned by :meth:`add_callback`."""
-        return self.remove_cluster_callback(callback)
-
-    def acknowledge_signal_capture(self, capture):
-        """Release a retained Signal event after host-side validation."""
-
-        if len(self.boards) != 1:
-            raise ValueError("explicit Signal acknowledgement requires one board")
-        generations = np.unique(np.asarray(capture.config_generation, dtype=np.uint32))
-        if generations.size != 1:
-            raise ValueError("Signal capture has inconsistent configuration generations")
-        self.boards[0].iq.acknowledge_signal_capture(int(generations[0]), int(capture.capture_id))
-
-    def _auto_acknowledge_signal_identity(self, generation, capture_id, context):
+    def acknowledge(self, generation, capture_id, context):
         """Best-effort automatic retirement without killing pool processing."""
+
+        if self._signal_pending_ack is not None:
+            pending_generation, pending_id, _ = self._signal_pending_ack
+            if generation == pending_generation and IQSignalAssembler._forward(pending_id, capture_id):
+                generation, capture_id, context = self._signal_pending_ack
 
         for attempt in range(3):
             try:
-                self.boards[0].iq.acknowledge_signal_capture(int(generation), int(capture_id))
+                self.board.iq.acknowledge_signal_capture(int(generation), int(capture_id))
                 self._signal_pending_ack = None
                 return True
             except Exception as error:
@@ -242,14 +113,10 @@ class IQReceiver(ClusterAssembler):
                     return False
                 time.sleep(0.01 * (attempt + 1))
 
-    def _expire_cluster_caches(self):
-        super()._expire_cluster_caches()
-        # A failed final ACK can fill the sensors' retained-event queue: no
-        # later capture then arrives to trigger another cumulative ACK.
-        # Retry from the normal processing loop, including when it is idle.
+    def retry_pending(self):
         pending = self._signal_pending_ack
-        if pending is not None and not self.calibrating and time.monotonic() >= self._signal_ack_retry_at:
-            self._auto_acknowledge_signal_identity(*pending)
+        if pending is not None and time.monotonic() >= self._signal_ack_retry_at:
+            self.acknowledge(*pending)
 
     def _signal_capture_accepted(self):
         with self._signal_recovery_lock:
@@ -322,7 +189,7 @@ class IQReceiver(ClusterAssembler):
         genuinely wedged barrier stalled forever.
         """
 
-        board_iq = self.boards[0].iq
+        board_iq = self.board.iq
         get_config = getattr(board_iq, "get_config", None)
         for attempt in range(3):
             try:
@@ -348,7 +215,7 @@ class IQReceiver(ClusterAssembler):
                 time.sleep(0.5 * (attempt + 1))
         return False
 
-    def _signal_watchdog_start(self):
+    def start_watchdog(self):
         if self._signal_watchdog_thread is not None:
             return
         self._signal_watchdog_stop.clear()
@@ -361,9 +228,9 @@ class IQReceiver(ClusterAssembler):
 
     def _signal_watchdog_loop(self):
         while not self._signal_watchdog_stop.wait(1.0):
-            if not self.processing or not self._signal_auto_maintenance:
+            if not self.receiver.processing or not self.auto_maintenance:
                 continue  # a coordinator holds ACKs deliberately
-            stamp = self._signal_last_signal_monotonic
+            stamp = self.last_chunk_at
             if stamp is None:
                 continue
             quiet = time.monotonic() - stamp
@@ -384,13 +251,13 @@ class IQReceiver(ClusterAssembler):
 
     def _signal_watchdog_check(self, quiet):
         try:
-            config = self.boards[0].iq.get_config()
+            config = self.board.iq.get_config()
         except Exception:
             return
         trigger = config.get("trigger", {})
         if config.get("mode") != "iq" or trigger.get("mode") != "signal" or not trigger.get("antennas"):
             # No longer in Signal mode: disarm until Signal traffic returns.
-            self._signal_last_signal_monotonic = None
+            self.last_chunk_at = None
             return
         if quiet < trigger["holdoff_ms"] / 1000.0 + _SIGNAL_WATCHDOG_QUIET_SECONDS:
             return  # a long configured holdoff is legitimate dead time
@@ -399,7 +266,7 @@ class IQReceiver(ClusterAssembler):
         if config.get("boot_line_high", False):
             # Armed with the shared net high: the RF environment is genuinely
             # quiet. Restamp so the next check needs another full quiet window.
-            self._signal_last_signal_monotonic = time.monotonic()
+            self.last_chunk_at = time.monotonic()
             return
         # Signal mode, holdoff long expired, zero chunk traffic, and a sensor
         # holds the shared BOOT net low: the fail-closed barrier is wedged
@@ -409,27 +276,161 @@ class IQReceiver(ClusterAssembler):
             quiet,
         )
         self._signal_try_rearm("liveness watchdog")
-        self._signal_last_signal_monotonic = time.monotonic()
+        self.last_chunk_at = time.monotonic()
 
     def _signal_event_rejected(self, generation, capture_id, reason):
         """Internal assembler rejection hook: transport hygiene + recovery."""
-        self._auto_acknowledge_signal_identity(generation, capture_id, f"rejection ({reason})")
-        if self._signal_auto_maintenance:
+        self.acknowledge(generation, capture_id, f"rejection ({reason})")
+        if self.auto_maintenance:
             self._signal_capture_rejected(reason)
 
-    def _signal_feed(self, cluster):
-        """Feed the pool's central Signal transport maintainer (__init__)."""
-        if self._signal_assembler is None:
-            return
-        if bool(np.all(np.asarray(cluster.capture_id) == 0xFFFFFFFF)):
-            return  # ordinary interval traffic carries no Signal identity
-        for capture in self._signal_assembler.add_cluster(cluster):
-            if self._signal_auto_maintenance:
+    def feed(self, cluster):
+        """Validate one board-local chunk and retire completed captures."""
+        for capture in self.assembler.add_cluster(cluster):
+            if self.auto_maintenance:
                 self._signal_capture_accepted()
                 generations = np.unique(np.asarray(capture.config_generation, dtype=np.uint32))
-                self._auto_acknowledge_signal_identity(int(generations[0]), int(capture.capture_id), "acceptance")
-            for consumer in list(self._signal_capture_consumers):
+                self.acknowledge(int(generations[0]), int(capture.capture_id), "acceptance")
+            for consumer in list(self.receiver._signal_capture_consumers):
                 consumer(capture)
+
+    def close(self):
+        self._signal_watchdog_stop.set()
+        if self._signal_watchdog_thread is not None and self._signal_watchdog_thread is not threading.current_thread():
+            self._signal_watchdog_thread.join()
+
+
+class IQReceiver(ClusterAssembler):
+    """Manage IQ capture and assemble synchronized chunk clusters.
+
+    :param owner: The owning Pool. Obtain this receiver through ``pool.iq``.
+    :param chunk_settle_timeout: Seconds an incomplete cluster may wait for
+        stragglers before it is offered to ordinary raw-IQ partial-snapshot
+        consumers.
+    :param signal_settle_timeout: Seconds a Signal chunk offset may wait for
+        all eight sensors on its board. On expiry the host can retire the
+        incomplete event and release its slot in the sensor snapshot queue.
+    :param master_index: Index of the master board (the one whose reference TX
+        feeds the shared reference network); autodetected when None
+    :param gain_phase_compensation: Correct deterministic phase jumps caused
+        by changes between analog gain states (enabled by default)
+    """
+
+    def __init__(
+        self,
+        owner,
+        chunk_settle_timeout=15.0,
+        signal_settle_timeout=2.0,
+        master_index=None,
+        gain_phase_compensation=True,
+    ):
+        super().__init__(owner)
+        self._expected = np.ones(self.shape, dtype=bool)
+        self.chunk_settle_timeout = float(chunk_settle_timeout)
+        self.signal_settle_timeout = float(signal_settle_timeout)
+        self._master_index = master_index
+        self._gain_phase_enabled = bool(gain_phase_compensation)
+
+        # 24-bit chunk-index unwrap state (module docstring); the grid is
+        # common to all boards by construction, so one global tracker
+        # suffices — inter-board arrival skew (<~ms) is far below the 2^23
+        # wrap threshold. Post-sync stragglers from the old time base briefly
+        # inflate the epoch, keeping the unwrapped index monotonic through
+        # the transition; their spurious clusters age out via the settle
+        # timeout.
+        self._unwrap_lock = threading.Lock()
+        self._unwrap_epoch = 0
+        self._unwrap_last = None
+
+        self._calibration: SensorCalibration | None = None
+        # capture parameters the stored calibration was computed at (needed to
+        # place its corrections on an absolute frequency grid)
+        self._calibration_sample_rate = None
+        self._calibration_center_frequency = None
+        self._calibration_epoch = None
+        self._calibration_grid_origin = None
+        self._calibrating = False
+        self._reference_lock = threading.Lock()
+        self._reference_sequence = time.monotonic_ns() & 0xFFFFFFFF
+
+        for board_index, board_obj in enumerate(self.boards):
+            iq = board_obj.iq
+            self._subscribe_sensor_messages(board_index, iq, iq.subscribe_chunks)
+            self._subscribe_sensor_messages(board_index, iq, iq.subscribe_accumulations)
+
+        self._signal_capture_consumers = []
+        self._signal_transports = [_BoardSignalTransport(self, board) for board in self.boards]
+        self.add_callback(self._feed_signal, callback_predicate=self._signal_ready)
+        for transport in self._signal_transports:
+            transport.start_watchdog()
+
+    @staticmethod
+    def _signal_ready(cluster):
+        board = cluster.signal_board_index
+        return board is None or cluster.settled or np.all(cluster.completion[board])
+
+    def _feed_signal(self, cluster):
+        board = cluster.signal_board_index
+        if board is not None:
+            self._signal_transports[board].feed(cluster._signal_board_view())
+
+    # ---- data plane: chunk clustering ----
+
+    def _complete(self, cluster):
+        expected = self._expected
+        return bool(np.any(expected) and np.all(cluster.completion[expected]))
+
+    def add_callback(self, callback, callback_predicate=None, include_partial=False):
+        """Register a callback for assembled :class:`.IQCluster` objects.
+
+        By default only clusters containing every antenna currently in IQ RX mode are delivered, immediately on completion. With
+        ``include_partial``, settled incomplete clusters are delivered as well
+        (after ``chunk_settle_timeout``, once no more chunks are expected) —
+        such consumers must tolerate out-of-order chunk indices between the
+        immediate complete and the delayed partial deliveries. A custom
+        ``callback_predicate`` overrides both behaviors; it can consult
+        ``cluster.settled`` to recognize the settled-incomplete case.
+
+        :param callback: The function to call, gets the :class:`.IQCluster`
+        :param callback_predicate: Cluster completion predicate, see :meth:`espargos.clustering.ClusterAssembler.add_cluster_callback`
+        :param include_partial: Also deliver settled incomplete clusters (ignored if ``callback_predicate`` is given)
+        :return: A callback handle for :meth:`remove_callback`
+        """
+        predicate = callback_predicate
+        if predicate is None:
+            predicate = (lambda cluster: cluster.settled or self._complete(cluster)) if include_partial else self._complete
+
+        # Pool callback completion is tracked globally. Treat clusters of the
+        # other IQ data type as an immediate no-op so a raw callback cannot
+        # keep accumulation clusters cached forever (and vice versa).
+        def typed_callback(cluster):
+            if isinstance(cluster, IQCluster):
+                callback(cluster)
+
+        return self.add_cluster_callback(
+            typed_callback,
+            callback_predicate=lambda cluster: not isinstance(cluster, IQCluster) or predicate(cluster),
+        )
+
+    def remove_callback(self, callback) -> bool:
+        """Remove a callback previously returned by :meth:`add_callback`."""
+        return self.remove_cluster_callback(callback)
+
+    def acknowledge_signal_capture(self, capture):
+        """Release a retained Signal event after host-side validation."""
+
+        if len(self.boards) != 1:
+            raise ValueError("explicit Signal acknowledgement requires one board")
+        generations = np.unique(np.asarray(capture.config_generation, dtype=np.uint32))
+        if generations.size != 1:
+            raise ValueError("Signal capture has inconsistent configuration generations")
+        self.boards[0].iq.acknowledge_signal_capture(int(generations[0]), int(capture.capture_id))
+
+    def _expire_cluster_caches(self):
+        super()._expire_cluster_caches()
+        if not self.calibrating:
+            for transport in self._signal_transports:
+                transport.retry_pending()
 
     def add_signal_capture_callback(self, callback, *, auto_acknowledge=True):
         """Register for complete, contiguous signal-triggered array events.
@@ -441,7 +442,7 @@ class IQReceiver(ClusterAssembler):
         applications that only consume the raw chunk stream need no
         Signal-specific code at all.
 
-        Signal capture requires a single-board pool. The eight antennas on
+        This callback requires a single-board pool. The eight antennas on
         that array capture together, but separate arrays trigger independently.
         A shared clock and reference do not synchronize their Signal events.
         Use Interval or Accumulate for synchronized multi-array capture.
@@ -452,12 +453,13 @@ class IQReceiver(ClusterAssembler):
         accepted capture. This option does not coordinate triggers across arrays.
         """
 
-        if len(self.boards) != 1 or self._signal_assembler is None:
+        if len(self.boards) != 1:
             raise ValueError("Signal capture consensus is local to one board's shared BOOT net; " "use one IQReceiver per board")
+        transport = self._signal_transports[0]
         if not auto_acknowledge:
-            self._signal_auto_maintenance = False
+            transport.auto_maintenance = False
         self._signal_capture_consumers.append(callback)
-        return _SignalCaptureCallbackHandle(callback, self._signal_assembler)
+        return _SignalCaptureCallbackHandle(callback, transport.assembler)
 
     def remove_signal_capture_callback(self, callback) -> bool:
         """Remove a consumer by its handle or by the original callback."""
@@ -469,9 +471,8 @@ class IQReceiver(ClusterAssembler):
             return False
 
     def _close(self):
-        self._signal_watchdog_stop.set()
-        if self._signal_watchdog_thread is not None and self._signal_watchdog_thread is not threading.current_thread():
-            self._signal_watchdog_thread.join()
+        for transport in self._signal_transports:
+            transport.close()
         super()._close()
 
     def add_accumulation_callback(self, callback, callback_predicate=None, include_partial=False):
@@ -526,7 +527,7 @@ class IQReceiver(ClusterAssembler):
         if isinstance(payload, IQAccumPacket):
             return _CACHE_ACCUMULATIONS
         if payload.is_signal_capture and payload.capture_id != 0xFFFFFFFF:
-            self._signal_last_signal_monotonic = time.monotonic()
+            self._signal_transports[board_index].last_chunk_at = time.monotonic()
             return _CACHE_SIGNAL_CHUNKS
         return _CACHE_CHUNKS
 
@@ -577,15 +578,21 @@ class IQReceiver(ClusterAssembler):
                 self.board_revisions,
                 gain_phase_compensation=self._gain_phase_enabled,
             )
-        return IQCluster(
+        cluster = IQCluster(
             cluster_key[-1] if cache_name == _CACHE_CHUNKS else cluster_key,
             self.board_revisions,
             gain_phase_compensation=self._gain_phase_enabled,
         )
 
+        if cache_name == _CACHE_SIGNAL_CHUNKS:
+            cluster.signal_board_index = board_index
+        return cluster
+
     def _on_cluster_updated(self, cache_name, cluster_key, sensor_cluster) -> bool:
         all_callbacks_fired = self._try_callbacks(sensor_cluster)
         # TX/WiFi antennas cannot complete an IQ cluster in a mixed-mode pool.
+        if cache_name == _CACHE_SIGNAL_CHUNKS:
+            return all_callbacks_fired and self._signal_ready(sensor_cluster)
         return all_callbacks_fired and self._complete(sensor_cluster)
 
     def _on_cluster_expired(self, cache_name, cluster_key, sensor_cluster) -> None:
