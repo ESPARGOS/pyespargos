@@ -78,8 +78,10 @@ traffic. Use :meth:`add_signal_capture_callback() <espargos.iq_receiver.IQReceiv
    with a shared clock and reference connection. Their captures may therefore
    cover different events or different parts of the same signal.
 
-   Use a single-board :class:`Pool <espargos.pool.Pool>` for Signal capture. For synchronized captures
-   across multiple arrays, use Interval or Accumulate instead.
+   A multi-board :class:`Pool <espargos.pool.Pool>` acknowledges each board's
+   Signal events independently, including when consuming raw chunks. Use a
+   single-board pool for the complete-event callback. For synchronized captures
+   across boards, use Interval or Accumulate.
 
 For example:
 

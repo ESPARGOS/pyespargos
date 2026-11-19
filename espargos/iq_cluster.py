@@ -11,6 +11,7 @@ across arrays. An :class:`IQCluster`
 collects one such association key across the configured sensors.
 """
 
+from copy import copy
 import time
 
 import numpy as np
@@ -43,6 +44,7 @@ class IQCluster(SensorCluster):
     ):
         super().__init__(board_revisions)
         self.chunk_index = int(chunk_index)
+        self.signal_board_index: int | None = None
         self._gain_phase_enabled = bool(gain_phase_compensation)
         #: Set by the pool once the cluster's settle window has elapsed: no
         #: more chunks are expected (missing positions are genuine uplink
@@ -64,6 +66,20 @@ class IQCluster(SensorCluster):
         self._capture_id = np.full(self.shape, 0xFFFFFFFF, dtype=np.uint32)
         self._capture_chunk_offset = np.full(self.shape, 0xFFFFFFFF, dtype=np.uint32)
         self._capture_chunk_count = np.zeros(self.shape, dtype=np.uint32)
+
+    def _signal_board_view(self):
+        """Expose only the triggering board to its eight-sensor event assembler."""
+        if len(self.board_revisions) == 1:
+            return self
+        board = self.signal_board_index
+        view = copy(self)
+        view.board_revisions = self.board_revisions[board : board + 1]
+        view._shape = (1, *self.shape[1:])
+        # Every ndarray on an IQCluster is indexed by (board, row, column).
+        for name, value in vars(self).items():
+            if isinstance(value, np.ndarray):
+                setattr(view, name, value[board : board + 1])
+        return view
 
     def add_message(self, board_index: int, sensor_message: sensor.SensorMessage) -> bool:
         position = self.get_sensor_position(board_index, int(sensor_message.antenna_id))

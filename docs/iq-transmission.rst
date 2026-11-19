@@ -82,7 +82,8 @@ An individual array can also use ``tx_method="monitor"`` for calibration.
 See :doc:`calibration` for the two methods and their requirements.
 
 To transmit through an antenna feed, configure ``output="antenna_r"`` or
-``"antenna_l"`` instead. ``"isolation"`` selects neither antenna nor Reference.
+``"antenna_l"`` instead. ``"isolated"`` disconnects both antennas and Reference.
+The legacy spelling ``"isolation"`` is also accepted by ``configure()``.
 Stopping transmission replaces the samples with silence while replay keeps
 running, preserving calibration timing. Closing the pool also stops TX.
 

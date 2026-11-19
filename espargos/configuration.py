@@ -15,7 +15,7 @@ from .calibration import Antenna
 from .iq_packet import DECIM_TO_FS
 from .iq_tx_control import _rpc, _wait
 
-_ROUTES = {"isolation": 0, "reference": 1, "antenna_r": 2, "antenna_l": 3, "random": 4}
+_ROUTES = {"isolated": 0, "reference": 1, "antenna_r": 2, "antenna_l": 3, "random": 4}
 _PLANNERS = {}
 _LOCK = RLock()
 
@@ -218,6 +218,8 @@ def configure(selection, *, mode=None, **options):
     options = {k: v for k, v in options.items() if v is not None}
     if "frequency_hz" in options and (not math.isfinite(options["frequency_hz"]) or options["frequency_hz"] <= 0):
         raise ValueError("frequency_hz must be positive and finite")
+    if options.get("output") == "isolation":
+        options["output"] = "isolated"
     if "output" in options and options["output"] not in _ROUTES:
         raise ValueError(f"output must be one of {tuple(_ROUTES)}")
     with _LOCK:

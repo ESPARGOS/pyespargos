@@ -26,6 +26,23 @@ class ConfigurationTests(unittest.TestCase):
             pool.configure(channel=38)
             self.assertFalse(receiver.is_calibrated())
 
+    def test_isolated_route_and_legacy_alias(self):
+        for spelling in ("isolated", "isolation"):
+            board = FakeBoard()
+            with Pool([board]) as pool:
+                pool.configure(output=spelling)
+                self.assertEqual(board.config["rf_switch"], 0)
+                board.modes = ["iq_rx"] * 8
+                board.iq.get_config = lambda: {"modes": board.modes, "receivers": [{"rf_freq_hz": 2440e6}] * 8}
+                board.iq.set_config = Mock()
+                pool.configure(output=spelling)
+                self.assertEqual(board.iq.set_config.call_args.args[0]["rf_switch"], 0)
+                board.modes = ["iq_tx"] * 8
+                pool.configure(output=spelling)
+                path, payload = board.writes[-1]
+                self.assertEqual(path, "set_iq_tx")
+                self.assertEqual(payload["transmitters"], [dict(antid=a, output="isolated") for a in range(8)])
+
     def test_validate_every_board_before_writing(self):
         a, b = FakeBoard("a"), FakeBoard("b")
         b.modes[7] = "wifi"
