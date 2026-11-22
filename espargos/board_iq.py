@@ -11,6 +11,7 @@ from typing import Any, Callable
 from espargos.board import BoardCapability, SensorMessageSubscription
 from espargos.sensor import SensorMessage
 
+from .iq_rx_stream import IQStreamPacket, IQ_RX_STREAM_TYPE_HEADER
 from .iq_packet import (
     IQ_ACCUM_TYPE_HEADER,
     IQ_CHUNK_TYPE_HEADER,
@@ -145,3 +146,7 @@ class IQCapability(BoardCapability):
             IQAccumPacket,
             callback,
         )
+
+    def subscribe_stream(self, callback: Callable[[SensorMessage[IQStreamPacket]], None]) -> SensorMessageSubscription:
+        """Receive each antenna's narrowband IQ blocks, including its absolute output sample index."""
+        return self._subscribe_decoded_sensor_messages(IQ_RX_STREAM_TYPE_HEADER, IQStreamPacket, callback)

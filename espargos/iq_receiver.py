@@ -25,12 +25,14 @@ from espargos.calibration import Calibration
 from ._iq_calibration import reference as iq_reference
 from . import iq_tone
 from .iq_accum_cluster import IQAccumCluster
+from .iq_rx_stream import IQStreamBlock, IQStreamPacket
 from .iq_cluster import CHUNK_SAMPLES, IQCluster
 from .iq_packet import DECIM_TO_FS, IQ_SYNC_INFO_GRID_SYNCED, IQAccumPacket
 from .iq_signal_capture import IQSignalAssembler
 
 __all__ = ["DECIM_TO_FS", "IQCalibrationError", "IQReceiver", "SENSOR_COUNT", "iq_receiver_config"]
 
+_CACHE_STREAM = "stream"
 _CACHE_CHUNKS = "chunks"
 _CACHE_SIGNAL_CHUNKS = "signal_chunks"
 _CACHE_ACCUMULATIONS = "accumulations"
@@ -355,6 +357,7 @@ class IQReceiver(ClusterAssembler):
 
         for board_index, board_obj in enumerate(self.boards):
             iq = board_obj.iq
+            self._subscribe_sensor_messages(board_index, iq, iq.subscribe_stream)
             self._subscribe_sensor_messages(board_index, iq, iq.subscribe_chunks)
             self._subscribe_sensor_messages(board_index, iq, iq.subscribe_accumulations)
 
@@ -411,6 +414,17 @@ class IQReceiver(ClusterAssembler):
             typed_callback,
             callback_predicate=lambda cluster: not isinstance(cluster, IQCluster) or predicate(cluster),
         )
+
+    def add_stream_callback(self, callback, *, include_partial=False):
+        """Receive aligned narrowband blocks. Partial blocks retain NaNs for missing antennas."""
+        def ready(block):
+            return not isinstance(block, IQStreamBlock) or self._complete(block) or (include_partial and block.settled)
+
+        def deliver(block):
+            if isinstance(block, IQStreamBlock):
+                callback(block)
+
+        return self.add_cluster_callback(deliver, callback_predicate=ready)
 
     def remove_callback(self, callback) -> bool:
         """Remove a callback previously returned by :meth:`add_callback`."""
@@ -515,6 +529,7 @@ class IQReceiver(ClusterAssembler):
         counters, so pre-sync clusters can never complete and would only
         pollute the store.
         """
+        self._clear_cluster_cache(_CACHE_STREAM)
         self._clear_cluster_cache(_CACHE_CHUNKS)
         self._clear_cluster_cache(_CACHE_SIGNAL_CHUNKS)
         self._clear_cluster_cache(_CACHE_ACCUMULATIONS)
@@ -524,6 +539,8 @@ class IQReceiver(ClusterAssembler):
 
     def _get_cluster_cache_name(self, board_index, sensor_message) -> str:
         payload = sensor_message.payload
+        if isinstance(payload, IQStreamPacket):
+            return _CACHE_STREAM
         if isinstance(payload, IQAccumPacket):
             return _CACHE_ACCUMULATIONS
         if payload.is_signal_capture and payload.capture_id != 0xFFFFFFFF:
@@ -532,6 +549,12 @@ class IQReceiver(ClusterAssembler):
         return _CACHE_CHUNKS
 
     def _get_cluster_key(self, board_index, sensor_message) -> int:
+        p = sensor_message.payload
+        if isinstance(p, IQStreamPacket):
+            # Free-running counters are local to an individual antenna.
+            local = None if p.synchronized else (board_index, sensor_message.antenna_id)
+            generation = p.config_generation if len(self.boards) == 1 else None
+            return (p.sync_info, generation, local, p.center_freq_hz, p.sample_rate_hz, p.first_sample)
         if isinstance(sensor_message.payload, IQAccumPacket):
             payload = sensor_message.payload
             return (
@@ -575,6 +598,8 @@ class IQReceiver(ClusterAssembler):
         return proposed_key
 
     def _create_cluster(self, cache_name, cluster_key, board_index, first_message) -> IQCluster:
+        if cache_name == _CACHE_STREAM:
+            return IQStreamBlock(first_message.payload, self.board_revisions)
         if cache_name == _CACHE_ACCUMULATIONS:
             return IQAccumCluster(
                 first_message.payload,
@@ -607,6 +632,8 @@ class IQReceiver(ClusterAssembler):
         self._try_callbacks(sensor_cluster)
 
     def _get_cluster_cache_timeout(self, cache_name: str) -> float | None:
+        if cache_name == _CACHE_STREAM:
+            return min(0.15, self.chunk_settle_timeout)
         if cache_name == _CACHE_SIGNAL_CHUNKS:
             return self.signal_settle_timeout
         return self.chunk_settle_timeout

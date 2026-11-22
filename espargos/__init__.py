@@ -71,6 +71,7 @@ from . import board_iq
 from .board_iq import IQCapability
 from .iq_backlog import IQBacklog, IQBacklogFilter
 from .iq_cluster import CHUNK_SAMPLES, IQCluster
+from .iq_rx_stream import IQStreamBlock, IQStreamPacket
 from .iq_accum_cluster import IQAccumCluster
 from .iq_packet import (
     IQ_ACCUM_TYPE_HEADER,
