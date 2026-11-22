@@ -67,8 +67,15 @@ class CalibrationState:
     @classmethod
     def from_iq_packet(cls, host, antid, packet, boot_id):
         """Validate RX against an actual packet and the device's current boot ID."""
-        base = (packet.source_chunk_index - packet.chunk_counter) & 0xFFFFFF
-        origin = packet.fire_time_ns - round(base * 256e9 / packet.sample_rate_hz)
+        from .iq_rx_stream import IQStreamPacket
+
+        if isinstance(packet, IQStreamPacket):
+            if not packet.synchronized:
+                raise ValueError("IQ stream has no synchronized sample grid")
+            origin = packet.grid_origin_ns
+        else:
+            base = (packet.source_chunk_index - packet.chunk_counter) & 0xFFFFFF
+            origin = packet.fire_time_ns - round(base * 256e9 / packet.sample_rate_hz)
         return cls(Antenna(host, antid), "rx", packet.center_freq_hz, packet.sample_rate_hz, boot_id, packet.fire_time_ns, sample_origin_ns=origin)
 
 

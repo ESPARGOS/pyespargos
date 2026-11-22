@@ -7,6 +7,7 @@ import pytest
 
 from espargos.iq_receiver import IQReceiver
 from espargos.iq_rx_stream import IQStreamBlock, IQStreamPacket
+from espargos.calibration import CalibrationState
 
 
 def record(generation=7, grid=3, fire=110000000):
@@ -65,3 +66,25 @@ def test_delayed_reports_do_not_redeliver_an_array_block():
         receiver._run(timeout=0)
     assert len(received) == 1
     assert received[0].is_complete
+
+
+def test_calibration_follows_each_present_antenna_on_a_partial_grid():
+    revision = SimpleNamespace(antenna_id_to_row_col=lambda n: divmod(n, 4))
+    packet = IQStreamPacket(record(grid=(1 << 18) | (1 << 16) | 7))
+    block = IQStreamBlock(packet, [revision])
+    epochs = np.full(block.shape, packet.fire_time_ns, dtype=np.uint64)
+    model = SimpleNamespace(phase_offsets=np.zeros(block.shape))
+    receiver = SimpleNamespace(_calibration=model, _calibration_epoch=epochs.tobytes(),
+                               _calibration_sample_rate=16000, _calibration_center_frequency=2437000000)
+    assert not IQReceiver.calibration_applies_to(receiver, block)
+    block.add_message(0, SimpleNamespace(antenna_id=2, payload=packet))
+    assert IQReceiver.calibration_applies_to(receiver, block)
+    state = CalibrationState.from_iq_packet("array", 2, packet, boot_id=4)
+    assert (state.epoch, state.sample_origin_ns) == (packet.fire_time_ns, packet.grid_origin_ns)
+    model.phase_offsets[0, 0, 2] = np.nan
+    assert not IQReceiver.calibration_applies_to(receiver, block)
+    model.phase_offsets.fill(0)
+    block.fire_time_ns[0, 0, 2] += 1
+    assert not IQReceiver.calibration_applies_to(receiver, block)
+    with pytest.raises(ValueError, match="synchronized"):
+        CalibrationState.from_iq_packet("array", 2, IQStreamPacket(record()), boot_id=4)

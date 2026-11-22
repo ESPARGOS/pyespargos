@@ -837,13 +837,17 @@ class IQReceiver(ClusterAssembler):
         A restarted sample engine has a new epoch. Same-frequency IQ mode
         switches through the pool transfer the correction to that epoch.
         Unhandled restarts and retunes remain detectable as a mismatch."""
-        if isinstance(source, IQStreamBlock) and (
-            not source.synchronized
-            or source.center_freq_hz != self._calibration_center_frequency
-            or source.sample_rate_hz != self._calibration_sample_rate
-        ):
+        if self._calibration is None or self._calibration_epoch is None:
             return False
-        return self._calibration is not None and self._calibration_epoch == np.asarray(source.fire_time_ns, dtype=np.uint64).tobytes()
+        if isinstance(source, IQStreamBlock):
+            if (not source.synchronized or source.center_freq_hz != self._calibration_center_frequency
+                    or source.sample_rate_hz != self._calibration_sample_rate):
+                return False
+            present = source.completion
+            epochs = np.frombuffer(self._calibration_epoch, np.uint64).reshape(source.shape)
+            return bool(np.any(present) and np.all(np.isfinite(self._calibration.phase_offsets[present]))
+                        and np.array_equal(epochs[present], source.fire_time_ns[present]))
+        return self._calibration_epoch == np.asarray(source.fire_time_ns, dtype=np.uint64).tobytes()
 
     def cal_correction(self, fft_size=CHUNK_SAMPLES):
         """Per-bin correction vectors synthesized from the stored calibration

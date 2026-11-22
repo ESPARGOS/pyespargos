@@ -61,9 +61,28 @@ before capture.
 
 Each block contains 128 samples per antenna, or 8 ms at 16 kSa/s.
 ``block.iq[board, row, column]`` is a complex NumPy vector.
-The samples retain their measured amplitude and phase. If you need calibrated phase
-relationships, apply the receiver's frequency-domain correction as described
-in :doc:`calibration`. Recalibrate after retuning or changing the sample rate.
+The samples retain their measured amplitude and phase. To compare phase
+between antennas, get the correction once after calibration and apply it on
+the same frequency grid as the FFT. For example, the following can replace
+the callback registration in the example above:
+
+.. code-block:: python
+
+   receiver = pool.iq
+   correction = receiver.cal_correction(128)
+
+   def compare_phase(block):
+       if block.first_sample % 16000 == 0 and receiver.calibration_applies_to(block):
+           spectrum = np.fft.fftshift(np.fft.fft(block.iq, axis=-1), axes=-1)
+           calibrated = spectrum * correction
+           # Phase relative to antenna (row 0, column 0) on the first board.
+           phase = np.angle(calibrated * calibrated[0, 0, 0].conj())
+           print(phase[..., 80])  # +2 kHz at 16 kSa/s
+
+   receiver.add_stream_callback(compare_phase)
+
+Recalibrate and get a new correction after retuning or changing the sample
+rate. See :doc:`calibration` for reference cable settings.
 
 Recording consecutive samples
 -----------------------------
@@ -88,11 +107,12 @@ antennas. Inspect ``block.completion`` to see which antennas contributed.
 Missing samples are NaNs. Partial blocks may arrive after more recent
 complete blocks, so use the sample index when assembling a recording.
 
-To inspect a single sensor independently of synchronization, use
+For independently tuned sensors, or to inspect one sensor before array
+synchronization, use
 ``board.iq.subscribe_stream(callback)``. Each message carries an
 ``antenna_id`` and a ``payload`` with the first sample index, sample rate
 and a ``decode_iq()`` method. Free-running sensors have independent sample
-indices. Use the calibrated pool callback for array measurements.
+indices. The pool groups synchronized antennas tuned to the same frequency.
 
 Signal analyzer
 ---------------
