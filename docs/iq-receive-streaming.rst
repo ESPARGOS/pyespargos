@@ -19,6 +19,8 @@ is the filter's transition band.
    the Nyquist limits. Each point comes from an RF tone swept past the array
    at 2441 MHz. Each antenna's response is relative to its in-band level.
 
+The radio tunes in 1 kHz steps. Allow for the frequency error between
+the transmitter and receiver when choosing the center of a narrow passband.
 A peak at exactly zero frequency can come from the receiver's DC offset.
 To distinguish it from a carrier, retune slightly. A received carrier moves
 by the tuning offset, while the receiver's DC component stays at zero.
