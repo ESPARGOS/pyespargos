@@ -7,8 +7,13 @@ example, you can follow a carrier as it drifts or demodulate a signal that
 crosses many block boundaries. For short events that need several MHz of
 bandwidth, use the triggered captures in :doc:`iq-reception`.
 
-Choose the lowest rate that covers your signal. The remaining spectrum
-near each Nyquist edge is the filter's transition band.
+The narrowband hardware filter reaches its −3 dB points about 600 kHz on
+either side of the tuned frequency. The sensors then filter the samples
+digitally before reducing the rate.
+
+The IQ receivers on a board share a sample rate. Each sensor can tune to
+a different center frequency. Choose the lowest rate that covers your signal
+and leave the filter's transition band near each Nyquist edge clear.
 
 .. list-table::
    :header-rows: 1
@@ -38,6 +43,9 @@ near each Nyquist edge is the filter's transition band.
 
 The radio tunes in 1 kHz steps. Allow for the frequency error between
 the transmitter and receiver when choosing the center of a narrow passband.
+At the low end of the 2310–2640 MHz tuning range, reception can
+vary between sensors. On our array all eight received a test carrier at 2316 MHz,
+while six received it at 2310 MHz.
 
 On the same array, moving a test tone by one or two output sample rates,
 or by 1.6, 3.2 or 6.4 MHz in either direction, reduced its folded signal by
@@ -70,7 +78,7 @@ before capture.
 
    with Pool("myspargel.local") as pool:
        pool.configure(mode="iq_rx", frequency_hz=2437e6,
-                      sample_rate_hz=16000, output="antenna_r")
+                      sample_rate_hz=16000, rx_gain=30, output="antenna_r")
        pool.calibrate()
        pool.iq.add_stream_callback(report)
        pool.start_processing()
@@ -98,8 +106,10 @@ the callback registration in the example above:
 
    receiver.add_stream_callback(compare_phase)
 
-Recalibrate and get a new correction after retuning or changing the sample
-rate. See :doc:`calibration` for reference cable settings.
+Keep the gain fixed when comparing antenna phases. Changing receiver gain
+can also shift phase. Recalibrate after changing the gain, center frequency
+or sample rate and get a new correction. See :doc:`calibration` for reference
+cable settings.
 
 Recording consecutive samples
 -----------------------------
@@ -134,8 +144,8 @@ Signal analyzer
 ---------------
 
 From the SDK checkout, run the signal analyzer to inspect the time trace,
-spectrum or waterfall. The sample-rate argument is optional and defaults
-to 16000.
+spectrum or waterfall. Use ``--stream`` by itself for 16 kSa/s, or give the
+rate in samples per second.
 
 .. code-block:: console
 
