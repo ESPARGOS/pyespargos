@@ -19,6 +19,15 @@ def receive_sample_rate(config):
     return DECIM_TO_FS[config["adc_decimation"]]
 
 
+def gain_changed(previous, update):
+    """Compare the gain settings that actually drive the narrowband receiver."""
+    mode = update.get("gain_mode", previous.get("gain_mode"))
+    if mode != previous.get("gain_mode"):
+        return True
+    key = {"manual": "rx_gain", "expert": "expert_gain_words"}.get(mode)
+    return key in update and update[key] != previous.get(key)
+
+
 class IQStreamPacket:
     """One sensor's consecutive complex samples, indexed on the output grid."""
 

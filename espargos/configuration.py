@@ -14,7 +14,7 @@ import math
 from .calibration import Antenna
 from .csi_processing import get_center_frequency
 from .iq_packet import DECIM_TO_FS
-from .iq_rx_stream import IQ_RX_STREAM_RATES, receive_sample_rate
+from .iq_rx_stream import IQ_RX_STREAM_RATES, gain_changed, receive_sample_rate
 from .iq_tx_control import _rpc, _wait
 
 _ROUTES = {"isolated": 0, "reference": 1, "antenna_r": 2, "antenna_l": 3, "random": 4}
@@ -195,6 +195,9 @@ def _iq_rx(ctx, options):
         old = tx["sensors"][a]["frequency_hz"] if ctx.before[a] == "iq_tx" else ctx.snapshot["receivers"][a]["rf_freq_hz"]
         if ctx.before[a] == "iq_tx" and "frequency_hz" not in options:
             receivers.setdefault(a, {"antid": a})["rf_freq_hz"] = old
+        if (ctx.snapshot.get("trigger", {}).get("mode") == "stream"
+                and gain_changed(ctx.snapshot["receivers"][a], receiver)):
+            invalidated.add(Antenna(ctx.board.host, a))
         if "frequency_hz" in options and options["frequency_hz"] != old:
             invalidated.add(Antenna(ctx.board.host, a))
     if receivers:
@@ -304,6 +307,9 @@ def configure(selection, *, mode=None, **options):
             plans.append((bi, board, before, modes, iq, updates))
         # No writes occur until every board and mode planner has validated.
         owner.calibrations = owner.calibrations.without(invalidated)
+        iq_receiver = owner._receivers.get("iq")
+        if iq_receiver is not None and invalidated:
+            iq_receiver._invalidate_stream_phases(invalidated)
         try:
             for bi, board, before, modes, iq, updates in plans:
                 for update in updates:

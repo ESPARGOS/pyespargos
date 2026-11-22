@@ -26,7 +26,7 @@ from espargos.calibration import Calibration
 from ._iq_calibration import reference as iq_reference
 from . import iq_tone
 from .iq_accum_cluster import IQAccumCluster
-from .iq_rx_stream import IQ_RX_STREAM_RATES, IQStreamBlock, IQStreamPacket, receive_sample_rate
+from .iq_rx_stream import IQ_RX_STREAM_RATES, IQStreamBlock, IQStreamPacket, gain_changed, receive_sample_rate
 from .iq_cluster import CHUNK_SAMPLES, IQCluster
 from .iq_packet import DECIM_TO_FS, IQ_SYNC_INFO_GRID_SYNCED, IQAccumPacket
 from .iq_signal_capture import IQSignalAssembler
@@ -668,6 +668,14 @@ class IQReceiver(ClusterAssembler):
 
     # ---- configuration ----
 
+    def _invalidate_stream_phases(self, antennas):
+        if self._calibration is None or self._calibration_sample_rate not in IQ_RX_STREAM_RATES:
+            return
+        for antenna in antennas:
+            bi = self._owner.hosts.index(antenna.host)
+            row, col = self.boards[bi].revision.antenna_id_to_row_col(antenna.antid)
+            self._calibration.phase_offsets[bi, row, col] = np.nan
+
     def apply_config(self, config: dict):
         """Push (a partial) IQ control config to every board; each controller
         merges it onto its stored config and re-pushes to its sensors.
@@ -692,13 +700,12 @@ class IQReceiver(ClusterAssembler):
                 raise ValueError("cannot combine array-wide receiver fields with receivers")
             config["receivers"] = [{"antid": antenna_id, **receiver_update} for antenna_id in range(SENSOR_COUNT)]
 
-        # Trigger, gain and feed edits leave RF calibration intact. Retunes
-        # through this receiver API must also invalidate the pool's records.
+        # Narrowband phase also depends on the active receiver gain.
         if self._owner.calibrations.groups:
             from .calibration import Antenna
 
             sensitive = {"adc_decimation", "adc_source_sel", "bw_mhz", "second_chan", "filter_bw_mhz", "loopback", "tx_tone_enable", "mode", "modes"}
-            if "trigger" in config or sensitive.intersection(config) or any("rf_freq_hz" in r for r in config.get("receivers", [])):
+            if "trigger" in config or sensitive.intersection(config) or config.get("receivers"):
                 invalid = set()
                 for board in self.boards:
                     old = board.iq.get_config()
@@ -707,9 +714,12 @@ class IQReceiver(ClusterAssembler):
                     if any(key in config and config[key] != old.get(key) for key in sensitive):
                         invalid.update(Antenna(board.host, a) for a in range(8))
                     for r in config.get("receivers", []):
-                        if "rf_freq_hz" in r and r["rf_freq_hz"] != old["receivers"][r["antid"]]["rf_freq_hz"]:
+                        previous = old["receivers"][r["antid"]]
+                        retuned = "rf_freq_hz" in r and r["rf_freq_hz"] != previous["rf_freq_hz"]
+                        if retuned or (old.get("trigger", {}).get("mode") == "stream" and gain_changed(previous, r)):
                             invalid.add(Antenna(board.host, r["antid"]))
                 self._owner.calibrations = self._owner.calibrations.without(invalid)
+                self._invalidate_stream_phases(invalid)
 
         errors = self._fanout(lambda board_obj: board_obj.iq.set_config(dict(config)))
         failed = [f"{self.boards[i].host}: {e}" for i, e in enumerate(errors) if e is not None]
@@ -888,7 +898,9 @@ class IQReceiver(ClusterAssembler):
         Acquire a common sample grid, fit phase/delay, validate on fresh data,
         then restore receive settings and publish the calibration atomically.
         By default, choose RX gain for the configured internal or external
-        reference path. Pass ``rx_gain`` to override it.
+        reference path. Pass ``rx_gain`` to override acquisition gain. The
+        narrowband phase measurement uses the operating gain of each receiver
+        configured for manual or expert gain.
         """
         t0 = time.monotonic()
         if attempts < 1:
@@ -913,9 +925,9 @@ class IQReceiver(ClusterAssembler):
                     else:
                         seqs = iq_reference.acquire_grid(self, center, timeout, scope)
                     if streaming:
-                        from ._iq_calibration.stream import measure
+                        from ._iq_calibration.stream import measure_at_operating_gain
                         scope.apply_rx({"trigger": configs[bi]["trigger"]})
-                        timing, phi, epoch, grid_origin = measure(self, scope, center, fs, 80, iq_ready_timeout)
+                        timing, phi, epoch, grid_origin = measure_at_operating_gain(self, scope, configs, center, fs, iq_ready_timeout)
                         break
                     training = iq_reference.collect(self, count=32, timeout=iq_ready_timeout, seqs=seqs, mask=scope.mask)
                     tau, phi, quality = iq_reference.fit(training, ref, scope.mask)

@@ -110,9 +110,10 @@ the callback registration in the example above:
 
    receiver.add_stream_callback(compare_phase)
 
-Keep the gain fixed when comparing antenna phases. Changing receiver gain
-can also shift phase. Recalibrate after changing the gain, center frequency
-or sample rate and get a new correction. See :doc:`calibration` for reference
+Choose a fixed gain before calibrating for phase measurements. Each receiver
+is measured at its operating gain. An automatic gain change can shift phase
+during reception. After changing manual gain, center frequency or sample rate,
+recalibrate and get a new correction. See :doc:`calibration` for reference
 cable settings.
 
 Recording consecutive samples

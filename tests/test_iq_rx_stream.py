@@ -88,3 +88,19 @@ def test_calibration_follows_each_present_antenna_on_a_partial_grid():
     assert not IQReceiver.calibration_applies_to(receiver, block)
     with pytest.raises(ValueError, match="synchronized"):
         CalibrationState.from_iq_packet("array", 2, IQStreamPacket(record()), boot_id=4)
+
+
+def test_narrowband_noise_phase_fit():
+    from espargos._iq_calibration.stream import _fit_noise
+
+    rng = np.random.default_rng(81)
+    excitation = rng.normal(size=(192, 128)) + 1j * rng.normal(size=(192, 128))
+    delay = np.array([1.75, 0, -2.35])
+    phase = np.array([2.4, 0, -1.9])
+    response = np.exp(1j * (phase[:, None] + 2 * np.pi * delay[:, None] * np.fft.fftfreq(128)))
+    samples = np.fft.ifft(np.fft.fft(excitation)[:, None, :] * response)
+    measured_delay, measured_phase = _fit_noise(samples, reference=1)
+    np.testing.assert_allclose(measured_delay, delay, atol=0.01)
+    np.testing.assert_allclose(measured_phase, phase, atol=0.01)
+    with pytest.raises(RuntimeError, match="bandwidth"):
+        _fit_noise(np.zeros_like(samples), reference=1)
