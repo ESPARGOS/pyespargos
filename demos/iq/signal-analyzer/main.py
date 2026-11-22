@@ -545,12 +545,12 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
             spectra = np.fft.fftshift(np.fft.fft(np.asarray(windows) * self._win, axis=-1), axes=-1)
             masks = np.asarray(masks)
             if mode == "phase":
-                spectra *= np.conj(spectra[:, :1]).copy()
                 if self.iqcontrol is not None:
                     for a in range(SENSOR_COUNT):
                         corr = self.iqcontrol.display_correction(self.active_board, a, self.fft_size)
                         if corr is not None:
                             spectra[:, a] *= corr
+                spectra *= np.conj(spectra[:, :1])
                 pooled = pool_complex_to_width(spectra, self.display_width)
                 pixels = (PHASE_MAPPER.cmap(PHASE_MAPPER.norm(np.angle(pooled))) * 255).astype(np.uint8)
                 masks &= masks[:, :1].copy()

@@ -135,3 +135,16 @@ class WaterfallTests(unittest.TestCase):
                     else:
                         expected.append(cls._power_row(app, spectrum))
                 np.testing.assert_array_equal(app.providers[a].add_rows.call_args.args[0], expected)
+
+    def test_common_phase_correction_cancels_in_relative_phase(self):
+        self.app.active_board = 0
+        self.app.display_width = 256
+        render = self.module.EspargosSignalAnalyzer._render_block_rows
+        for offset, correction in ((0, None), (1, 1j)):
+            self.app.iqcontrol = SimpleNamespace(display_correction=lambda *args: correction)
+            with patch.object(self.module.time, "monotonic", return_value=offset):
+                render(self.app, [(offset*4+k, self.chunk) for k in range(4)], "phase")
+            with patch.object(self.module.time, "monotonic", return_value=offset+0.21):
+                render(self.app, [], "phase")
+        first, second = self.app.providers[0].add_rows.call_args_list
+        np.testing.assert_array_equal(first.args[0], second.args[0])
