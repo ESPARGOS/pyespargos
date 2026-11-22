@@ -27,6 +27,7 @@ class WaterfallTests(unittest.TestCase):
             complete_only=False,
             last_display_block=-1,
             _display_config={},
+            _display_epoch=None,
             _display_schedule=None,
             providers=[Mock() for _ in range(8)],
             rows_rendered=[0] * 8,
@@ -74,6 +75,19 @@ class WaterfallTests(unittest.TestCase):
             self.render(frame * 0.04, [(frame * 1024 + i, partial) for i in range(4)])
             self.assertLessEqual(len(self.app.block_acc), 7)
         self.assertGreater(self.app.rows_rendered[0], 90)
+
+    def test_stream_keeps_a_gap_on_the_waterfall_time_axis(self):
+        self.app._display_epoch = ("stream", 7, 2441000000, 64000, 1)
+        self.app._display_config = dict(trigger=dict(mode="interval", interval_chunks=1024, offset_chunks=0, burst_chunks=1))
+        render = self.module.EspargosSignalAnalyzer._render_block_rows
+        samples = {a: np.ones(128) for a in range(8)}
+        for now, indices in ((0, range(8)), (0.21, ()), (0.3, range(24, 32)), (0.51, ())):
+            with patch.object(self.module.time, "monotonic", return_value=now):
+                render(self.app, [(i, samples) for i in indices], "power", 128)
+        pixels = self.app.providers[0].add_rows.call_args.args[0]
+        self.assertEqual(len(pixels), 3)
+        self.assertFalse(pixels[:2].any())
+        self.assertTrue(pixels[2].any())
 
     def test_first_arrival_keeps_live_cluster_until_deadline(self):
         app = self.app

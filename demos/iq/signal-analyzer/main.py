@@ -468,9 +468,14 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         index order, once only; late data cannot create duplicate grey rows.
         """
         B = self.fft_size // chunk_samples
-        config = self._display_config
-        trigger = config.get("trigger", {})
-        schedule = tuple(trigger[k] for k in ("interval_chunks", "offset_chunks", "burst_chunks")) if trigger.get("mode") == "interval" else None
+        trigger = self._display_config.get("trigger", {})
+        if self._display_epoch and self._display_epoch[0] == "stream":
+            # A continuous recording has one FFT window at every row index.
+            schedule = (B, 0, B)
+        elif trigger.get("mode") == "interval":
+            schedule = tuple(trigger[k] for k in ("interval_chunks", "offset_chunks", "burst_chunks"))
+        else:
+            schedule = None
         if schedule != self._display_schedule:
             self._display_schedule = schedule
             self.block_acc.clear()
@@ -490,7 +495,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
             if now - self.block_time[b] < DISPLAY_SETTLE_SECONDS:
                 break
             ready.append(b)
-        if ready and schedule and len(schedule) == 3 and self.last_display_block >= 0:
+        if ready and schedule and self.last_display_block >= 0:
             period, phase, length = schedule
             if period > 0 and length > 0:
                 # Infer only scheduled Interval blocks, never the intentional
