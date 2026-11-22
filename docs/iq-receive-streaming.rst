@@ -21,6 +21,14 @@ is the filter's transition band.
 
 The radio tunes in 1 kHz steps. Allow for the frequency error between
 the transmitter and receiver when choosing the center of a narrow passband.
+
+On the same array, moving a test tone by one or two output sample rates,
+or by 1.6, 3.2 or 6.4 MHz in either direction, reduced its folded signal by
+at least 57 dB at all three rates. A strong tone *inside* the passband can
+also have a weak mirror on the opposite side of the center frequency due to
+I/Q imbalance. The largest such mirror we measured was about 34 dB below
+the tone.
+
 A peak at exactly zero frequency can come from the receiver's DC offset.
 To distinguish it from a carrier, retune slightly. A received carrier moves
 by the tuning offset, while the receiver's DC component stays at zero.
