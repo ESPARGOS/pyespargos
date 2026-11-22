@@ -30,6 +30,7 @@ Usage: main.py <controller-host>[,<controller-host>,...]
 """
 
 import argparse
+from collections import deque
 import pathlib
 import sys
 import threading
@@ -97,6 +98,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         self._display_config = {}
         self._display_schedule = None
         self._display_epoch = None
+        self._stream_epochs = deque(maxlen=8)
         self._display_epoch_time = -1.0
         self.display_mode = self.get_initial_config("app", "display_mode")
         self.fft_size = int(self.get_initial_config("app", "fft_size"))
@@ -217,6 +219,8 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         if index == self.active_board or not hasattr(self, "pool") or not (0 <= index < len(self.receiver.boards)):
             return
         self.active_board = index
+        self._stream_epochs.clear()
+        self._display_epoch = None
         self.block_acc = {}
         self.last_display_block = -1
         self.block_time = {}
@@ -381,6 +385,11 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
                     continue
                 generation = int(cluster.config_generation[board][present][0])
                 epoch = ("stream", generation, cluster.center_freq_hz, cluster.sample_rate_hz, cluster.sync_info)
+                # A delayed block can finish after blocks from the new tuning.
+                if not self._stream_epochs or epoch != self._stream_epochs[-1]:
+                    if epoch in self._stream_epochs:
+                        continue
+                    self._stream_epochs.append(epoch)
             elif isinstance(cluster, IQAccumCluster):
                 epoch = ("accum", tuple(cluster.config_generation[board].flat))
             else:
