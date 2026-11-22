@@ -12,6 +12,17 @@ frequency, or 32 kSa/s for about 12 kHz either side. These are complex
 sample rates per antenna. The remaining spectrum near each Nyquist edge
 is the filter's transition band.
 
+.. figure:: _static/iq-rx-stream-response.svg
+   :alt: Measured amplitude across the 16 and 32 kSa/s receive bands on eight antennas.
+
+   The shaded band shows where to place your signal. The dashed lines mark
+   the Nyquist limits. Each point comes from an RF tone swept past the array
+   at 2441 MHz, measured against a second tone that stayed in the passband.
+
+A peak at exactly zero frequency can come from the receiver's DC offset.
+To distinguish it from a carrier, retune slightly. A received carrier moves
+by the tuning offset, while the receiver's DC component stays at zero.
+
 Receive a stream
 ----------------
 
