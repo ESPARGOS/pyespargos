@@ -40,18 +40,19 @@ before capture.
 
 Each block contains 128 samples per antenna, or 8 ms at 16 kSa/s.
 ``block.iq[board, row, column]`` is a complex NumPy vector.
-The callback returns the measured samples. If you need calibrated phase
+The samples retain their measured amplitude and phase. If you need calibrated phase
 relationships, apply the receiver's frequency-domain correction as described
 in :doc:`calibration`. Recalibrate after retuning or changing the sample rate.
 
 Recording consecutive samples
 -----------------------------
 
-Within a capture, the next block starts at
-``block.first_sample + block.iq.shape[-1]``. A jump tells you how many
-samples are missing. Keep the gap in the recording's time axis. Joining
-the samples across it introduces a false phase or frequency change.
-After a new synchronization, start a new recording segment.
+Place each block at ``block.first_sample`` in the recording. Adjacent blocks
+are 128 samples apart. UDP can deliver blocks out of order, so a later
+arrival may fill a gap. Keep any remaining gaps on the time axis. Joining
+the samples across a gap introduces a false phase or frequency change.
+Start a new recording segment after synchronization or a change of sample
+rate or center frequency.
 
 By default the callback receives a block when all active IQ receivers have
 contributed. Pass ``include_partial=True`` to keep blocks with missing
