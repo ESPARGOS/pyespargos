@@ -8,7 +8,7 @@ import numpy as np
 from .iq_packet import DECIM_TO_FS, IQ_SYNC_INFO_GRID_SYNCED, IQ_SYNC_INFO_FIRE_TIME_VALID
 from .sensor_cluster import ClusterCollisionError, SensorCluster
 
-IQ_RX_STREAM_RATES = (16000, 32000, 64000)
+IQ_RX_STREAM_RATES = (16000, 32000, 64000, 80000)
 IQ_RX_STREAM_TYPE_HEADER = int.from_bytes(b"IRS1", "little")
 
 

@@ -7,13 +7,30 @@ example, you can follow a carrier as it drifts or demodulate a signal that
 crosses many block boundaries. For short events that need several MHz of
 bandwidth, use the triggered captures in :doc:`iq-reception`.
 
-Choose 16, 32 or 64 kSa/s for signals within about 6, 12 or 24 kHz either
-side of the tuned frequency, respectively. These are complex sample rates
-per antenna. The remaining spectrum near each Nyquist edge
-is the filter's transition band.
+Choose the lowest rate that covers your signal. The remaining spectrum
+near each Nyquist edge is the filter's transition band.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Rate per antenna
+     - Usable frequency offsets
+     - I/Q data from eight antennas
+   * - 16 kSa/s
+     - ±6 kHz
+     - 0.51 MB/s
+   * - 32 kSa/s
+     - ±12 kHz
+     - 1.02 MB/s
+   * - 64 kSa/s
+     - ±24 kHz
+     - 2.05 MB/s
+   * - 80 kSa/s
+     - ±30 kHz
+     - 2.56 MB/s
 
 .. figure:: _static/iq-rx-stream-response.svg
-   :alt: Measured amplitude across the 16, 32 and 64 kSa/s receive bands on eight antennas.
+   :alt: Measured amplitude across the 16, 32, 64 and 80 kSa/s receive bands on eight antennas.
 
    The shaded band shows where to place your signal. The dashed lines mark
    the Nyquist limits. Each point comes from an RF tone swept past the array
@@ -24,7 +41,7 @@ the transmitter and receiver when choosing the center of a narrow passband.
 
 On the same array, moving a test tone by one or two output sample rates,
 or by 1.6, 3.2 or 6.4 MHz in either direction, reduced its folded signal by
-at least 57 dB at all three rates. A strong tone *inside* the passband can
+at least 57 dB at all four rates. A strong tone *inside* the passband can
 also have a weak mirror on the opposite side of the center frequency due to
 I/Q imbalance. The largest such mirror we measured was about 34 dB below
 the tone.
@@ -87,8 +104,7 @@ rate. See :doc:`calibration` for reference cable settings.
 Recording consecutive samples
 -----------------------------
 
-At 64 kSa/s, eight antennas produce 2.05 MB/s of I/Q samples before
-packet headers. For a recording over a link that sometimes drops packets,
+The data rates above exclude packet headers. For a recording over a link that sometimes drops packets,
 open the pool with ``Pool("myspargel.local").open(transports=["websocket"])``.
 The underlying TCP connection retransmits lost network data. A long network
 stall can still fill the sensor buffers, so check the sample indices with
