@@ -5,6 +5,7 @@ import time
 import numpy as np
 
 from ..iq_rx_stream import IQStreamBlock, IQStreamPacket
+from ..iq_tone import TONE_MAX_HZ, TONE_MIN_HZ
 
 
 def _tone(receiver, scope, center, offset, rate, backoff, timeout):
@@ -75,8 +76,14 @@ def measure(receiver, scope, center, rate, backoff, timeout):
     """Fit three tones across the passband and verify on a fourth tone."""
     # Alternate sides so buffered samples from the previous tone cannot pass
     # the next tone's frequency check, including at the lowest output rate.
+    offsets = (-0.30, 0.30, -0.13, 0.16)
+    # At either end of the RF tuning range, fit tones on the available side.
+    if center - 0.30 * rate < TONE_MIN_HZ:
+        offsets = (0.16, 0.36, 0.09, 0.26)
+    elif center + 0.30 * rate > TONE_MAX_HZ:
+        offsets = (-0.16, -0.36, -0.09, -0.26)
     observations = [_tone(receiver, scope, center, round(x * rate), rate, backoff, timeout)
-                    for x in (-0.30, 0.30, -0.13, 0.16)]
+                    for x in offsets]
     f, phase, epochs, origins = zip(*observations)
     if any(not np.array_equal(t[scope.mask], epochs[0][scope.mask]) for t in epochs[1:]):
         raise RuntimeError("Narrowband receiver restarted during calibration")

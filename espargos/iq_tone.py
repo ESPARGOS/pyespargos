@@ -4,7 +4,7 @@
 
 The controller's reference tone generator has two regimes:
 
-- from 2310 to 2497 MHz the exact tone API places the tone with kHz
+- from 2310 to 2640 MHz the exact tone API places the tone with kHz
   resolution (``set_reference("cw", ...)``);
 - above that, a forced-VCO-cap path reaches ~2680 MHz (``set_reference(..., cw_tuning=...)``
   with an explicit ``cap``): the VCO free-runs, its frequency set by the coarse
@@ -26,11 +26,9 @@ __all__ = [
     "highband_cap_for_freq",
 ]
 
-# Exact-tone range of the controller ESP32 RFPLL, verified on hardware
-# 2026-09-30. Below 2412 MHz the controller tunes the PLL directly, avoiding
-# the WiFi channel-offset overflow that previously limited the lower range.
+# The controller tunes its PLL directly outside the WiFi channel range.
 TONE_MIN_HZ = 2310e6
-TONE_MAX_HZ = 2497e6
+TONE_MAX_HZ = 2640e6
 
 # High-band reference tone: forced-VCO-cap -> measured tone frequency (MHz).
 # Characterized on the reference controller 2026-07-07 (2-pass warm sweep, cbw=4,
