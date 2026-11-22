@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import espargos.constants as c; print\\('ANTENNAS_PER_BOARD', c.ANTENNAS_PER_BOARD\\); print\\([a for a in dir\\(c\\) if not a.startswith\\('_'\\)]\\)\")",
+      "Bash(git -C /home/florian/prgm/ESPARGOS/pyespargos branch -a)",
+      "Bash(git -C /home/florian/prgm/ESPARGOS/pyespargos log --oneline -15 iqsampling-wip)",
+      "Bash(git -C /home/florian/prgm/ESPARGOS/pyespargos log --oneline -15 iqsampling-ooksync)"
+    ]
+  }
+}
