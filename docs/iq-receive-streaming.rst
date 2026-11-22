@@ -68,6 +68,13 @@ in :doc:`calibration`. Recalibrate after retuning or changing the sample rate.
 Recording consecutive samples
 -----------------------------
 
+At 64 kSa/s, eight antennas produce 2.05 MB/s of I/Q samples before
+packet headers. For a recording over a link that sometimes drops packets,
+open the pool with ``Pool("myspargel.local").open(transports=["websocket"])``.
+The underlying TCP connection retransmits lost network data. A long network
+stall can still fill the sensor buffers, so check the sample indices with
+either transport.
+
 Place each block at ``block.first_sample`` in the recording. Adjacent blocks
 are 128 samples apart. UDP can deliver blocks out of order, so a later
 arrival may fill a gap. Keep any remaining gaps on the time axis. Joining
