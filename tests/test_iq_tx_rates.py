@@ -21,8 +21,7 @@ def test_waveform_frequency_and_time_units(rate):
     assert recipe['offset_samples'] == rate // 2_000_000
     with pytest.raises(ValueError):
         CW(rate / 2 + 1).synthesize(sample_rate_hz=rate)
-    phase, delay = Beamspace(30, squint=True).coefficients(np.array([.06, 0]), 2.437e9, CW(), rate)
-    assert abs(delay / rate - .03 / 299792458) < 1e-18
+    phase = Beamspace(30).coefficients(np.array([.06, 0]), 2.437e9, CW(0))
     assert abs(phase - np.exp(-2j*np.pi*2.437e9*.03/299792458)) < 1e-12
 
 
@@ -30,11 +29,11 @@ def test_beam_compilation_uses_board_rate():
     tx = transmitter()
     tx.states[0]['sample_rate_hz'] = 40_000_000
     a = Antenna('board0', 2)
-    tx.signals.add(waveform=LFM(-5e6, 5e6, duration_s=1e-6), antennas=[a], steering=Weights({a:1}, {a:25e-9}))
+    tx.signals.add(waveform=LFM(-5e6, 5e6, duration_s=1e-6), antennas=[a], steering=Weights({a:1}))
     plans = tx._apply_signals.call_args.args[0]
     recipe = plans[0][0][1][0][1]
     assert recipe['waveform']['chirp_samples'] == 40
-    assert recipe['delay_samples'][2] == 1
+    assert set(recipe) == {'waveform', 'real', 'imag'}
 
 
 @pytest.mark.parametrize('ratio', [1, 2, 2.5, 4, 5])

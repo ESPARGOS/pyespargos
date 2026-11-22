@@ -5,9 +5,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "demos"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "demos/iq/transmit-beamforming"))
 from PyQt6.QtWidgets import QApplication
-from common.iq_tx_controller import IQTxController
+from controller import IQTxController
 from espargos import Pool
 
 
@@ -94,7 +94,7 @@ class TransmitBeamUITests(unittest.TestCase):
 
     def test_waveform_drag_only_pans_horizontally(self):
         from PyQt6.QtCore import QPointF
-        from common.iq_tx_plot import IQTxPlot
+        from plot import IQTxPlot
 
         plot = IQTxPlot()
         plot.setWidth(400)

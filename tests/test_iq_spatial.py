@@ -1,6 +1,6 @@
 import numpy as np
 
-from demos.common.iq_spatial import NoiseFloor, detect_emissions, direction_grid, locate, peak_directions
+from demos.iq.camera.processing import NoiseFloor, detect_emissions, direction_grid, locate, peak_directions
 
 HALF_WAVELENGTH_HZ = 299792458 / (2 * 0.06)
 

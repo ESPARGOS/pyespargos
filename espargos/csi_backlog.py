@@ -36,11 +36,11 @@ class MACFilter(CSIBacklogFilter):
         self._compiled_pattern = re.compile(filter_regex)
 
     def matches(self, clustered_csi):
-        return self._compiled_pattern.match(clustered_csi.source_mac) is not None
+        return clustered_csi.source_mac is not None and self._compiled_pattern.match(clustered_csi.source_mac) is not None
 
 
 class Exclude11bFilter(CSIBacklogFilter):
-    """Drop 802.11b packets, which do not carry CSI."""
+    """Drop 802.11b DSSS packets."""
 
     def matches(self, clustered_csi):
         return not clustered_csi.is_11b
@@ -166,8 +166,8 @@ class CSIBacklog(SensorBacklog):
 
         super().__init__(
             sensor_shape=receiver.shape,
-            field_specs=self.FIELD_SPECS,
-            fields=fields,
+            field_specs=self.fields_for(receiver),
+            fields=self.default_fields_for(receiver) if fields is None else fields,
             size=size,
             logger=logging.getLogger("pyespargos.csi_backlog"),
         )
@@ -227,13 +227,30 @@ class CSIBacklog(SensorBacklog):
             csi = getattr(calibration, calibration_method)(csi)
         values[field] = csi
 
+    @classmethod
+    def default_fields_for(cls, receiver):
+        return getattr(type(receiver), "backlog_fields", cls.FIELD_SPECS)
+
+    @classmethod
+    def fields_for(cls, receiver):
+        """Fields supplied by this CSI source."""
+        fields = {k: v for k, v in cls.FIELD_SPECS.items() if k in cls.default_fields_for(receiver)}
+        return fields | getattr(type(receiver), "extra_backlog_fields", {})
+
     def _on_new_csi(self, clustered_csi):
         """Translate one accepted CSI cluster into a backlog datapoint."""
 
         if not self._passes_filters(clustered_csi):
             return
 
-        calibration = self._receiver.calibration if self._apply_calibration else None
+        calibration = None
+        if self._apply_calibration:
+            if hasattr(self._receiver, "calibration_for"):
+                calibration = self._receiver.calibration_for(clustered_csi)
+                if calibration is None:
+                    return
+            else:
+                calibration = self._receiver.calibration
         if self._apply_calibration and calibration is None:
             if not self._missing_calibration_warned:
                 self._logger.warning("Skipping CSI backlog datapoints while calibration is enabled but the receiver has no calibration")
@@ -302,7 +319,7 @@ class CSIBacklog(SensorBacklog):
             if field in fields:
                 values[field] = getattr(clustered_csi, property_name)
 
-        if "mac" in fields:
+        if "mac" in fields and clustered_csi.source_mac is not None:
             mac_string = clustered_csi.source_mac
             mac = np.asarray(
                 [int(mac_string[index : index + 2], 16) for index in range(0, len(mac_string), 2)],
@@ -328,6 +345,16 @@ class CSIBacklog(SensorBacklog):
                 values["tx_power"] = tx_report.tx_power
             if "tx_rf_switch_state" in fields:
                 values["tx_rf_switch_state"] = tx_report.rf_switch_state
+
+        self._deserialize_csi_field(
+            clustered_csi, "dsss", fields, "is_11b", "deserialize_csi_dsss", "apply_dsss", calibration, values
+        )
+        if "spatial_csi" in fields:
+            measurement = clustered_csi.spatial_csi
+            if measurement is not None:
+                values["spatial_csi"] = calibration.apply_spatial(measurement) if calibration else measurement
+        if "iq_packets" in fields:
+            values["iq_packets"] = clustered_csi.iq_packets
 
         self.append_datapoint(values)
 

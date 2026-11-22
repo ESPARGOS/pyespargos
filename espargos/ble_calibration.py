@@ -1,5 +1,6 @@
 """Reference acquisition and validity for narrowband BLE phase measurements."""
 
+from contextlib import ExitStack
 from dataclasses import dataclass
 import threading
 import re
@@ -52,22 +53,37 @@ def calibrate(receiver, board_index, samples, timeout, reference_address):
     if not receiver.processing:
         raise RuntimeError("Start pool processing before BLE reference acquisition")
     board = receiver.boards[board_index]
-    with receiver._control_lock:
+    with receiver._control_lock, ExitStack() as restore:
         config = board.ble.get_config()
         if config["phy"] not in ("LE1M", "LE2M"):
             raise BLECalibrationError("BLE phase calibration requires LE1M or LE2M")
         if not np.all(receiver._expected[board_index]):
             raise BLECalibrationError("BLE phase calibration currently requires all eight sensors on the board")
+        controller = getattr(receiver._owner, "reference_controller", None)
+        if reference_address is None and controller is not None:
+            from .controller_reference import prepare_packet_reference
+
+            if config["phy"] != "LE1M":
+                raise BLECalibrationError("The controller reference transmitter uses LE1M")
+            reference_address = prepare_packet_reference(restore, controller, "ble", config["channel"])
         if reference_address is None:
-            if config["reference_source"] != 0:
+            if config["reference_source"] not in (0, 1):  # Only internal and master controllers generate REF.
                 raise BLECalibrationError("Specify reference_address for an external BLE reference transmitter")
             reference_address = config.get("reference_address")
         if not isinstance(reference_address, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", reference_address):
             raise ValueError("A BLE reference advertiser address is required (xx:xx:xx:xx:xx:xx)")
         reference_address = reference_address.lower()
+        if config["phy"] == "LE1M" and config["reference_source"] in (0, 1) and config["reference_mode"]:
+            # Selecting REF starts the local generator and can switch the
+            # controller radio. Return it to the caller's role after capture.
+            from .controller_reference import select_reference_mode
+
+            select_reference_mode(restore, board, "ble")
         ready = threading.Event()
         lock = threading.Lock()
-        vectors, contexts, responses = [], [], []
+        epochs, responses = {}, []
+        phase_sum = np.zeros(receiver.shape[1:], complex)
+        counts = np.zeros(receiver.shape[1:], int)
         generation = None
 
         def collect(cluster):
@@ -80,37 +96,46 @@ def calibrate(receiver, board_index, samples, timeout, reference_address):
                 return
             iq = align_packet_iq(cluster)
             phase = iq.phase()
-            if not np.all(phase.valid[board_index]):
+            valid = phase.valid[board_index]
+            if not valid[0, 0]:
                 return
-            response = channel_response(iq)
-            context = {a: (p.clock_epoch, p.receiver_epoch) for a in range(8) if (p := cluster.get_packet(board_index, a)) is not None}
+            context = {a: (p.clock_epoch, p.receiver_epoch) for a in range(8)
+                       if (p := cluster.get_packet(board_index, a)) is not None}
             with lock:
-                if contexts and contexts[0] != context:
-                    vectors.clear()
-                    contexts.clear()
+                if ready.is_set():
+                    return
+                if any(a in epochs and epochs[a] != epoch for a, epoch in context.items()):
+                    counts.fill(0)
+                    phase_sum.fill(0)
                     responses.clear()
-                if len(vectors) < samples:
-                    vectors.append(phase.vector.copy())
-                    responses.append(response)
-                    contexts.append(context)
-                if len(vectors) == samples:
+                    epochs.clear()
+                if not np.any(valid & (counts < samples)):
+                    return
+                epochs.update(context)
+                vector = phase.vector[board_index]
+                phase_sum[valid] += vector[valid] * vector[0, 0].conj()
+                counts[valid] += 1
+                responses.append(channel_response(iq))
+                if np.all(counts >= samples):
                     ready.set()
 
-        handle = receiver.add_callback(collect)
+        handle = receiver.add_callback(collect, include_partial=True)
         try:
             with receiver._state_lock:
                 receiver._invalidate_board(board_index)
-                state = board.ble.set_config({"rf_switch": 1, "gain_mode": "manual"})
+                # Expert words can select a different analog signal path.
+                # Measure it with those same words on the reference input.
+                gain_mode = "expert" if config["gain_mode"] == "expert" else "manual"
+                state = board.ble.set_config({"rf_switch": 1, "gain_mode": gain_mode})
                 generation = state["generation"]
                 receiver._generations[board_index] = generation
                 receiver._epochs = {k: v for k, v in receiver._epochs.items() if k[0] != board_index}
             if not ready.wait(timeout):
-                raise BLECalibrationError("No stable complete BLE reference measurements. Check reference generation and routing")
+                raise BLECalibrationError("Insufficient BLE reference measurements across the array. Check reference generation and routing")
             with lock:
-                mean = np.mean(vectors, axis=0)
-                if np.min(abs(mean[board_index])) < 0.85:
+                mean = phase_sum / counts
+                if np.min(abs(mean)) < 0.85:
                     raise BLECalibrationError("BLE reference phase is unstable. Check the reference path and receiver gain")
-                epochs = contexts[0]
                 timing, phases = fit_reference_response(responses, board_index)
         finally:
             receiver.remove_callback(handle)
@@ -121,6 +146,7 @@ def calibrate(receiver, board_index, samples, timeout, reference_address):
                 receiver._epochs = {k: v for k, v in receiver._epochs.items() if k[0] != board_index}
         if (restored["channel"], restored["phy"]) != (state["channel"], state["phy"]):
             raise BLECalibrationError("BLE receiver tuning changed during calibration")
+        restore.close()
         model = SensorCalibration(
             sensor_shape=receiver.shape,
             timing_offsets=timing,
@@ -151,6 +177,7 @@ def fit_reference_response(responses, board_index):
         if position[0] != board_index:
             continue
         values, weights = [], []
+        usable_packets = 0
         for response in responses:
             if not np.array_equal(response.offsets_hz, offsets):
                 raise ValueError("Reference frequency grids must agree")
@@ -160,11 +187,12 @@ def fit_reference_response(responses, board_index):
                           where=np.isfinite(anchor) & (abs(anchor) > 0))
             weight = response.coherence[position] * response.coherence[board_index, 0, 0]
             valid = np.isfinite(h) & (abs(h) > 0) & (weight > .8)
+            usable_packets += bool(np.any(valid))
             values.append(np.divide(h, abs(h), out=np.zeros_like(h), where=valid))
             weights.append(np.where(valid, weight, 0))
         weight = np.sum(weights, axis=0)
         mean = np.sum(np.asarray(values)*weights, axis=0)
-        valid = (weight > len(responses)*.5) & (abs(mean) > weight*.8)
+        valid = (weight > usable_packets*.5) & (abs(mean) > weight*.8)
         if np.count_nonzero(valid) < 4:
             raise ValueError("Insufficient coherent BLE reference bandwidth")
         f, w = offsets[valid], weight[valid]

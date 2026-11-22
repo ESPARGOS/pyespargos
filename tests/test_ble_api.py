@@ -41,15 +41,19 @@ class FakeBoard(Board):
         self._logger = logging.getLogger("test.ble")
         self.callbacks = []
         self.writes = []
-        self.config = dict(channel=37, phy="LE1M", gain_mode="manual", rx_gain=40, rf_switch=2, generation=3, reference_source=0, reference_address="00:01:02:03:04:05")
+        self.config = dict(channel=37, phy="LE1M", gain_mode="manual", rx_gain=40, rf_switch=2, generation=3, reference_source=0, reference_mode=1, reference_address="00:01:02:03:04:05")
+        self.controller_mode = "ble"
         self.modes = ["ble"] * 8
         self.ble = BLECapability(self)
         self.iq = SimpleNamespace(get_config=lambda: {"modes": self.modes})
-        self.control = SimpleNamespace(get_json=lambda path: dict(self.config), post_json=self.post)
+        self.control = SimpleNamespace(get_json=lambda path: {"mode": self.controller_mode} if path == "get_controller_mode" else dict(self.config), post_json=self.post)
         self.closed = False
 
     def post(self, path, value):
         self.writes.append((path, value))
+        if path == "set_controller_mode":
+            self.controller_mode = value["mode"]
+            return "{}"
         self.config.update(value)
         self.config["generation"] += 1
         return json.dumps(self.config)
@@ -254,13 +258,27 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(seen[-1].packet.generation, 4)
         self.assertEqual(seen[-1].completion.sum(), 1)
 
+    def test_controller_reboot_restarts_generation_and_discards_old_datagrams(self):
+        seen = []
+        self.receiver.add_callback(seen.append, lambda c: True)
+        for clock, generation in [(1, 93), (2, 1), (1, 94), (2, 2)]:
+            self.board.emit(0, clock_epoch=clock, generation=generation)
+            self.pool.run(0)
+        self.assertEqual([(c.packet.clock_epoch, c.packet.generation) for c in seen], [(1, 93), (2, 1), (2, 2)])
+
     def test_cache_bounds(self):
         self.receiver.max_clusters = 3
+        partial, complete = [], []
+        self.receiver.add_callback(partial.append, include_partial=True)
+        self.receiver.add_callback(complete.append)
         for i in range(10):
             self.board.emit(0, sequence=i + 1)
         self.pool.run(0)
         self.assertEqual(len(self.receiver._get_cluster_cache_snapshot("packets")), 3)
         self.assertEqual(self.receiver.dropped, 7)
+        self.assertEqual([c.packet.sequence for c in partial], list(range(1, 8)))
+        self.assertTrue(all(c.settled for c in partial))
+        self.assertFalse(complete)
 
     def test_boards_do_not_share_event_identity(self):
         other = FakeBoard("other")
@@ -459,30 +477,31 @@ class CalibrationTests(unittest.TestCase):
 
     def test_external_reference_requires_explicit_identity(self):
         board = FakeBoard()
-        board.config["reference_source"] = 1
+        board.config["reference_source"] = 2
         with Pool([board]) as pool:
             receiver = pool.ble
             pool.start_processing()
             with self.assertRaisesRegex(BLECalibrationError, "Specify reference_address"):
                 receiver.calibrate(timeout=0.01)
             self.assertEqual(board.writes, [])
-            with self.assertRaisesRegex(BLECalibrationError, "No stable complete"):
+            with self.assertRaisesRegex(BLECalibrationError, "Insufficient BLE reference measurements"):
                 receiver.calibrate(reference_address="AA:BB:CC:DD:EE:FF", timeout=0.01)
             self.assertEqual(board.config["rf_switch"], 2)
             self.assertFalse(receiver.is_calibrated())
 
-    def test_auto_gain_is_restored_after_failed_reference_acquisition(self):
-        board = FakeBoard()
-        board.config["gain_mode"] = "auto"
-        with Pool([board]) as pool:
-            receiver = pool.ble
-            pool.start_processing()
-            with self.assertRaisesRegex(BLECalibrationError, "No stable complete"):
-                receiver.calibrate(timeout=0.01)
-            self.assertEqual(board.writes[0][1], {"rf_switch": 1, "gain_mode": "manual"})
-            self.assertEqual(board.config["gain_mode"], "auto")
-            self.assertEqual(board.config["rf_switch"], 2)
-            self.assertFalse(receiver.is_calibrated())
+    def test_gain_modes_during_and_after_failed_reference_acquisition(self):
+        for user_gain, reference_gain in (("auto", "manual"), ("expert", "expert")):
+            board = FakeBoard()
+            board.config["gain_mode"] = user_gain
+            with self.subTest(gain=user_gain), Pool([board]) as pool:
+                receiver = pool.ble
+                pool.start_processing()
+                with self.assertRaisesRegex(BLECalibrationError, "Insufficient BLE reference measurements"):
+                    receiver.calibrate(timeout=0.01)
+                self.assertEqual(board.writes[0][1], {"rf_switch": 1, "gain_mode": reference_gain})
+                self.assertEqual(board.config["gain_mode"], user_gain)
+                self.assertEqual(board.config["rf_switch"], 2)
+                self.assertFalse(receiver.is_calibrated())
 
     def test_auto_gain_calibration_restores_mode_and_can_be_reused(self):
         board = FakeBoard()
@@ -495,16 +514,24 @@ class CalibrationTests(unittest.TestCase):
                 deadline = time.monotonic() + 1
                 while board.config["rf_switch"] != 1 and time.monotonic() < deadline:
                     time.sleep(.001)
-                for sequence in (1, 2):
+                for sequence in range(1, 5):
                     for antenna in range(8):
+                        if antenna == (2 if sequence % 2 else 3):
+                            continue
                         board.emit(antenna, sequence=sequence, time_us=sequence * 5000,
                             generation=board.config["generation"],
                             settings=board.ble.packet_settings(board.config))
 
-            phase = BLEPhase(np.ones(receiver.shape, complex), np.ones(receiver.shape),
-                             np.ones(receiver.shape, bool))
+            def align(cluster):
+                valid = cluster.completion.copy()
+                vector = np.where(valid, 1.0 + 0j, np.nan + 1j*np.nan)
+                phase = BLEPhase(vector, np.ones(receiver.shape), valid)
+                return SimpleNamespace(phase=lambda: phase)
+
             producer = threading.Thread(target=reference)
-            with patch("espargos.ble_calibration.align_packet_iq", return_value=SimpleNamespace(phase=lambda: phase)), patch("espargos.ble_calibration.channel_response", return_value=reference_response(phase)):
+            with patch("espargos.ble_calibration.align_packet_iq", side_effect=align), patch(
+                "espargos.ble_calibration.channel_response", side_effect=lambda iq: reference_response(iq.phase())
+            ):
                 producer.start()
                 result = receiver.calibrate(samples=2, timeout=2)
                 producer.join()
@@ -516,12 +543,15 @@ class CalibrationTests(unittest.TestCase):
 
     def test_failed_reference_acquisition_restores_route(self):
         board = FakeBoard()
+        board.controller_mode = "wifi_iq"
+        board.config["reference_source"] = 1
         with Pool([board]) as pool:
             receiver = pool.ble
             pool.start_processing()
             with self.assertRaises(BLECalibrationError):
                 receiver.calibrate(timeout=0.01)
             self.assertEqual(board.config["rf_switch"], 2)
+            self.assertEqual(board.controller_mode, "wifi_iq")
             self.assertFalse(receiver.is_calibrated())
             self.assertEqual(receiver._cluster_callbacks, [])
 
@@ -549,6 +579,19 @@ if __name__ == "__main__":
 
 
 class HostDecodingTests(unittest.TestCase):
+    def test_sensor_qualified_iq_preserves_identity_and_crc_provenance(self):
+        import struct
+        for crc in (False, True):
+            data = bytearray(record())
+            expected = BLEPacket(data)
+            struct.pack_into("<I", data, 88, 64 | 16 | 1 | (2 if crc else 0))
+            with patch.object(BLEPacket, "_decode_on_host", side_effect=AssertionError):
+                packet = BLEPacket(data)
+            self.assertEqual(packet.identity, expected.identity)
+            self.assertEqual(packet.crc_valid, crc)
+            self.assertFalse(packet.host_decoded)
+            np.testing.assert_array_equal(packet.samples, expected.samples)
+
     def test_raw_metadata_and_subscription(self):
         import struct
         board = FakeBoard()
@@ -572,7 +615,7 @@ class HostDecodingTests(unittest.TestCase):
             board = pool.boards[0]
             pool.start_processing()
             try:
-                with self.assertRaisesRegex(BLECalibrationError, "No stable complete"):
+                with self.assertRaisesRegex(BLECalibrationError, "Insufficient BLE reference measurements"):
                     receiver.calibrate(timeout=0.01)
                 self.assertTrue(any(value.get("rf_switch") == 1 for _, value in board.writes))
             finally:

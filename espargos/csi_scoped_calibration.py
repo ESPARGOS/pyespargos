@@ -168,6 +168,10 @@ def calibrate(pool, *, antennas=None, per_board=True, duration=2, cable_lengths=
     measured = []
     boards = list(dict.fromkeys(pool.boards + pool._reference_generator_boards))
     with ExitStack() as restore:
+        controller = getattr(pool._owner, "reference_controller", None)
+        if controller is None:
+            from .controller_reference import prepare_local_wifi_references
+            prepare_local_wifi_references(restore, boards)
         for b in boards:
             config = b.wifi_rx.get_config()
             restore.callback(b.wifi_rx.set_reference_config, {"channel-primary": config["channel-primary"], "channel-secondary": config["channel-secondary"]})
@@ -175,6 +179,10 @@ def calibrate(pool, *, antennas=None, per_board=True, duration=2, cable_lengths=
             restore.callback(b.wifi_rx.set_mac_filter, b.wifi_rx.get_mac_filter())
             b.wifi_rx.clear_mac_filter()
         for primary, secondary in dict.fromkeys((p, s) for p, s, _ in groups):
+            if controller is not None:
+                from .controller_reference import prepare_packet_reference
+
+                prepare_packet_reference(restore, controller, "wifi", primary, 2 if secondary == -1 else secondary)
             for b in boards:
                 b.wifi_rx.set_rf_switch(sensor.RFSwitchState.SENSOR_RFSWITCH_ISOLATION)
                 b.wifi_rx.set_reference_config({"channel-primary": primary, "channel-secondary": 2 if secondary == -1 else secondary})

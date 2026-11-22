@@ -12,3 +12,7 @@ body {
 .wy-nav-top {
 	background-color: var(--themecolor);
 }
+
+.rst-content.style-external-links a.reference.external.image-reference::after {
+	content: none;
+}

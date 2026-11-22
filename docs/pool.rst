@@ -45,16 +45,8 @@ from the configuration file:
 .. code-block:: python
 
    with Pool.from_config("config/aperture-kit-8x4.yml") as pool:
-       transmitters = pool.select(boards=["ba1", "ba2"])
        receivers = pool.select(boards=["ba3", "ba4"])
-
-       transmitters.configure(mode="iq_tx", frequency_hz=2437e6,
-                              rf_gain={"a": 0, "b": 0})
-       receivers.configure(mode="iq_rx", frequency_hz=2437e6,
-                           sample_rate_hz=80e6, rx_gain=30)
-
-       # Prepare TX waveforms before requesting TX calibration.
-       # See IQ Transmission for waveform and beam controls.
+       receivers.configure(mode="iq_rx", frequency_hz=2437e6)
 
 Choose individual antennas with hardware IDs 0–7, rather than row/column
 indices. IDs apply to each board in the selection:
@@ -67,33 +59,28 @@ indices. IDs apply to each board in the selection:
 Nested selections can only narrow the selected set. For different antenna
 lists on different boards, pass explicit :class:`Antenna(host, antid) <espargos.calibration.Antenna>` identities.
 
-:meth:`configure() <espargos.pool.AntennaSelection.configure>` changes the supplied fields on selected antennas. It does not
-calibrate. Antennas entering IQ TX remain silent even if a waveform was
-previously loaded. RX sample rate and RX port routing are board-wide hardware
-settings, so changing them requires selecting all eight antennas on that board.
-TX gain, bandwidth, frequency and output port can be set per antenna.
-
-For per-sensor WiFi channels and their calibration, see :doc:`wifi-reception`.
+:meth:`configure() <espargos.pool.AntennaSelection.configure>` changes the supplied fields on selected antennas. See :doc:`modes` for
+the available roles, board-wide settings and an example of mixing roles.
 
 Receive and transmit
 ---------------------
 
-:attr:`pool.iq <espargos.pool.Pool.iq>`, :attr:`pool.wifi <espargos.pool.Pool.wifi>` and
+:attr:`pool.iq <espargos.pool.Pool.iq>`, :attr:`pool.wifi <espargos.pool.Pool.wifi>`,
+:attr:`pool.wifi_iq <espargos.pool.Pool.wifi_iq>` and
 :attr:`pool.ble <espargos.pool.Pool.ble>` provide shared receivers.
 Use their callbacks and backlogs, with :class:`Pool <espargos.pool.Pool>` driving processing, as described in
-:doc:`iq-reception`, :doc:`wifi-reception` and :doc:`ble-reception`. They use the same board connections,
-and :class:`Pool <espargos.pool.Pool>` manages their lifetime. Default callbacks wait for antennas in the
-corresponding mode. Other antennas remain missing in the returned data. A
-selection does not change the shape of receiver data.
+:doc:`iq-reception`, :doc:`wifi-reception`, :doc:`wifi-iq-reception` and :doc:`ble-reception`. They use the same board connections,
+and :class:`Pool <espargos.pool.Pool>` manages their lifetime.
 
 WiFi packet transmission also uses :attr:`pool.wifi <espargos.pool.Pool.wifi>`, as described in
 :doc:`wifi-transmission`.
 
 :attr:`pool.tx <espargos.pool.Pool.tx>` provides waveform and beam controls, described in
-:doc:`iq-transmission`. It also shares the pool's connections and IQ receiver.
+:doc:`iq-transmission`. For live sources, see :doc:`iq-transmit-streaming`.
+Both use the pool's connections and IQ receiver.
 Beamspace steering across boards requires geometry from :meth:`from_config() <espargos.pool.Pool.from_config>`.
 A :class:`Pool <espargos.pool.Pool>` built from addresses alone can still use explicit per-antenna
-phases and delays.
+complex weights.
 Creating these TX controls mutes transmission. Preparing a waveform does not
 start it. Use :meth:`selection.start_transmission() <espargos.pool.AntennaSelection.start_transmission>` and
 :meth:`selection.stop_transmission() <espargos.pool.AntennaSelection.stop_transmission>` to control selected transmitters. Stop sends
@@ -128,6 +115,31 @@ Saved calibration is bound to the hardware state in which it was measured.
 Changing modes or retuning can invalidate it. See :doc:`calibration` for group
 references, subset selection and validity checks.
 
+Reports and measurements
+------------------------
+
+Subscribe on a board if you want to inspect one antenna's capture as soon
+as it arrives. For example, ``board.ble.subscribe_packets()`` gives you each
+sensor's samples and metadata separately. Subscribe on the pool receiver
+when you need the antennas that observed the same event. For direction
+finding, that grouping keeps a late report from one packet from being
+mistaken for part of the next.
+
+.. figure:: _static/measurement-flow.svg
+   :target: _static/measurement-flow.svg
+   :alt: Individual sensor reports for events A and B arrive interleaved. A pool receiver groups the reports and shows event B is missing sensor 2.
+   :align: center
+
+   Reports for two events arrive interleaved. The pool groups them by
+   event and keeps a gap for the sensor that missed event B.
+
+Keep callbacks short because receivers share a worker. If a callback accepts
+an incomplete measurement early, copy the fields you want to keep. More
+antenna reports may still arrive. The receiver backlogs keep selected fields
+from delivered measurements. If your recorder falls behind, inspect
+``buffer_stats.dropped`` and ``buffer_stats.expired`` and adjust its receiver's
+``configure_buffering(BufferPolicy(...))`` settings.
+
 Connection ownership
 --------------------
 
@@ -139,68 +151,7 @@ connections. Receivers have no independent start, stop or close operation.
 Backlog ``close()`` only removes its callback. IQ/WiFi calibration groups live in
 :attr:`pool.calibrations <espargos.pool.Pool.calibrations>`. Narrowband BLE phase
 calibration is managed by ``pool.ble``, as described in :doc:`ble-reception`.
-See :doc:`measurement-architecture` for receiver registration and extension.
 
 CSI getters that return one pool-wide value raise ``ValueError`` when boards
 disagree. They never change settings. Read individual :class:`Board <espargos.board.Board>` capabilities
 when different settings are intentional, or explicitly set a common value.
-
-Mixed roles
------------
-
-For an aperture kit with sensor 1 on each board receiving WiFi and the other
-sensors receiving IQ:
-
-.. code-block:: python
-
-   with Pool.from_config("config/aperture-kit-8x4.yml") as pool:
-       pool.configure(mode="iq_rx", frequency_hz=2437e6, sample_rate_hz=80e6)
-       pool.select(antennas=[1]).configure(mode="wifi", channel=6)
-
-       pool.iq.add_callback(handle_iq)
-       pool.wifi.add_callback(handle_csi)
-       pool.start_processing()
-       input("Press Enter to stop\n")
-
-This uses four boards, one pool, a WiFi transceiver and an IQ receiver. Calibration inspects the
-current modes and requests the appropriate IQ receive, WiFi receive, and IQ
-transmit measurements for the selection.
-
-The controller reference radio operates independently of sensor modes, so the
-same kit can calibrate both groups. Inside the ``with`` block:
-
-.. code-block:: python
-
-   calibration = pool.calibrate(per_board=False)
-
-The result contains a WiFi receive group for the four selected WiFi sensors
-and an IQ receive group for the other 28 sensors.
-
-Selections do not reserve antennas or remember their roles. If selections
-intersect, a later :meth:`configure(mode=...) <espargos.pool.AntennaSelection.configure>` changes the overlapping antennas to
-that mode. Each antenna has exactly one operating mode at a time. Mixing roles
-in a calibration request is valid. Unsupported combinations, such as IQ
-calibration across different center frequencies, are rejected before acquisition.
-
-Controller reference radio
---------------------------
-
-Reference generation is independent of sensor modes. A controller can generate WiFi reference packets while its sensors
-receive IQ, or generate wideband noise while its sensors use WiFi. Sensor mode
-changes do not stop or retune the controller reference.
-
-The controller has one radio. CW/noise and reference monitoring cannot run at
-the same time. Stop the active function before selecting the other. WiFi
-reference packets pause automatically while either function owns the radio,
-then resume according to the configured reference policy. WiFi reference
-configuration changes are rejected while CW/noise or monitoring is active.
-Calibration routines manage these transitions for their measurements.
-
-We can read and select the controller mode with ``get_controller_mode`` and
-``set_controller_mode`` (``{"mode": "wifi"}`` or ``{"mode": "iq"}``).
-This runtime selection leaves sensor modes unchanged. Selecting WiFi stops
-CW/noise and monitoring and restores the configured WiFi reference policy.
-Selecting IQ suppresses WiFi reference packets and restores the configured
-CW/noise signal, if one was enabled before switching to WiFi. An explicit
-reference-off request clears that selection.
-The web interface's global mode buttons set both controller and sensor modes.

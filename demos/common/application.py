@@ -44,7 +44,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         "pool": {
             # Pool configuration settings; "hosts" is generic, additional keys
             # are contributed by the modality subclass and its drawer backend
-            "hosts": []
+            "hosts": [],
+            "reference_controller": None,
         },
         "combined-array": {
             # Combined array configuration settings
@@ -149,7 +150,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         # Let mixins add their arguments
         self._add_argparse_arguments(parser)
 
-        self.args = parser.parse_args()
+        self.args = parser.parse_args(argv[1:])
 
         # Load initial configuration if provided
         self.config_path = None
@@ -222,6 +223,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         if not self._uses_combined_array():
             parser.add_argument(
                 "hosts",
+                nargs="?",
                 type=str,
                 default="",
                 help="Comma-separated list of host addresses (IP or hostname) of ESPARGOS devices",
@@ -306,6 +308,24 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         """
         pass
 
+    def _make_pool(self, *, layout=None, hosts=None):
+        """Construct the SDK pool without opening hardware connections."""
+        reference = self.get_initial_config("pool", "reference_controller")
+        if layout:
+            if reference is not None:
+                layout = dict(layout, reference_controller=reference)
+            return espargos.Pool.from_config(layout, hosts=hosts)
+        if hosts is None:
+            hosts = self.get_initial_config("pool", "hosts")
+        return espargos.Pool(hosts, reference_controller=reference)
+
+    @staticmethod
+    def _default_tx_calibration(pool):
+        # A splitter can distribute the reference without a return path to the master.
+        if len(pool.hosts) == 1 and pool.reference_controller_host is None:
+            return "monitor"
+        return "reciprocity"
+
     def initialize_pool(
         self,
         backlog_cb_predicate=None,
@@ -326,7 +346,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         additional_calibrate_args = self._prepare_pool_init(additional_calibrate_args)
 
         if not hasattr(self, "pool"):
-            self.pool = espargos.Pool(self.get_initial_config("pool", "hosts"))
+            self.pool = self._make_pool()
         try:
             self.pool.open()
             self.receiver = self._create_receiver(self.pool)
@@ -463,6 +483,7 @@ class CombinedArrayMixin:
         if getattr(self.args, "single_array", None):
             host = self.args.single_array
 
+            reference = self.get_initial_config("combined-array", "reference_controller")
             self.initial_config["combined-array"] = {
                 "boards": {
                     "arr": {
@@ -478,6 +499,8 @@ class CombinedArrayMixin:
                     ["arr.1.0", "arr.1.1", "arr.1.2", "arr.1.3"],
                 ],
             }
+            if reference is not None:
+                self.initial_config["combined-array"]["reference_controller"] = reference
 
     def _prepare_pool_init(self, additional_calibrate_args):
         additional_calibrate_args = super()._prepare_pool_init(additional_calibrate_args)
@@ -488,7 +511,7 @@ class CombinedArrayMixin:
         if combined_array_cfg is None or combined_array_cfg == {}:
             raise ValueError("Combined array configuration is required for applications using CombinedArrayMixin. You must either provide it via config file or use the --single-array option.")
 
-        self.pool = espargos.Pool.from_config(combined_array_cfg)
+        self.pool = self._make_pool(layout=combined_array_cfg)
         self.indexing_matrix = self.pool.indexing_matrix
         self.n_rows, self.n_cols = self.indexing_matrix.shape
         self.antenna_orientations = self.pool.antenna_orientations

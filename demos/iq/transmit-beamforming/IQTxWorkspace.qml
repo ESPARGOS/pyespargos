@@ -20,14 +20,6 @@ ColumnLayout {
         }
         RowLayout {
             Layout.fillWidth: true
-            Switch {
-                text: "Beam-squint correction"
-                checked: root.state.beams[beamEditor.beamIndex].squint
-                enabled: root.state.authorized && !root.state.exclusive && !root.state.closing
-                onToggled: root.controller.setBeam(beamEditor.beamIndex,"squint",checked)
-                ToolTip.visible: hovered
-                ToolTip.text: "Correct frequency-dependent steering for Beam " + (beamEditor.beamIndex + 1)
-            }
             Item { Layout.fillWidth: true }
             ToolButton {
                 objectName: "txTransmissionIndicator"

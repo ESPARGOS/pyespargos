@@ -12,7 +12,7 @@ import numpy as np
 @unittest.skipUnless(importlib.util.find_spec("PyQt6"), "requires optional demo dependencies")
 class WaterfallTests(unittest.TestCase):
     def setUp(self):
-        path = Path(__file__).resolve().parents[1] / "demos/iq-signal-analyzer/iq-signal-analyzer.py"
+        path = Path(__file__).resolve().parents[1] / "demos/iq/signal-analyzer/main.py"
         spec = importlib.util.spec_from_file_location("iq_signal_analyzer", path)
         self.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.module)

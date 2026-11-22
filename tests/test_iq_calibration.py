@@ -65,7 +65,8 @@ class CalibrationTests(unittest.TestCase):
     def test_pool_rejects_overlap_before_acquisition(self):
         from espargos.pool import AntennaSelection
 
-        board = SimpleNamespace(host="array", api_version=(4, 4), iq=SimpleNamespace(get_config=lambda: dict(modes=["iq_rx"] * 8, receivers=[dict(rf_freq_hz=2.4e9)] * 8)))
+        config = dict(modes=["iq_rx"] * 8, adc_decimation=1, receivers=[dict(rf_freq_hz=2.4e9)] * 8)
+        board = SimpleNamespace(host="array", api_version=(4, 4), iq=SimpleNamespace(get_config=lambda: config))
         owner = SimpleNamespace(_lock=RLock(), open=Mock(), _refresh_receivers=Mock(), boards=[board], calibrations=self.result)
         with patch("espargos.pool._rpc", return_value={}) as rpc:
             with self.assertRaisesRegex(ValueError, "complete calibration group"):

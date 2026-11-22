@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from threading import RLock
 from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
@@ -8,6 +9,7 @@ import numpy as np
 from espargos import Antenna
 from espargos.calibration import Calibration
 from espargos.steering import Beamspace, Weights
+from espargos.stream_sources import Stream
 from espargos.waveforms import CW, LFM, Noise, IQSamples
 from espargos.iq_transmitter import IQTransmitter
 from espargos.tx_signal import TXSignals
@@ -16,7 +18,7 @@ from espargos.tx_signal import TXSignals
 def transmitter(boards=1):
     tx = IQTransmitter.__new__(IQTransmitter)
     tx.closed = False
-    tx.owner = SimpleNamespace(calibrations=Calibration(()))
+    tx.owner = SimpleNamespace(calibrations=Calibration(()), _lock=RLock())
     tx.boards = [SimpleNamespace(host=f"board{i}") for i in range(boards)]
     tx.states = [dict(modes=["iq_tx"] * 8, sensors=[dict(frequency_hz=2380e6, samples=1024, enabled=True, boot_id=1) for _ in range(8)], schedule_epoch=42) for _ in range(boards)]
     tx.positions = np.zeros((boards, 8, 2))
@@ -73,23 +75,43 @@ class SignalTests(unittest.TestCase):
         self.assertEqual(plans[0][0][0], [3])
         self.assertEqual(plans[0][0][1][0][1]["waveform"]["amplitude"], 0)
 
+    def test_stream_beam_prepares_silence_and_opens_its_own_source(self):
+        tx = transmitter()
+        tx._stream = None
+        tx.states[0]["sample_rate_hz"] = 16_000_000
+        selected = (Antenna("board0", 2),)
+        source = Stream(sample_rate_hz=8000)
+        direction = Beamspace(azimuth_deg=30)
+        beam = tx.signals.add(waveform=source, steering=direction, antennas=selected, amplitude=.25)
+        antennas, records = tx._apply_signals.call_args.args[0][0][0]
+        self.assertEqual(antennas, [2])
+        self.assertEqual(records[0][1]["waveform"]["amplitude"], 0)
+        with self.assertRaisesRegex(ValueError, "one beam"):
+            tx.signals.add(waveform=source)
+        self.assertEqual(list(tx.signals), [beam])
+        with patch("espargos.iq_stream.IQStream") as writer:
+            self.assertIs(beam.open_stream(), writer.return_value)
+            self.assertIs(writer.return_value.signal, beam)
+            self.assertEqual(writer.call_args.kwargs["antennas"], selected)
+            self.assertEqual(writer.call_args.kwargs["sample_rate_hz"], 8000)
+            self.assertEqual(writer.call_args.kwargs["amplitude"], .25)
+            self.assertIs(writer.call_args.kwargs["steering"], direction)
+
     def test_steering_changes_preserve_source(self):
         tx = transmitter()
         source = IQSamples(np.ones(1024, complex) * 0.5)
         signal = tx.signals.add(waveform=source, steering=Beamspace())
-        signal.steering = Beamspace(azimuth_deg=30, squint=True)
+        signal.steering = Beamspace(azimuth_deg=30)
         self.assertIs(signal.waveform, source)
         record = tx.signals._compile()[0][0][0][1][0][1]
-        self.assertGreater(record["delay_samples"][1], 0)
         self.assertNotEqual(record["imag"][1], 0)
 
     def test_weights_and_waveform_units(self):
         tx = transmitter()
         a = Antenna("board0", 2)
-        tx.signals.add(waveform=LFM(delay_s=1e-6), antennas=[a], steering=Weights({a: 0.25j}, {a: 25e-9}))
+        tx.signals.add(waveform=LFM(delay_s=1e-6), antennas=[a], steering=Weights({a: 0.25j}))
         record = tx.signals._compile()[0][0][0][1][0][1]
         self.assertEqual(record["imag"][2], 0.025)
-        self.assertEqual(record["delay_samples"][2], 2)
         self.assertEqual(record["waveform"]["offset_samples"], 80)
         self.assertEqual(record["waveform"]["chirp_samples"], 32)
 

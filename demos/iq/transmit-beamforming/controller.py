@@ -297,7 +297,7 @@ class IQTxController(QObject):
             bandwidth_mhz=self.data["bandwidth"],
             output=self.data["output"],
             amplitude=1.0,  # Waveform amplitude is controlled per beam.
-            steering=dict(phase_deg=[0] * 8, delay_samples=[0] * 8),
+            steering=dict(phase_deg=[0] * 8),
         )
         return (beams, self.data["samples"], self.data["frequency"] * 1e6), rf, copy.deepcopy(self.data["modes"])
 
@@ -320,7 +320,7 @@ class IQTxController(QObject):
             u, v = beam["u"], beam["v"]
             az = np.degrees(np.arctan2(u, np.sqrt(max(0, 1 - u * u - v * v))))
             el = np.degrees(np.arcsin(np.clip(v, -1, 1)))
-            sources.append(dict(waveform=source, amplitude=beam["amplitude"] / len(beams), steering=Beamspace(azimuth_deg=az, elevation_deg=el, squint=beam["squint"])))
+            sources.append(dict(waveform=source, amplitude=beam["amplitude"] / len(beams), steering=Beamspace(azimuth_deg=az, elevation_deg=el)))
         with self.session.update(samples=samples):
             while len(self.session.signals) > len(sources):
                 self.session.signals[-1].remove()

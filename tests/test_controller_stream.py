@@ -32,6 +32,33 @@ class ControllerStreamTests(unittest.TestCase):
         self.assertFalse(b.unsubscribe_controller_messages(s))
         self.assertEqual(b._controller_message_subscriptions, {})
 
+    def test_callback_can_stop_with_a_full_dispatch_queue(self):
+        board = self.board()
+        board._stream_lifecycle_lock = threading.RLock()
+        board._stream_connected = True
+        entered = threading.Event()
+        release = threading.Event()
+        drained = threading.Event()
+
+        def consume(frame):
+            if frame == b"first":
+                entered.set()
+                release.wait(2)
+                board.stop()
+            else:
+                drained.set()
+
+        board._stream_handle_message = consume
+        with patch("espargos.board.STREAM_DISPATCH_QUEUE_PACKETS", 1):
+            board._start_stream_dispatch()
+        self.assertTrue(board._enqueue_stream_message(b"first"))
+        self.assertTrue(entered.wait(2))
+        self.assertTrue(board._enqueue_stream_message(b"last"))
+        release.set()
+        self.assertTrue(drained.wait(2))
+        board.stop()
+        self.assertIsNone(board._stream_dispatch_thread)
+
     def test_uplink_reuses_connected_transport_and_bounds_datagrams(self):
         b = self.board()
         b._stream_connected = True

@@ -139,6 +139,10 @@ values to account for different cable delays. Use the cable manufacturer's
 velocity factor and the measured cable length. Equal cables contribute a
 common delay, so their length differences are zero.
 
+If the master supplies only the reference, give its address as
+``reference_controller`` and leave its antennas out of the layout.
+See :doc:`modes` for a controller-only master example.
+
 The configuration describes geometry and cabling. It does not select sensor
 modes or establish the physical clock connection. See :doc:`pool` for choosing
 sensor subsets and assigning different roles.

@@ -23,7 +23,7 @@ Common.AppDrawer {
     implicitWidth: 400
 
     function loadConfig() {
-        if (!channel || !gain || !polarization || !phy || !automatic || !decimation || !samples) return
+        if (!channel || !gain || !polarization || !phy || !automatic || !decimation) return
         channel.currentIndex = channel.indexOfValue(receiverConfig.channel)
         gain.value = receiverConfig.gain
         polarization.value = receiverConfig.polarization

@@ -36,6 +36,25 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(factory.call_count, 2)
             c.close.assert_called_once()
 
+    def test_retries_identification_read_after_timeout(self):
+        b = self.board()
+        first = self.connection()
+        first.request.side_effect = TimeoutError()
+        with patch("espargos.board.http.client.HTTPConnection", side_effect=[first, self.connection()]):
+            self.assertEqual(b._fetch("api_info"), "ok")
+            first.close.assert_called_once()
+
+    def test_connection_timeout_before_write_is_safe_to_retry(self):
+        b = self.board()
+        first, second = self.connection(), self.connection()
+        first.sock = second.sock = None
+        first.connect.side_effect = TimeoutError()
+        second.connect.side_effect = lambda: setattr(second, "sock", Mock())
+        with patch("espargos.board.http.client.HTTPConnection", side_effect=[first, second]):
+            self.assertEqual(b._fetch("settings", "{}"), "ok")
+        first.request.assert_not_called()
+        second.request.assert_called_once_with("POST", "/settings", "{}")
+
     def test_does_not_repeat_ambiguous_write(self):
         b = self.board()
         c = self.connection()

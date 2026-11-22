@@ -1,9 +1,11 @@
 import unittest
 from unittest.mock import Mock, patch
-from espargos.iq_tx_reciprocity_calibration import _Captures
+from threading import RLock
+from espargos._iq_calibration.capture import _Captures
 from espargos.iq_tx_control import _waveform
 from espargos.iq_transmitter import IQTransmitter
 from espargos.array_geometry import ArrayGeometry
+from espargos.calibration import Calibration
 
 
 class AcknowledgementTests(unittest.TestCase):
@@ -116,8 +118,9 @@ class AcknowledgementTests(unittest.TestCase):
     def test_failed_calibration_refreshes_actual_modes(self):
         session = IQTransmitter.__new__(IQTransmitter)
         session.geometry = ArrayGeometry(["localhost"])
-        session.receiver = Mock()
-        session.receiver.calibrate_tx.side_effect = RuntimeError("calibration failed")
+        session._stream = None
+        session.owner = Mock()
+        session.owner.calibrate.side_effect = RuntimeError("calibration failed")
         session.read = Mock()
         with self.assertRaisesRegex(RuntimeError, "calibration failed"):
             session.calibrate()
@@ -166,7 +169,8 @@ class ReplayPreparationTests(unittest.TestCase):
             s.capture = Mock()
             s.closed = False
             s.signals = TXSignals(s)
-            s.states = [{"modes": ["iq_tx"] * 8, "sensors": [{"samples": samples, "enabled": enabled} for _ in range(8)]}]
+            s.owner = Mock(_lock=RLock(), calibrations=Calibration())
+            s.states = [{"modes": ["iq_tx"] * 8, "sensors": [{"samples": samples, "enabled": enabled, "frequency_hz": 2.4e9} for _ in range(8)]}]
             s._parallel = lambda fn: [fn(0, b)]
             seen = []
 

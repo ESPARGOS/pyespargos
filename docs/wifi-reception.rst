@@ -11,12 +11,15 @@ packet, but receives again between transmissions. Enabling a periodic TX
 schedule does not disable reception for the whole schedule. See
 :doc:`wifi-transmission` for sending packets.
 
+For CSI estimated in Python from packet waveforms, see :doc:`wifi-iq-reception`.
+Both receivers use the same CSI backlog and MAC filters.
+
 WiFi Settings
 -------------
 
 The examples use sensors in WiFi mode and an internal reference on a single
-board. In the web interface, select the WiFi channel of the transmitter and
-set *Generate Phase Reference* to *During calibration*. Reference transmission
+board. Use ``pool.configure(mode="wifi", channel=6)`` to select the transmitter's
+channel. Set the internal reference to generate packets during calibration. Reference transmission
 requires transmit authorization. For a shared reference across boards, see
 :doc:`combined-arrays`.
 
@@ -134,8 +137,10 @@ The application code can query the backlog whenever it needs recent CSI.
 The backlog supports multiple data fields that can be retrieved using the :meth:`~espargos.csi_backlog.CSIBacklog.get` method:
 
 * ``lltf`` - L-LTF CSI data
-* ``ht20`` - HT20 CSI data
-* ``ht40`` - HT40 CSI data
+* ``ht20`` - CSI on the primary 20 MHz channel. For an HT40 packet the two
+  outermost tones on the band edge fall outside the training field and are zero.
+* ``ht40`` - CSI across both channels of an HT40 packet
+* ``he20`` - HE-LTF CSI from a 20 MHz 802.11ax packet
 * ``rssi`` - RSSI values
 * ``timestamp`` - Sensor timestamps
 * ``host_timestamp`` - Host timestamps

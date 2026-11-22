@@ -99,7 +99,11 @@ class IQCluster(SensorCluster):
         if self._completion[position]:
             if np.array_equal(self._iq[position], iq):
                 return False
-            raise ClusterCollisionError(f"different IQ data for chunk index {self.chunk_index} at sensor position {position}")
+            raise ClusterCollisionError(
+                f"different IQ data for chunk {self.chunk_index} at {position}, "
+                f"configuration {self._config_generation[position]} / {payload.config_generation}, "
+                f"capture origin {self._fire_time_ns[position]} / {payload.fire_time_ns} ns"
+            )
         self._iq[position] = iq
         self._adc_peak[position] = adc_peak
         self._sample_rx_gain[position] = rx_gain

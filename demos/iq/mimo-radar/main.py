@@ -23,7 +23,6 @@ from PyQt6 import QtCore, QtGui, QtQuick, QtQml
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 from demos.common.application import ESPARGOSApplication
-from espargos import Pool
 from espargos.calibration import CalibrationState
 from mimo_processing import MIMOProcessor, pilots, C, RATE, SAMPLES, INTERVAL, DOPPLER_WINDOWS, DOPPLER_OVERSAMPLING, SAMPLE_RATES, Sampling, render_maps
 
@@ -331,9 +330,9 @@ class MIMORadar(ESPARGOSApplication):
             self.workerState.emit(text, False, True)
 
         if self.args.config:
-            self._pool = Pool.from_config(self.initial_config)
+            self._pool = self._make_pool(layout=self.initial_config["combined-array"])
         else:
-            self._pool = Pool(self.args.single_array)
+            self._pool = self._make_pool(hosts=self.args.single_array)
         self._pool.open()
 
         # Keep reading packets during setup so they do not build up.
@@ -382,7 +381,7 @@ class MIMORadar(ESPARGOSApplication):
 
         tx_method = self._settings["tx_calibration"]
         if tx_method == "auto":
-            tx_method = "reciprocity" if len(self._pool.hosts) > 1 else "monitor"
+            tx_method = self._default_tx_calibration(self._pool)
         status(f"Calibrating RX and TX through Reference ({tx_method})…")
         self._pool.calibrate(tx_method=tx_method)
 

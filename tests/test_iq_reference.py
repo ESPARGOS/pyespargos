@@ -114,9 +114,27 @@ class ReferenceSessionTests(unittest.TestCase):
         new = old + np.array([2, 22, -8]) + np.array([0, 53687091200, -2 * 53687091200])
         np.testing.assert_allclose(transfer_delay([0, 1e-9, -3e-9], old, new, 0), [0, 21e-9, -13e-9], atol=1e-15)
 
-    def test_failed_session_restores_settings_and_releases_lock(self):
-        import copy
+    def reference_pool(self, config, source=0):
         import threading
+        from espargos.revisions import BoardRevisionDensiflorus
+
+        writes = []
+        control = SimpleNamespace(
+            get_json=lambda path: {"get_controller_mode": {"mode": "iq"}, "get_iq_tx": {"muted": True}}[path],
+            post_json=lambda path, payload: "ok",
+        )
+        board = SimpleNamespace(
+            host="test", revision=BoardRevisionDensiflorus(), control=control,
+            wifi_rx=SimpleNamespace(get_config=lambda: {"calib-source": source}),
+            iq=SimpleNamespace(
+                get_config=lambda: dict(config, modes=["iq_rx"] * 8),
+                set_reference=lambda: writes.append("off"), set_config=writes.append,
+            ),
+        )
+        pool = SimpleNamespace(boards=[board], master_board=board, _reference_lock=threading.Lock(), _calibrating=False)
+        return pool, writes
+
+    def test_failed_session_restores_settings_and_releases_lock(self):
         from espargos.iq_reference import reference_session
 
         saved = dict(
@@ -126,9 +144,7 @@ class ReferenceSessionTests(unittest.TestCase):
             trigger=dict(mode="signal", threshold=64, antennas=list(range(8)), holdoff_ms=300, capture_chunks=56, quiet_threshold=0),
             receivers=[dict(antid=a, rf_freq_hz=2437000000, gain_mode="auto", rx_gain=60) for a in range(8)],
         )
-        writes = []
-        board = SimpleNamespace(wifi_rx=SimpleNamespace(get_config=lambda: {"calib-source": 0}), iq=SimpleNamespace(get_config=lambda: copy.deepcopy(saved), set_reference=lambda: writes.append("off"), set_config=lambda c: writes.append(c)))
-        pool = SimpleNamespace(boards=[board], master_board=board, _reference_lock=threading.Lock(), _owner=SimpleNamespace(start_processing=lambda: None), apply_config=lambda c: writes.append(c), _calibrating=False)
+        pool, writes = self.reference_pool(saved)
         with self.assertRaisesRegex(RuntimeError, "injected"):
             with reference_session(pool) as (center, fs):
                 self.assertEqual(fs, 4e6)
@@ -141,26 +157,42 @@ class ReferenceSessionTests(unittest.TestCase):
         self.assertEqual(writes[-2], "off")
 
     def test_reference_gain_follows_routing_and_allows_override(self):
-        import threading
         from espargos.iq_reference import reference_session
 
         saved = dict(adc_decimation=1, rf_switch=3, trigger={"mode": "interval"}, receivers=[dict(antid=a, rf_freq_hz=2437000000) for a in range(8)])
         for source, override, expected in [(0, None, 30), (1, None, 42), (2, None, 42), (1, 35, 35)]:
-            writes = []
-            board = SimpleNamespace(wifi_rx=SimpleNamespace(get_config=lambda: {"calib-source": source}), iq=SimpleNamespace(get_config=lambda: saved, set_reference=lambda: None, set_config=lambda c: None))
-            pool = SimpleNamespace(boards=[board], master_board=board, _reference_lock=threading.Lock(), _owner=SimpleNamespace(start_processing=lambda: None), apply_config=writes.append, _calibrating=False)
+            pool, writes = self.reference_pool(saved, source)
             with reference_session(pool, rx_gain=override):
-                self.assertEqual(writes[0]["rx_gain"], expected)
+                self.assertEqual([r["rx_gain"] for r in writes[-1]["receivers"]], [expected] * 8)
 
     def test_grid_and_rate_transitions_cannot_collide_in_cache(self):
         from espargos.iq_receiver import IQReceiver
 
         pool = IQReceiver.__new__(IQReceiver)
+        pool.boards = [None]
         keys = []
         for sequence, rate in [(7, 80_000_000), (7, 40_000_000), (8, 80_000_000)]:
-            message = SimpleNamespace(payload=SimpleNamespace(sync_info=sequence, sample_rate_hz=rate))
+            message = SimpleNamespace(payload=SimpleNamespace(sync_info=sequence, sample_rate_hz=rate, config_generation=4))
             keys.append(pool._resolve_cluster_key("chunks", 123, {}, 0, message))
         self.assertEqual(len(set(keys)), 3)
+
+    def test_restarted_local_grids_and_independent_controller_generations(self):
+        from espargos.iq_receiver import IQReceiver
+        from espargos.iq_packet import IQ_SYNC_INFO_GRID_SYNCED
+
+        receiver = IQReceiver.__new__(IQReceiver)
+        receiver.boards = [None, None]
+
+        def key(board, generation, sync=0):
+            payload = SimpleNamespace(sync_info=sync, sample_rate_hz=80_000_000, config_generation=generation)
+            return receiver._resolve_cluster_key("chunks", 16384, {}, board, SimpleNamespace(payload=payload))
+
+        self.assertNotEqual(key(0, 557), key(0, 558))
+        self.assertNotEqual(key(0, 557), key(1, 557))
+        sync = IQ_SYNC_INFO_GRID_SYNCED | 9
+        self.assertEqual(key(0, 557, sync), key(1, 22, sync))
+        receiver.boards.pop()
+        self.assertNotEqual(key(0, 557, sync), key(0, 558, sync))
 
     def test_out_of_order_sensor_packets_across_index_wrap(self):
         import threading
@@ -179,10 +211,11 @@ class ReferenceSessionTests(unittest.TestCase):
         from espargos.board import EspargosAPIVersionError
         from espargos.board_iq import IQCapability
 
-        IQCapability(SimpleNamespace(api_version=(4, 0)))
-        for major in (3, 5):
+        for major in (4, 5):
+            IQCapability(SimpleNamespace(api_version=(major, 0)))
+        for major in (3, 6):
             with self.subTest(major=major):
-                with self.assertRaisesRegex(EspargosAPIVersionError, "major 4"):
+                with self.assertRaisesRegex(EspargosAPIVersionError, "major 4 or 5"):
                     IQCapability(SimpleNamespace(api_version=(major, 0)))
 
 

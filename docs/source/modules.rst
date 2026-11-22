@@ -246,6 +246,18 @@ espargos.iq_transmitter
    Signal assignments for this transmitter. Add, edit or remove contributions
    to the selected antennas' replay buffers.
 
+espargos.iq_stream
+-------------------
+
+.. autoclass:: espargos.iq_stream.IQStream
+   :members: write, write_packet, start, finish, wait, status, transport_status, close
+
+espargos.stream_sources
+-----------------------
+
+.. automodule:: espargos.stream_sources
+   :members: SingleCarrier, GFSK, SSBEncoder, psk31_symbols, ble_le1m_packet, ble_le2m_packet
+
 espargos.iq_packet
 ------------------
 
@@ -371,7 +383,7 @@ espargos.ble_cluster
    :show-inheritance:
 
 espargos.ble_backlog
--------------------
+-----------------------
 
 .. automodule:: espargos.ble_backlog
    :members:
@@ -399,7 +411,7 @@ espargos.ble_calibration
    :show-inheritance:
 
 espargos.ble_phase_history module
---------------------------------
+------------------------------------
 
 .. automodule:: espargos.ble_phase_history
    :members:

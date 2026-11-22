@@ -71,7 +71,7 @@ def refresh(owner, timeout):
                 capture.wait(
                     b,
                     lambda s: all(
-                        abs(s["sensors"][a]["delay_samples"] - correction["delay_samples"][a] - steering["delay_samples"][a]) < 1e-3 and abs(s["sensors"][a]["phase_deg"] - correction["phase_deg"][a] - steering["phase_deg"][a]) < 0.02 for a in touched
+                        abs(s["sensors"][a]["delay_samples"] - correction["delay_samples"][a]) < 1e-3 and abs(s["sensors"][a]["phase_deg"] - correction["phase_deg"][a] - steering["phase_deg"][a]) < 0.02 for a in touched
                     ),
                     timeout,
                 )

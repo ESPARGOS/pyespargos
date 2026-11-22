@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 430 186" role="img" aria-labelledby="title desc">
+  <title id="title">Two independent arrays</title>
+  <desc id="desc">Each eight-antenna board steers its own beam.</desc>
+  <defs>
+    <g id="board">
+      <rect width="104" height="54" rx="2" fill="#0d4f1a" stroke="#082f10"/>
+      <g fill="#b49024" stroke="#e6d49e" stroke-width="1.5">
+        <circle cx="16" cy="15" r="7.8"/><circle cx="40" cy="15" r="7.8"/>
+        <circle cx="64" cy="15" r="7.8"/><circle cx="88" cy="15" r="7.8"/>
+        <circle cx="16" cy="39" r="7.8"/><circle cx="40" cy="39" r="7.8"/>
+        <circle cx="64" cy="39" r="7.8"/><circle cx="88" cy="39" r="7.8"/>
+      </g>
+    </g>
+  </defs>
+  <rect width="430" height="186" fill="white"/>
+  <g font-family="Carlito, Calibri, Arial, sans-serif" font-size="17" text-anchor="middle" fill="#293135">
+    <g transform="translate(111 101) rotate(-30)">
+    <path d="M0 0 C-3 -19 -19 -45 -14 -64 Q0 -105 14 -64 C19 -45 3 -19 0 0Z" fill="#cce8db" stroke="#32745d" stroke-width="1.8"/>
+    <path d="M0 0V-72" stroke="#32745d" stroke-width="1.4" stroke-dasharray="4 4"/>
+  </g><g transform="translate(319 101) rotate(20)">
+    <path d="M0 0 C-3 -19 -19 -45 -14 -64 Q0 -105 14 -64 C19 -45 3 -19 0 0Z" fill="#d5e7f4" stroke="#386a8b" stroke-width="1.8"/>
+    <path d="M0 0V-72" stroke="#386a8b" stroke-width="1.4" stroke-dasharray="4 4"/>
+  </g>
+    <use xlink:href="#board" transform="translate(69.4 102) scale(.8)"/>
+    <use xlink:href="#board" transform="translate(277.4 102) scale(.8)"/>
+    <text x="111" y="162">Left · 10 ms dwell</text><text x="319" y="162">Right · 20 ms dwell</text>
+  </g>
+</svg>

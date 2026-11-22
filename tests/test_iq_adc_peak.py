@@ -29,6 +29,7 @@ def cluster(value):
 
 def pool(c):
     return SimpleNamespace(
+        shape=c.shape,
         boards=[SimpleNamespace(iq=SimpleNamespace(get_config=lambda: {"config_generation": 1}))],
         add_callback=lambda cb, **kwargs: cb(c),
         remove_callback=lambda _: None,

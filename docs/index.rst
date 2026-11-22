@@ -1,8 +1,13 @@
 pyespargos Documentation
 ========================
 
-This is the documentation of `pyespargos <https://github.com/ESPARGOS/pyespargos>`_, the python library for working with the ESPARGOS WiFi channel sounder.
-Please note that *pyespargos* is very early in its development, so the documentation will be updated and APIs are subject to change.
+Use `pyespargos <https://github.com/ESPARGOS/pyespargos>`_ to control ESPARGOS
+arrays from Python. The array can measure Wi-Fi channels, receive Bluetooth
+LE packets and capture or transmit radio waveforms.
+
+If this is your first array, start with :doc:`get-started`. Read
+:doc:`pool` when you need to select antennas or work with more than one
+board, and :doc:`calibration` if your measurements depend on phase or timing.
 
 Table of contents
 -----------------
@@ -12,14 +17,19 @@ Table of contents
    ESPARGOS Website <https://www.espargos.net>
    get-started
    pool
+   modes
    combined-arrays
    calibration
-   measurement-architecture
-   ble-reception
    wifi-reception
+   wifi-iq-reception
    wifi-transmission
+   ble-reception
+   ble-transmission
    iq-reception
    iq-transmission
+   iq-transmit-streaming
+   iq-beam-steering
    iq-radar
    application-framework
+   packet-decoders
    source/modules

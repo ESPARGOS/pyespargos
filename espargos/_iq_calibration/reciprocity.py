@@ -332,7 +332,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                 b,
                 lambda s: all(
                     abs(s["sensors"][a]["phase_deg"] - corrections[bi]["phase_deg"][a] - saved_tx[bi]["steering"]["phase_deg"][a]) < 0.02
-                    and abs(s["sensors"][a]["delay_samples"] - corrections[bi]["delay_samples"][a] - saved_tx[bi]["steering"]["delay_samples"][a]) < 1e-4
+                    and abs(s["sensors"][a]["delay_samples"] - corrections[bi]["delay_samples"][a]) < 1e-4
                     for a in ants
                 ),
                 timeout,

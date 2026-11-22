@@ -1,49 +1,38 @@
-import unittest
+"""Exercise both reference CW tuning paths through the receive API."""
+from types import SimpleNamespace
+from unittest.mock import Mock
 
-import numpy as np
+import pytest
 
-from espargos.iq_tone import tone_sweep_steps
-
-
-class TonePlanningTests(unittest.TestCase):
-    def test_calibration_at_2350_mhz(self):
-        for fs in (80e6, 40e6, 20e6, 10e6, 8e6, 4e6):
-            with self.subTest(fs=fs):
-                steps = tone_sweep_steps(2350e6, fs)
-                self.assertGreaterEqual(len(steps), 4)
-                self.assertTrue(all(kind == "freq" for kind, _ in steps))
-                frequencies = [khz * 1000 for _, khz in steps]
-                self.assertEqual(len(set(frequencies)), len(frequencies))
-                self.assertLess(min(frequencies), 2350e6)
-                self.assertGreater(max(frequencies), 2350e6)
-                self.assertTrue(all(abs(f - 2350e6) < 0.45 * fs for f in frequencies))
-
-    def test_sweep_distinguishes_delays_across_fit_search_window(self):
-        # Two delays anywhere in [-16, 16) must not have the same tone
-        # signature after fitting a constant phase. The old 4 MHz grid
-        # repeated after about 19.4 samples at 80 MSa/s.
-        for fs in (80e6, 8e6):
-            with self.subTest(fs=fs):
-                frequencies = np.array([khz * 1000 for kind, khz in tone_sweep_steps(2350e6, fs) if kind == "freq"])
-                delay_differences = np.arange(1.0, 32.0, 0.01)
-                signatures = np.exp(2j * np.pi * np.outer(delay_differences, (frequencies - 2350e6) / fs))
-                self.assertLess(np.max(np.abs(signatures.mean(axis=1))), 0.9)
-
-    def test_exact_tones_stay_in_controller_range(self):
-        for center in (2310e6, 2350e6, 2437e6, 2497e6):
-            with self.subTest(center=center):
-                steps = tone_sweep_steps(center, 80e6)
-                self.assertTrue(steps)
-                for kind, value in steps:
-                    if kind == "freq":
-                        self.assertGreaterEqual(value, 2310000)
-                        self.assertLessEqual(value, 2497000)
-
-    def test_high_band_still_uses_cap_tones(self):
-        steps = tone_sweep_steps(2600e6, 80e6)
-        self.assertTrue(steps)
-        self.assertTrue(all(kind == "cap" for kind, _ in steps))
+from espargos import iq_tone
+from espargos.board_iq import IQCapability
+from espargos.iq_receiver import IQReceiver
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.fixture
+def receiver():
+    master = Mock()
+    master.api_version = (5, 0)
+    master.iq = IQCapability(master)
+    rx = object.__new__(IQReceiver)
+    rx._owner = SimpleNamespace(reference_controller=master, _reference_boards=set())
+    return rx
+
+
+@pytest.mark.parametrize("hz", [2310e6, 2350.125e6, 2437e6, 2497e6])
+def test_exact_tone_frequency_sent_in_khz(receiver, hz):
+    receiver.set_reference_tone(hz)
+    receiver.master_board.control.post_json.assert_called_once_with(
+        "set_iq_reference", {"mode": "cw", "freq_khz": round(hz / 1000), "backoff_qdb": 30})
+
+
+@pytest.mark.parametrize("hz,approximate", [(2600e6, False), (2670e6, True)])
+def test_high_band_uses_nearest_measured_cap(receiver, hz, approximate):
+    cap, mhz, reported = receiver.place_highband_tone(hz, backoff_qdb=24)
+    table = iq_tone.HIGHBAND_CAP_FREQ_EDGE_MHZ if approximate else iq_tone.HIGHBAND_CAP_FREQ_MHZ
+    assert reported == approximate
+    assert mhz == table[cap]
+    assert abs(mhz - hz/1e6) == min(abs(f - hz/1e6) for f in table.values())
+    receiver.master_board.control.post_json.assert_called_once_with("set_iq_reference", {
+        "mode": "cw", "freq_khz": round(iq_tone.HIGHBAND_TONE_CODE_HZ/1000), "backoff_qdb": 24,
+        "cw_tuning": {"cbw": iq_tone.HIGHBAND_TONE_CBW, "cap": cap}})

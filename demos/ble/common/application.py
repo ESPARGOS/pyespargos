@@ -8,7 +8,7 @@ from demos.common.application import ESPARGOSApplication
 from demos.common.latest_worker import LatestWorker
 from demos.ble.common.controller import BLEController
 from demos.ble.common.advertisers import Advertisers, advertiser_record
-from espargos import BufferPolicy, Pool
+from espargos import BufferPolicy
 from espargos.ble_receiver import BLECalibrationError
 
 
@@ -49,7 +49,7 @@ class BLEMeasurementApplication(ESPARGOSApplication):
         self._timer.start(200)
 
     def _open_pool(self):
-        self.pool = Pool(self.get_initial_config("pool", "hosts"))
+        self.pool = self._make_pool()
         if len(self.pool.hosts) != 1:
             raise ValueError("BLE measurement demos currently support one array")
         return self.pool

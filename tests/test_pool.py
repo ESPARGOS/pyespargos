@@ -29,6 +29,8 @@ class FakeBoard(api.board_module.Board):
         self.host = host
         self.api_version = (4, 0)
         self.iq = FakeIQ()
+        self.control = Mock()
+        self.control.get_json.side_effect = lambda path: {"sensors": [{"applied_mode": mode, "boot_id": a + 1} for a, mode in enumerate(self.iq.config["modes"])]} if path == "get_iq_tx" else {"mode": "wifi"}
         self.revision = Mock()
         self.revision.antenna_id_to_row_col.side_effect = lambda a: divmod(a, 4)
         self.start = Mock()
@@ -45,6 +47,8 @@ class PoolTests(unittest.TestCase):
         self.boards = patch.object(api, "Board", side_effect=FakeBoard).start()
         self.rpc = patch.object(api, "_rpc", return_value={"sensors": [{"frequency_hz": 2437000000}] * 8}).start()
         self.wait = patch.object(api, "_wait").start()
+        patch("espargos.configuration._rpc", self.rpc).start()
+        patch("espargos.configuration._wait", self.wait).start()
         self.addCleanup(patch.stopall)
 
     def test_selections_are_lazy_and_non_owning(self):
@@ -134,7 +138,8 @@ class PoolTests(unittest.TestCase):
         self.assertEqual(a.boards[0].iq.config["modes"][2], "iq_tx")
 
     def test_receive_pools_share_connections_and_are_closed(self):
-        with patch.object(api, "IQReceiver") as iq, patch.object(api, "WiFiTransceiver") as csi:
+        iq, csi = Mock(), Mock()
+        with patch.dict(Pool._receiver_factories, iq=(iq, "iq_rx"), wifi=(csi, "wifi")):
             with Pool("a") as a:
                 self.assertIs(a.iq, a.iq)
                 self.assertIs(a.wifi, a.wifi)
@@ -148,13 +153,12 @@ class PoolTests(unittest.TestCase):
         from espargos import Calibration
 
         config = {"boards": {"one": {"host": "a"}, "two": {"host": "b"}}, "array": [[f"{name}.{r}.{c}" for name in ("one", "two") for c in range(4)] for r in range(2)]}
-        with patch.object(api, "WiFiTransceiver") as csi:
-            csi.return_value.calibrate_channels.return_value = Calibration()
+        with patch("espargos.csi_scoped_calibration.calibrate_full_array", return_value=Calibration()) as calibrate:
             with Pool.from_config(config) as owner:
                 owner.calibrate()
-                self.assertTrue(csi.return_value.calibrate_channels.call_args.kwargs["per_board"])
+                self.assertTrue(calibrate.call_args.kwargs["per_board"])
                 owner.calibrate(per_board=False)
-                self.assertFalse(csi.return_value.calibrate_channels.call_args.kwargs["per_board"])
+                self.assertFalse(calibrate.call_args.kwargs["per_board"])
 
     def test_reconnect_preserves_selected_transport(self):
         with Pool("a") as owner:
@@ -239,7 +243,7 @@ class PoolTests(unittest.TestCase):
         a.boards[1].iq.config["receivers"][2]["rf_freq_hz"] = 2412000000
         with self.assertRaisesRegex(ValueError, "one frequency"):
             a.calibrate()
-        self.assertIsNone(a._iq)
+        self.assertNotIn("iq", a._receivers)
         self.assertFalse(any(b.iq.writes for b in a.boards))
 
     def test_subset_start_keeps_other_transmitters_silent(self):
@@ -330,7 +334,8 @@ class ProcessingTests(unittest.TestCase):
         import threading
 
         csi_seen, iq_seen = threading.Event(), threading.Event()
-        with patch.object(api, "WiFiTransceiver") as csi, patch.object(api, "IQReceiver") as iq:
+        iq, csi = Mock(), Mock()
+        with patch.dict(Pool._receiver_factories, iq=(iq, "iq_rx"), wifi=(csi, "wifi")):
             csi.return_value._run.side_effect = lambda **k: (csi_seen.set(), 0)[1]
             iq.return_value._run.side_effect = lambda **k: (iq_seen.set(), 0)[1]
             with Pool("a") as owner:
@@ -354,7 +359,7 @@ class ProcessingTests(unittest.TestCase):
 
         stopped = threading.Event()
         with Pool("a") as owner:
-            receiver = owner._wifi = Mock()
+            receiver = owner._receivers["wifi"] = Mock()
 
             def callback(**kwargs):
                 owner.stop_processing()
@@ -371,58 +376,52 @@ class ProcessingTests(unittest.TestCase):
         import numpy as np
 
         with Pool("a") as owner:
-            owner._wifi = Mock()
-            owner._iq = Mock()
+            owner._receivers["wifi"] = Mock()
+            owner._receivers["iq"] = Mock()
             a, b = owner.select(antennas=[0, 1]), owner.select(antennas=[1, 2])
             a.configure(mode="wifi")
             b.configure(mode="iq_tx")
             self.assertEqual(owner.boards[0].iq.config["modes"][:3], ["wifi", "iq_tx", "iq_tx"])
-            self.assertEqual(owner._wifi._expected.reshape(-1).tolist(), [True, False, False, True, True, True, True, True])
-            self.assertFalse(np.any(owner._iq._expected))
+            self.assertEqual(owner._receivers["wifi"]._expected.reshape(-1).tolist(), [True, False, False, True, True, True, True, True])
+            self.assertFalse(np.any(owner._receivers["iq"]._expected))
 
     def test_mixed_roles_dispatch_wifi_and_tx_calibration(self):
         from espargos import Calibration
 
         with Pool(["a", "b"]) as owner:
             owner.boards[1].iq.config["modes"][1] = "iq_tx"
-            owner._iq = Mock()
-            owner._wifi = Mock(processing=False)
-            owner._iq.calibrate_tx.return_value = Calibration()
-            owner._wifi.calibrate_channels.return_value = Calibration()
-            owner.select(antennas=[Antenna("a", 0), Antenna("b", 1)]).calibrate()
-            owner._iq.calibrate_tx.assert_called_once()
-            self.assertEqual(owner._wifi.calibrate_channels.call_args.kwargs["antennas"], {Antenna("a", 0)})
+            owner._receivers["iq"] = Mock(boards=owner.boards)
+            with patch("espargos._iq_calibration.orchestration.calibrate", return_value=Calibration()) as iq, patch.object(owner.wifi, "calibrate_channels", return_value=Calibration()) as wifi:
+                owner.select(antennas=[Antenna("a", 0), Antenna("b", 1)]).calibrate(tx_method="monitor")
+                self.assertEqual(iq.call_args.kwargs["scope"].antennas, {Antenna("b", 1)})
+                self.assertEqual(wifi.call_args.kwargs["antennas"], {Antenna("a", 0)})
 
     def test_mixed_roles_on_same_board_can_calibrate(self):
         from espargos import Calibration
 
         with Pool("a") as owner:
             owner.boards[0].iq.config["modes"][0] = "iq_rx"
-            owner._iq, owner._wifi = Mock(), Mock(processing=False)
-            owner._wifi.calibrate_channels.return_value = Calibration()
-            with patch("espargos.iq_tx_calibration.snapshot", return_value=Calibration()):
+            iq = owner._receivers["iq"] = Mock(boards=owner.boards)
+            with patch.object(owner.wifi, "calibrate_channels", return_value=Calibration()) as wifi, patch("espargos._iq_calibration.orchestration.snapshot", return_value=Calibration()):
                 owner.calibrate()
-            owner._iq.sync.assert_called_once()
-            owner._wifi.calibrate_channels.assert_called_once()
+            self.assertEqual(iq._sync.call_args.kwargs["scope"].antennas, {Antenna("a", 0)})
+            self.assertEqual(wifi.call_args.kwargs["antennas"], {Antenna("a", a) for a in range(1, 8)})
 
-    def test_mixed_rx_calibration_waits_for_wifi_restore(self):
+    def test_mixed_rx_calibration_finishes_iq_before_wifi(self):
         from espargos import Calibration
 
         with Pool(["a", "b"]) as owner:
             owner.boards[1].iq.config["modes"] = ["iq_rx"] * 8
-            owner._iq, owner._wifi = Mock(), Mock(processing=False)
+            iq = owner._receivers["iq"] = Mock(boards=owner.boards)
 
             def wifi(**kwargs):
-                self.assertEqual(self.wait.call_count, 2)
-                predicate = self.wait.call_args_list[0].args[1]
-                self.assertFalse(predicate({"sensors": [{"applied_mode": "iq_rx"}] * 8}))
-                self.assertTrue(predicate({"sensors": [{"applied_mode": "wifi"}] * 8}))
+                self.assertEqual(iq._sync.call_args.kwargs["scope"].active, [1])
+                self.assertEqual(kwargs["antennas"], {Antenna("a", a) for a in range(8)})
                 return Calibration()
 
-            owner._wifi.calibrate_channels.side_effect = wifi
-            with patch("espargos.iq_tx_calibration.snapshot", return_value=Calibration()):
+            with patch.object(owner.wifi, "calibrate_channels", side_effect=wifi) as measure, patch("espargos._iq_calibration.orchestration.snapshot", return_value=Calibration()):
                 owner.calibrate()
-            owner._wifi.calibrate_channels.assert_called_once()
+            measure.assert_called_once()
 
     def test_default_callbacks_only_wait_for_their_roles(self):
         import numpy as np

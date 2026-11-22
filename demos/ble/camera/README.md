@@ -100,8 +100,8 @@ cannot restore hardware settings.
 
 The demo uses the public `board.ble` and `pool.ble` APIs. Packet discovery, raw
 captures, event association, phase estimation and reference calibration are
-available independently of Qt and this camera. See `docs/ble-reception.rst`
-and `docs/measurement-architecture.rst` for other consumers and extension points.
+available independently of Qt and this camera. See [BLE reception](../../../docs/ble-reception.rst)
+and [Boards and pools](../../../docs/pool.rst) for the Python interfaces.
 
 ## Polarization and multiple targets
 

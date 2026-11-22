@@ -37,6 +37,7 @@ class BLEReceiver(ClusterAssembler):
         self.max_clusters = int(max_clusters)
         self._expected = np.ones(self.shape, bool)
         self._epochs = {}
+        self._board_clocks = {}
         self._generations = {}
         self._calibrations = {}
         self._state_lock = threading.RLock()
@@ -87,17 +88,35 @@ class BLEReceiver(ClusterAssembler):
     def _create_cluster(self, cache_name, cluster_key, board_index, first_message):
         return BLECluster(cluster_key, board_index, first_message.payload, self.board_revisions)
 
-    def _on_cluster_cached(self, cache_name, cluster_key, cluster):
-        cache = self._cluster_caches[cache_name]
-        while len(cache) > self.max_clusters:
-            cache.pop(next(iter(cache)))
-            self.dropped += 1
+    def _expire_cluster_caches(self):
+        # A busy advertiser can fill the cache before the time limit. Offer
+        # these partial events to subscribers once, after the current batch.
+        with self._cluster_lock:
+            cache = self._cluster_caches.get("packets", {})
+            evicted = []
+            while len(cache) > self.max_clusters:
+                key = next(iter(cache))
+                evicted.append((key, cache.pop(key)))
+            self.dropped += len(evicted)
+        for key, cluster in evicted:
+            self._on_cluster_expired("packets", key, cluster)
+        super()._expire_cluster_caches()
 
     def _add_sensor_message(self, board_index, message):
         p = message.payload
         with self._state_lock:
             if not p.synchronized:
                 return None
+            clock, previous_clock = self._board_clocks.get(board_index, (None, None))
+            if p.clock_epoch != clock:
+                if p.clock_epoch == previous_clock:
+                    return None
+                self._board_clocks[board_index] = p.clock_epoch, clock
+                if clock is not None:
+                    # The controller starts its configuration counter again on boot.
+                    self._invalidate_board(board_index)
+                    self._generations.pop(board_index, None)
+                    self._epochs = {k: v for k, v in self._epochs.items() if k[0] != board_index}
             generation = self._generations.get(board_index)
             if generation is not None and p.generation != generation:
                 if not 0 < (p.generation - generation) & 0xFFFFFFFF < 0x80000000:
@@ -226,9 +245,10 @@ class BLEReceiver(ClusterAssembler):
     def calibrate(self, *, board_index=0, samples=8, timeout=8.0, reference_address=None):
         """Measure narrowband phase on REF and restore the previous antenna input.
 
-        Only advertisements from the reference transmitter are accepted. By
-        default its address comes from the controller. Supply ``reference_address``
-        explicitly when using an external reference generator.
+        Each antenna needs ``samples`` measurements with the same reference antenna.
+        Only advertisements from the reference transmitter are accepted. Its address
+        comes from the dedicated reference controller or the local board. Supply
+        ``reference_address`` when using an external reference generator.
 
         Requires all eight sensors on this board in BLE mode, LE1M or LE2M,
         and a reference signal on the selected channel. Existing stream processing

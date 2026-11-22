@@ -12,6 +12,7 @@ from collections.abc import Callable
 import math
 
 from .calibration import Antenna
+from .csi_processing import get_center_frequency
 from .iq_packet import DECIM_TO_FS
 from .iq_tx_control import _rpc, _wait
 
@@ -100,18 +101,54 @@ def _ble(ctx, options):
     return ConfigurationUpdate(before_modes=apply if settings else None)
 
 
+def _wifi_channel(options):
+    primary = options.get("channel")
+    if "frequency_hz" in options:
+        found = next((c for c in range(1, 15) if get_center_frequency(c) == options["frequency_hz"]), None)
+        if found is None or primary is not None and primary != found:
+            raise ValueError("WiFi frequency must match the primary channel center")
+        primary = found
+    if primary is not None and (type(primary) is not int or not 1 <= primary <= 14):
+        raise ValueError("WiFi channel must be 1–14")
+    return primary
+
+
+def _wifi_iq(ctx, options):
+    _validate(options, ("channel", "frequency_hz", "sample_rate_hz", "rx_gain", "gain_mode", "output", "boot_sync"))
+    primary = _wifi_channel(options)
+    settings = dict(options)
+    settings.pop("frequency_hz", None)
+    if primary is not None:
+        settings["channel"] = primary
+    if settings.pop("sample_rate_hz", 20e6) != 20e6:
+        raise ValueError("WiFi IQ captures use 20 MSa/s")
+    if "rx_gain" in settings:
+        if type(settings["rx_gain"]) is not int or not 0 <= settings["rx_gain"] <= 76:
+            raise ValueError("WiFi IQ gain must be 0–76")
+        settings.setdefault("gain_mode", "manual")
+    if "gain_mode" in settings and settings["gain_mode"] not in ("manual", "auto", "expert"):
+        raise ValueError("Unknown WiFi IQ gain mode")
+    if "boot_sync" in settings and type(settings["boot_sync"]) is not bool:
+        raise ValueError("boot_sync must be a boolean")
+    if "output" in settings:
+        settings["rf_switch"] = _ROUTES[settings.pop("output")]
+    if settings and any(mode == "wifi_iq" and a not in ctx.antennas for a, mode in enumerate(ctx.modes)):
+        raise ValueError("Select every WiFi IQ sensor on the board to change shared capture settings")
+    def apply():
+        receiver = ctx.pool._receivers.get("wifi_iq")
+        if receiver is None:
+            ctx.board.wifi_iq.set_config(settings)
+        else:
+            receiver.configure(settings, board_index=ctx.board_index)
+
+    return ConfigurationUpdate(before_modes=apply if settings else None)
+
+
 def _wifi(ctx, options):
     _validate(options, ("frequency_hz", "channel", "secondary_channel", "output"))
     channels = None
     if any(k in options for k in ("frequency_hz", "channel", "secondary_channel")):
-        primary = options.get("channel")
-        if "frequency_hz" in options:
-            found = next((c for c in range(1, 15) if (2484e6 if c == 14 else (2407 + 5 * c) * 1e6) == options["frequency_hz"]), None)
-            if found is None or primary is not None and primary != found:
-                raise ValueError("WiFi frequency must match the primary channel center")
-            primary = found
-        if primary is not None and (type(primary) is not int or not 1 <= primary <= 14):
-            raise ValueError("WiFi channel must be 1–14")
+        primary = _wifi_channel(options)
         secondary = options.get("secondary_channel")
         if secondary not in (None, -1, 0, 1):
             raise ValueError("secondary_channel must be -1, 0 or 1")
@@ -210,7 +247,7 @@ def _iq_tx(ctx, options):
     )
 
 
-for _mode, _planner in {"ble": _ble, "wifi": _wifi, "iq_rx": _iq_rx, "iq_tx": _iq_tx}.items():
+for _mode, _planner in {"ble": _ble, "wifi": _wifi, "wifi_iq": _wifi_iq, "iq_rx": _iq_rx, "iq_tx": _iq_tx}.items():
     register_configuration(_mode, _planner)
 
 

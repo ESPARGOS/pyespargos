@@ -4,7 +4,6 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtQml import qmlRegisterType
 from demos.common.application import ESPARGOSApplication, CombinedArrayMixin
 from controller import IQTxController
-from espargos import Pool
 from plot import IQTxPlot
 
 
@@ -29,8 +28,8 @@ class ESPARGOSTxApplication(CombinedArrayMixin, ESPARGOSApplication):
         super().__init__(argv)
         hosts = self.get_initial_config("pool", "hosts") or None
         config = self.get_initial_config("combined-array") or None
-        self.pool = Pool.from_config(config, hosts=hosts) if config else Pool(hosts or [])
-        self.txcontrol = IQTxController(self.pool, self, all_tx=True, calibration_method=self.args.tx_calibration or ("reciprocity" if len(self.pool.hosts) > 1 else "monitor"), calibration_path=self.args.calibration_path)
+        self.pool = self._make_pool(layout=config, hosts=hosts)
+        self.txcontrol = IQTxController(self.pool, self, all_tx=True, calibration_method=self.args.tx_calibration or self._default_tx_calibration(self.pool), calibration_path=self.args.calibration_path)
         self.txcontrol.closed.connect(self.quit)
         self.txcontrol.changed.connect(self._ready)
         qmlRegisterType(IQTxPlot, "ESPARGOS.Tx", 1, 0, "IQTxPlot")

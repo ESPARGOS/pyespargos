@@ -339,7 +339,7 @@ class RangeDopplerTests(unittest.TestCase):
                     r = rd[:, d].argmax()
                     self.assertLessEqual(abs(p.ranges[r] - distance), 0.125)
                     self.assertLess(abs(p.angles[ra[r].argmax()] - angle), 2)
-                    self.assertGreater(10 * np.log10(rd[r, d] / p.map_noise), 12)
+                    self.assertGreater(10 * np.log10(rd[r, d] / p.background_power(rd)), 12)
 
     def visible_maps(self, maps, floor=12):
         return [np.where(power > floor, power, -200) for power in self.processor.display_maps(maps)]

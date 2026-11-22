@@ -198,12 +198,12 @@ def get_center_frequency(primary_channel: int, secondary_channel: int | None = N
         to ``primary_channel``, the 20 MHz channel center is returned.
     :return: Center frequency in Hz.
     """
-    center_primary = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (primary_channel - 1)
-    if secondary_channel is None or secondary_channel == primary_channel:
-        return center_primary
-
-    center_secondary = constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (secondary_channel - 1)
-    return (center_primary + center_secondary) / 2
+    if secondary_channel is not None and secondary_channel != primary_channel:
+        return (get_center_frequency(primary_channel) + get_center_frequency(secondary_channel)) / 2
+    # Channel 14 is 12 MHz above channel 13.
+    if primary_channel == 14:
+        return 2484e6
+    return constants.WIFI_CHANNEL1_FREQUENCY + constants.WIFI_CHANNEL_SPACING * (primary_channel - 1)
 
 
 def get_frequencies_ht20(channel: int):

@@ -3,44 +3,59 @@ import threading
 import unittest
 from types import SimpleNamespace
 
-from espargos.iq_receiver import IQReceiver, _BoardSignalTransport
+from espargos.iq_receiver import _BoardSignalTransport
 
 
-def _snapshot(count=3, uptime=1000, wifi_count=20, missing=None):
-    return {
-        "sensors": [
-            {
-                "antid": antenna_id,
-                "uptime_ms": uptime,
-                "iq_timed_syncs": count,
-                "wifi_promisc_cb": wifi_count,
-            }
-            for antenna_id in range(8)
-            if antenna_id != missing
-        ]
-    }
+def test_reference_readiness_and_capture_generation():
+    from unittest.mock import Mock, patch
 
+    import numpy as np
+    import pytest
+    from espargos._iq_calibration import reference
 
-class _Control:
-    def __init__(self, replies):
-        self.replies = iter(replies)
+    gen = 12
+    source = np.random.default_rng(94).normal(size=1024)
+    ids = [1, 5]
+    for missing in ("ready", "chunk", None):
+        board = Mock(host="test-board")
+        pool = SimpleNamespace(boards=[board], master_board=board, _reference_sequence=7,
+                               clear_chunks=Mock(), _logger=Mock())
+        scope = SimpleNamespace(active=[0], pairs=[(0, a) for a in ids], ids=[ids], apply_rx=Mock())
+        board.iq.get_config.return_value = {"config_generation": gen}
 
-    def get_json(self, path):
-        assert path == "get_sensor_debug"
-        return next(self.replies)
+        def emit(antenna, flag, generation, offset=0):
+            handler = board.subscribe_sensor_messages.call_args.args[1]
+            packet = SimpleNamespace(flags=flag, config_generation=generation, capture_chunk_offset=offset,
+                                     fire_time_ns=1000 * antenna, producer_wake_write_ptr=1,
+                                     decode_iq=lambda: source[256*offset:256*(offset+1)])
+            handler(SimpleNamespace(antenna_id=antenna, payload=packet))
 
+        def arm(config):
+            if config["trigger"]["mode"] == "reference":
+                for antenna in ids:
+                    stale = missing == "ready" and antenna == 5
+                    emit(antenna, reference.READY, gen - int(stale))
 
-class _Board:
-    host = "test-board"
+        def gate(path, payload):
+            if payload["open"] and scope.apply_rx.called:
+                for antenna in ids:
+                    for offset in range(4):
+                        stale = missing == "chunk" and antenna == 5 and offset == 1
+                        emit(antenna, reference.REFERENCE, gen - int(stale), offset)
 
-    def __init__(self, replies):
-        self.control = _Control(replies)
-
-
-def _pool(board):
-    pool = object.__new__(IQReceiver)
-    pool.boards = [board]
-    return pool
+        scope.apply_rx.side_effect = arm
+        board.control.command.side_effect = gate
+        with patch.object(reference, "IQChunkPacket", side_effect=lambda packet: packet):
+            if missing:
+                detail = "readiness" if missing == "ready" else "onset snapshots"
+                with pytest.raises(RuntimeError, match=detail + ": test-board/5"):
+                    reference._acquire_grid(pool, 2437e6, timeout=.001, scope=scope)
+                board.iq.set_sync_anchor.assert_not_called()
+            else:
+                assert reference._acquire_grid(pool, 2437e6, timeout=.01, scope=scope) == [8]
+                board.iq.set_sync_anchor.assert_called_once_with([0, 1000, 0, 0, 0, 5000, 0, 0], seq=8)
+        board.unsubscribe_sensor_messages.assert_called_once()
+        assert board.control.command.call_args.args == ("gate_iq_reference", {"open": True})
 
 
 class IQPoolReadyTests(unittest.TestCase):
@@ -48,54 +63,6 @@ class IQPoolReadyTests(unittest.TestCase):
     def _recovery_pool():
         receiver = SimpleNamespace(_logger=logging.getLogger(__name__))
         return _BoardSignalTransport(receiver, SimpleNamespace(iq=SimpleNamespace()))
-
-    def test_state_requires_every_sensor(self):
-        board = _Board([_snapshot(missing=7)])
-        self.assertIsNone(IQReceiver._sensor_sync_state(board))
-
-    def test_wifi_state_requires_every_sensor(self):
-        board = _Board([_snapshot(missing=4)])
-        self.assertIsNone(IQReceiver._sensor_wifi_state(board))
-
-    def test_waits_for_fresh_wifi_rx_on_every_sensor(self):
-        old = IQReceiver._sensor_wifi_state(_Board([_snapshot()]))
-        pool = _pool(_Board([_snapshot(), _snapshot(wifi_count=21)]))
-        pool._wait_for_fresh_wifi_rx([old], [True], timeout=0.5)
-
-    def test_wifi_rx_after_reboot_is_fresh(self):
-        old = IQReceiver._sensor_wifi_state(_Board([_snapshot(uptime=9000, wifi_count=500)]))
-        pool = _pool(_Board([_snapshot(uptime=20, wifi_count=1)]))
-        pool._wait_for_fresh_wifi_rx([old], [True], timeout=0.1)
-
-    def test_unchanged_wifi_rx_times_out(self):
-        old = IQReceiver._sensor_wifi_state(_Board([_snapshot()]))
-        pool = _pool(_Board([_snapshot()] * 20))
-        with self.assertRaisesRegex(RuntimeError, "ant0"):
-            pool._wait_for_fresh_wifi_rx([old], [True], timeout=0.02)
-
-    def test_waits_for_every_counter_to_advance(self):
-        old = IQReceiver._sensor_sync_state(_Board([_snapshot()]))
-        replies = [_snapshot(), _snapshot(count=4)]
-        pool = _pool(_Board(replies))
-        pool._wait_for_fresh_iq_sync([old], [True], timeout=0.5, stability_time=0)
-
-    def test_sensor_reboot_accepts_first_new_grid_fire(self):
-        old = IQReceiver._sensor_sync_state(_Board([_snapshot(count=99, uptime=9000)]))
-        pool = _pool(_Board([_snapshot(count=1, uptime=20)]))
-        pool._wait_for_fresh_iq_sync([old], [True], timeout=0.1, stability_time=0)
-
-    def test_counter_reset_is_not_progress_until_uptime_reports_reboot(self):
-        old = IQReceiver._sensor_sync_state(_Board([_snapshot(count=99, uptime=9000)]))
-        pool = _pool(_Board([_snapshot(count=0, uptime=9001)] * 20))
-        with self.assertRaisesRegex(RuntimeError, "ant0"):
-            pool._wait_for_fresh_iq_sync([old], [True], timeout=0.02, stability_time=0)
-
-    def test_unchanged_counter_times_out(self):
-        old = IQReceiver._sensor_sync_state(_Board([_snapshot()]))
-        # Supply enough unchanged snapshots for the short polling window.
-        pool = _pool(_Board([_snapshot()] * 20))
-        with self.assertRaisesRegex(RuntimeError, "ant0"):
-            pool._wait_for_fresh_iq_sync([old], [True], timeout=0.02)
 
     def test_consecutive_signal_epoch_mismatches_reset_barrier_without_resync(self):
         pool = self._recovery_pool()

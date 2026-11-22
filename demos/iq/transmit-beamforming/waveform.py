@@ -18,7 +18,6 @@ def default_beam_settings():
         file="",
         u=0.0,
         v=0.0,
-        squint=False,
     )
 
 

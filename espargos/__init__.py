@@ -98,6 +98,8 @@ board.Board.register_capability("wifi_rx", board_wifi_rx.WiFiRxCapability)
 board.Board.register_capability("wifi_tx", board_wifi_tx.WiFiTxCapability)
 board.Board.register_capability("iq", board_iq.IQCapability)
 
+from .wifi_iq_packet import WiFiIQPacket, WiFiIQCapability
+from .wifi_iq_receiver import WiFiIQReceiver
 from .board_ble import BLECapability
 from .ble_packet import BLEPacket
 from .ble_cluster import BLECluster
@@ -111,6 +113,8 @@ from .ble_beamforming import BLEBeamformer, BLEBeamformingConfig, BLEBeamforming
 from .receiver_buffer import BufferPolicy, BufferStats
 from .configuration import ConfigurationContext, ConfigurationUpdate
 
+board.Board.register_capability("wifi_iq", WiFiIQCapability)
+Pool.register_receiver("wifi_iq", WiFiIQReceiver, sensor_mode="wifi_iq")
 board.Board.register_capability("ble", BLECapability)
 Pool.register_receiver("wifi", WiFiTransceiver, sensor_mode="wifi")
 Pool.register_receiver("iq", IQReceiver, sensor_mode="iq_rx")

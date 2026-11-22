@@ -1,5 +1,8 @@
 """Host-side encoders for low-bandwidth IQ transmission."""
 
+from dataclasses import dataclass
+import math
+
 import numpy as np
 
 # ITU-R M.2034 (2013), Annex 2, ASCII Varicode code points:
@@ -336,3 +339,30 @@ def ble_le2m_packet(pdu, *, channel=0, access_address=0x8E89BED6, crc_init=0x555
         pdu, channel=channel, access_address=access_address, crc_init=crc_init
     )
     return air[:1] + air
+
+
+@dataclass(frozen=True)
+class Stream:
+    """Live input for a transmit beam. Supply samples or symbols through beam.open_stream()."""
+
+    mode: str = "cs8"
+    sample_rate_hz: int = 16000
+    modulation: SingleCarrier | GFSK | None = None
+    packet_gap_us: int = 20000
+
+    def __post_init__(self):
+        if not math.isfinite(self.packet_gap_us) or self.packet_gap_us < 0:
+            raise ValueError("Packet gap must be finite and nonnegative")
+        if self.mode == "cs8":
+            if self.sample_rate_hz not in (8000, 16000, 32000, 40000, 50000):
+                raise ValueError("CS8 sample rate must be 8000, 16000, 32000, 40000 or 50000 Sa/s")
+            if self.modulation is not None:
+                raise ValueError("Raw IQ does not take a modulation table")
+        elif self.mode == "single_carrier":
+            if not isinstance(self.modulation, SingleCarrier):
+                raise ValueError("single_carrier mode requires a SingleCarrier configuration")
+        elif self.mode == "gfsk":
+            if not isinstance(self.modulation, GFSK):
+                raise ValueError("gfsk mode requires a GFSK configuration")
+        else:
+            raise ValueError("mode must be cs8, single_carrier or gfsk")
