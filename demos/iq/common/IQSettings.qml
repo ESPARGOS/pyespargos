@@ -37,7 +37,7 @@ GridLayout {
 
 	property bool _loading: true
     property bool allowStreaming: false
-    readonly property var streamRates: [16000, 32000, 64000, 80000]
+    readonly property var streamRates: [16000, 32000, 64000, 80000, 100000]
     readonly property bool streaming: triggerModes[triggerCombo.currentIndex]?.mode === "stream"
 
 	// Named trigger fields, matching the controller HTTP API.

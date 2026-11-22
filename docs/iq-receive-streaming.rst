@@ -33,13 +33,17 @@ and leave the filter's transition band near each Nyquist edge clear.
    * - 80 kSa/s
      - ±30 kHz
      - 2.56 MB/s
+   * - 100 kSa/s
+     - ±37.5 kHz
+     - 3.20 MB/s
 
 .. figure:: _static/iq-rx-stream-response.svg
-   :alt: Measured amplitude across the 16, 32, 64 and 80 kSa/s receive bands on eight antennas.
+   :alt: Measured response at all five sample rates, with a close-up of the passband.
 
    The shaded band shows where to place your signal. The dashed lines mark
    the Nyquist limits. Each point comes from an RF tone swept past the array
    at 2441 MHz. Each antenna's response is relative to its in-band level.
+   The last panel compares the median response inside the usable band.
 
 The radio tunes in 1 kHz steps. Allow for the frequency error between
 the transmitter and receiver when choosing the center of a narrow passband.
@@ -49,7 +53,7 @@ while six received it at 2310 MHz.
 
 On the same array, moving a test tone by one or two output sample rates,
 or by 1.6, 3.2 or 6.4 MHz in either direction, reduced its folded signal by
-at least 57 dB at all four rates. A strong tone *inside* the passband can
+at least 57 dB at all five rates. A strong tone *inside* the passband can
 also have a weak mirror on the opposite side of the center frequency due to
 I/Q imbalance. The largest such mirror we measured was about 34 dB below
 the tone.
@@ -114,7 +118,8 @@ cable settings.
 Recording consecutive samples
 -----------------------------
 
-The data rates above exclude packet headers. For a recording over a link that sometimes drops packets,
+The data rates above exclude packet headers. Use wired Ethernet for all eight
+antennas at 100 kSa/s. For a recording over a link that sometimes drops packets,
 open the pool with ``Pool("myspargel.local").open(transports=["websocket"])``.
 The underlying TCP connection retransmits lost network data. A long network
 stall can still fill the sensor buffers, so check the sample indices with
