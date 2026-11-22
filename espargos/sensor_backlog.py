@@ -318,6 +318,11 @@ class SensorBacklog:
         self._initialize_storage(size=new_size)
 
     @property
+    def available_fields(self) -> frozenset[str]:
+        """Fields this receiver can store, including currently disabled fields."""
+        return frozenset(self._field_specs)
+
+    @property
     def fields(self) -> set[str]:
         """Return the enabled field names."""
 

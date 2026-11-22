@@ -5,6 +5,8 @@ from __future__ import annotations
 import struct
 import numpy as np
 
+from .packet_iq import complex_samples, unpack_words
+
 BLE_PACKET_TYPE_HEADER = 0x35514C42  # BLQ5
 ADVERTISING_ACCESS_ADDRESS = 0x8E89BED6
 
@@ -62,27 +64,22 @@ class BLEPacket:
         self.rx_gain = (self.packet_flags >> 8) & 255 if self.packet_flags & 4 else None
         if self.rx_gain is not None and self.rx_gain > 76:
             raise ValueError("Invalid measured BLE gain")
-        if self.rx_gain is None and self.settings >> 24 == 0:
-            self.rx_gain = (self.settings >> 16) & 255
+        requested_gain = (self.settings >> 16) & 255
+        if self.rx_gain is None and self.settings >> 24 == 0 and requested_gain <= 76:
+            self.rx_gain = requested_gain
         self.capture_phy = self.phy
         self.coding = 0
         self.prefix = bytes(data[96 : 96 + length])
-        if packed:
-            b = np.frombuffer(data[128:], dtype=np.uint8).reshape(-1, 5).astype(np.uint32)
-            raw = np.empty(words, np.uint32)
-            raw[::2] = b[:, 0] | b[:, 1] << 8 | (b[:, 2] & 15) << 16
-            raw[1::2] = b[:, 2] >> 4 | b[:, 3] << 4 | b[:, 4] << 12
-        else:
-            raw = np.frombuffer(data[128:], dtype="<u4")
+        raw = unpack_words(data, 128, packed)
         if self.raw_capture:
-            # Raw records cannot supply decoded identity or CRC verdicts.
-            self.access_address = self.packet_crc = 0
-            self.prefix = b""
-            self.packet_flags &= ~(1 | 2 | 32)
-            self._decode_on_host(raw)
-        i = (raw & 1023).astype(np.int32)
-        q = ((raw >> 10) & 1023).astype(np.int32)
-        self.samples = (np.where(i >= 512, i - 1024, i) + 1j * np.where(q >= 512, q - 1024, q)).astype(np.complex64)
+            self.packet_flags &= ~32  # Host provenance is local to this decoder.
+            if not (self.packet_flags & 64 and self.qualified):
+                # Unfiltered IQ and coded preambles still need host demodulation.
+                self.access_address = self.packet_crc = 0
+                self.prefix = b""
+                self.packet_flags &= ~(1 | 2)
+                self._decode_on_host(raw)
+        self.samples = complex_samples(raw)
 
     def _decode_on_host(self, raw):
         # Original wire bytes remain unchanged, including local CRC provenance.
@@ -110,7 +107,7 @@ class BLEPacket:
 
     @property
     def raw_capture(self):
-        """True for raw candidate IQ that needs host decoding."""
+        """Whether the record contains raw candidate IQ."""
         return bool(self.packet_flags & 16)
 
     @property

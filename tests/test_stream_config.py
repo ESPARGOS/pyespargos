@@ -24,7 +24,7 @@ class StreamConfigTests(TestCase):
     def configured(self):
         board = SimpleNamespace(host="test")
         beam = dict(ready=True, antennas=[0, 3], real=[.1]*8, imag=[.05]*8,
-                    delay_samples=[2]*8, boot_id=[10]*8, crc32=[33]*8, samples=[1024]*8)
+                    boot_id=[10]*8, crc32=[33]*8, samples=[1024]*8)
         profile = dict(mode="single_carrier", sample_rate_hz=0,
                        table_hex=SingleCarrier.psk31().payload.hex(), beam=beam)
         tx = SimpleNamespace(owner=SimpleNamespace(_lock=threading.RLock()), boards=[board],
@@ -41,8 +41,6 @@ class StreamConfigTests(TestCase):
         self.assertEqual(result["modulation"].payload.hex(), profile["table_hex"])
         for value in result["steering"].values.values():
             self.assertEqual(value, .1+.05j)
-        for delay in result["steering"].delays_s.values():
-            self.assertEqual(delay, 2/16000000)
 
     def test_saved_gfsk_configuration(self):
         tx, profile = self.configured()
@@ -166,17 +164,15 @@ class StreamConfigTests(TestCase):
         tx.boards.append(SimpleNamespace(host="other-array"))
         second = copy.deepcopy(first)
         second["beam"].update(boot_id=[20]*8, crc32=[44]*8,
-                              real=[-.2]*8, imag=[.1]*8, delay_samples=[-3]*8)
+                              real=[-.2]*8, imag=[.1]*8)
         tx.states.append(dict(sensors=[dict(boot_id=20, crc32=44, samples=1024) for _ in range(8)]))
         profiles = {b.host: p for b, p in zip(tx.boards, (first, second))}
         with patch("espargos.iq_transmitter._rpc", side_effect=lambda b, _: profiles[b.host]):
             result = IQTransmitter.open_configured_stream(tx)
         values = result["steering"].values
-        delays = result["steering"].delays_s
         from espargos.calibration import Antenna
         self.assertEqual(values[Antenna("test",0)], .1+.05j)
         self.assertEqual(values[Antenna("other-array",0)], -.2+.1j)
-        self.assertEqual(delays[Antenna("other-array",0)], -3/16000000)
         second["table_hex"] = SingleCarrier([-.5,.5], [.25]*33, symbol_rate_hz=1000).payload.hex()
         with patch("espargos.iq_transmitter._rpc", side_effect=lambda b, _: profiles[b.host]):
             with self.assertRaisesRegex(ValueError, "matching stream modulation"):

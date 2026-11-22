@@ -6,19 +6,18 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "demos"))
-from common.iq_tx_waveform import load_iq, waveform
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "demos" / "iq" / "transmit-beamforming"))
+from waveform import load_iq, waveform
 from espargos.steering import Beamspace
 from espargos.waveforms import CW
 
 
-def steering(positions, u, v, frequency, squint=False):
+def steering(positions, u, v, frequency):
     az = np.degrees(np.arctan2(u, np.sqrt(1 - u * u - v * v)))
     el = np.degrees(np.arcsin(v))
-    values = [Beamspace(az, el, squint).coefficients(p, frequency, CW(0)) for p in positions.reshape(-1, 2)]
-    weights, delays = np.array(values).T
+    values = [Beamspace(az, el).coefficients(p, frequency, CW(0)) for p in positions.reshape(-1, 2)]
     shape = positions.shape[:-1]
-    return np.rad2deg(np.angle(weights)).reshape(shape), delays.real.reshape(shape)
+    return np.rad2deg(np.angle(values)).reshape(shape)
 
 
 from espargos.array_geometry import ArrayGeometry as Layout
@@ -31,9 +30,9 @@ class TransmitBeamTests(unittest.TestCase):
         pos = Layout(["localhost"]).positions([board])[0]
         expected = np.array([[-(a % 4 - 1.5), -0.5 if a < 4 else 0.5] for a in range(8)]) * 0.06
         np.testing.assert_allclose(pos, expected)
-        phase, delay = steering(pos, 0.3, -0.2, 2380e6, True)
-        np.testing.assert_allclose(np.exp(1j * np.deg2rad(phase)), np.exp(-2j * np.pi * 2380e6 * delay / 80e6))
-        np.testing.assert_allclose(steering(pos, 0.3, -0.2, 2380e6)[1], 0)
+        phase = steering(pos, 0.3, -0.2, 2380e6)
+        delay = expected @ [.3, -.2] / 299792458
+        np.testing.assert_allclose(np.exp(1j * np.deg2rad(phase)), np.exp(-2j * np.pi * 2380e6 * delay))
 
     def test_kit_uses_global_positions_across_rotated_boards(self):
         root = pathlib.Path(__file__).resolve().parents[1]
@@ -43,7 +42,7 @@ class TransmitBeamTests(unittest.TestCase):
         self.assertEqual(len(np.unique(pos.reshape(-1, 2), axis=0)), 32)
         self.assertAlmostEqual(np.ptp(pos[..., 0]), 0.42)
         self.assertAlmostEqual(np.ptp(pos[..., 1]), 0.18)
-        phase, _ = steering(pos, 0.2, 0, 2380e6)
+        phase = steering(pos, 0.2, 0, 2380e6)
         self.assertFalse(np.allclose(phase[0], phase[1]))
 
     def test_file_normalization_and_invalid_length(self):

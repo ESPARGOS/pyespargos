@@ -115,6 +115,10 @@ can weaken or blur a signal instead of improving it. Radar with a shared TX/RX
 clock is the main use case. Unrelated transmissions generally do not meet
 these conditions.
 
+After moving sensors from another mode into IQ reception, call
+``pool.calibrate()`` before collecting array averages. A sensor that has not
+joined the sample grid can be present on the board but absent from the averages.
+
 Choose ``vector_chunks`` so that ``vector_chunks * 256`` received samples cover
 one waveform repetition, or an integer multiple of it. ``interval_chunks`` sets
 the output interval in units of 256 received samples. For example::

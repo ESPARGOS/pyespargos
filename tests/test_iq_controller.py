@@ -11,7 +11,7 @@ import unittest
 class ReferenceControllerTests(unittest.TestCase):
     def test_sync_waits_for_tone_and_discards_queued_edits(self):
         from PyQt6 import QtCore
-        from demos.common.iq_application import IQController
+        from demos.iq.common.application import IQController
 
         app = QtCore.QCoreApplication.instance() or QtCore.QCoreApplication([])
         entered, release, synced = (threading.Event() for _ in range(3))
@@ -27,7 +27,8 @@ class ReferenceControllerTests(unittest.TestCase):
             calls.append("sync")
             synced.set()
 
-        controller = IQController(SimpleNamespace(set_reference_tone=tone, sync=sync, add_callback=lambda cb: None, add_accumulation_callback=lambda cb: None))
+        receiver = SimpleNamespace(set_reference_tone=tone, add_callback=lambda cb: None, add_accumulation_callback=lambda cb: None)
+        controller = IQController(SimpleNamespace(iq=receiver, calibrate=sync))
         try:
             controller.reference_apply("cw", 2437, 7.5)
             self.assertTrue(entered.wait(2))
@@ -49,10 +50,10 @@ class ReferenceControllerTests(unittest.TestCase):
             release.set()
 
     def test_sync_state_tracks_configuration_epochs_and_failure(self):
-        from demos.common.iq_application import IQController
+        from demos.iq.common.application import IQController
 
         callbacks = []
-        pool = SimpleNamespace(
+        receiver = SimpleNamespace(
             add_callback=callbacks.append,
             add_accumulation_callback=callbacks.append,
             calibration=object(),
@@ -61,7 +62,7 @@ class ReferenceControllerTests(unittest.TestCase):
             calibration_applies_to=lambda capture: capture == "valid",
             apply_config=lambda config: None,
         )
-        controller = IQController(pool)
+        controller = IQController(SimpleNamespace(iq=receiver, configure=lambda **kwargs: None))
         self.assertTrue(controller.syncNeeded)
         controller._begin_reference()
         controller._end_reference(True)
@@ -85,7 +86,7 @@ class ReferenceControllerTests(unittest.TestCase):
         self.assertFalse(controller.referenceBusy)
 
     def test_iq_demo_selects_roles_before_creating_receiver(self):
-        from demos.common.iq_application import ESPARGOSIQApplication
+        from demos.iq.common.application import ESPARGOSIQApplication
 
         calls = []
 
@@ -103,16 +104,16 @@ class ReferenceControllerTests(unittest.TestCase):
         self.assertIs(ESPARGOSIQApplication._create_receiver(None, Owner()), receiver)
 
     def test_manual_noise_uses_canonical_reference_api(self):
-        from demos.common.iq_application import IQController
+        from demos.iq.common.application import IQController
 
         calls = []
-        pool = SimpleNamespace(
+        receiver = SimpleNamespace(
             add_callback=lambda cb: None,
             add_accumulation_callback=lambda cb: None,
             master_board=SimpleNamespace(iq=SimpleNamespace(set_reference=lambda *args: calls.append(args))),
             set_reference_tone=lambda **kwargs: calls.append(kwargs),
         )
-        controller = IQController(pool)
+        controller = IQController(SimpleNamespace(iq=receiver))
         controller._apply_tone_request("iq", 2437, 7.5)
         self.assertEqual(calls[-1], ("iq", 2437000000, 30))
         controller._apply_tone_request("iq", 2640, 7.5)

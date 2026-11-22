@@ -6,6 +6,7 @@ Groups per-sensor CSI into packet clusters and matches them with TX reports.
 """
 
 from typing import Callable
+from contextlib import ExitStack
 import numpy as np
 import time
 
@@ -695,18 +696,27 @@ class WiFiTransceiver(ClusterAssembler):
         try:
             self.clear_mac_filter()
 
-            # Enable calibration mode
-            self._logger.info("Starting calibration")
-            self.set_rf_switch(sensor.RFSwitchState.SENSOR_RFSWITCH_REFERENCE)
+            with ExitStack() as restore:
+                from .controller_reference import prepare_local_wifi_references, prepare_packet_reference
 
-            # Run calibration for specified duration
-            start = time.monotonic()
-            while time.monotonic() - start < duration:
-                if run_in_thread:
-                    remaining = max(0.0, duration - (time.monotonic() - start))
-                    self._run(timeout=min(0.05, remaining))
+                if self._owner.reference_controller is not None:
+
+                    config = self.boards[0].wifi_rx.get_config()
+                    prepare_packet_reference(restore, self._owner.reference_controller, "wifi", config["channel-primary"], config["channel-secondary"])
                 else:
-                    time.sleep(0.01)
+                    prepare_local_wifi_references(restore, self.boards + self._reference_generator_boards)
+                # Enable calibration mode
+                self._logger.info("Starting calibration")
+                self.set_rf_switch(sensor.RFSwitchState.SENSOR_RFSWITCH_REFERENCE)
+
+                # Run calibration for specified duration
+                start = time.monotonic()
+                while time.monotonic() - start < duration:
+                    if run_in_thread:
+                        remaining = max(0.0, duration - (time.monotonic() - start))
+                        self._run(timeout=min(0.05, remaining))
+                    else:
+                        time.sleep(0.01)
         finally:
             # Disable calibration mode
             self._logger.info("Finished calibration")

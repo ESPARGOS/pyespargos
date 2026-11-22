@@ -238,7 +238,10 @@ def _acquire_grid(pool, center, timeout=3.0, scope=None):
             for a in scope.ids[bi]:
                 packets = snapshots[((bi, a), generations[bi])]
                 samples = np.concatenate([packets[k].decode_iq() for k in range(4)])
-                lag, score = relative_lag(samples, reference, packets[0].producer_wake_write_ptr - ref_edge)
+                try:
+                    lag, score = relative_lag(samples, reference, packets[0].producer_wake_write_ptr - ref_edge)
+                except RuntimeError as error:
+                    raise RuntimeError(f"{pool.boards[bi].host} antenna {a} at {center / 1e6:g} MHz: {error}") from error
                 values[a] = packets[0].fire_time_ns + round(lag * 1e9 / 80e6)
                 scores.append(score)
             anchors.append(values)

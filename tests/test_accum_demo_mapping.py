@@ -65,7 +65,7 @@ def _cluster():
 
 
 def test_signal_analyzer_splits_accumulation_into_display_sections():
-    module = _load_demo("iq_signal_analyzer_test", "demos/iq-signal-analyzer/iq-signal-analyzer.py")
+    module = _load_demo("iq_signal_analyzer_test", "demos/iq/signal-analyzer/main.py")
     fake = SimpleNamespace(
         _pending_lock=threading.Lock(),
         _pending_clusters=[(0.0, _cluster())],

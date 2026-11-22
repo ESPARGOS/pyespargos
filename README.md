@@ -14,8 +14,9 @@ Multiple arrays can be combined into one larger phase-coherent aperture.
 With *pyespargos*, you can use ESPARGOS to
 
 * **measure WiFi channels**: ESPARGOS passively extracts channel state information (CSI) from received 802.11g/n/ax packets in real time, phase-coherent across all antennas and arrays. Supported formats are L-LTF, HT-LTF (20 and 40 MHz) and HE-LTF.
+* **receive Bluetooth LE**: discover advertisers, record packet IQ and estimate arrival direction from the same packet received across several antennas. See [BLE reception](docs/ble-reception.rst).
 * **capture raw I/Q samples**: ESPARGOS can record synchronized complex baseband samples from all antennas, bypassing WiFi decoding (see [ESP-SDR](https://espargos.net/espsdr/)). This is useful for non-WiFi signals and radar-like measurements.
-* **transmit** (requires transmit authorization): sensors can send WiFi packets on a schedule, or replay arbitrary I/Q waveforms with beam steering across the array.
+* **transmit** (requires transmit authorization): send WiFi packets on a schedule, replay stored IQ waveforms, or feed live samples and digital symbols into a beam. See [IQ Transmit Streaming](docs/iq-transmit-streaming.rst).
 
 The library handles device communication, clustering of measurements across sensors and boards, and phase/timing calibration, and provides array-processing utilities such as angle-of-arrival estimation.
 It also ships with a collection of demo applications, listed below.

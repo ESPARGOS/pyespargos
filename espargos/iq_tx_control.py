@@ -65,6 +65,9 @@ def _waveform(board, recipe, timeout, wait=_wait):
                 time.sleep(0.1)
 
 
+_SENSOR_MODES = {0: "wifi", 1: "iq_rx", 2: "iq_tx", 3: "ble", 4: "wifi_iq", 255: "transitioning"}
+
+
 class TXStatus:
     """Wait for streamed TX acknowledgements, with bounded HTTP recovery."""
 
@@ -88,9 +91,9 @@ class TXStatus:
             offset += 3
             if offset + size > len(data):
                 return
-            if tag == 6 and size in (100, 108, 112):
+            if tag == 6 and size in (100, 108, 112, 132):
                 v = struct.unpack_from("<9I3f" + str((size - 48) // 4) + "I", data, offset)
-                if v[13] > 2:
+                if v[13] not in _SENSOR_MODES:
                     return
                 state = dict(
                     zip(
@@ -111,7 +114,12 @@ class TXStatus:
                         v[:12],
                     )
                 )
-                state.update(applied_mode=("wifi", "iq_rx", "iq_tx")[v[13]], epoch=v[15], origin_ns=(v[25] | v[26] << 32) if size >= 108 else 0, sample_rate_hz=v[27] if size >= 112 else 80000000)
+                state.update(applied_mode=_SENSOR_MODES[v[13]], epoch=v[15], origin_ns=(v[25] | v[26] << 32) if size >= 108 else 0, sample_rate_hz=v[27] if size >= 112 else 80000000)
+                if size == 132:
+                    state.update(sync_seq=v[16], applied_generation=v[18], applied_sample_rate_hz=v[27],
+                                 sample_position=v[19] | v[20] << 32, applied_sample=v[23] | v[24] << 32,
+                                 steer_id=v[28], steer_loaded=v[29], steer_applied=v[30],
+                                 steer_error=v[31], steer_state=v[32])
             if tag == 255:
                 if size != 4 or offset + size != len(data) or zlib.crc32(data[:start]) != struct.unpack_from("<I", data, offset)[0]:
                     return
@@ -125,31 +133,46 @@ class TXStatus:
                 return
             offset += size
 
-    def wait(self, board, predicate, timeout):
+    def wait(self, board, predicate, timeout, *, antennas=()):
         """Prefer streamed acknowledgements, recover dropped UDP status via HTTP.
+
+        For a long wait, pass the antennas being watched. As long as each of
+        them keeps reporting, the stream is sufficient to track progress.
 
         Never hold the collector lock during a control request: stream reception
         must remain able to make progress while that request is in flight.
         """
         deadline = time.monotonic() + timeout
         next_poll = min(deadline, time.monotonic() + 0.25)
-        state = None
+        previous = [None] * 8
+        fallback = [None] * 8
         while True:
             with self.changed:
-                sensors = self.status[board]
-                if all(s is not None for s in sensors):
-                    state = {"sensors": list(sensors)}
+                live = self.status[board]
+                sensors = [s if s is not None else old for s, old in zip(live, fallback)]
+                complete = all(s is not None for s in sensors)
+                if complete:
+                    state = {"sensors": sensors}
                     if predicate(state):
                         return state
-                left = next_poll - time.monotonic()
+                now = time.monotonic()
+                left = next_poll - now
                 if left > 0:
                     # Each sensor wakes us separately. Keep collecting streamed
                     # acknowledgements instead of fetching a full JSON status
                     # after every partial update (which strains controller RAM).
                     self.changed.wait(left)
                     continue
+                # Check outside the lock over HTTP only when a watched sensor
+                # goes quiet. Always make one final read at the timeout.
+                fresh = antennas and all(live[a] is not previous[a] for a in antennas)
+                previous = list(live)
+                if complete and fresh and now < deadline:
+                    next_poll = min(deadline, now + 0.25)
+                    continue
             # A missing stream packet does not mean the sensor rejected a command.
             state = _rpc(board, "get_iq_tx")
+            fallback = state["sensors"]
             if predicate(state):
                 return state
             if time.monotonic() >= deadline:

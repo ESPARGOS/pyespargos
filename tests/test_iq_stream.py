@@ -68,7 +68,7 @@ class Device:
         if not self.callback:
             return
         self.sequence += 1
-        words = [0x32535449, 3, self.sequence, 0, 0, 0]
+        words = [0x32535449, 4, self.sequence, 0, 0, 0]
         for a in range(8):
             state = self.sensors[a] if a < 2 else dict(boot_id=10 + a, state="closed")
             words += [state["boot_id"], int(a < 2)]
@@ -92,7 +92,7 @@ class Device:
 
     def send(self, path, data):
         magic, version, command, mask, reserved, session, offset, count = struct.unpack_from("<IBBBBIII", data)
-        assert magic == 0x31535449 and version == 3 and not reserved
+        assert magic == 0x31535449 and version == 4 and not reserved
         payload = data[20:]
         self.frames.append((path, command, count))
         self.wire_frames.append(bytes(data))
@@ -625,7 +625,7 @@ class MultiArrayStreamTests(TestCase):
                  dict(mode="gfsk", modulation=GFSK.le1m())]
         for settings in modes:
             with self.subTest(mode=settings["mode"]):
-                steering = Beamspace(azimuth_deg=17, squint=True)
+                steering = Beamspace(azimuth_deg=17)
                 with IQStream(self.tx, steering=steering, **settings) as stream:
                     if stream.mode == "gfsk":
                         stream.write_packet(b"abcd", gap_us=20000)
@@ -636,18 +636,18 @@ class MultiArrayStreamTests(TestCase):
                     self.assertEqual(arms[0][0:2], arms[1][0:2])
                     self.assertEqual(arms[0][-1], arms[1][-1])
                     self.assertEqual(arms[0][0], stream.start_sample)
+                    self.assertEqual(stream.start_sample % 32, 0)
                     latest = max(s["sample_position"] for d in self.devices for s in d.tx_state["sensors"][:2])
                     self.assertGreaterEqual(stream.start_sample - latest, .5 * IQStream.RATE)
                     for d, arm in zip(self.devices, arms):
                         self.assertEqual(arm[2:10], tuple(s["epoch"] for s in d.tx_state["sensors"]))
                         opened = [f for f in d.wire_frames if f[5] == 1][-1]
-                        config = struct.unpack_from("<4I24f", opened, 20)
+                        config = struct.unpack_from("<4I16f", opened, 20)
                         bi = self.devices.index(d)
                         for a in range(2):
-                            weight, delay = steering.coefficients(self.tx.positions[bi, a], 2437000000, None, stream.RATE)
+                            weight = steering.coefficients(self.tx.positions[bi, a], 2437000000, None)
                             self.assertAlmostEqual(config[4 + a], weight.real * .1, places=6)
                             self.assertAlmostEqual(config[12 + a], weight.imag * .1, places=6)
-                            self.assertAlmostEqual(config[20 + a], delay, places=5)
                     self.assertNotEqual(arms[0][2:10], arms[1][2:10])
                     self.assertEqual(self.devices[0].received[0], self.devices[1].received[0])
 

@@ -329,11 +329,6 @@ class MIMOProcessor:
             rd[start:stop] = np.maximum(power[..., :edge].max(axis=-1), power[..., negative_start:].max(axis=-1)).T
             ra[start:stop] = power.max(axis=0)
 
-        # One display reference, estimated after beamforming and outside the
-        # Doppler speeds normally occupied by hand motion and walking.
-        outer = rd[:, abs(np.fft.ifftshift(self.velocities)) > 2.5]
-        self.map_noise = max(float(np.median(np.median(outer, axis=1))), 1e-20)
-
         return np.fft.fftshift(rd, axes=1), np.fft.fftshift(ra, axes=1)
 
     def _suppress_leakage(self, data, weight):
@@ -348,6 +343,20 @@ class MIMOProcessor:
         basis_f = np.stack((q0, q1), axis=1)
         mask = np.repeat(self.masks, self.receiver_count, axis=0)
         coefficients = np.einsum("tpf,pkf->tpk", data - reference, basis_f.conj())
+        # A small clock shift rotates the stationary return in proportion to
+        # frequency. Its slope is imaginary, while a moving echo rotates
+        # through both quadratures. Remove gain and phase changes correlated
+        # with that shift only when the imaginary slope dominates by 10 dB.
+        slope = coefficients[..., 1]
+        delay = slope.imag
+        power = np.einsum("t,tp,tp->p", weight, delay, delay)
+        quadrature_power = np.einsum("t,tp,tp->p", weight, slope.real, slope.real)
+        confidence = np.clip(1 - 10 * quadrature_power / np.maximum(power, 1e-30), 0, 1)
+        if confidence.any():
+            fit = np.einsum("t,tp,tpk->pk", weight, delay, coefficients)
+            drift = delay[..., None] * (fit * (confidence / np.maximum(power, 1e-30))[:, None])
+            data -= np.einsum("tpk,pkf->tpf", drift, basis_f)
+            coefficients -= drift
         # Estimate their excess noise outside walking Doppler speeds, rather
         # than treating every moving echo as a change in the hardware.
         spectrum = fft.fft((data - reference) * weight[:, None, None], axis=0) / np.linalg.norm(weight)
@@ -385,9 +394,14 @@ class MIMOProcessor:
             correlations = resample(correlations, doppler_bins, axis=0)
         return np.maximum(fft.hfft(correlations, n=self.spatial_fft_shape[1], axis=-1), 0)
 
+    def background_power(self, range_doppler):
+        """Measure the noise floor outside typical hand and walking speeds."""
+        outer = range_doppler[:, abs(self.velocities) > 2.5]
+        return max(float(np.median(np.median(outer, axis=1))), 1e-20)
+
     def display_maps(self, maps):
         """Power in dB, using one background reference for both plots."""
-        reference = max(self.map_noise, 1e-20)
+        reference = self.background_power(maps[0])
         result = [10 * np.log10(np.maximum(power / reference, 1e-20)) for power in maps]
         return result[0][:, ::-1], result[1]
 

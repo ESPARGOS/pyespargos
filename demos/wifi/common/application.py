@@ -13,21 +13,8 @@ from demos.wifi.common.wifi_transceiver_drawer import WiFiTransceiverDrawer
 from demos.common.application import ESPARGOSApplication
 
 
-class ESPARGOSCSIApplication(ESPARGOSApplication):
-    """
-    ESPARGOS application whose sensing modality is WiFi channel state information (CSI).
-
-    On top of the generic :class:`.ESPARGOSApplication`, this class provides
-    the :class:`.WiFiTransceiver`, the CSI receiver-drawer backend
-    (:class:`.WiFiTransceiverDrawer`), pool calibration during initialization, and the
-    :code:`csi` configuration section (preamble format selection, exposed to
-    QML as the :code:`csiconfig` context property).
-
-    Use mixins to extend functionality:
-    - CSIBacklogMixin: Adds CSI backlog support
-    - CombinedArrayMixin: Adds combined array configuration support
-    - SingleCSIFormatMixin: Adds single preamble format selection
-    """
+class CSIApplication(ESPARGOSApplication):
+    """Shared configuration and format selection for applications that consume CSI."""
 
     CSI_DEFAULT_CONFIG = {
         # CSI-specific application settings, handled by CSIAppSettings
@@ -38,8 +25,14 @@ class ESPARGOSCSIApplication(ESPARGOSApplication):
 
     def _extend_default_config(self, config):
         super()._extend_default_config(config)
-        deep_update(config, copy.deepcopy({"pool": WiFiTransceiverDrawer.DEFAULT_CONFIG}))
         deep_update(config, copy.deepcopy({"csi": self.CSI_DEFAULT_CONFIG}))
+
+    def _read_channel_fields(self, additional_keys, allow_incomplete):
+        key = self._resolve_backlog_preamble_format(allow_incomplete=allow_incomplete)
+        if key == "ht40" and self.pooldrawer.configManager().get("secondary_channel") == 0:
+            self.backlog.clear()
+            return None
+        return key, list(self.backlog.get_multiple([key, *additional_keys]))
 
     def _uses_backlog(self):
         """Check if this class uses the CSIBacklogMixin."""
@@ -69,6 +62,17 @@ class ESPARGOSCSIApplication(ESPARGOSApplication):
         super()._setup_qml_context(context)
         context.setContextProperty("csiconfig", self.csiconfig)
 
+
+class ESPARGOSCSIApplication(CSIApplication):
+    """Native WiFi CSI acquisition, receiver controls and calibration."""
+
+    # Formats are ordered by priority: the first format wins if sample counts tie.
+    CSI_FORMATS = ("ht40", "ht20", "he20", "lltf")
+
+    def _extend_default_config(self, config):
+        super()._extend_default_config(config)
+        deep_update(config, copy.deepcopy({"pool": WiFiTransceiverDrawer.DEFAULT_CONFIG}))
+
     def _create_receiver(self, owner: espargos.Pool) -> espargos.WiFiTransceiver:
         # A previous IQ demo may have left sensors outside WiFi mode.
         for board in owner.boards:
@@ -84,7 +88,8 @@ class ESPARGOSCSIApplication(ESPARGOSApplication):
         return pool
 
     def _create_pool_drawer(self):
-        pool_cfg = self.get_explicit_initial_config("pool", default={})
+        explicit = self.get_explicit_initial_config("pool", default={})
+        pool_cfg = {key: value for key, value in explicit.items() if key in WiFiTransceiverDrawer.DEFAULT_CONFIG}
         pooldrawer = WiFiTransceiverDrawer(self.pool, pool_cfg or None, parent=self)
         pooldrawer.calibrationStarted.connect(self._on_pool_calibration_started)
         pooldrawer.calibrationFinished.connect(self._on_pool_calibration_finished)
@@ -123,41 +128,19 @@ class ESPARGOSCSIApplication(ESPARGOSApplication):
 
 
 class CSIBacklogMixin:
-    """
-    Mixin that adds CSI backlog support to an ESPARGOSCSIApplication.
-
-    Provides:
-    - Backlog size command-line argument (-b/--backlog-size)
-    - CSIBacklogSettings configuration manager
-    - Automatic backlog creation during pool initialization
-    """
-
-    backlog_cli_option = True
+    """Create the CSI backlog and expose its settings to the demo."""
 
     def _extend_default_config(self, config):
         super()._extend_default_config(config)
-        deep_update(config, copy.deepcopy({"backlog": CSIBacklogSettings.DEFAULT_CONFIG}))
-
-    def _add_argparse_arguments(self, parser):
-        super()._add_argparse_arguments(parser)
-        if not self.backlog_cli_option:
-            return
-        parser.add_argument(
-            "-b",
-            "--backlog-size",
-            type=int,
-            default=None,
-            help="Size of CSI datapoint backlog",
-        )
-
-    def _process_args(self):
-        super()._process_args()
-        if getattr(self.args, "backlog_size", None) is not None:
-            self.initial_config["backlog"]["size"] = self.args.backlog_size
+        config["backlog"] = {
+            "size": 20,
+            "fields": {name: name in ("lltf", "dsss") for name in self.CSI_FORMATS},
+            "filters": {"exclude_11b": "dsss" not in self.CSI_FORMATS},
+        }
 
     def _init_config_managers(self):
         super()._init_config_managers()
-        self.backlog_settings = CSIBacklogSettings(force_config=self.get_initial_config("backlog"), parent=self)
+        self.backlog_settings = CSIBacklogSettings(self.get_initial_config("backlog"), parent=self)
 
     def _setup_qml_context(self, context):
         super()._setup_qml_context(context)
@@ -165,41 +148,22 @@ class CSIBacklogMixin:
 
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
-        fields_cfg = self.get_initial_config("backlog", "fields", default=None)
-        initial_fields = None
-        if isinstance(fields_cfg, dict):
-            initial_fields = set(espargos.CSIBacklog.FIELD_SPECS)
-            for field, enabled in fields_cfg.items():
-                if enabled:
-                    initial_fields.add(field)
-                else:
-                    initial_fields.discard(field)
-
+        config = self.get_initial_config("backlog")
+        available = espargos.CSIBacklog.fields_for(self.receiver)
+        defaults = espargos.CSIBacklog.default_fields_for(self.receiver)
         self.backlog = espargos.CSIBacklog(
             self.receiver,
-            fields=initial_fields,
+            fields={field for field in available if config["fields"].get(field, field in defaults)},
+            size=config["size"],
             callback_predicate=backlog_cb_predicate,
             apply_calibration=calibrate,
         )
-        self.pool.start_processing()
-
         self.backlog_settings.set_backlog(self.backlog)
+        self.pool.start_processing()
 
 
 class SingleCSIFormatMixin:
-    """
-    Mixin that adds single preamble format selection to an ESPARGOSCSIApplication.
-
-    Provides:
-    - Mutually exclusive command-line arguments (--lltf, --ht20, --ht40, --he20)
-    - Automatic backlog field configuration when combined with CSIBacklogMixin.
-      Without a format command-line argument, all CSI formats are stored and
-      the backlog reader resolves the concrete format automatically. Passing a
-      format argument stores and reads only that CSI format.
-    """
-
-    # Formats are ordered by priority: the first format wins if sample counts tie.
-    CSI_FORMATS = ("ht40", "ht20", "he20", "lltf")
+    """Read the configured CSI format or select one from the available measurements."""
 
     def _ensure_backlog_fields_for_preamble_format(self):
         if not self._uses_backlog() or not hasattr(self, "backlog"):
@@ -211,7 +175,9 @@ class SingleCSIFormatMixin:
             fields.update(self.CSI_FORMATS)
         elif preamble_format in self.CSI_FORMATS:
             fields.add(preamble_format)
-        self.backlog.fields = fields
+        fields.intersection_update(self.backlog.available_fields)
+        if fields != self.backlog.fields:
+            self.backlog.fields = fields
 
     def _configured_preamble_format(self, default: str = "lltf") -> str:
         preamble_format = self.csiconfig.get("preamble_format")
@@ -223,6 +189,10 @@ class SingleCSIFormatMixin:
             return preamble_format
         if not hasattr(self, "backlog"):
             return default
+
+        if "dsss" in self.CSI_FORMATS and "dsss" in self.backlog.fields:
+            latest = self.backlog.get_latest("dsss")
+            return "dsss" if latest is not None and np.isfinite(latest).any() else "lltf"
 
         counts = {}
         for fmt in self.CSI_FORMATS:
@@ -257,17 +227,14 @@ class SingleCSIFormatMixin:
         if not hasattr(self, "backlog") or not self.backlog.has_data:
             return None
 
-        csi_key = self._resolve_backlog_preamble_format(allow_incomplete=allow_incomplete)
-        # Discard buffered HT40 samples after switching back to a 20 MHz channel.
-        if csi_key == "ht40" and self.pooldrawer.configManager().get("secondary_channel") == 0:
-            self.backlog.clear()
-            return None
-
         try:
-            results = list(self.backlog.get_multiple([csi_key, *additional_keys]))
-        except ValueError:
-            self.logger.warning(f"Requested CSI key {csi_key} not in backlog")
+            snapshot = self._read_channel_fields(additional_keys, allow_incomplete)
+        except ValueError as exc:
+            self.logger.warning("Cannot read CSI backlog: %s", exc)
             return None
+        if snapshot is None:
+            return None
+        csi_key, results = snapshot
 
         csi_backlog = results[0]
 
@@ -300,62 +267,15 @@ class SingleCSIFormatMixin:
             return tuple(results)
         return csi_backlog
 
-    def _add_argparse_arguments(self, parser):
-        super()._add_argparse_arguments(parser)
-        format_group = parser.add_mutually_exclusive_group()
-        format_group.add_argument(
-            "--lltf",
-            default=False,
-            help="Store and read only CSI from L-LTF",
-            action="store_true",
-        )
-        format_group.add_argument(
-            "--ht40",
-            default=False,
-            help="Store and read only CSI from HT40",
-            action="store_true",
-        )
-        format_group.add_argument(
-            "--ht20",
-            default=False,
-            help="Store and read only CSI from HT20",
-            action="store_true",
-        )
-        format_group.add_argument(
-            "--he20",
-            default=False,
-            help="Store and read only CSI from HE20",
-            action="store_true",
-        )
-
     def _process_args(self):
         super()._process_args()
-
-        # Make sure that only one format is selected
-        selected_formats = []
-        if self.args.lltf:
-            selected_formats.append("lltf")
-        if self.args.ht40:
-            selected_formats.append("ht40")
-        if self.args.ht20:
-            selected_formats.append("ht20")
-        if self.args.he20:
-            selected_formats.append("he20")
-        if len(selected_formats) > 1:
-            raise ValueError("At most one of --lltf, --ht40, --ht20 or --he20 can be selected!")
-
-        if len(selected_formats) == 1:
-            # Format flags explicitly narrow both backlog storage and readback.
-            self.initial_config["csi"]["preamble_format"] = selected_formats[0]
-            if self._uses_backlog():
-                self.initial_config["backlog"]["fields"] = {
-                    "lltf": self.args.lltf,
-                    "ht20": self.args.ht20,
-                    "ht40": self.args.ht40,
-                    "he20": self.args.he20,
-                }
-        elif self._uses_backlog():
-            # No format flag means Auto readback with all CSI formats available.
-            self.initial_config["csi"]["preamble_format"] = "auto"
-            for fmt in self.CSI_FORMATS:
-                self.initial_config["backlog"]["fields"][fmt] = True
+        selected = self.initial_config["csi"]["preamble_format"]
+        if len(self.CSI_FORMATS) == 1:
+            selected = self.CSI_FORMATS[0]
+        if selected != "auto" and selected not in self.CSI_FORMATS:
+            raise ValueError(f"Unsupported CSI format {selected!r}")
+        self.initial_config["csi"]["preamble_format"] = selected
+        if self._uses_backlog():
+            self.initial_config["backlog"]["fields"].update(
+                {name: selected == "auto" or name == selected for name in self.CSI_FORMATS}
+            )

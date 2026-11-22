@@ -6,11 +6,11 @@ import concurrent.futures
 from contextlib import contextmanager
 import secrets
 import struct
-import threading
 import zlib
 
 import numpy as np
 
+from .calibration import Antenna
 from .iq_tx_control import TXStatus, _SensorTXError, _rpc, _waveform
 from .waveforms import IQSamples
 from .tx_signal import TXSignals
@@ -31,6 +31,7 @@ class IQTransmitter:
         self.receiver = self.capture = None
         self.uploaded = {}
         self._stream = None
+        self._schedules = set()
         self.signals = TXSignals(self)
         self.workers = concurrent.futures.ThreadPoolExecutor(max_workers=len(geometry.hosts))
         try:
@@ -48,23 +49,38 @@ class IQTransmitter:
                 error.add_note(str(cleanup_error))
             raise
 
-    def _parallel(self, fn):
-        futures = [self.workers.submit(fn, i, b) for i, b in enumerate(self.boards)]
-        results, errors = [], []
-        for f in futures:
-            try:
-                results.append(f.result())
-            except Exception as error:
-                errors.append(error)
-        if errors:
-            raise errors[0]
-        return results
+    def _parallel(self, fn, boards=None):
+        futures = []
+        try:
+            for i, board in enumerate(self.boards):
+                if boards is None or board in boards:
+                    futures.append(self.workers.submit(fn, i, board))
+            return [future.result() for future in futures]
+        finally:
+            # Even on interruption, finish outstanding writes before sending cancellation.
+            concurrent.futures.wait(futures)
 
     def read(self):
         self.states = self._parallel(lambda i, b: _rpc(b, "get_iq_tx"))
         return self.states
 
-    def open_stream(self, **settings):
+    def schedule_steering(self, changes, *, start_sample=None, lead_time=0.5):
+        """Schedule beam directions on the playback clock.
+
+        Each change is (sample offset, signal or stream, Beamspace or Weights).
+        Weights maps Antenna identities to complex multipliers of the signal
+        amplitude. Selected antennas omitted from that entry use unit weight.
+        The returned context manager cancels outstanding changes on exit.
+        """
+        from .iq_steering_schedule import SteeringSchedule
+        with self.owner._lock:
+            if self.signals._editing:
+                raise RuntimeError("Finish editing the waveforms before scheduling steering")
+            schedule = SteeringSchedule(self, changes, start_sample, lead_time)
+            self._schedules.add(schedule)
+            return schedule
+
+    def open_stream(self, *, signal=None, **settings):
         """Open one buffered CS8 or indexed source over the prepared beam scene.
 
         See IQStream for prefill, synchronized start, backpressure and close.
@@ -73,9 +89,24 @@ class IQTransmitter:
         with self.owner._lock:
             if self.closed:
                 raise RuntimeError("Transmitter is closed")
+            if self.signals._editing:
+                raise RuntimeError("Finish editing the waveforms before opening a stream")
             if self._stream is not None and not self._stream.closed:
                 raise RuntimeError("Close the current stream before opening another")
+            from .stream_sources import Stream
+            if signal is not None:
+                if signal not in self.signals or not isinstance(signal.waveform, Stream):
+                    raise ValueError("Select a beam with a Stream source on this transmitter")
+                if settings:
+                    raise ValueError("Configure the source and steering on the beam")
+                source = signal.waveform
+                settings = dict(mode=source.mode, sample_rate_hz=source.sample_rate_hz,
+                                modulation=source.modulation, packet_gap_us=source.packet_gap_us,
+                                amplitude=signal.amplitude, steering=signal.steering, antennas=signal.antennas)
+            elif any(isinstance(beam.waveform, Stream) for beam in self.signals):
+                raise ValueError("Open the configured stream beam with beam.open_stream()")
             self._stream = IQStream(self, **settings)
+            self._stream.signal = signal
             return self._stream
 
     def open_configured_stream(self):
@@ -84,7 +115,6 @@ class IQTransmitter:
         Prepare and calibrate the scene in IQ Transmission first. This method
         preserves its other beams; the caller unmutes TX before start().
         """
-        from .calibration import Antenna
         from .steering import Weights
         from .stream_sources import SingleCarrier, GFSK
 
@@ -92,7 +122,7 @@ class IQTransmitter:
             profiles = [_rpc(board, "get_iq_tx_stream_config") for board in self.boards]
             self.read()
             first = profiles[0]
-            antennas, values, delays = [], {}, {}
+            antennas, values = [], {}
             for bi, (board, profile) in enumerate(zip(self.boards, profiles)):
                 if any(profile.get(k) != first.get(k) for k in ("mode", "sample_rate_hz", "table_hex")):
                     raise ValueError("Save matching stream modulation settings on every controller")
@@ -102,7 +132,7 @@ class IQTransmitter:
                 ids = beam["antennas"]
                 if len(set(ids)) != len(ids) or any(not isinstance(a, int) or not 0 <= a < 8 for a in ids):
                     raise ValueError("Invalid saved stream antenna selection")
-                for key in ("real", "imag", "delay_samples", "boot_id", "crc32", "samples"):
+                for key in ("real", "imag", "boot_id", "crc32", "samples"):
                     if len(beam.get(key, [])) != 8:
                         raise ValueError("Incomplete saved stream beam")
                 for a in ids:
@@ -112,12 +142,11 @@ class IQTransmitter:
                     antenna = Antenna(board.host, a)
                     antennas.append(antenna)
                     values[antenna] = complex(beam["real"][a], beam["imag"][a])
-                    delays[antenna] = beam["delay_samples"][a] / 16_000_000
             modulation = ({"single_carrier":SingleCarrier,"gfsk":GFSK}[first["mode"]].from_payload(bytes.fromhex(first["table_hex"]))
                           if first["mode"] != "cs8" else None)
             stream = self.open_stream(mode=first["mode"], sample_rate_hz=first["sample_rate_hz"],
                                     modulation=modulation, amplitude=1, antennas=antennas,
-                                    steering=Weights(values, delays_s=delays),
+                                    steering=Weights(values),
                                     **({"packet_gap_us":first.get("ui",{}).get("gfsk_gap",20000)} if first["mode"]=="gfsk" else {}))
             return stream
 
@@ -152,8 +181,27 @@ class IQTransmitter:
                     if muted:
                         return
                     raise PermissionError(f"{b.host}: enable transmit authorization in controller Settings")
-                _rpc(b, "set_iq_tx", {"muted": muted})
-                return self.capture.wait(b, lambda s: all(not x["enabled"] or abs(x["applied_amplitude"]) < 1e-8 for x in s["sensors"]), 10) if muted and self.capture is not None else None
+                settings = _rpc(b, "set_iq_tx", {"muted": muted})
+                if self.capture is None:
+                    return
+                targets = {a: 0 if muted else sensor["amplitude"]
+                           for a, sensor in enumerate(settings["sensors"]) if muted or sensor.get("enabled")}
+
+                def applied(state):
+                    for a, amplitude in targets.items():
+                        sensor = state["sensors"][a]
+                        if not sensor.get("enabled"):
+                            if muted:
+                                continue
+                            return False
+                        if abs(sensor["applied_amplitude"] - amplitude) > 1e-7:
+                            return False
+                    return True
+
+                # Unmuting a long waveform can take time to render. Wait for
+                # the sensors before starting an upload on the same UART.
+                if not applied(settings):
+                    self.capture.wait(b, applied, 10)
 
             self._parallel(apply)
             if stream_error is not None:
@@ -192,7 +240,7 @@ class IQTransmitter:
             try:
                 for offset in range(0, samples, 1000):
                     part = words[offset : offset + 1000]
-                    header = struct.pack("<IBBBB7I", 0x31585449, 3, 7, sum(1 << a for a in antennas), slot, generation, offset, samples, crc, len(part), 0xFFFFFFFF, 0xFFFFFFFF)
+                    header = struct.pack("<IBBBB7I", 0x31585449, 4, 7, sum(1 << a for a in antennas), slot, generation, offset, samples, crc, len(part), 0xFFFFFFFF, 0xFFFFFFFF)
                     board.control.fetch("upload_iq_tx_waveform", header.ljust(68, b"\0") + part.tobytes())
                 self._wait_generation(board, generation, antennas)
                 break
@@ -219,34 +267,20 @@ class IQTransmitter:
         if not resize:
             yield
             return
-        from .calibration import Antenna
 
-        self.owner.calibrations = self.owner.calibrations.without(Antenna(board.host, a) for a in antennas)
-        # RX mode status can arrive while the engine is still restarting.
-        # A fresh chunk from every target proves it can accept a new buffer.
-        trigger = board.iq.get_config()["trigger"]
-        subscription = None
+        # Resizing requires the replay engine to release both sample banks.
+        # The applied RX role acknowledges this even when no IQ is delivered.
         try:
-            _rpc(board, "set_iq_tx", {"muted": True})
-            board.iq.set_config({"modes": ["iq_rx" if a in antennas else m for a, m in enumerate(modes)], "trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 1}})
-            generation = board.iq.get_config()["config_generation"]
-            seen, ready = set(), threading.Event()
-
-            def received(message):
-                if message.payload.config_generation == generation and message.antenna_id in antennas:
-                    seen.add(message.antenna_id)
-                    if len(seen) == len(antennas):
-                        ready.set()
-
-            subscription = board.iq.subscribe_chunks(received)
-            if not ready.wait(10):
-                raise TimeoutError(f"{board.host}: receivers did not become ready for replay resize")
-            self.capture.wait(board, lambda s: all(s["sensors"][a]["applied_mode"] == "iq_rx" and not s["sensors"][a]["enabled"] for a in antennas), 10)
+            _rpc(board, "set_iq_tx", {"muted": True, "modes": [
+                "iq_rx" if a in antennas else mode for a, mode in enumerate(modes)
+            ]})
+            self.capture.wait(board, lambda s: all(
+                s["sensors"][a]["applied_mode"] == "iq_rx" and not s["sensors"][a]["enabled"]
+                for a in antennas
+            ), 10)
             yield
         finally:
-            if subscription:
-                board.iq.unsubscribe(subscription)
-            board.iq.set_config({"modes": modes, "trigger": trigger})
+            board.iq.set_config({"modes": modes})
             self.capture.wait(board, lambda s: all(s["sensors"][a]["applied_mode"] == "iq_tx" for a in antennas), 10)
 
     @property
@@ -272,16 +306,26 @@ class IQTransmitter:
         samples = self.samples
         if start_sample is not None:
             self.read()
-            for i, groups in enumerate(plans):
-                for antennas, _ in groups:
-                    if any(not self.states[i]["sensors"][a]["enabled"] or self.states[i]["sensors"][a]["samples"] != samples for a in antennas):
-                        raise ValueError("Scheduled updates require running TX with unchanged replay length")
+        resize_groups = set()
+        for i, groups in enumerate(plans):
+            sensors = self.states[i]["sensors"]
+            for antennas, _ in groups:
+                if any(not sensors[a]["enabled"] or sensors[a]["samples"] != samples for a in antennas):
+                    resize_groups.add((i, tuple(antennas)))
+        if resize_groups:
+            if start_sample is not None:
+                raise ValueError("Scheduled updates require running TX with unchanged replay length")
+            # Resizing restarts these antennas. Invalidate all affected corrections
+            # together before the controller workers start changing modes.
+            self.owner.calibrations = self.owner.calibrations.without(
+                Antenna(self.boards[i].host, a) for i, antennas in resize_groups for a in antennas
+            )
 
         def apply_board(i, board):
             scheduled = []
             for antennas, sources in plans[i]:
                 modes = self.states[i]["modes"]
-                resize = any(self.states[i]["sensors"][a]["samples"] != samples or not self.states[i]["sensors"][a]["enabled"] for a in antennas)
+                resize = (i, tuple(antennas)) in resize_groups
                 with self._edit_replay(board, antennas, modes, resize):
                     records = []
                     for slot, (source, record) in enumerate(sources):
@@ -332,17 +376,28 @@ class IQTransmitter:
             exc.add_note(f"TX shutdown also failed: {cleanup_error}")
 
     def close(self):
-        if self.closed:
-            return
-        self.closed = True
+        with self.owner._lock:
+            if self.closed:
+                return
+            self.closed = True
+            schedules = tuple(self._schedules)
         errors = []
         if self.boards:
             try:
                 self.mute(True)
             except Exception as error:
-                errors.append(str(error))
-        if self.capture:
-            self.capture.close()
-        self.workers.shutdown(wait=True)
+                errors.append(error)
+        for schedule in schedules:
+            try:
+                schedule.close()
+            except Exception as error:
+                errors.append(error)
+        try:
+            if self.capture:
+                self.capture.close()
+        except Exception as error:
+            errors.append(error)
+        finally:
+            self.workers.shutdown(wait=True)
         if errors:
-            raise RuntimeError("Could not confirm shutdown: " + "; ".join(errors))
+            raise ExceptionGroup("Could not confirm TX shutdown", errors)

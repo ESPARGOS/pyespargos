@@ -372,8 +372,10 @@ The lower-level :meth:`receiver.sync() <espargos.iq_receiver.IQReceiver.sync>`
 returns a :class:`SensorCalibration <espargos.sensor_calibration.SensorCalibration>`.
 Prefer the pool API for selections and mixed RX/TX roles.
 
-IQ tuning supports 2310–2640 MHz. Synchronization still needs a usable reference
-signal at the chosen frequency. Python does not import calibration from the
+IQ tuning accepts 2310–2640 MHz. Near the edges, individual sensors can lose
+frequency lock even when the reference signal is strong. If several attempts
+fail at the same antenna, try a center frequency closer to the 2.4 GHz WiFi
+band. Python does not import calibration from the
 web interface. See :doc:`iq-reception` for capture and trigger setup.
 
 For IQ transmission, we first configure sensor modes and source waveforms.

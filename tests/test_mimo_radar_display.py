@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 
-path = Path(__file__).resolve().parents[1] / "demos/iq-mimo-radar/mimo_processing.py"
+path = Path(__file__).resolve().parents[1] / "demos/iq/mimo-radar/mimo_processing.py"
 spec = importlib.util.spec_from_file_location("mimo_radar_processing", path)
 radar = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(radar)
@@ -169,16 +169,17 @@ def test_display_preserves_power_ratios_between_ranges():
         np.testing.assert_allclose(image[10] - image[80], 20)
 
 
-def test_pilots_alternate_across_every_fft_bin():
+def test_pilots_alternate_across_the_occupied_band():
     p = radar.MIMOProcessor(np.zeros((8, 2)))
     masks = abs(p.pilots) > 0.1
-    np.testing.assert_array_equal(masks.sum(axis=0), np.ones(radar.SAMPLES))
-    np.testing.assert_array_equal(masks.sum(axis=1), [128, 128])
-    order = np.argsort(p.offsets)
-    np.testing.assert_array_equal(np.argmax(masks[:, order], axis=0), np.arange(radar.SAMPLES) % 2)
+    bins = np.rint(np.fft.fftfreq(radar.SAMPLES) * radar.SAMPLES).astype(int)
+    occupied = abs(bins) <= radar.SAMPLES // 2 - radar.EDGE_BINS
+    np.testing.assert_array_equal(masks.sum(axis=0), occupied)
+    np.testing.assert_array_equal(np.argmax(masks[:, occupied], axis=0), bins[occupied] % 2)
     for t in range(2):
         assert np.min(abs(p.pilots[t, masks[t]])) > 0.1
-        assert np.max(abs(p.pilots[t, ~masks[t]])) < 1e-10
+        # Ten-bit replay samples introduce quantization energy in guard bins.
+        assert np.max(abs(p.pilots[t, ~masks[t]])) < 0.002 * np.min(abs(p.pilots[t, masks[t]]))
 
 
 def test_receiver_dc_offsets_do_not_enter_radar_channels():
@@ -191,7 +192,7 @@ def test_receiver_dc_offsets_do_not_enter_radar_channels():
         offset = 100 * (rng.normal(size=(6, 1)) + 1j * rng.normal(size=(6, 1)))
         np.testing.assert_allclose(p.channels(iq + offset, correction), expected, atol=1e-6)
     assert not p.masks[:, 0].any()
-    assert np.all(p.masks[:, 1:].sum(axis=0) == 1)
+    np.testing.assert_array_equal(p.masks[:, 1:], abs(p.pilots[:, 1:]) > 0.1)
 
 
 def test_angular_and_doppler_maps_preserve_the_same_doppler_peak():
@@ -247,8 +248,9 @@ def test_radar_rejects_buffered_pre_start_windows_across_boards():
     import pytest
 
     pytest.importorskip("PyQt6")
-    MIMORadar = importlib.import_module("iq-mimo-radar").MIMORadar
+    MIMORadar = importlib.import_module("demos.iq.mimo-radar.main").MIMORadar
     s = SimpleNamespace()
+    s._processor = SimpleNamespace(sample_rate=radar.RATE, interval_chunks=1792)
     s._capturing = True
     s._frequency = 2385e6
     s._captures = queue.Queue()
@@ -265,6 +267,7 @@ def test_radar_rejects_buffered_pre_start_windows_across_boards():
         coverage_hashes=np.ones((2, 1, 1, 1)),
         flags=np.zeros((2, 1, 1, 1), dtype=int),
         iq=np.ones((2, 1, 1, 256), complex),
+        adc_peak=np.full((2, 1, 1), 10),
         source_chunk_start=1792,
     )
     MIMORadar._capture(s, cluster)
@@ -355,8 +358,8 @@ def test_pilots_emphasize_edges_without_raising_peak_or_crest_factor():
         iq = np.broadcast_to(samples, (p.receiver_count, radar.SAMPLES))
         channels = p.channels(iq, np.ones_like(iq))
         recovered = abs(channels[t * p.receiver_count, p.masks[t]])
-        expected = weights[p.masks[t]]
-        np.testing.assert_allclose(recovered / recovered.mean(), expected / expected.mean(), atol=0.003)
+        # The receiver removes the transmitted pilot envelope.
+        np.testing.assert_allclose(recovered / recovered.mean(), 1, atol=0.003)
 
 
 def test_both_views_show_identical_peak_power_at_each_range():
@@ -395,8 +398,7 @@ def test_cached_pilot_weights_preserve_channel_estimation():
     expected = np.zeros((2, p.receiver_count, radar.SAMPLES), np.complex64)
     for t, mask in enumerate(p.masks):
         pilot = p.pilots[t, mask]
-        template = pilot / abs(pilot) * np.mean(abs(pilot))
-        expected[t][:, mask] = spectrum[:, mask] / template
+        expected[t][:, mask] = spectrum[:, mask] / pilot
         expected[t] *= (radar.SAMPLES / 2) / np.count_nonzero(mask)
     actual = p.channels(iq, correction)
     np.testing.assert_allclose(actual, expected.reshape(actual.shape), rtol=2e-5, atol=1e-6)
@@ -410,7 +412,7 @@ def test_radar_shutdown_closes_pool_even_if_callback_removal_fails():
 
     pytest.importorskip("PyQt6")
     sys.path.insert(0, str(path.parent))
-    app = importlib.import_module("iq-mimo-radar").MIMORadar
+    app = importlib.import_module("demos.iq.mimo-radar.main").MIMORadar
     calls = []
 
     def remove_callback(callback):

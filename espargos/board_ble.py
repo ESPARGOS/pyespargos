@@ -41,7 +41,8 @@ class BLECapability(BoardCapability):
 
         This does not select sensor modes or change persistent reference settings.
         The controller validates channel, PHY, gain and capture options.
-        Full IQ candidates are streamed and decoded on the host.
+        Sensors normally qualify candidates before sending their IQ. Set
+        ``sensor_filter=False`` to receive all energy-triggered captures.
         """
         return json.loads(self._board.control.post_json("set_bluetooth", config))
 

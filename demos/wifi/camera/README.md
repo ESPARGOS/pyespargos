@@ -21,3 +21,5 @@ Camera options use the standard configuration overrides:
 ```
 
 `--no-camera` is also available as a shortcut for `-o app.camera.enable=false`.
+
+For packet IQ, run the [WiFi IQ camera](../../wifi_iq/camera).

@@ -61,14 +61,16 @@ class ScopedCSITests(unittest.TestCase):
     def fake_pool(self):
         b = Mock()
         b.host = "a"
+        b.api_version = (5, 0)
         b.revision.antenna_id_to_row_col = lambda a: divmod(a, 4)
-        config = {"channel-primary": 6, "channel-secondary": 0}
+        config = {"channel-primary": 6, "channel-secondary": 0, "calib-mode": 1}
         override = {"override_active": True, "channel-primary": [1] * 4 + [11] * 4, "channel-secondary": [0] * 8}
         b.wifi_rx.get_config.return_value = config.copy()
         b.wifi_rx.get_channel_overrides.return_value = override.copy()
         b.wifi_rx.get_rf_switch.return_value = 2
         b.wifi_rx.get_mac_filter.return_value = {"enable": True, "mac": "x"}
         b.control.get_json.return_value = {"sensors": [{"applied_mode": "wifi", "boot_id": 5} for _ in range(8)]}
+        b.control.get_json.side_effect = lambda path: {"mode": "wifi_iq"} if path == "get_controller_mode" else b.control.get_json.return_value
         p = SimpleNamespace(
             boards=[b], _reference_generator_boards=[], _association_epoch=0, _wifi_calibration_epoch=0, _wifi_calibration_epochs={Antenna("a", a): 0 for a in range(8)}, _gain_phase_enabled=True, _owner=SimpleNamespace(calibrations=Calibration())
         )

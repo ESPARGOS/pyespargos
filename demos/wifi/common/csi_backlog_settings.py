@@ -1,4 +1,3 @@
-import copy
 import logging
 
 import PyQt6.QtCore
@@ -8,40 +7,26 @@ from demos.common.config_manager import ConfigManager
 
 
 class CSIBacklogSettings(PyQt6.QtCore.QObject):
-    DEFAULT_CONFIG = {
-        "size": 20,
-        "fields": {"ht20": False, "ht40": False, "he20": False, "lltf": True},
-        "filters": {"exclude_11b": True},
-    }
-
-    def __init__(self, force_config=None, parent=None):
+    def __init__(self, config, parent=None):
         super().__init__(parent=parent)
-
-        self.cfgman = ConfigManager(self.DEFAULT_CONFIG, parent=self)
+        self.cfgman = ConfigManager(config, parent=self)
         self.cfgman.updateAppState.connect(self.onUpdateAppState)
-        self.force_config = force_config
         self.backlog = None
         self.exclude_11b_filter = espargos.Exclude11bFilter()
 
     def set_backlog(self, backlog):
         self.backlog = backlog
 
-        # Update configuration with initial backlog settings
-        if self.force_config:
-            self.cfgman.force(self.force_config)
-        else:
-            self._read_config()
+        if self.cfgman.get("filters", "exclude_11b"):
+            backlog.add_filter(self.exclude_11b_filter)
+        self._read_config()
 
     def _read_config(self):
+        fields = self.backlog.fields
         self.cfgman.set(
             {
                 "size": self.backlog.size,
-                "fields": {
-                    "ht20": "ht20" in self.backlog.fields,
-                    "ht40": "ht40" in self.backlog.fields,
-                    "he20": "he20" in self.backlog.fields,
-                    "lltf": "lltf" in self.backlog.fields,
-                },
+                "fields": {name: name in fields for name in self.cfgman.get("fields")},
                 "filters": {
                     "exclude_11b": self.exclude_11b_filter in self.backlog.filters,
                 },
@@ -54,17 +39,18 @@ class CSIBacklogSettings(PyQt6.QtCore.QObject):
             self.cfgman.updateAppStateHandled.emit()
             return
 
-        if "size" in newcfg:
+        if "size" in newcfg and newcfg["size"] != self.backlog.size:
             self.backlog.size = newcfg["size"]
 
         if "fields" in newcfg:
-            new_fields = copy.deepcopy(self.backlog.fields)
+            fields = self.backlog.fields
             for field, enabled in newcfg["fields"].items():
-                if enabled and field not in new_fields:
-                    new_fields.add(field)
-                elif not enabled and field in new_fields:
-                    new_fields.remove(field)
-            self.backlog.fields = new_fields
+                if enabled and field in self.backlog.available_fields:
+                    fields.add(field)
+                else:
+                    fields.discard(field)
+            if fields != self.backlog.fields:
+                self.backlog.fields = fields
 
         if "filters" in newcfg:
             filters_cfg = newcfg["filters"]

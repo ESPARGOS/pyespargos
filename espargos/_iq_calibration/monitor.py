@@ -27,7 +27,6 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
     arrays need at least two transmitters on one board to link pilot groups.
     Failures leave TX muted. The monitor's saved configuration is restored.
     """
-    from ..reference_monitor import ReferenceMonitor
 
     if pool._calibrating:
         raise RuntimeError("Calibration is already running")
@@ -68,9 +67,10 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
         for values in steering[bi].values():
             values[a] = 0
     corrections = [copy.deepcopy(s["calibration"]) for s in saved_tx]
-    monitors = _map(lambda b: _rpc(b, "get_iq_monitor"), boards)
+    monitored_boards = list(dict.fromkeys([boards[i] for i in scope.active] + [pool.master_board]))
+    monitors = {b: _rpc(b, "get_iq_monitor") for b in monitored_boards}
     status = TXStatus(boards)
-    monitor = ReferenceMonitor(pool.master_board)
+    monitor = pool._owner._open_monitor(pool.master_board)
     prepared = set()
     success = False
     phase_error = delay_error = 0.0
@@ -245,8 +245,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             pool.master_board.iq.set_reference()
         except Exception as error:
             errors.append(str(error))
-        for bi in scope.active:
-            b, c = boards[bi], monitors[bi]
+        for b, c in monitors.items():
             try:
                 _rpc(
                     b,

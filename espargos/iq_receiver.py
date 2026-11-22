@@ -26,7 +26,7 @@ from ._iq_calibration import reference as iq_reference
 from . import iq_tone
 from .iq_accum_cluster import IQAccumCluster
 from .iq_cluster import CHUNK_SAMPLES, IQCluster
-from .iq_packet import DECIM_TO_FS, IQAccumPacket
+from .iq_packet import DECIM_TO_FS, IQ_SYNC_INFO_GRID_SYNCED, IQAccumPacket
 from .iq_signal_capture import IQSignalAssembler
 
 __all__ = ["DECIM_TO_FS", "IQCalibrationError", "IQReceiver", "SENSOR_COUNT", "iq_receiver_config"]
@@ -566,9 +566,12 @@ class IQReceiver(ClusterAssembler):
     def _resolve_cluster_key(self, cache_name, proposed_key, cache, board_index, sensor_message):
         if cache_name == _CACHE_CHUNKS:
             payload = sensor_message.payload
-            # A rate change or a new grid can reuse an index while old data
-            # is still in transport. Keep those observations separate.
-            return (payload.sync_info & 0xFFFF, payload.sample_rate_hz, proposed_key)
+            # A local engine restart can reuse an index while old chunks are
+            # still in flight. Only a synchronized grid names the same sample
+            # across boards, whose configuration counters are independent.
+            local = len(self.boards) == 1 or not payload.sync_info & IQ_SYNC_INFO_GRID_SYNCED
+            session = (board_index, payload.config_generation) if local else None
+            return (payload.sync_info & 0xFFFF, payload.sample_rate_hz, session, proposed_key)
         return proposed_key
 
     def _create_cluster(self, cache_name, cluster_key, board_index, first_message) -> IQCluster:
@@ -709,10 +712,12 @@ class IQReceiver(ClusterAssembler):
     # ---- master board / reference tone ----
 
     @property
-    def master_index(self) -> int:
+    def master_index(self) -> int | None:
         """Index of the master board — the one whose reference TX may generate
         the shared reference (wificonf calib-mode != Never); kit slaves are
-        Never. Autodetected on first access unless given to the constructor."""
+        Never. A controller outside the aperture has no board index."""
+        if self._owner.reference_controller is not None:
+            return None
         if self._master_index is None:
             self._master_index = 0
             for i, board_obj in enumerate(self.boards):
@@ -726,6 +731,8 @@ class IQReceiver(ClusterAssembler):
 
     @property
     def master_board(self):
+        if self._owner.reference_controller is not None:
+            return self._owner.reference_controller
         return self.boards[self.master_index]
 
     def set_reference_tone(self, freq_hz=None, enable=True, backoff_qdb=30):

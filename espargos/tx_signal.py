@@ -1,27 +1,27 @@
-"""Signal assignments and spatial distributions for repeating IQ transmission."""
+"""Waveform sources, antenna assignments and steering for IQ transmission."""
 
 from dataclasses import dataclass, replace
 from contextlib import contextmanager
-import threading
 
 import numpy as np
 
 from .calibration import Antenna, CalibrationState
-from .steering import Beamspace, Weights
+from .steering import Beamspace, Weights, antenna_weight
 
+from .stream_sources import Stream
 from .waveforms import CW, IQSamples, Waveform, SAMPLE_RATE, _finite
 
 
 @dataclass(frozen=True)
 class _SignalSettings:
-    waveform: Waveform
+    waveform: Waveform | Stream
     amplitude: float
     antennas: tuple
     steering: object = None
 
 
 class TXSignal:
-    """An editable contribution to the selected antennas' replay buffers."""
+    """A repeating or streamed waveform assigned to a set of antennas."""
 
     def __init__(self, collection, settings):
         self._collection, self._settings = collection, settings
@@ -33,6 +33,10 @@ class TXSignal:
             if "antennas" in settings:
                 settings["antennas"] = self._collection._antennas(settings["antennas"])
             self._settings = replace(self._settings, **settings)
+
+    def open_stream(self):
+        """Open the writer for this beam using its configured source and steering."""
+        return self._collection.transmitter.open_stream(signal=self)
 
     def remove(self):
         with self._collection.transmitter.update():
@@ -71,7 +75,6 @@ class TXSignals:
     def __init__(self, transmitter):
         self.transmitter = transmitter
         self._items = []
-        self._lock = threading.RLock()
         self._editing = False
         self._samples = 1024
         self._targets = set()
@@ -84,6 +87,11 @@ class TXSignals:
 
     def __getitem__(self, index):
         return self._items[index]
+
+    def _assigned_to(self, antenna, *, loops_only=False):
+        """Return signals in the beam slot order used by this sensor."""
+        return tuple(signal for signal in self._items if antenna in signal.antennas
+                     and not (loops_only and isinstance(signal.waveform, Stream)))
 
     def _antennas(self, antennas):
         tx = self.transmitter
@@ -111,7 +119,7 @@ class TXSignals:
     def update(self, *, samples=None, start_sample=None):
         """Validate the complete configuration before sending any waveform commands."""
         tx = self.transmitter
-        with self._lock:
+        with tx.owner._lock:
             if tx.closed:
                 raise RuntimeError("Transmitter is closed")
             if getattr(tx, "_stream", None) is not None and not tx._stream.closed:
@@ -166,10 +174,12 @@ class TXSignals:
         tx = self.transmitter
         self._check_beam_calibration(preparing=True)
         targets = set()
+        if sum(isinstance(signal.waveform, Stream) for signal in self) > 1:
+            raise ValueError("Only one beam can have a live stream source")
         for signal in tx.signals:
             s = signal._settings
-            if not isinstance(s.waveform, Waveform):
-                raise TypeError("waveform must be a Waveform object")
+            if not isinstance(s.waveform, (Waveform, Stream)):
+                raise TypeError("waveform must be a Waveform or Stream")
             amplitude = _finite(s.amplitude, "amplitude")
             if not 0 <= amplitude <= 1:
                 raise ValueError("amplitude must lie between 0 and 1")
@@ -182,42 +192,41 @@ class TXSignals:
             groups = {}
             for a in range(8):
                 antenna = Antenna(board.host, a)
-                assigned = tuple(s for s in tx.signals if antenna in s.antennas)
+                assigned = self._assigned_to(antenna)
                 if not assigned and antenna not in self._targets:
                     continue
                 if tx.states[i]["modes"][a] != "iq_tx":
                     if assigned:
                         raise ValueError(f"{antenna}: sensor must be in IQ TX mode")
                     continue
-                if len(assigned) > 4:
+                if len(self._assigned_to(antenna, loops_only=True)) > 4:
                     raise ValueError(f"{antenna}: at most four signals can contribute to one sensor")
                 groups.setdefault(assigned, []).append(a)
             board_plan = []
             for assigned, antennas in groups.items():
                 records = []
-                for slot, signal in enumerate(assigned):
+                total = np.zeros(8)
+                for signal in assigned:
                     s = signal._settings
-                    weights, delays = np.zeros(8, complex), np.zeros(8)
+                    weights = np.zeros(8, complex)
                     for a in antennas:
                         antenna = Antenna(board.host, a)
-                        if isinstance(s.steering, Beamspace):
-                            position = None if tx.positions is None else tx.positions[i, a]
-                            weights[a], delays[a] = s.steering.coefficients(position, tx.states[i]["sensors"][a]["frequency_hz"], s.waveform, rate)
-                        elif isinstance(s.steering, Weights):
-                            weights[a] = s.steering.values.get(antenna, 1)
-                            delays[a] = s.steering.delays_s.get(antenna, 0) * rate
-                        else:
-                            weights[a] = 1
+                        position = None if not isinstance(s.steering, Beamspace) or tx.positions is None else tx.positions[i, a]
+                        weights[a] = antenna_weight(
+                            s.steering, antenna, position, tx.states[i]["sensors"][a]["frequency_hz"],
+                            s.waveform,
+                        )
                     weights *= s.amplitude
-                    if np.any(abs(delays) > 8192):
-                        raise ValueError("Additional delays must fit within ±8192 samples")
-                    records.append((s.waveform, dict(waveform={**s.waveform.recipe(self._samples, sample_rate_hz=rate), "amplitude": 1.0, "antennas": antennas}, real=weights.real.tolist(), imag=weights.imag.tolist(), delay_samples=delays.tolist())))
-                if records:
-                    total = sum(np.hypot(record["real"], record["imag"]) for _, record in records)
-                    if np.any(total > 1.000001):
-                        raise ValueError("Sum of signal amplitude × weight magnitude must not exceed 1 per sensor")
+                    total += np.abs(weights)
+                    if isinstance(s.waveform, Stream):
+                        if rate != 16_000_000 or self._samples > 2048:
+                            raise ValueError("Stream beams require 16 MSa/s playback and at most 2048 replay samples")
+                        continue
+                    records.append((s.waveform, dict(waveform={**s.waveform.recipe(self._samples, sample_rate_hz=rate), "amplitude": 1.0, "antennas": antennas}, real=weights.real.tolist(), imag=weights.imag.tolist())))
+                if np.any(total > 1.000001):
+                    raise ValueError("Sum of signal amplitude × weight magnitude must not exceed 1 per sensor")
                 if not records:
-                    records = [(CW(), dict(waveform=dict(type="cw", frequency_hz=0, samples=self._samples, amplitude=0, antennas=antennas), real=[1.0] * 8, imag=[0.0] * 8, delay_samples=[0.0] * 8))]
+                    records = [(CW(), dict(waveform=dict(type="cw", frequency_hz=0, samples=self._samples, amplitude=0, antennas=antennas), real=[1.0] * 8, imag=[0.0] * 8))]
                 board_plan.append((antennas, records))
             plans.append(board_plan)
         return plans, targets

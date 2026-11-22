@@ -62,7 +62,7 @@ class AntennaSelection:
             raise ValueError("Selection contains no antennas")
         return AntennaSelection(owner, selected)
 
-    def configure(self, *, mode=None, frequency_hz=None, sample_rate_hz=None, rx_gain=None, gain_mode=None, rf_gain=None, bandwidth_mhz=None, output=None, channel=None, secondary_channel=None):
+    def configure(self, *, mode=None, frequency_hz=None, sample_rate_hz=None, rx_gain=None, gain_mode=None, rf_gain=None, bandwidth_mhz=None, output=None, channel=None, secondary_channel=None, boot_sync=None):
         """Update only selected antennas; mode changes do not calibrate or start TX.
 
         RX sample rate and RX output routing require all eight antennas on a
@@ -75,7 +75,7 @@ class AntennaSelection:
         return configure(self, mode=mode, frequency_hz=frequency_hz, sample_rate_hz=sample_rate_hz,
                          rx_gain=rx_gain, gain_mode=gain_mode, rf_gain=rf_gain,
                          bandwidth_mhz=bandwidth_mhz, output=output, channel=channel,
-                         secondary_channel=secondary_channel)
+                         secondary_channel=secondary_channel, boot_sync=boot_sync)
 
     def calibrate_tx_rx_delay(self, *, path="reference", reference_delays_s=None, timeout=5.0):
         """Measure each IQ transmitter's delay relative to calibrated receivers.
@@ -121,14 +121,21 @@ class AntennaSelection:
                 if not _rpc(board, "get_transmit_authorization")["authorized"]:
                     raise PermissionError(f"{board.host}: transmission is not authorized")
                 changes = [{"antid": a, "amplitude": amplitude if a in ids else 0} for a in range(8) if a in ids or state["muted"]]
-                plans.append((board, changes))
+                expected = {v["antid"]: v["amplitude"] for v in changes
+                            if state["sensors"][v["antid"]]["applied_mode"] == "iq_tx"}
+                plans.append((board, changes, expected))
             try:
-                for board, changes in plans:
+                for board, changes, expected in plans:
                     owner._iq_tx_boards.add(board)
                     _rpc(board, "set_iq_tx", {"transmitters": changes, "muted": False})
-                    _wait(board, lambda s, changes=changes: all(abs(s["sensors"][v["antid"]]["applied_amplitude"] - v["amplitude"]) < 1e-6 for v in changes if s["sensors"][v["antid"]]["applied_mode"] == "iq_tx"), 10)
+                    def applied(state):
+                        return all(state["sensors"][a].get("applied_mode") == "iq_tx"
+                                   and abs(state["sensors"][a]["applied_amplitude"] - level) < 1e-6
+                                   for a, level in expected.items())
+
+                    _wait(board, applied, 10)
             except Exception:
-                for board, _ in plans:
+                for board, _, _ in plans:
                     try:
                         _rpc(board, "set_iq_tx", {"muted": True})
                     except Exception:
@@ -176,11 +183,14 @@ class AntennaSelection:
             roles = {Antenna(b.host, a): c["modes"][a] for b, c in zip(owner.boards, configs) for a in range(8)}
             if any(roles[a] == "ble" for a in selected):
                 raise ValueError("Use pool.ble.calibrate() for narrowband BLE phase calibration")
+            if any(roles[a] == "wifi_iq" for a in selected):
+                raise ValueError("Use pool.wifi_iq.calibrate() for WiFi IQ phase calibration")
             iq_selected = {a for a in selected if roles[a] != "wifi"}
             wifi_selected = selected - iq_selected
             # Validate every role before either IQ or WiFi acquisition starts.
             tx_states = [_rpc(b, "get_iq_tx") for b in owner.boards] if iq_selected else []
             keys = []
+            iq_rates = set()
             for bi, (board, config) in enumerate(zip(owner.boards, configs)):
                 for a in range(8):
                     antenna = Antenna(board.host, a)
@@ -188,6 +198,8 @@ class AntennaSelection:
                         direction = "tx" if roles[antenna] == "iq_tx" else "rx"
                         frequency = tx_states[bi]["sensors"][a]["frequency_hz"] if direction == "tx" else config["receivers"][a]["rf_freq_hz"]
                         keys.append((antenna, direction, frequency))
+                        if direction == "rx":
+                            iq_rates.add(config["adc_decimation"])
             if wifi_selected:
                 from .csi_scoped_calibration import states
 
@@ -199,20 +211,14 @@ class AntennaSelection:
                 from ._iq_calibration.scope import CalibrationScope
                 from ._iq_calibration.orchestration import calibrate, snapshot
 
-                scope = CalibrationScope(owner.iq, iq_selected)
-                scope.check_sync(configs)
                 tx_selected = [a for a in iq_selected if roles[a] == "iq_tx"]
                 if tx_selected and tx_method == "reciprocity" and len(tx_selected) < 2:
                     raise ValueError("Reciprocity calibration requires at least two selected IQ transmitters")
-                centers, rates = set(), set()
-                for bi, a in scope.pairs:
-                    if configs[bi]["modes"][a] == "iq_rx":
-                        centers.add(configs[bi]["receivers"][a]["rf_freq_hz"])
-                        rates.add(configs[bi]["adc_decimation"])
-                    else:
-                        centers.add(tx_states[bi]["sensors"][a]["frequency_hz"])
-                if len(centers) != 1 or len(rates) > 1:
+                centers = {frequency for antenna, _, frequency in keys if antenna in iq_selected}
+                if len(centers) != 1 or len(iq_rates) > 1:
                     raise ValueError("Selected IQ sensors require one frequency and RX sample rate")
+                scope = CalibrationScope(owner.iq, iq_selected)
+                scope.check_sync(configs)
                 cables = dict(cable_lengths=owner._geometry.cables, cable_velocity_factors=owner._geometry.velocity_factors)
                 try:
                     if tx_selected:
@@ -260,9 +266,11 @@ class Pool(AntennaSelection):
     leaves transmission muted. Operations are blocking.
     """
 
-    def __init__(self, boards):
+    def __init__(self, boards, *, reference_controller=None):
         """Use Board objects or addresses, without requiring antenna geometry.
 
+        Use reference_controller for the address of a separate reference master
+        whose sensors are outside the aperture.
         Supplied Board objects are reused. This pool owns their lifetime once
         passed in, so do not share them between independently managed pools.
         """
@@ -270,18 +278,25 @@ class Pool(AntennaSelection):
         if any(not isinstance(b, (str, board_module.Board)) for b in items):
             raise TypeError("Pool expects Board objects or controller addresses")
         hosts = [b if isinstance(b, str) else b.host for b in items]
-        self._initialize(ArrayGeometry(hosts))
+        self._initialize(ArrayGeometry(hosts), reference_controller)
         self._provided = {b.host: b for b in items if not isinstance(b, str)}
 
-    def _initialize(self, geometry):
+    def _initialize(self, geometry, reference_controller):
         self._geometry = geometry
         self.hosts, self.names = list(geometry.hosts), list(geometry.names)
+        if reference_controller is not None and (
+            not isinstance(reference_controller, str) or not reference_controller.strip() or reference_controller in self.hosts
+        ):
+            raise ValueError("reference_controller must be an address distinct from the measurement boards")
+        self.reference_controller_host = reference_controller
+        self.reference_controller = None
         self.boards = []
         self._provided = {}
         self._opened = False
         self._receivers = {}
         self._tx = None
         self._monitor = None
+        self._reference_stream_started = False
         self._iq_tx_boards = set()
         self._wifi_tx_boards = set()
         self._reference_boards = set()
@@ -299,13 +314,14 @@ class Pool(AntennaSelection):
         """Read the existing combined-array YAML format, or an equivalent dict.
 
         Optional host overrides follow the named board order in the file.
+        An optional reference_controller address beside boards names a dedicated master.
         Demo-specific YAML sections are ignored. No modes or TX are enabled.
         """
         data = yaml.safe_load(Path(config).read_text()) if isinstance(config, (str, Path)) else config
         data = data.get("combined-array", data)
         geometry = ArrayGeometry(hosts, config=data)
         pool = cls.__new__(cls)
-        pool._initialize(geometry)
+        pool._initialize(geometry, data.get("reference_controller"))
         return pool
 
     @property
@@ -333,6 +349,8 @@ class Pool(AntennaSelection):
                         board = Board(host)
                     self.boards.append(board)
                     board.start(transports=transports)
+                if self.reference_controller_host is not None:
+                    self.reference_controller = Board(self.reference_controller_host)
                 self._transports = transports
                 self._opened = True
             except Exception as error:
@@ -347,7 +365,10 @@ class Pool(AntennaSelection):
         """Restart shared streams after a device reboot or connection failure."""
         with self._lock:
             self.open()
-            for board in self.boards:
+            streams = list(self.boards)
+            if self.reference_controller is not None and self._reference_stream_started:
+                streams.append(self.reference_controller)
+            for board in streams:
                 board.stop()
                 board.start(transports=self._transports)
 
@@ -358,6 +379,8 @@ class Pool(AntennaSelection):
             self.calibrations = Calibration()
             for board in self.boards:
                 board.reboot()
+            if self.reference_controller is not None:
+                self.reference_controller.reboot()
 
     def _refresh_receivers(self, configs=None):
         """Snapshot operating roles outside the callback thread."""
@@ -431,6 +454,10 @@ class Pool(AntennaSelection):
         return self.get_receiver("wifi")
 
     @property
+    def wifi_iq(self):
+        return self.get_receiver("wifi_iq")
+
+    @property
     def ble(self):
         return self.get_receiver("ble")
 
@@ -460,9 +487,16 @@ class Pool(AntennaSelection):
                 return self.calibrations
             return refresh(self, timeout)
 
+    def _open_monitor(self, board):
+        from .reference_monitor import ReferenceMonitor
+
+        if board is self.reference_controller:
+            board.start(transports=self._transports)
+            self._reference_stream_started = True
+        return ReferenceMonitor(board)
+
     def configure_monitor(self, config):
         """Configure the reference monitor on the master controller."""
-        from .reference_monitor import ReferenceMonitor
 
         with self._lock:
             self.open()
@@ -473,7 +507,7 @@ class Pool(AntennaSelection):
                     self._monitor.close()
                     self._monitor = None
                 return None
-            monitor = self._monitor or ReferenceMonitor(board)
+            monitor = self._monitor or self._open_monitor(board)
             try:
                 _rpc(board, "set_iq_monitor", {**config, "enabled": True})
             except Exception:
@@ -589,6 +623,8 @@ class Pool(AntennaSelection):
                 attempt(pool._close)
         for b in self.boards:
             attempt(b.close)
+        if self.reference_controller is not None:
+            attempt(self.reference_controller.close)
         for b in self._provided.values():
             if b not in self.boards:
                 attempt(b.close)

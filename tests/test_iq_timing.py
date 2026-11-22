@@ -74,7 +74,7 @@ def test_timing_survives_split_groups_from_the_same_measurement():
 
 
 def test_capture_cleanup_attempts_all_subscriptions():
-    from espargos.iq_capture import _Captures
+    from espargos._iq_calibration.capture import _Captures
     from types import SimpleNamespace
 
     calls = []
@@ -153,7 +153,7 @@ def test_timing_failure_restores_every_board_and_keeps_tx_muted(restore_failure)
         calls.append((board.host, path, payload))
         if path == "get_iq_tx":
             return state
-        if payload == {"muted": True, "steering": {"phase_deg": [0] * 8, "delay_samples": [0] * 8}}:
+        if payload == {"muted": True, "steering": {"phase_deg": [0] * 8}}:
             raise RuntimeError("prepare failed")
 
     with patch("espargos.iq_timing_capture._rpc", side_effect=rpc), patch("espargos.iq_timing_capture._Captures") as captures, patch("espargos.iq_timing_capture.compute_reference_path_delays", return_value=np.zeros((2, 2, 4))):
@@ -169,7 +169,7 @@ def test_timing_failure_restores_every_board_and_keeps_tx_muted(restore_failure)
 
 
 def test_common_pilot_matches_one_sensor_comb_and_has_independent_arrays():
-    from espargos.iq_tx_calibration_fit import pilots
+    from espargos._iq_calibration.pilots import pilots
 
     sensor_pilot = pilots(256)[0]
     common = pilots(256, mask=1)

@@ -18,7 +18,6 @@ import PyQt6.QtCore
 
 class EspargosDemoPhasesByAntenna(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
     updatePhases = PyQt6.QtCore.pyqtSignal(list)
-    backlog_cli_option = False
 
     DEFAULT_CONFIG = {}
 

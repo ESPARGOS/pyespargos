@@ -12,11 +12,11 @@ setup(
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/ESPARGOS/pyespargos",
-    packages=find_packages() + ["espargos.packet_decoders"],
-    package_dir={"espargos.packet_decoders": DECODERS + "/python/espargos_packet_decoders"},
+    packages=find_packages() + ["_pyespargos_packet_decoders"],
+    package_dir={"_pyespargos_packet_decoders": DECODERS + "/python/espargos_packet_decoders"},
     ext_modules=[
         Extension(
-            "espargos.packet_decoders._native",
+            "_pyespargos_packet_decoders._native",
             sources=[DECODERS + "/" + source for source in ("bindings/python.c", "bindings/bridge.c", "src/wifi.c", "src/ble.c")],
             include_dirs=[DECODERS + "/include", DECODERS + "/bindings"],
             libraries=[] if sys.platform == "win32" else ["m"],

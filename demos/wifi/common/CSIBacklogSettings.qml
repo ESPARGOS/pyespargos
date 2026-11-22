@@ -8,6 +8,7 @@ import "../../common" as Common
 Item  {
 	id: csiBacklogSettings
 	property Item insertBefore: null
+	property bool showFormatControls: true
 	onInsertBeforeChanged: {
 		if (!insertBefore) return
 
@@ -103,6 +104,7 @@ Item  {
 
 	Label {
 		id: lltfEnableLabel
+		visible: csiBacklogSettings.showFormatControls
 		text: "Store L-LTF"
 		color: "#ffffff"
 		horizontalAlignment: Text.AlignRight
@@ -112,10 +114,11 @@ Item  {
 
 	Switch {
 		id: lltfEnableSwitch
+		visible: csiBacklogSettings.showFormatControls
 		property string configKey: "fields.lltf"
 		property string configProp: "checked"
 
-		Component.onCompleted: backlogConfigManager.register(this)
+		Component.onCompleted: if (csiBacklogSettings.showFormatControls) backlogConfigManager.register(this)
 		onCheckedChanged: backlogConfigManager.onControlChanged(this)
 
 		checked: true
@@ -123,6 +126,7 @@ Item  {
 
 	Label {
 		id: ht20EnableLabel
+		visible: csiBacklogSettings.showFormatControls
 		text: "Store HT20"
 		color: "#ffffff"
 		horizontalAlignment: Text.AlignRight
@@ -132,10 +136,11 @@ Item  {
 
 	Switch {
 		id: ht20EnableSwitch
+		visible: csiBacklogSettings.showFormatControls
 		property string configKey: "fields.ht20"
 		property string configProp: "checked"
 
-		Component.onCompleted: backlogConfigManager.register(this)
+		Component.onCompleted: if (csiBacklogSettings.showFormatControls) backlogConfigManager.register(this)
 		onCheckedChanged: backlogConfigManager.onControlChanged(this)
 
 		checked: false
@@ -143,6 +148,7 @@ Item  {
 
 	Label {
 		id: ht40EnableLabel
+		visible: csiBacklogSettings.showFormatControls
 		text: "Store HT40"
 		color: "#ffffff"
 		horizontalAlignment: Text.AlignRight
@@ -152,10 +158,11 @@ Item  {
 
 	Switch {
 		id: ht40EnableSwitch
+		visible: csiBacklogSettings.showFormatControls
 		property string configKey: "fields.ht40"
 		property string configProp: "checked"
 
-		Component.onCompleted: backlogConfigManager.register(this)
+		Component.onCompleted: if (csiBacklogSettings.showFormatControls) backlogConfigManager.register(this)
 		onCheckedChanged: backlogConfigManager.onControlChanged(this)
 
 		checked: false
@@ -163,6 +170,7 @@ Item  {
 
 	Label {
 		id: he20EnableLabel
+		visible: csiBacklogSettings.showFormatControls
 		text: "Store HE20"
 		color: "#ffffff"
 		horizontalAlignment: Text.AlignRight
@@ -172,10 +180,11 @@ Item  {
 
 	Switch {
 		id: he20EnableSwitch
+		visible: csiBacklogSettings.showFormatControls
 		property string configKey: "fields.he20"
 		property string configProp: "checked"
 
-		Component.onCompleted: backlogConfigManager.register(this)
+		Component.onCompleted: if (csiBacklogSettings.showFormatControls) backlogConfigManager.register(this)
 		onCheckedChanged: backlogConfigManager.onControlChanged(this)
 
 		checked: false

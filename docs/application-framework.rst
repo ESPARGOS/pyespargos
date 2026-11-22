@@ -1,251 +1,129 @@
 The Common Demo Application Framework
-=======================================
+=====================================
 
-The Qt demos share application setup, settings drawers and plotting components
-from ``demos/common``, ``demos/wifi/common`` and ``demos/iq/common``.
-These components can also be used in new demos. Hardware control lives in the ``espargos`` library, while application-specific
-processing stays with each demo. Applications without a Qt interface can use :class:`.Pool` directly.
+The WiFi and WiFi IQ cameras show the same scene from two different
+measurements. The WiFi camera reads CSI from the modem. The WiFi IQ camera
+estimates CSI from the packet waveform. Each has its own receiver controls,
+but both feed a CSI backlog into the same beamformer, camera overlay and QML
+window. When writing a new demo, start with the application that supplies
+your measurement. You can reuse its controls even if your plot looks nothing
+like a camera.
 
-Choose an application class
------------------------------
+The framework lives in the checkout under ``demos/``. For a recorder or
+another application without a Qt interface, use :class:`.Pool` directly.
 
-Each application owns one ``self.pool``. Receive demos access its processing
-interface through ``self.receiver``. Drawers use the same connections.
+Choose a starting point
+-----------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 35 65
+   :widths: 27 43 30
 
-   * - Class
-     - Provides
-   * - ``ESPARGOSApplication``
-     - Command-line parsing, configuration, QML setup and shutdown hooks.
-   * - ``ESPARGOSCSIApplication``
-     - WiFi CSI reception through :attr:`pool.wifi <espargos.pool.Pool.wifi>`, calibration and the WiFi settings drawer.
-   * - ``ESPARGOSIQApplication``
-     - IQ reception through :attr:`pool.iq <espargos.pool.Pool.iq>` and a controller for the IQ settings drawer.
-   * - ``ESPARGOSTxApplication``
-     - IQ transmission controls, startup calibration and asynchronous hardware updates.
+   * - Measurement
+     - Application code
+     - Example in ``demos/``
+   * - Modem WiFi CSI
+     - ``ESPARGOSCSIApplication`` in ``wifi/common/application.py``
+     - ``wifi/instantaneous-csi``
+   * - CSI from WiFi packet IQ
+     - ``WiFiIQApplication`` in ``wifi_iq/common/application.py``
+     - ``wifi_iq/camera``, ``wifi_iq/instantaneous-csi``
+   * - BLE packet IQ
+     - ``BLEMeasurementApplication`` in ``ble/common/application.py``
+     - ``ble/phases-by-antenna``
+   * - Raw IQ
+     - ``ESPARGOSIQApplication`` in ``iq/common/application.py``
+     - ``iq/signal-analyzer``
+   * - IQ transmission
+     - ``ESPARGOSTxApplication`` in ``iq/transmit-beamforming/application.py``
+     - ``iq/transmit-beamforming``
 
-The CSI classes are available from ``demos.wifi.common.application``. Import the IQ classes
-from ``demos.iq.common.application`` and the transmit-beamforming demo’s local
-``application.py``.
-These modules belong to the repository's demo code, so run your application
-from a checkout or include the common directory with it.
+A pool for the whole application
+--------------------------------
 
-Receive demos call ``initialize_pool()`` and then ``initialize_qml()``. CSI
-initialization can calibrate automatically. IQ reception starts processing,
-but its calibration is initiated through the IQ controller. The TX application
-starts connecting after QML loads and reports progress through ``txcontrol``.
+``ESPARGOSApplication`` reads the configuration and owns the Qt window and
+shutdown hooks. Receive demos call ``initialize_pool()`` to open the pool and
+set up their receiver. The receiver, settings drawer and backlog use the same
+board connections. When a demo needs antenna positions, ``CombinedArrayMixin``
+loads the layout and cable lengths. Pass ``-c FILE`` for an assembled array or
+``-s HOST`` for one board in its standard orientation.
 
-The existing ``instantaneous-csi``, ``signal-analyzer`` and
-``transmit-beamforming`` demos show complete examples of these three paths.
+A controller can supply the reference without contributing any antennas.
+In a layout file, list the sensing boards under ``combined-array.boards``
+and give the master's address as ``combined-array.reference_controller``.
+For a demo that takes host addresses, supply the master separately. For
+example, this command measures CSI on two boards using a shared reference::
 
-Optional mixins
------------------
+   python demos/wifi/instantaneous-csi/main.py 192.168.1.3,192.168.1.4 \
+       -o pool.reference_controller=192.168.1.2 -o pool.calibration.per_board=false
 
-Mixins add features to a receive application. Put them before the application
-class in the inheritance list::
+The cameras and drawers count measurement boards. The WiFi IQ camera accepts
+one receiving board, which can have a separate reference controller. See
+:doc:`modes` for the SDK equivalent and :doc:`combined-arrays` for wiring.
 
-   from demos.wifi.common.application import (
-       ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIFormatMixin,
-   )
+CSI plots and cameras
+---------------------
 
-   class MyCSIApplication(CSIBacklogMixin, SingleCSIFormatMixin,
-                          ESPARGOSCSIApplication):
-       DEFAULT_CONFIG = {"show_phase": True}
+Both WiFi applications derive from ``CSIApplication``. Add ``CSIBacklogMixin``
+to keep recent packets in ``self.backlog`` and ``SingleCSIFormatMixin`` to
+read a training field with ``get_backlog_csi()``. Put the mixins before the
+receiver application in the inheritance list. The WiFi IQ receiver currently
+supplies the legacy long training field (L-LTF). The modem receiver also
+offers HT and HE formats.
 
-``CSIBacklogMixin`` collects recent CSI in ``self.backlog`` and provides
-backlog-size, field and packet-filter settings. ``SingleCSIFormatMixin``
-selects the preamble format used by a visualization.
+The two camera entry points are ``wifi/camera/main.py`` and
+``wifi_iq/camera/main.py``. To change how both display CSI, edit
+``wifi/camera/backend.py`` or ``wifi/camera/CSIWindow.qml``. To change WiFi IQ
+acquisition or calibration, edit ``wifi_iq/common/``. Its drawer controls the
+channel, automatic or manual gain, antenna feed and shared trigger. Selecting a transmitter
+by MAC filters the backlog. Both instantaneous CSI demos share the plot code
+in ``wifi/common/instantaneous_csi.py`` and the same chart window.
 
-``CombinedArrayMixin`` loads antenna geometry and reference-cable properties
-into the pool. It adds ``-s HOST`` for a single board with the standard layout.
-``ESPARGOSTxApplication`` already includes this mixin. See
-:doc:`combined-arrays` for the layout format.
+For example, run the WiFi IQ camera on channel 5 with the video input disabled::
 
-The two drawers
------------------
+   python demos/wifi_iq/camera/main.py -s 192.168.1.3 --no-camera \
+       -o wifi_iq.channel=5 -o wifi_iq.rx_gain=30
 
-The shared QML window, ``Common.ESPARGOSApplication``, has optional left and
-right drawers. The left drawer normally contains radio and calibration
-controls, and the right contains display or application settings. Assign
-``receiverDrawerComponent`` and ``appDrawerComponent`` to provide them.
-Omitting either component hides its button.
+All four radio cameras use the video and overlay components in
+``demos/common/camera``. Their receiver-specific calculations stay with the
+corresponding WiFi, BLE or IQ demo.
 
-For example, a CSI window can use the shared WiFi drawer:
-
-.. code-block:: qml
-
-   import QtQuick
-   import "../../common" as Common
-   import "../common" as WiFi
-
-   Common.ESPARGOSApplication {
-       receiverDrawerComponent: Component {
-           WiFi.WiFiTransceiverDrawer {}
-       }
-   }
-
-``initialize_qml()`` exposes the Python application as ``backend``, its
-application settings as ``appconfig``, and common settings as ``genericconfig``.
-Additional context objects can be passed in its ``context_props`` argument.
-
-TX controls
--------------
-
-``ESPARGOSTxApplication`` exposes ``txcontrol`` to QML. Its reusable components
-include ``Common.IQTxDrawer``, ``Common.IQTxWorkspace`` and
-``Common.IQTxMonitorSettings``. To use just the calibration controls in a
-custom drawer:
-
-.. code-block:: qml
-
-   Common.IQTxCalibrationSettings {
-       controller: txcontrol
-       Layout.fillWidth: true
-   }
-
-The controls select monitor-based or reciprocal calibration and, for the
-reciprocal method, the signal path. Calibration runs through
-:meth:`Pool.calibrate() <espargos.pool.Pool.calibrate>` on the controller's worker thread. Changing a selector
-sets the next calibration method without starting it.
-
-The TX application selects IQ TX on all sensors, calibrates, then starts
-transmission. Closing its window must call ``txcontrol.close()`` so the worker
-can mute the transmitters before quitting. The beamforming demo's QML shows
-this shutdown handler and its calibration progress dialog.
-
-Configuration
----------------
-
-The framework builds its initial configuration from defaults, then merges the
-YAML file passed with ``-c``, then applies ``-o KEY=VALUE`` overrides. Nested
-keys are merged, so a file only needs to contain the settings we want to change.
-Dedicated arguments such as ``-s``, ``-b`` and ``--lltf`` are processed afterward
-and can override the corresponding settings.
-
-Available sections depend on the application:
-
-* ``pool``: board addresses and, for CSI demos, WiFi and calibration settings.
-* ``combined-array``: board arrangement and reference-cable properties.
-* ``backlog``: CSI history size, stored fields and packet filters.
-* ``csi``: preamble-format selection.
-* ``generic``: shared UI settings such as ``kiosk_mode``.
-* ``app``: settings defined by the demo's ``DEFAULT_CONFIG``.
-
-Run a demo with ``--help`` to see its arguments and configuration defaults.
-TX waveform, steering and monitor controls are managed by ``txcontrol`` rather
-than the CSI ``pool`` configuration section.
-
-For example, this YAML file changes the CSI channel and backlog size:
-
-.. code-block:: yaml
-
-   pool:
-     channel: 6
-   backlog:
-     size: 64
-
-We can use dotted keys for a single run instead::
-
-   ./demos/wifi/instantaneous-csi/main.py 192.168.1.2 \
-       -o pool.channel=6 -o backlog.size=64
-
-Values are parsed as YAML: ``true`` is a boolean, ``64`` an integer, and
-``[a, b]`` a list. Repeat ``-o`` to set several keys. For combined arrays, use
-one of the supplied layouts and override individual settings as needed::
-
-   ./demos/wifi/phases-by-antenna/main.py \
-       -c config/aperture-kit-8x4.yml -o backlog.size=100
-
-Host arguments differ between demos. Receive demos may accept positional
-comma-separated hosts. The TX application requires either ``-s HOST`` or
-``-c FILE``::
-
-   ./demos/iq/transmit-beamforming/main.py \
-       -s 192.168.1.2 --tx-calibration monitor
-
-   ./demos/iq/transmit-beamforming/main.py \
-       -c config/aperture-kit-8x4.yml \
-       --tx-calibration reciprocity --calibration-path reference
-
-Without ``--tx-calibration``, the TX application uses the controller monitor
-for one board and reciprocity for multiple boards. See :doc:`calibration`
-for the RF connections each method requires.
-
-Demo layout
------------
-
-Each published demo has a ``main.py`` entry point and a ``Main.qml`` window.
-Keep its processing, shaders and application-specific controls beside them.
-Only components used across demos belong in the shared folders:
-
-* ``demos/common``: application shell, configuration and branding.
-* ``demos/wifi/common``: CSI application support and WiFi controls.
-* ``demos/iq/common``: IQ receive controls and waterfall rendering.
-
-Import Python helpers from their modules explicitly. This keeps camera and
-other optional dependencies out of demos that do not use them. Local
-experiments belong in ``demos/custom`` and are ignored by Git.
-
-Use ``Pool.configure()`` and ``Pool.calibrate()`` for radio configuration and
-calibration. Receiver-specific capture options and data callbacks remain on
-``pool.iq`` and ``pool.wifi``. Reference cable properties come from the pool’s
-array configuration.
-
-Shared receiver controls
-------------------------
-
-``demos/common/RFSwitchControl.qml`` renders the RF-input buttons using the same
-polarization and shuffle icons as the web UI. Its ``value`` is the firmware
-route number, independent of button order. ``modes`` selects the available
-routes, and ``activated(value)`` reports a user choice. Assigning ``value`` from
-a controller snapshot does not emit that signal.
-
-``demos/common/GainSlider.qml`` supplies a slider and numeric readout. It exposes
-``value``, ``from``, ``to``, ``stepSize`` and ``pressed``. The ``edited()`` signal
-fires after a drag or keyboard edit. WiFi and IQ retain their existing update
-policies while sharing the visual control with BLE.
-
-``demos/ble/common/BLERxDrawer.qml`` provides BLE channel, PHY, input, gain and
-capture controls without importing the camera or calling a backend itself.
-Bind ``receiverConfig`` and handle ``configurationRequested(settings)`` for live
-edits. Bind ``busy``, ``calibrating``, ``needsCalibration`` and
-``calibrationSupported`` to the operation state. Handle ``calibrationRequested()``
-separately. Progress and the calibration-needed highlight reflect the backend.
-
-The shared camera overlay uses ``demos/common/camera/img/beamspace_transform.svg``
-for the azimuth and elevation grid in beamspace mode. All three demos use the
-same diagram, scaled to the spectrum bounds. The editable TikZ source lives
-alongside the SVG.
-
-Camera-specific startup settings use the common configuration mechanism. For
-example, ``--no-camera`` (or ``-o app.camera.enable=false``) disables video in
-any camera demo, and
-``-o 'app.receiver.advertisers=["00:01:02:03:04:05"]'`` selects an initial BLE
-advertiser. The same keys can be supplied in the YAML configuration file.
-
-Live BLE processing
+Drawers and workers
 -------------------
 
-The BLE camera submits selected complete measurements to
-``demos/common/latest_worker.py``. It retains one pending measurement per source,
-replacing superseded work without blocking the pool's packet processing thread.
-This policy complements the receiver input BufferPolicy, which bounds work
-before association and exposes overflow/expiry counters. Recording applications
-choose their own queue and backlog limits.
+The shared QML window accepts ``receiverDrawerComponent`` on the left and
+``appDrawerComponent`` on the right. An omitted drawer has no button.
+``initialize_qml()`` exposes the application as ``backend`` and the settings
+as ``appconfig`` and ``genericconfig``. Pass additional objects in
+``context_props``. For example, both CSI cameras use the same window and each
+assigns a different receiver drawer in its own ``Main.qml``.
 
-``espargos.BLEBeamformer`` combines ``BLEPhaseHistory`` and shared spatial
-estimators without Qt or demo dependencies. It provides Bartlett, MUSIC and
-Root-MUSIC numerical results. ``demos/ble/common/beamforming.py`` only translates
-UI options and draws fitted paths into an overlay spectrum. The reusable
-``BeamformingSettings.qml`` exposes method and history limits through the normal
-configuration endpoint.
+* **BLE.** ``BLEController`` handles tuning, reference acquisition and restoring
+  receiver settings. ``BLEMeasurementApplication`` provides advertiser
+  selection and a ``process_cluster()`` hook. Slow display processing runs on a
+  worker that keeps the newest pending measurement per advertiser. The BLE
+  camera also uses this controller and adds its own beamforming and video.
+* **Raw IQ.** ``ESPARGOSIQApplication`` starts the receiver's processing worker.
+  Use ``create_iq_controller()`` for a drawer that controls capture and
+  synchronization. The signal analyzer shows how to use it without a camera.
+* **IQ transmission.** The beamforming demo exposes its worker as ``txcontrol``.
+  It connects after QML loads, prepares the sensors, calibrates and starts
+  playback. The window calls ``txcontrol.close()`` so the worker can mute the
+  transmitters before Qt exits. The default calibration method is monitor for
+  a standalone board and reciprocity for multiple boards or a dedicated
+  master. Use ``--tx-calibration`` to choose the method for your wiring.
 
-``demos/ble/common/controller.py`` supplies ``BLEController`` for any BLE Qt demo.
-Bind the RX drawer to its properties and connect the configuration/calibration
-signals to its slots. Call ``start(lambda: pool)`` and ``close()`` to acquire and
-restore receiver settings. Its pool remains owned by the application. The shared
-``Advertisers`` Qt model lives alongside this controller. Camera-specific frame
-selection, steering grids, image blending and markers remain in the camera.
+Configuration
+-------------
+
+Use ``DEFAULT_CONFIG`` for a demo's ``app`` settings. The framework merges
+defaults with the YAML file passed via ``-c``, then applies each dotted
+``-o KEY=VALUE`` override. Values use YAML types. Run a demo with ``--help`` to see its settings and defaults.
+
+For instance, to keep a longer history in a native CSI demo, use
+``-o backlog.size=64``. To turn off video, pass
+``-o app.camera.enable=false`` or use the equivalent YAML::
+
+   app:
+     camera:
+       enable: false

@@ -1,46 +1,40 @@
 Getting Started
-=================
+===============
 
-ESPARGOS is an antenna array for coherent radio measurements and transmission.
-With *pyespargos*, we can receive WiFi channel estimates, capture raw I/Q
-samples, and transmit custom waveforms with beam steering.
+ESPARGOS One is a 2.4 GHz array with eight antennas. Each antenna has a
+radio called a sensor. The controller connects the sensors to your
+computer. You can open its IP address in a browser to configure the
+array, or connect to the same address from Python with *pyespargos*.
 
-Choose what you want to do
-----------------------------
+Follow the `installation instructions <https://github.com/ESPARGOS/pyespargos#installation>`_
+for your operating system. Use your controller's address in place of
+``192.168.1.2`` in the examples.
 
-* :doc:`wifi-reception` and :doc:`wifi-transmission`: measure channel state
-  information (CSI) from WiFi packets and send scheduled packets for channel
-  sounding, direction finding and sensing.
-* :doc:`iq-reception`: capture raw complex samples without WiFi packet
-  decoding. We can trigger captures periodically or when a signal arrives.
-* :doc:`iq-transmission`: transmit repeating waveforms, steer multiple beams,
-  or assign different signals to individual antennas.
-* :doc:`iq-radar`: combine IQ transmission and reception to measure range,
-  direction and motion, with a calibrated range origin.
+Receive or transmit
+-------------------
 
-We can combine these modes within one board or across several boards. For
-example, some sensors can transmit IQ waveforms while others receive IQ
-samples, and another group can receive WiFi packets. Each sensor has one mode
-at a time, but different sensors can operate in different modes simultaneously.
+* Use :doc:`wifi-reception` to measure how a Wi-Fi signal arrives at each
+  antenna. Use :doc:`wifi-iq-reception` to capture the packet waveform at
+  each antenna, for example to study an 802.11b preamble.
+  :doc:`wifi-transmission` can send packets on a schedule for those measurements.
+* Use :doc:`ble-reception` to find nearby Bluetooth LE advertisers or
+  compare the phase of their packets across antennas.
+* Use :doc:`iq-reception` to capture the waveform itself as a sequence of
+  complex I/Q samples. This works with signals that are outside the Wi-Fi
+  and Bluetooth packet formats.
+* Use :doc:`iq-transmission` to repeat a waveform from sensor memory.
+  Use :doc:`iq-transmit-streaming` to send changing samples, symbols or
+  packets from your computer while the array transmits.
+* Use :doc:`iq-radar` to transmit a known waveform and measure its reflections
+  for range, direction and motion.
 
-Boards, pools and sensor roles
---------------------------------
+Connect to an array
+-------------------
 
-Each ESPARGOS board contains eight **sensors**, which receive or transmit the
-antenna signals, and a **controller**, which connects them to the computer
-and contains the reference radio. Each board has its own controller and IP
-address.
-
-In a synchronized multi-array setup, one board is the **master**. Its
-controller supplies the shared clock and calibration reference. When we talk
-about the **reference monitor** or the shared **controller reference signal**,
-we mean this master's controller. On a standalone array, its own controller
-performs those functions. The other boards still have controllers that manage
-their sensors and network connections.
-
-A :class:`Board <espargos.board.Board>` represents one eight-sensor ESPARGOS array. A :class:`Pool <espargos.pool.Pool>` manages one
-or more boards, including their connections, configuration and calibration.
-We normally start with a pool, even for one board::
+In Python, a :class:`Board <espargos.board.Board>` represents one ESPARGOS
+array. A :class:`Pool <espargos.pool.Pool>` manages connections and calibration
+for one or more boards. Start with a pool even for one board. This example
+connects to the controller and puts all eight sensors into Wi-Fi reception::
 
    from espargos import Pool
 
@@ -49,23 +43,21 @@ We normally start with a pool, even for one board::
        receiver = pool.wifi
        # Register callbacks and process incoming measurements here.
 
-Each sensor can operate in WiFi, IQ RX or IQ TX mode. We can select subsets
-of antennas and assign different roles or frequencies within the same pool.
-:attr:`pool.wifi <espargos.pool.Pool.wifi>`, :attr:`pool.iq <espargos.pool.Pool.iq>` and :attr:`pool.tx <espargos.pool.Pool.tx>` share that pool's connections.
-See :doc:`pool` for selections and mixed configurations.
+See :doc:`pool` for antenna selection and :doc:`modes` to choose what
+each sensor and the controller radio do.
 
-For larger apertures, we can load the board arrangement from a configuration
-file using :meth:`Pool.from_config() <espargos.pool.Pool.from_config>`. A shared clock and reference network allow
-coherent measurements across boards. See :doc:`combined-arrays` for wiring
-and layout configuration.
+To use several boards as a single phase-coherent array, connect them to a
+shared clock and load their layout with
+:meth:`Pool.from_config() <espargos.pool.Pool.from_config>`.
+See :doc:`combined-arrays` for the wiring and layout file.
 
 Calibration and demos
------------------------
+---------------------
 
-Calibration measures the phase and timing differences between sensors. We
-apply these corrections when comparing received signals or steering transmit
-beams. :doc:`calibration` explains the available methods and how to calibrate
-all antennas or separate groups.
+Two sensors can record the same signal with different phase and timing
+because of their radio circuits. Calibration measures those differences.
+Calibrate before using phase to find a direction or steering a transmit
+beam. Start with :doc:`calibration` to choose a method for your setup.
 
 The reception and transmission pages include runnable examples. For an
 interactive view, try the ``instantaneous-csi``, ``signal-analyzer`` or

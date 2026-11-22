@@ -78,7 +78,7 @@ class EspargosAPIVersionError(Exception):
 class SensorMessageSubscription:
     """Handle for one sensor-message callback subscription."""
 
-    type_header: int
+    type_header: int | tuple[int, ...]
     callback: Callable[[sensor.SensorMessage[bytes]], None]
 
 
@@ -162,7 +162,7 @@ class BoardCapability:
 
     def _subscribe_decoded_sensor_messages(
         self,
-        type_header: int,
+        type_header: int | tuple[int, ...],
         decoder: Callable[[bytes], Any],
         callback: Callable[[sensor.SensorMessage[Any]], None],
     ) -> SensorMessageSubscription:
@@ -286,9 +286,23 @@ class Board(object):
         self._http_lock = threading.Lock()
         self._http_connection = None
         self._transport_kind = "network"
-        if uart.is_uart_host(host):
+        self._stream_connected = False
+        self._stream_lifecycle_lock = threading.RLock()
+        self._sensor_message_reassembler = sensor.SensorMessageReassembler(logger=self._logger)
+        self._sensor_message_subscriptions: dict[int, list[SensorMessageSubscription]] = {}
+        self._controller_message_subscriptions: dict[int, list[ControllerMessageSubscription]] = {}
+        self._sensor_message_subscriptions_lock = threading.Lock()
+
+        try:
+            self._identify()
+        except BaseException:
+            self.close()
+            raise
+
+    def _identify(self):
+        if uart.is_uart_host(self.host):
             self._transport_kind = "uart"
-            self._uart_client = uart.UARTClient(host)
+            self._uart_client = uart.UARTClient(self.host)
             self._uart_client.add_log_callback(self._handle_uart_log)
             self._uart_client.connect()
         try:
@@ -299,7 +313,7 @@ class Board(object):
                 raise EspargosUnexpectedResponseError(f"Server at {self.host} did not provide valid API information. Check if the host is correct and the server is running ESPARGOS firmware.")
         except TimeoutError:
             self._logger.error(f"Could not connect to {self.host} to fetch API information")
-            raise TimeoutError
+            raise
         except EspargosHTTPStatusError:
             raise EspargosAPIVersionError(
                 f"ESPARGOS controller at {self.host} did not provide API version information. " f"This version of pyespargos supports API major versions {SUPPORTED_API_MAJOR_MIN}–{SUPPORTED_API_MAJOR_MAX}. " "Please update the controller firmware."
@@ -335,13 +349,6 @@ class Board(object):
         self.ip_info = self.control.get_json("get_ip_info")
 
         self._logger.info(f"Identified ESPARGOS at {self.ip_info['ip']} as {self.name}")
-
-        self._stream_connected = False
-        self._stream_lifecycle_lock = threading.Lock()
-        self._sensor_message_reassembler = sensor.SensorMessageReassembler(logger=self._logger)
-        self._sensor_message_subscriptions: dict[int, list[SensorMessageSubscription]] = {}
-        self._controller_message_subscriptions: dict[int, list[ControllerMessageSubscription]] = {}
-        self._sensor_message_subscriptions_lock = threading.Lock()
 
     @property
     def name(self):
@@ -393,6 +400,11 @@ class Board(object):
             transports = ["uart"] if transports is None else transports
         elif transports is None:
             transports = ["udp", "websocket"]
+
+        if threading.current_thread() is getattr(self, "_stream_dispatch_thread", None):
+            if not self._stream_connected:
+                self._defer_stream_change(self.start, transports)
+            return
 
         with self._stream_lifecycle_lock:
             if self._stream_connected:
@@ -467,31 +479,14 @@ class Board(object):
         """
         self._logger.info(f"Trying UDP sensor stream for {self.name}")
 
-        # Resolve remote endpoint first so we can create a socket with the right family
+        # The controller sends UDP to the peer of the HTTP registration request.
+        # A dual-stack hostname can resolve to both families. Use the address
+        # that actually connected, including the interface scope on IPv6.
+        udp_family, peer = self._http_peer
+        udp_remote_addr = (peer[0], STREAM_CONTROLLER_SRC_PORT, *peer[2:])
         try:
-            host_is_bracketed_ipv6 = self.host.startswith("[") and self.host.endswith("]")
-            udp_host = self.host[1:-1] if host_is_bracketed_ipv6 else self.host
-            host_for_ipv6_check = udp_host.split("%", 1)[0]
-            try:
-                socket.inet_pton(socket.AF_INET6, host_for_ipv6_check)
-                host_is_ipv6_literal = True
-            except OSError:
-                host_is_ipv6_literal = False
-            preferred_family = socket.AF_INET6 if (host_is_bracketed_ipv6 or host_is_ipv6_literal) else socket.AF_INET
-            udp_info = socket.getaddrinfo(udp_host, STREAM_CONTROLLER_SRC_PORT, preferred_family, socket.SOCK_DGRAM)
-            if len(udp_info) == 0:
-                return f"Could not resolve UDP endpoint for host {self.host}"
-            udp_family, udp_socktype, udp_proto, _, udp_remote_addr = udp_info[0]
-        except OSError as e:
-            return f"Could not resolve UDP endpoint for host {self.host}: {e}"
-
-        # Open a local UDP socket on an ephemeral port
-        try:
-            udp_sock = socket.socket(udp_family, udp_socktype, udp_proto)
-            if udp_family == socket.AF_INET6:
-                udp_sock.bind(("::", 0, 0, 0))
-            else:
-                udp_sock.bind(("", 0))
+            udp_sock = socket.socket(udp_family, socket.SOCK_DGRAM)
+            udp_sock.bind(("::" if udp_family == socket.AF_INET6 else "", 0))
             udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)
             local_port = udp_sock.getsockname()[1]
         except OSError as e:
@@ -559,7 +554,7 @@ class Board(object):
         return f"HTTP request to enable UDP stream failed ({'; '.join(errors)})"
 
     def _try_start_websocket(self) -> str | None:
-        """Try the generic WebSocket endpoint, then its legacy alias."""
+        """Prefer the WebSocket endpoint served by ESPARGOS controllers."""
 
         errors = []
         for path in WEBSOCKET_STREAM_PATHS:
@@ -594,7 +589,7 @@ class Board(object):
     def _disable_udp_stream(self):
         """Tell the server to stop the UDP stream (best-effort)."""
         try:
-            path = getattr(self, "_udp_stream_control_path", UDP_STREAM_CONTROL_PATHS[-1])
+            path = getattr(self, "_udp_stream_control_path", UDP_STREAM_CONTROL_PATHS[0])
             self.control.command(path, {"enable": False})
         except Exception:
             pass
@@ -614,6 +609,7 @@ class Board(object):
 
         self._stream_dispatch_queue = queue.Queue(maxsize=STREAM_DISPATCH_QUEUE_PACKETS)
         self._stream_dispatch_sentinel = object()
+        self._deferred_stream_change = None
         self._stream_dispatch_thread = threading.Thread(
             target=self._stream_dispatch_loop,
             args=(self._stream_dispatch_queue, self._stream_dispatch_sentinel),
@@ -642,6 +638,36 @@ class Board(object):
             if message is sentinel:
                 return
             self._stream_handle_message(message)
+
+    def _defer_stream_change(self, action, *args):
+        """A subscriber cannot wait for its own dispatch queue to drain."""
+        dispatcher = getattr(self, "_stream_dispatch_thread", None)
+        if threading.current_thread() is not dispatcher:
+            return False
+
+        self._stream_connected = False
+        pending = self._deferred_stream_change is not None
+        self._deferred_stream_change = dispatcher, action, args
+        if not pending:
+            def finish():
+                with self._stream_lifecycle_lock:
+                    # A concurrent stop may already have drained this session.
+                    # Only a replacement dispatcher supersedes the request.
+                    request = self._deferred_stream_change
+                    if request is None or request[0] is not dispatcher:
+                        return
+                    if self._stream_dispatch_thread is dispatcher:
+                        self._cleanup_stream_session()
+                    # Draining the remaining callbacks can change the request.
+                    _, operation, arguments = self._deferred_stream_change
+                    self._deferred_stream_change = None
+                    try:
+                        operation(*arguments)
+                    except Exception:
+                        self._logger.exception("Deferred sensor stream operation failed")
+
+            threading.Thread(target=finish, name=f"espargos-stream-close-{self.host}", daemon=True).start()
+        return True
 
     def _stop_stream_dispatch(self):
         """Drain accepted frames and stop the current session's dispatcher."""
@@ -703,8 +729,12 @@ class Board(object):
         The receiver stops after the current packet has been processed, or
         after a short transport timeout. This affects every consumer of the
         board's shared stream; see :meth:`start` for the sharing contract.
+        When a subscriber calls stop, the transport stops accepting frames
+        immediately and releases its resources after queued callbacks return.
         Safe to call on an already stopped or silently died stream.
         """
+        if self._defer_stream_change(self.stop):
+            return
         with self._stream_lifecycle_lock:
             was_connected = self._stream_connected
             self._stream_connected = False
@@ -720,6 +750,8 @@ class Board(object):
         For UART-backed boards, this releases the serial port lock. Calling this on
         network-backed boards is harmless.
         """
+        if self._defer_stream_change(self.close):
+            return
         with self._capabilities_lock:
             capabilities = list(self._capabilities.values())
             self._capabilities = {}
@@ -747,7 +779,7 @@ class Board(object):
 
     def subscribe_sensor_messages(
         self,
-        type_header: int,
+        type_header: int | tuple[int, ...],
         callback: Callable[[sensor.SensorMessage[bytes]], None],
     ) -> SensorMessageSubscription:
         """Subscribe a callback to one raw sensor-message type.
@@ -759,7 +791,7 @@ class Board(object):
         thread; they should return promptly so its bounded burst buffer does not
         fill.
 
-        :param type_header: Four-byte logical message type as an integer.
+        :param type_header: A four-byte logical message type or a tuple of types.
         :param callback: Callable accepting a raw, reassembled
             :class:`sensor.SensorMessage`.
         :return: Subscription handle accepted by
@@ -767,7 +799,8 @@ class Board(object):
         :raises ValueError: If the type header is invalid.
         :raises TypeError: If ``callback`` is not callable.
         """
-        if not isinstance(type_header, int) or not 0 <= type_header <= 0xFFFFFFFF:
+        headers = type_header if isinstance(type_header, tuple) else (type_header,)
+        if not headers or any(not isinstance(h, int) or not 0 <= h <= 0xFFFFFFFF for h in headers):
             raise ValueError("type_header must be a 32-bit unsigned integer")
         if not callable(callback):
             raise TypeError("callback must be callable")
@@ -776,8 +809,8 @@ class Board(object):
             callback=callback,
         )
         with self._sensor_message_subscriptions_lock:
-            subscriptions = self._sensor_message_subscriptions.setdefault(type_header, [])
-            subscriptions.append(subscription)
+            for header in set(headers):
+                self._sensor_message_subscriptions.setdefault(header, []).append(subscription)
         return subscription
 
     def unsubscribe_sensor_messages(self, subscription: SensorMessageSubscription) -> bool:
@@ -793,15 +826,15 @@ class Board(object):
         if not isinstance(subscription, SensorMessageSubscription):
             return False
         with self._sensor_message_subscriptions_lock:
-            subscriptions = self._sensor_message_subscriptions.get(subscription.type_header)
-            if subscriptions is None:
+            headers = subscription.type_header
+            headers = headers if isinstance(headers, tuple) else (headers,)
+            if subscription not in self._sensor_message_subscriptions.get(headers[0], ()):
                 return False
-            try:
-                subscriptions.remove(subscription)
-            except ValueError:
-                return False
-            if not subscriptions:
-                del self._sensor_message_subscriptions[subscription.type_header]
+            for header in set(headers):
+                entries = self._sensor_message_subscriptions[header]
+                entries.remove(subscription)
+                if not entries:
+                    del self._sensor_message_subscriptions[header]
             return True
 
     def subscribe_controller_messages(self, type_header: int, callback: Callable[[bytes], None]) -> ControllerMessageSubscription:
@@ -967,7 +1000,12 @@ class Board(object):
                 if self._http_connection is None:
                     self._http_connection = http.client.HTTPConnection(self.host, timeout=5)
                 conn = self._http_connection
+                connecting = conn.sock is None
                 try:
+                    if connecting:
+                        conn.connect()
+                        self._http_peer = (conn.sock.family, conn.sock.getpeername())
+                        connecting = False
                     conn.request(method, "/" + path, data)
                     res = conn.getresponse()
                     body = res.read()
@@ -980,9 +1018,9 @@ class Board(object):
                 except BaseException as error:
                     conn.close()
                     self._http_connection = None
-                    # A controller can close an idle connection. Reads may be
-                    # repeated, but a write might already have taken effect.
-                    if attempt == 0 and read_only and isinstance(error, (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError)):
+                    # Before connect succeeds no request bytes have been sent.
+                    # After that only an idempotent read can be retried safely.
+                    if attempt == 0 and (connecting or read_only) and isinstance(error, (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError, TimeoutError)):
                         continue
                     raise
 

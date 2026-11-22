@@ -63,6 +63,8 @@ SERIALIZED_CSI_TLV_ACQUIRE_FLAG_LLTF_8BIT_MODE = 1 << 1
 
 
 def get_csi_format_subcarrier_count(preamble_format: str) -> int:
+    if preamble_format == "dsss":
+        return 35
     if preamble_format == "lltf":
         return LEGACY_COEFFICIENTS_PER_CHANNEL
     if preamble_format == "ht20":
@@ -75,6 +77,8 @@ def get_csi_format_subcarrier_count(preamble_format: str) -> int:
 
 
 def get_csi_format_subcarrier_indices(preamble_format: str) -> np.ndarray:
+    if preamble_format == "dsss":
+        return np.arange(-17, 18, dtype=np.int32)
     if preamble_format == "lltf":
         return np.arange(-26, 27, dtype=np.int32)
     if preamble_format == "ht20":
@@ -421,11 +425,11 @@ class CSIPacket:
     def is_compressed(self):
         return self._is_compressed
 
-    def _decode_lltf8(self) -> np.ndarray:
-        """Decode signed 8-bit complex pairs from this packet's CSI payload."""
+    def _decode_iq8(self, count: int) -> np.ndarray:
+        """Unpack the modem's signed (imaginary, real) byte pairs."""
 
-        values = np.frombuffer(self.buf[: LEGACY_COEFFICIENTS_PER_CHANNEL * 2], dtype=np.int8).astype(np.float32).view(np.complex64)
-        return -1.0j * np.conj(values)
+        values = np.frombuffer(self.buf, dtype=np.int8, count=count * 2).astype(np.float32).reshape(-1, 2)
+        return values[:, 1] + 1j * values[:, 0]
 
     def _decode_lltf12(self, value_count: int) -> np.ndarray:
         """Decode packed signed 12-bit values from this packet's CSI payload."""

@@ -1,80 +1,52 @@
-import unittest
+"""Restore a selected board independently of a controller-only reference master."""
+from threading import Lock
+from types import SimpleNamespace
+from unittest.mock import Mock, call
 
-import numpy as np
+import pytest
 
-from espargos import RFSwitchState
-from espargos.iq_sync import acquire_reference_anchors
-
-
-class _Revision:
-    @staticmethod
-    def antenna_id_to_row_col(antenna_id):
-        return divmod(antenna_id, 4)
-
-
-class _Board:
-    revision = _Revision()
+from espargos._iq_calibration.reference import reference_session
+from espargos._iq_calibration.scope import CalibrationScope
+from espargos.calibration import Antenna
+from espargos.revisions import BoardRevisionDensiflorus
 
 
-class _Cluster:
-    sensor_timestamps = np.arange(8, dtype=float).reshape(1, 2, 4) / 1e9
+@pytest.mark.parametrize("fail", [False, True])
+def test_scoped_reference_restores_board_and_master(fail):
+    boards = [Mock(host=host, revision=BoardRevisionDensiflorus()) for host in ("master", "array")]
+    master, array = boards
+    master.control.get_json.return_value = {"mode": "wifi"}
+    master.wifi_rx.get_config.return_value = {"calib-source": 1}
+    selected = dict(antid=3, rf_freq_hz=2437000000, gain_mode="auto", rx_gain=54)
+    modes = ["wifi"] * 8
+    modes[3] = "iq_rx"
+    config = dict(adc_decimation=2, rf_switch=3, trigger={"mode": "signal"},
+                  receivers=[dict(selected, antid=a) for a in range(8)], modes=modes)
+    array.iq.get_config.return_value = config
+    array.control.get_json.return_value = {
+        "muted": False, "sensors": [dict(enabled=False, applied_mode=mode) for mode in modes]}
+    array.control.post_json.return_value = "ok"
+    pool = SimpleNamespace(boards=boards, master_board=master, _reference_lock=Lock(), _calibrating=False)
+    scope = CalibrationScope(pool, [Antenna("array", 3)])
 
+    def acquire():
+        with reference_session(pool, scope=scope) as (center, rate):
+            assert (center, rate) == (2437000000, 40e6)
+            assert pool._calibrating
+            if fail:
+                raise TimeoutError("reference disconnected")
 
-class _Pool:
-    def __init__(self, deliver):
-        self.deliver = deliver
-        self.callback = None
-        self.emitting = False
-        self.original_switch = RFSwitchState.SENSOR_RFSWITCH_ANTENNA_L
-        self.switch_calls = []
-        self.removed = None
-
-    def add_callback(self, callback):
-        self.callback = callback
-        return object()
-
-    def remove_callback(self, handle):
-        self.removed = handle
-
-    @property
-    def emit_calibration_csi(self):
-        return self.emitting
-
-    @emit_calibration_csi.setter
-    def emit_calibration_csi(self, enabled):
-        self.emitting = bool(enabled)
-
-    def get_rf_switch(self):
-        return self.original_switch
-
-    def set_rf_switch(self, state):
-        self.switch_calls.append(state)
-
-    def run(self):
-        if self.deliver:
-            self.deliver = False
-            self.callback(_Cluster())
-
-
-class IQSyncRestoreTests(unittest.TestCase):
-    def test_success_restores_wifi_rf_switch(self):
-        pool = _Pool(deliver=True)
-        anchors = acquire_reference_anchors(pool, [_Board()], timeout=0.1)
-        self.assertEqual(anchors, [list(range(8))])
-        self.assertEqual(
-            pool.switch_calls,
-            [RFSwitchState.SENSOR_RFSWITCH_REFERENCE, RFSwitchState.SENSOR_RFSWITCH_ANTENNA_L],
-        )
-        self.assertFalse(pool.emitting)
-        self.assertIsNotNone(pool.removed)
-
-    def test_timeout_also_restores_wifi_rf_switch(self):
-        pool = _Pool(deliver=False)
-        self.assertIsNone(acquire_reference_anchors(pool, [_Board()], timeout=0.0))
-        self.assertEqual(pool.switch_calls[-1], RFSwitchState.SENSOR_RFSWITCH_ANTENNA_L)
-        self.assertFalse(pool.emitting)
-        self.assertIsNotNone(pool.removed)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    if fail:
+        with pytest.raises(TimeoutError, match="reference disconnected"):
+            acquire()
+    else:
+        acquire()
+    assert not pool._calibrating
+    master.iq.set_config.assert_not_called()
+    assert master.iq.set_reference.call_count == 2
+    assert master.control.post_json.call_args_list == [
+        call("set_controller_mode", {"mode": "iq"}), call("set_controller_mode", {"mode": "wifi"})]
+    assert array.iq.set_config.call_args.args[0] == dict(
+        rf_switch=3, trigger=config["trigger"], adc_decimation=2, receivers=[selected])
+    assert array.control.post_json.call_args_list == [
+        call("set_iq_tx", {"muted": True}), call("set_iq_tx", {"muted": False})]
