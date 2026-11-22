@@ -17,7 +17,7 @@ is the filter's transition band.
 
    The shaded band shows where to place your signal. The dashed lines mark
    the Nyquist limits. Each point comes from an RF tone swept past the array
-   at 2441 MHz, measured against a second tone that stayed in the passband.
+   at 2441 MHz. Each antenna's response is relative to its in-band level.
 
 A peak at exactly zero frequency can come from the receiver's DC offset.
 To distinguish it from a carrier, retune slightly. A received carrier moves
