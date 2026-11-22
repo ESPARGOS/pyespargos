@@ -13,7 +13,7 @@ per antenna. The remaining spectrum near each Nyquist edge
 is the filter's transition band.
 
 .. figure:: _static/iq-rx-stream-response.svg
-   :alt: Measured amplitude across the 16 and 32 kSa/s receive bands on eight antennas.
+   :alt: Measured amplitude across the 16, 32 and 64 kSa/s receive bands on eight antennas.
 
    The shaded band shows where to place your signal. The dashed lines mark
    the Nyquist limits. Each point comes from an RF tone swept past the array
