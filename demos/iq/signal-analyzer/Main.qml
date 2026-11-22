@@ -28,6 +28,7 @@ Common.ESPARGOSApplication {
 	/** RX drawer: the reusable IQ capture settings (replaces the CSI pool drawer) **/
 	receiverDrawerComponent: Component {
 		IQ.IQRxDrawer {
+            allowStreaming: true
 			controller: iqcontrol
 		}
 	}

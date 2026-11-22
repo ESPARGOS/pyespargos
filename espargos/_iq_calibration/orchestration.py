@@ -2,7 +2,7 @@
 
 import numpy as np
 from ..calibration import Antenna, AntennaCorrection, Calibration, CalibrationGroup, CalibrationState
-from ..iq_packet import DECIM_TO_FS
+from ..iq_rx_stream import receive_sample_rate
 from .reference import _map
 from ..iq_tx_control import _rpc
 
@@ -30,7 +30,7 @@ def snapshot(pool, tx_result=None, method="rx", scope=None):
             pos = (bi, *board.revision.antenna_id_to_row_col(a))
             if mode == "iq_rx" and model is not None and epochs is not None:
                 center = configs[bi]["receivers"][a]["rf_freq_hz"]
-                rate = DECIM_TO_FS[configs[bi]["adc_decimation"]]
+                rate = receive_sample_rate(configs[bi])
                 if center != model.phase_reference_frequency or rate != pool.calibration_sample_rate:
                     continue
                 origin = None if pool._calibration_grid_origin is None else int(pool._calibration_grid_origin[pos])

@@ -36,6 +36,8 @@ GridLayout {
 	property var controller: null
 
 	property bool _loading: true
+    property bool allowStreaming: false
+    readonly property bool streaming: triggerModes[triggerCombo.currentIndex]?.mode === "stream"
 
 	// Named trigger fields, matching the controller HTTP API.
 	property var triggerModes: [
@@ -56,7 +58,7 @@ GridLayout {
 			{k: "capture_chunks", l: "Capture chunks (56–112)", v: "56"},
 			{k: "quiet_threshold", l: "Quiet threshold", v: "0"}
 		]}
-	]
+	].concat(allowStreaming ? [{name: "Continuous stream", mode: "stream", fields: []}] : [])
 	property var triggerValues: triggerModes[0].fields.map(d => d.v)
 
 	function triggerModeIndex(mode) {
@@ -76,8 +78,9 @@ GridLayout {
 				? (value === "" ? [] : value.split(",").map(v => Number(v.trim())))
 				: Number(value)
 		})
-		return {
-			"rf_freq_hz": Math.round(parseFloat(freqField.text) * 1e6),
+        if (streaming) trigger.sample_rate_hz = streamRate.currentIndex === 1 ? 32000 : 16000
+        let settings = {
+            "rf_freq_hz": Math.round(parseFloat(freqField.text) * 1e6),
 			"adc_decimation": parseInt(decimationCombo.currentValue),
 			"adc_source_sel": 15,
 			"filter_bw_mhz": lpfSwitch.checked ? Math.round(lpfBwSlider.value) : 0,
@@ -86,9 +89,15 @@ GridLayout {
 			"trigger": trigger,
 			"rf_switch": rfSwitchCombo.value
 		}
-	}
+        if (streaming) {
+            delete settings.adc_decimation
+            delete settings.adc_source_sel
+            delete settings.filter_bw_mhz
+        }
+        return settings
+    }
 
-	function pushConfig() {
+    function pushConfig() {
 		if (_loading || !controller)
 			return
 		controller.queue_config_json(JSON.stringify(collectConfig()))
@@ -103,7 +112,7 @@ GridLayout {
 			var rx = Array.isArray(cfg.receivers) && cfg.receivers.length > 0
 				? cfg.receivers[0] : {}
 			if (rx.rf_freq_hz)
-				freqField.text = (rx.rf_freq_hz / 1e6).toFixed(0)
+				freqField.text = String(rx.rf_freq_hz / 1e6)
 			if (cfg.adc_decimation !== undefined) {
 				var di = decimationCombo.indexOfValue(cfg.adc_decimation)
 				if (di >= 0) decimationCombo.currentIndex = di
@@ -121,6 +130,7 @@ GridLayout {
 				rxGainSlider.value = Math.min(Math.max(rx.rx_gain, rxGainSlider.from), rxGainSlider.to)
 			if (cfg.trigger !== undefined) {
 				triggerCombo.currentIndex = triggerModeIndex(cfg.trigger.mode)
+                if (cfg.trigger.mode === "stream") streamRate.currentIndex = cfg.trigger.sample_rate_hz === 32000 ? 1 : 0
 				var defs = triggerModes[triggerCombo.currentIndex].fields
 				var vals = []
 				for (var i = 0; i < defs.length; ++i) {
@@ -182,6 +192,7 @@ GridLayout {
 	Label { text: "Sample rate"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 	ComboBox {
 		id: decimationCombo
+        visible: !iqsettings.streaming
 		implicitWidth: 210
 		textRole: "text"
 		valueRole: "value"
@@ -194,21 +205,30 @@ GridLayout {
 		onActivated: pushConfig()
 	}
 
-	// Analog RX (WifiRX0) low-pass filter: off = open (widest, ~54 MHz);
+    ComboBox {
+        id: streamRate
+        visible: iqsettings.streaming
+        implicitWidth: 210
+        model: ["16 kSa/s", "32 kSa/s"]
+        onActivated: pushConfig()
+    }
+    // Analog RX (WifiRX0) low-pass filter: off = open (widest, ~54 MHz);
 	// on = continuous cap-DAC tuning over the calibrated 13..54 MHz range
 	// (firmware interpolates to the 6-bit DAC, ~0.5 MHz effective steps).
 	// Only effective in the 20 MHz CBW path.
-	Label { text: "Enable LPF"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+	Label { visible: !iqsettings.streaming; text: "Enable LPF"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 	Switch {
 		id: lpfSwitch
+        visible: !iqsettings.streaming
 		checked: true
 		onToggled: pushConfig()
 		ToolTip.visible: hovered
 		ToolTip.text: "Analog RX low-pass filter ahead of the ADC (anti-aliasing / adjacent-channel rejection). Off = open (widest, ~54 MHz)."
 	}
 
-	Label { text: "Bandwidth"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+	Label { visible: !iqsettings.streaming; text: "Bandwidth"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 	RowLayout {
+        visible: !iqsettings.streaming
 		spacing: 14
 		Slider {
 			id: lpfBwSlider

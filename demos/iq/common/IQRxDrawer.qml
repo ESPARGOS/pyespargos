@@ -21,6 +21,7 @@ Drawer {
 	id: root
 
 	property int headerHeight: 0
+    property bool allowStreaming: false
 	// IQController backend (context property provided by the application)
 	property var controller: null
 
@@ -68,6 +69,7 @@ Drawer {
 
 			IQSettings {
 				id: iqSettings
+                allowStreaming: root.allowStreaming
 				controller: root.controller
 				onControllerChanged: loadFromController()
 				Layout.fillWidth: true

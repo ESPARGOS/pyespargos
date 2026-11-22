@@ -47,7 +47,7 @@ import PyQt6.QtCharts
 
 import espargos
 
-from espargos import CHUNK_SAMPLES, DECIM_TO_FS, IQAccumCluster, SENSOR_COUNT
+from espargos import CHUNK_SAMPLES, DECIM_TO_FS, IQAccumCluster, IQStreamBlock, SENSOR_COUNT
 from demos.iq.common.application import ESPARGOSIQApplication
 from demos.iq.common.iq_waterfall import WaterfallImageProvider, power_db_row
 
@@ -84,6 +84,8 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
 
     def __init__(self, argv):
         parser = argparse.ArgumentParser(description="ESPARGOS Demo: live IQ signal analyzer", add_help=False)
+        parser.add_argument("--stream", type=int, choices=(16000, 32000), nargs="?", const=16000,
+                            help="Receive continuous narrowband IQ at this sample rate in Sa/s")
         super().__init__(argv, argparse_parent=parser)
 
         self.iqcontrol = None  # IQController QML adapter, created once the pool is up
@@ -99,6 +101,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         self.display_mode = self.get_initial_config("app", "display_mode")
         self.fft_size = int(self.get_initial_config("app", "fft_size"))
         self.complete_only = bool(self.get_initial_config("app", "complete_only"))
+        self.display_chunk_samples = CHUNK_SAMPLES
         self.display_width = CHUNK_SAMPLES
         self._win = np.hanning(self.fft_size).astype(np.float32)
         self._fft_scale = max(float(np.sum(self._win)) * ADC_FULL_SCALE, 1.0)
@@ -311,6 +314,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
             sample_rate_hz = self._spectrum_sample_rate_hz
             center_hz = self._spectrum_center_hz
             self._spectrum_consumed[antid] = generation
+        frequency_axis.setLabelFormat("%.3f" if sample_rate_hz < 1e6 else "%.1f")
         frequency_axis.setRange((center_hz - sample_rate_hz / 2) / 1e6, (center_hz + sample_rate_hz / 2) / 1e6)
         if not present:
             series.replace([])
@@ -371,7 +375,13 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         positions = [revision.antenna_id_to_row_col(antenna_id) for antenna_id in range(SENSOR_COUNT)]
         sets = []
         for arrived, cluster in clusters:
-            if isinstance(cluster, IQAccumCluster):
+            if isinstance(cluster, IQStreamBlock):
+                present = cluster.completion[board]
+                if not np.any(present) or (self.display_mode == "phase" and not cluster.synchronized):
+                    continue
+                generation = int(cluster.config_generation[board][present][0])
+                epoch = ("stream", generation, cluster.sample_rate_hz, cluster.synchronized)
+            elif isinstance(cluster, IQAccumCluster):
                 epoch = ("accum", tuple(cluster.config_generation[board].flat))
             else:
                 present = cluster.completion
@@ -385,6 +395,15 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
                 self.last_display_block = -1
                 sets.clear()
             self._display_epoch_time = arrived
+            if isinstance(cluster, IQStreamBlock):
+                self.display_chunk_samples = cluster.iq.shape[-1]
+                with self._sample_window_lock:
+                    self._spectrum_center_hz = cluster.center_freq_hz
+                    self._spectrum_sample_rate_hz = cluster.sample_rate_hz
+                per = {a: cluster.iq[board, r, c] for a, (r, c) in enumerate(positions) if present[r, c]}
+                sets.append((cluster.first_sample // self.display_chunk_samples, per))
+                continue
+            self.display_chunk_samples = CHUNK_SAMPLES
             if isinstance(cluster, IQAccumCluster):
                 completion = cluster.section_completion
                 sections = cluster.iq_sections
@@ -419,15 +438,15 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
                     self._first_sets_logged = True
                     self.logger.info("first synchronized IQ chunk sets received, display running")
                 mode = self.display_mode
-                if mode == "spectrum":
+                if mode == "spectrum" and self._display_epoch[0] != "stream":
                     self._refresh_spectrum_config()
                 # Every display mode assembles consecutive chunks into FFT
                 # blocks, allowing partial clusters to arrive out of order.
-                self._render_block_rows(sets, mode)
+                self._render_block_rows(sets, mode, self.display_chunk_samples)
             except Exception as e:
                 print(f"render error: {e}", file=sys.stderr)
 
-    def _render_block_rows(self, sets, mode):
+    def _render_block_rows(self, sets, mode, chunk_samples=CHUNK_SAMPLES):
         """Assemble fft_size/256 CONSECUTIVE chunks per sensor into one
         display unit, a waterfall row or one time-domain trace window (blocks
         aligned to the synchronized index grid, so rows and traces line up in
@@ -438,7 +457,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         window joins adjacent chunks crossing a render tick. Retire blocks in
         index order, once only; late data cannot create duplicate grey rows.
         """
-        B = self.fft_size // CHUNK_SAMPLES
+        B = self.fft_size // chunk_samples
         config = self._display_config
         trigger = config.get("trigger", {})
         schedule = tuple(trigger[k] for k in ("interval_chunks", "offset_chunks", "burst_chunks")) if trigger.get("mode") == "interval" else None
@@ -559,6 +578,12 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
     def _update_display_config(self, config):
         self._display_config = {**self._display_config, **config}
 
+    def _create_receiver(self, owner):
+        receiver = super()._create_receiver(owner)
+        if self.args.stream:
+            receiver.apply_config({"trigger": {"mode": "stream", "sample_rate_hz": self.args.stream}})
+        return receiver
+
     def _start_iq_gui(self):
         """After the framework pool is up: expose the pool's QML adapter,
         subscribe the display to delivered clusters, and synchronize/calibrate IQ."""
@@ -572,6 +597,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
         # bounded settling window, independent of calibration/library consumers.
         self.receiver.add_callback(self._on_iq_cluster, callback_predicate=lambda cluster: True)
         self.receiver.add_accumulation_callback(self._on_iq_cluster, callback_predicate=lambda cluster: True)
+        self.receiver.add_stream_callback(self._on_iq_cluster, include_partial=True)
 
         self.iqcontrol.sync_async()
         self.start_render()

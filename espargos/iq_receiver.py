@@ -871,6 +871,7 @@ class IQReceiver(ClusterAssembler):
         bi, a = scope.pairs[0]
         row, col = self.boards[bi].revision.antenna_id_to_row_col(a)
         ref = bi * 8 + row * 4 + col
+        streaming = configs[bi].get("trigger", {}).get("mode") == "stream"
         with iq_reference.reference_session(self, center_hz, rx_gain, scope) as (center, fs):
             self._calibration = None
             for attempt in range(attempts):
@@ -881,6 +882,11 @@ class IQReceiver(ClusterAssembler):
                         seqs = None
                     else:
                         seqs = iq_reference.acquire_grid(self, center, timeout, scope)
+                    if streaming:
+                        from ._iq_calibration.stream import measure
+                        scope.apply_rx({"trigger": configs[bi]["trigger"]})
+                        timing, phi, epoch, grid_origin = measure(self, scope, center, fs, 80, iq_ready_timeout)
+                        break
                     training = iq_reference.collect(self, count=32, timeout=iq_ready_timeout, seqs=seqs, mask=scope.mask)
                     tau, phi, quality = iq_reference.fit(training, ref, scope.mask)
                     validation = iq_reference.collect(self, count=32, timeout=iq_ready_timeout, seqs=seqs, mask=scope.mask)
@@ -895,10 +901,11 @@ class IQReceiver(ClusterAssembler):
                     if attempt + 1 == attempts:
                         raise IQCalibrationError(str(error)) from error
                     self._logger.info("Acquiring a fresh broadband grid: %s", error)
-            timing = tau / 80e6
-            epoch = np.where(scope.mask, training[0].fire_time_ns, 0).astype(np.uint64).tobytes()
-            grid_origin = training[0].grid_origin_ns.copy()
-            if fs != 80e6:
+            if not streaming:
+                timing = tau / 80e6
+                epoch = np.where(scope.mask, training[0].fire_time_ns, 0).astype(np.uint64).tobytes()
+                grid_origin = training[0].grid_origin_ns.copy()
+            if not streaming and fs != 80e6:
                 # The ADC subsamples without anti-alias filtering. Measure
                 # the full reference band at 80 MS/s, then transfer the delay
                 # using the measured starts of the two capture epochs.
@@ -923,7 +930,10 @@ class IQReceiver(ClusterAssembler):
         self._calibration_grid_origin = grid_origin
         self._calibration_sample_rate = fs
         self._calibration_center_frequency = center
-        self._logger.info("Broadband calibration verified: coherence %.3f, residual %.3f rad, %.3f s", np.nanmin(quality), np.nanmax(residual), time.monotonic() - t0)
+        if streaming:
+            self._logger.info("Narrowband calibration verified at %d Sa/s in %.3f s", fs, time.monotonic() - t0)
+        else:
+            self._logger.info("Broadband calibration verified: coherence %.3f, residual %.3f rad, %.3f s", np.nanmin(quality), np.nanmax(residual), time.monotonic() - t0)
         from ._iq_calibration.orchestration import snapshot
 
         if publish:

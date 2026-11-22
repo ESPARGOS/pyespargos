@@ -94,10 +94,11 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None):
     saved = _map(lambda b: b.iq.get_config(), pool.boards)
     bi, a = scope.pairs[0]
     center = int(center_hz or saved[bi]["receivers"][a]["rf_freq_hz"])
-    fs = DECIM_TO_FS[saved[bi]["adc_decimation"]]
+    from ..iq_rx_stream import receive_sample_rate
+    fs = receive_sample_rate(saved[bi])
     if not 2310e6 <= center <= 2640e6:
         raise ValueError("Broadband reference requires a center frequency from 2310 to 2640 MHz")
-    if any(DECIM_TO_FS[saved[bi]["adc_decimation"]] != fs for bi in scope.active):
+    if any(receive_sample_rate(saved[bi]) != fs for bi in scope.active):
         raise ValueError("All boards must use the same IQ sample rate")
     if any(saved[bi]["receivers"][a]["rf_freq_hz"] != center for bi, a in scope.pairs) and center_hz is None:
         raise ValueError("All receivers must use the same center frequency")
