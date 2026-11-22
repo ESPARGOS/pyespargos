@@ -49,3 +49,19 @@ def test_array_alignment_requires_a_common_grid():
     assert cluster.synchronized and cluster.completion.sum() == 2
     assert np.isnan(cluster.iq[~cluster.completion]).all()
     assert cluster.fire_time_ns[1, 1, 3] == b.fire_time_ns
+
+
+def test_delayed_reports_do_not_redeliver_an_array_block():
+    receiver = IQReceiver(SimpleNamespace(boards=[]), chunk_settle_timeout=0)
+    receiver.board_revisions = (SimpleNamespace(antenna_id_to_row_col=lambda n: divmod(n, 4)),)
+    receiver._expected = np.ones((1, 2, 4), dtype=bool)
+    received = []
+    receiver.add_stream_callback(received.append, include_partial=True)
+    packet = IQStreamPacket(record(grid=(1 << 18) | (1 << 16) | 7))
+    reports = [(0, SimpleNamespace(antenna_id=a, payload=packet)) for a in range(8)]
+    for batch in (reports, reports[:3], reports):
+        for message in batch:
+            receiver._input_queue.put_nowait(message)
+        receiver._run(timeout=0)
+    assert len(received) == 1
+    assert received[0].is_complete

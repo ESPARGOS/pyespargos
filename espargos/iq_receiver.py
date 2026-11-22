@@ -11,6 +11,7 @@ including REF path compensation. The 24-bit chunk counter is unwrapped into
 monotonic cluster keys across counter wraps and synchronization restarts.
 """
 
+from collections import OrderedDict
 import threading
 import time
 
@@ -328,6 +329,9 @@ class IQReceiver(ClusterAssembler):
     ):
         super().__init__(owner)
         self._expected = np.ones(self.shape, dtype=bool)
+        self._recent_stream_blocks = OrderedDict()
+        # One second of keys even if every sensor runs an independent 32 kSa/s grid.
+        self._stream_history_limit = max(1, len(self.boards)) * SENSOR_COUNT * 250
         self.chunk_settle_timeout = float(chunk_settle_timeout)
         self.signal_settle_timeout = float(signal_settle_timeout)
         self._master_index = master_index
@@ -587,6 +591,8 @@ class IQReceiver(ClusterAssembler):
             return index
 
     def _resolve_cluster_key(self, cache_name, proposed_key, cache, board_index, sensor_message):
+        if cache_name == _CACHE_STREAM and proposed_key in self._recent_stream_blocks:
+            return None
         if cache_name == _CACHE_CHUNKS:
             payload = sensor_message.payload
             # A local engine restart can reuse an index while old chunks are
@@ -596,6 +602,18 @@ class IQReceiver(ClusterAssembler):
             session = (board_index, payload.config_generation) if local else None
             return (payload.sync_info & 0xFFFF, payload.sample_rate_hz, session, proposed_key)
         return proposed_key
+
+    def _on_cluster_removed(self, cache_name, cluster_key, sensor_cluster):
+        if cache_name == _CACHE_STREAM:
+            # A delayed duplicate after delivery must not open a second block
+            # for the same antennas and sample index.
+            self._recent_stream_blocks[cluster_key] = None
+            if len(self._recent_stream_blocks) > self._stream_history_limit:
+                self._recent_stream_blocks.popitem(last=False)
+
+    def _on_cluster_cache_cleared(self, cache_name):
+        if cache_name == _CACHE_STREAM:
+            self._recent_stream_blocks.clear()
 
     def _create_cluster(self, cache_name, cluster_key, board_index, first_message) -> IQCluster:
         if cache_name == _CACHE_STREAM:
