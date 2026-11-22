@@ -7,9 +7,9 @@ example, you can follow a carrier as it drifts or demodulate a signal that
 crosses many block boundaries. For short events that need several MHz of
 bandwidth, use the triggered captures in :doc:`iq-reception`.
 
-Choose 16 kSa/s for signals within about 6 kHz either side of the tuned
-frequency, or 32 kSa/s for about 12 kHz either side. These are complex
-sample rates per antenna. The remaining spectrum near each Nyquist edge
+Choose 16, 32 or 64 kSa/s for signals within about 6, 12 or 24 kHz either
+side of the tuned frequency, respectively. These are complex sample rates
+per antenna. The remaining spectrum near each Nyquist edge
 is the filter's transition band.
 
 .. figure:: _static/iq-rx-stream-response.svg

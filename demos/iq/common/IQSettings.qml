@@ -37,6 +37,7 @@ GridLayout {
 
 	property bool _loading: true
     property bool allowStreaming: false
+    readonly property var streamRates: [16000, 32000, 64000]
     readonly property bool streaming: triggerModes[triggerCombo.currentIndex]?.mode === "stream"
 
 	// Named trigger fields, matching the controller HTTP API.
@@ -78,7 +79,7 @@ GridLayout {
 				? (value === "" ? [] : value.split(",").map(v => Number(v.trim())))
 				: Number(value)
 		})
-        if (streaming) trigger.sample_rate_hz = streamRate.currentIndex === 1 ? 32000 : 16000
+        if (streaming) trigger.sample_rate_hz = streamRates[streamRate.currentIndex]
         let settings = {
             "rf_freq_hz": Math.round(parseFloat(freqField.text) * 1e6),
 			"adc_decimation": parseInt(decimationCombo.currentValue),
@@ -130,7 +131,7 @@ GridLayout {
 				rxGainSlider.value = Math.min(Math.max(rx.rx_gain, rxGainSlider.from), rxGainSlider.to)
 			if (cfg.trigger !== undefined) {
 				triggerCombo.currentIndex = triggerModeIndex(cfg.trigger.mode)
-                if (cfg.trigger.mode === "stream") streamRate.currentIndex = cfg.trigger.sample_rate_hz === 32000 ? 1 : 0
+                if (cfg.trigger.mode === "stream") streamRate.currentIndex = Math.max(0, streamRates.indexOf(cfg.trigger.sample_rate_hz))
 				var defs = triggerModes[triggerCombo.currentIndex].fields
 				var vals = []
 				for (var i = 0; i < defs.length; ++i) {
@@ -210,7 +211,7 @@ GridLayout {
         id: streamRate
         visible: iqsettings.streaming
         implicitWidth: 210
-        model: ["16 kSa/s", "32 kSa/s"]
+        model: iqsettings.streamRates.map(hz => (hz / 1000) + " kSa/s")
         onActivated: pushConfig()
     }
     // Analog RX (WifiRX0) low-pass filter: off = open (widest, ~54 MHz);

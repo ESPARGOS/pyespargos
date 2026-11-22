@@ -26,7 +26,7 @@ from espargos.calibration import Calibration
 from ._iq_calibration import reference as iq_reference
 from . import iq_tone
 from .iq_accum_cluster import IQAccumCluster
-from .iq_rx_stream import IQStreamBlock, IQStreamPacket, receive_sample_rate
+from .iq_rx_stream import IQ_RX_STREAM_RATES, IQStreamBlock, IQStreamPacket, receive_sample_rate
 from .iq_cluster import CHUNK_SAMPLES, IQCluster
 from .iq_packet import DECIM_TO_FS, IQ_SYNC_INFO_GRID_SYNCED, IQAccumPacket
 from .iq_signal_capture import IQSignalAssembler
@@ -330,8 +330,8 @@ class IQReceiver(ClusterAssembler):
         super().__init__(owner)
         self._expected = np.ones(self.shape, dtype=bool)
         self._recent_stream_blocks = OrderedDict()
-        # One second of keys even if every sensor runs an independent 32 kSa/s grid.
-        self._stream_history_limit = max(1, len(self.boards)) * SENSOR_COUNT * 250
+        # One second of keys even if every sensor runs an independent grid.
+        self._stream_history_limit = max(1, len(self.boards)) * SENSOR_COUNT * (max(IQ_RX_STREAM_RATES) // IQStreamPacket.SAMPLE_COUNT)
         self.chunk_settle_timeout = float(chunk_settle_timeout)
         self.signal_settle_timeout = float(signal_settle_timeout)
         self._master_index = master_index

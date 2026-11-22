@@ -48,6 +48,7 @@ import PyQt6.QtCharts
 
 import espargos
 
+from espargos.iq_rx_stream import IQ_RX_STREAM_RATES
 from espargos import CHUNK_SAMPLES, DECIM_TO_FS, IQAccumCluster, IQStreamBlock, SENSOR_COUNT
 from demos.iq.common.application import ESPARGOSIQApplication
 from demos.iq.common.iq_waterfall import WaterfallImageProvider, power_db_row
@@ -85,7 +86,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
 
     def __init__(self, argv):
         parser = argparse.ArgumentParser(description="ESPARGOS Demo: live IQ signal analyzer", add_help=False)
-        parser.add_argument("--stream", type=int, choices=(16000, 32000), nargs="?", const=16000,
+        parser.add_argument("--stream", type=int, choices=IQ_RX_STREAM_RATES, nargs="?", const=16000,
                             help="Receive continuous narrowband IQ at this sample rate in Sa/s")
         super().__init__(argv, argparse_parent=parser)
 
