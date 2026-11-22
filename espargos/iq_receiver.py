@@ -813,7 +813,7 @@ class IQReceiver(ClusterAssembler):
 
     def calibration_applies_to(self, source) -> bool:
         """Whether the stored calibration was measured in the capture epoch of
-        ``source`` (an :class:`.IQCluster`, :class:`.IQAccumCluster` or
+        ``source`` (an :class:`.IQCluster`, :class:`.IQStreamBlock`, :class:`.IQAccumCluster` or
         :class:`.IQSignalCapture`).
 
         A restarted sample engine has a new epoch. Same-frequency IQ mode

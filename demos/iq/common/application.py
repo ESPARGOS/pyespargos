@@ -269,9 +269,8 @@ class IQController(PyQt6.QtCore.QObject):
         return corrections[board_index, row, col]
 
     def display_correction(self, board_index, antenna_id, n=CHUNK_SAMPLES):
-        """:meth:`cal_correction` gated by the apply-calibration GUI toggle —
-        what demos should use in their display paths."""
-        if not self.apply_calibration:
+        """Return a display correction while the current capture is calibrated."""
+        if not self.apply_calibration or self.syncNeeded:
             return None
         return self.cal_correction(board_index, antenna_id, n)
 

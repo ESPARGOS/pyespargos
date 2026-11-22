@@ -169,11 +169,12 @@ GridLayout {
 		ToolTip.text: "Synchronize and calibrate all sensors using broadband REF at fixed gain and transmit power, verify the result, then restore receive settings."
 	}
 
-	Label { Layout.columnSpan: 2; text: "Corrections"; color: "#9fb3c8" }
+	Label { visible: !iqsettings.streaming; Layout.columnSpan: 2; text: "Corrections"; color: "#9fb3c8" }
 
-	Label { text: "Gain phase"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+	Label { visible: !iqsettings.streaming; text: "Gain phase"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 	Switch {
 		id: gainPhaseSwitch
+		visible: !iqsettings.streaming
 		checked: true
 		onToggled: if (controller) controller.set_gain_phase_compensation(checked)
 		ToolTip.visible: hovered

@@ -75,12 +75,16 @@ class ReferenceControllerTests(unittest.TestCase):
         controller._end_reference(True)
         controller.apply_config_json('{"receivers": [{"rf_freq_hz": 2438000000}]}')
         self.assertTrue(controller.syncNeeded)
+        controller.set_apply_calibration(True)
+        controller.cal_correction = lambda *args: 1j
         for callback in callbacks:
             controller._end_reference(True)
             callback("valid")
             self.assertFalse(controller.syncNeeded)
+            self.assertEqual(controller.display_correction(0, 0), 1j)
             callback("new epoch")
             self.assertTrue(controller.syncNeeded)
+            self.assertIsNone(controller.display_correction(0, 0))
         controller._begin_reference()
         controller._end_reference(False)
         self.assertTrue(controller.syncNeeded)
