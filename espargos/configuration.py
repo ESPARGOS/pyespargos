@@ -14,6 +14,7 @@ import math
 from .calibration import Antenna
 from .csi_processing import get_center_frequency
 from .iq_packet import DECIM_TO_FS
+from .iq_rx_stream import IQ_RX_STREAM_RATES, receive_sample_rate
 from .iq_tx_control import _rpc, _wait
 
 _ROUTES = {"isolated": 0, "reference": 1, "antenna_r": 2, "antenna_l": 3, "random": 4}
@@ -201,10 +202,16 @@ def _iq_rx(ctx, options):
     if "sample_rate_hz" in options:
         _board_wide(ctx)
         rates = {v: k for k, v in DECIM_TO_FS.items()}
-        if options["sample_rate_hz"] not in rates:
-            raise ValueError(f"sample_rate_hz must be one of {tuple(rates)}")
-        settings["adc_decimation"] = rates[options["sample_rate_hz"]]
-        if settings["adc_decimation"] != ctx.snapshot["adc_decimation"]:
+        rate = options["sample_rate_hz"]
+        if rate in IQ_RX_STREAM_RATES:
+            settings["trigger"] = {"mode": "stream", "sample_rate_hz": int(rate)}
+        elif rate in rates:
+            settings["adc_decimation"] = rates[rate]
+            if ctx.snapshot.get("trigger", {}).get("mode") == "stream":
+                settings["trigger"] = {"mode": "interval"}
+        else:
+            raise ValueError(f"sample_rate_hz must be one of {(*IQ_RX_STREAM_RATES, *rates)}")
+        if rate != receive_sample_rate(ctx.snapshot):
             invalidated.update(_identities(ctx))
     if "output" in options:
         _board_wide(ctx)

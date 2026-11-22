@@ -25,7 +25,7 @@ from espargos.calibration import Calibration
 from ._iq_calibration import reference as iq_reference
 from . import iq_tone
 from .iq_accum_cluster import IQAccumCluster
-from .iq_rx_stream import IQStreamBlock, IQStreamPacket
+from .iq_rx_stream import IQStreamBlock, IQStreamPacket, receive_sample_rate
 from .iq_cluster import CHUNK_SAMPLES, IQCluster
 from .iq_packet import DECIM_TO_FS, IQ_SYNC_INFO_GRID_SYNCED, IQAccumPacket
 from .iq_signal_capture import IQSignalAssembler
@@ -552,7 +552,7 @@ class IQReceiver(ClusterAssembler):
         p = sensor_message.payload
         if isinstance(p, IQStreamPacket):
             # Free-running counters are local to an individual antenna.
-            local = None if p.synchronized else (board_index, sensor_message.antenna_id)
+            local = None if p.synchronized else (board_index, sensor_message.antenna_id, p.fire_time_ns)
             generation = p.config_generation if len(self.boards) == 1 else None
             return (p.sync_info, generation, local, p.center_freq_hz, p.sample_rate_hz, p.first_sample)
         if isinstance(sensor_message.payload, IQAccumPacket):
@@ -680,10 +680,12 @@ class IQReceiver(ClusterAssembler):
             from .calibration import Antenna
 
             sensitive = {"adc_decimation", "adc_source_sel", "bw_mhz", "second_chan", "filter_bw_mhz", "loopback", "tx_tone_enable", "mode", "modes"}
-            if sensitive.intersection(config) or any("rf_freq_hz" in r for r in config.get("receivers", [])):
+            if "trigger" in config or sensitive.intersection(config) or any("rf_freq_hz" in r for r in config.get("receivers", [])):
                 invalid = set()
                 for board in self.boards:
                     old = board.iq.get_config()
+                    if "trigger" in config and receive_sample_rate(old) != receive_sample_rate(old | config):
+                        invalid.update(Antenna(board.host, a) for a, mode in enumerate(old["modes"]) if mode == "iq_rx")
                     if any(key in config and config[key] != old.get(key) for key in sensitive):
                         invalid.update(Antenna(board.host, a) for a in range(8))
                     for r in config.get("receivers", []):
@@ -817,6 +819,12 @@ class IQReceiver(ClusterAssembler):
         A restarted sample engine has a new epoch. Same-frequency IQ mode
         switches through the pool transfer the correction to that epoch.
         Unhandled restarts and retunes remain detectable as a mismatch."""
+        if isinstance(source, IQStreamBlock) and (
+            not source.synchronized
+            or source.center_freq_hz != self._calibration_center_frequency
+            or source.sample_rate_hz != self._calibration_sample_rate
+        ):
+            return False
         return self._calibration is not None and self._calibration_epoch == np.asarray(source.fire_time_ns, dtype=np.uint64).tobytes()
 
     def cal_correction(self, fft_size=CHUNK_SAMPLES):

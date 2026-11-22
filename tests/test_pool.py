@@ -51,6 +51,20 @@ class PoolTests(unittest.TestCase):
         patch("espargos.configuration._wait", self.wait).start()
         self.addCleanup(patch.stopall)
 
+    def test_rx_sample_rate_selects_capture_path(self):
+        with Pool("a") as pool:
+            pool.configure(mode="iq_rx", sample_rate_hz=16000)
+            iq = pool.boards[0].iq
+            self.assertEqual(iq.config["trigger"], {"mode": "stream", "sample_rate_hz": 16000})
+            pool.configure(sample_rate_hz=32e3)
+            self.assertEqual(iq.config["trigger"]["sample_rate_hz"], 32000)
+            pool.configure(sample_rate_hz=20e6)
+            self.assertEqual(iq.config["trigger"], {"mode": "interval"})
+            self.assertEqual(iq.config["adc_decimation"], 4)
+            iq.set_config({"trigger": {"mode": "signal", "threshold": 80}})
+            pool.configure(sample_rate_hz=40e6)
+            self.assertEqual(iq.config["trigger"], {"mode": "signal", "threshold": 80})
+
     def test_selections_are_lazy_and_non_owning(self):
         a = Pool(["a", "b"])
         view = a.select(boards="a", antennas=[1, 5])

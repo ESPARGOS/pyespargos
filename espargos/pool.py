@@ -66,7 +66,9 @@ class AntennaSelection:
         """Update only selected antennas; mode changes do not calibrate or start TX.
 
         RX sample rate and RX output routing require all eight antennas on a
-        board. TX sample rate is shared by all transmitters: select every IQ TX
+        board. For IQ RX, 16000 and 32000 Sa/s select continuous narrowband
+        streaming. A wideband rate selects triggered capture and preserves the
+        current trigger if it is already a wideband mode. TX sample rate is shared by all transmitters: select every IQ TX
         antenna on each affected board to change it.
         WiFi tuning uses channel/secondary_channel (or a channel-center frequency).
         WiFi gain controls remain available through board.wifi_rx.

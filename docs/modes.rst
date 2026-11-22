@@ -28,7 +28,9 @@ Sensor modes
 **IQ RX**
    Capture a waveform at a chosen center frequency without requiring a WiFi
    or BLE packet. Use this for signals with an unknown or custom modulation,
-   or when you want to choose the capture trigger yourself. See :doc:`iq-reception`.
+   or when you want to choose the capture trigger yourself. See :doc:`iq-reception`
+   for triggered wideband captures and :doc:`iq-receive-streaming` for
+   continuous narrowband samples.
 
 **IQ TX**
    Transmit a waveform from a repeating buffer or a live stream. A sensor

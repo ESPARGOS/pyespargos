@@ -25,7 +25,7 @@ def test_receiver_edits_coalesce_off_gui_and_replace_trigger_mode():
         captures.append(config)
         finished.set()
 
-    receiver = SimpleNamespace(add_callback=lambda cb: None, add_accumulation_callback=lambda cb: None, calibration=object(), calibration_center_frequency=2472000000, calibration_sample_rate=80000000, apply_config=apply)
+    receiver = SimpleNamespace(add_callback=lambda cb: None, add_accumulation_callback=lambda cb: None, add_stream_callback=lambda cb: None, calibration=object(), calibration_center_frequency=2472000000, calibration_sample_rate=80000000, apply_config=apply)
     controller = IQController(SimpleNamespace(iq=receiver, configure=configure))
     try:
         controller.queue_config_json('{"rx_gain":35}')
@@ -47,7 +47,7 @@ def test_receiver_edits_coalesce_off_gui_and_replace_trigger_mode():
 def test_closed_controller_does_not_start_hardware_edits():
     app = QCoreApplication.instance() or QCoreApplication([])
     calls = []
-    receiver = SimpleNamespace(add_callback=lambda cb: None, add_accumulation_callback=lambda cb: None)
+    receiver = SimpleNamespace(add_callback=lambda cb: None, add_accumulation_callback=lambda cb: None, add_stream_callback=lambda cb: None)
     controller = IQController(SimpleNamespace(iq=receiver, configure=lambda **cfg: calls.append(cfg)))
     controller.close()
     controller.apply_config_json('{"rx_gain":40}')
@@ -63,7 +63,7 @@ def test_shutdown_waits_for_calibration_before_pool_can_close():
         entered.set()
         assert release.wait(2)
 
-    receiver = SimpleNamespace(add_callback=lambda cb: None, add_accumulation_callback=lambda cb: None)
+    receiver = SimpleNamespace(add_callback=lambda cb: None, add_accumulation_callback=lambda cb: None, add_stream_callback=lambda cb: None)
     controller = IQController(SimpleNamespace(iq=receiver, calibrate=calibrate))
     controller.sync_async()
     assert entered.wait(1)

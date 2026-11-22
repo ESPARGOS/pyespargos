@@ -380,7 +380,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
                 if not np.any(present) or (self.display_mode == "phase" and not cluster.synchronized):
                     continue
                 generation = int(cluster.config_generation[board][present][0])
-                epoch = ("stream", generation, cluster.sample_rate_hz, cluster.synchronized)
+                epoch = ("stream", generation, cluster.center_freq_hz, cluster.sample_rate_hz, cluster.sync_info)
             elif isinstance(cluster, IQAccumCluster):
                 epoch = ("accum", tuple(cluster.config_generation[board].flat))
             else:
@@ -447,7 +447,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
                 print(f"render error: {e}", file=sys.stderr)
 
     def _render_block_rows(self, sets, mode, chunk_samples=CHUNK_SAMPLES):
-        """Assemble fft_size/256 CONSECUTIVE chunks per sensor into one
+        """Assemble consecutive chunks per sensor into one
         display unit, a waterfall row or one time-domain trace window (blocks
         aligned to the synchronized index grid, so rows and traces line up in
         time across sensors; a sensor that did not deliver a block gets a

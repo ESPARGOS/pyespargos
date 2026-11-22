@@ -8,6 +8,7 @@ import numpy as np
 from .iq_packet import DECIM_TO_FS, IQ_SYNC_INFO_GRID_SYNCED, IQ_SYNC_INFO_FIRE_TIME_VALID
 from .sensor_cluster import ClusterCollisionError, SensorCluster
 
+IQ_RX_STREAM_RATES = (16000, 32000)
 IQ_RX_STREAM_TYPE_HEADER = int.from_bytes(b"IRS1", "little")
 
 
@@ -28,7 +29,7 @@ class IQStreamPacket:
         if len(data) != self._HEADER.size + self.SAMPLE_COUNT * 4 + 4:
             raise ValueError("Invalid IQ stream block length")
         magic, self.config_generation, self.sync_info, self.center_freq_hz, self.first_sample, self.fire_time_ns, self.grid_origin_ns, self.sample_rate_hz = self._HEADER.unpack_from(data)
-        if magic != IQ_RX_STREAM_TYPE_HEADER or self.sample_rate_hz not in (16000, 32000):
+        if magic != IQ_RX_STREAM_TYPE_HEADER or self.sample_rate_hz not in IQ_RX_STREAM_RATES:
             raise ValueError("Invalid IQ stream header")
         if zlib.crc32(memoryview(data)[:-4]) != struct.unpack_from("<I", data, len(data) - 4)[0]:
             raise ValueError("Invalid IQ stream checksum")
@@ -53,6 +54,7 @@ class IQStreamBlock(SensorCluster):
 
     def __init__(self, packet, revisions):
         super().__init__(revisions)
+        self.sync_info = packet.sync_info
         self.first_sample = packet.first_sample
         self.sample_rate_hz = packet.sample_rate_hz
         self.center_freq_hz = packet.center_freq_hz

@@ -105,7 +105,8 @@ assigns a different receiver drawer in its own ``Main.qml``.
   camera also uses this controller and adds its own beamforming and video.
 * **Raw IQ.** ``ESPARGOSIQApplication`` starts the receiver's processing worker.
   Use ``create_iq_controller()`` for a drawer that controls capture and
-  synchronization. The signal analyzer shows how to use it without a camera.
+  synchronization. The signal analyzer uses the same time and spectrum displays
+  for triggered IQ and :doc:`iq-receive-streaming`.
 * **IQ transmission.** The beamforming demo exposes its worker as ``txcontrol``.
   It connects after QML loads, prepares the sensors, calibrates and starts
   playback. The window calls ``txcontrol.close()`` so the worker can mute the

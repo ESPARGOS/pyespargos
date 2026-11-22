@@ -26,6 +26,7 @@ Table of contents
    ble-reception
    ble-transmission
    iq-reception
+   iq-receive-streaming
    iq-transmission
    iq-transmit-streaming
    iq-beam-steering

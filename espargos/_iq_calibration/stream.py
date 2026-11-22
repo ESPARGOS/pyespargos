@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 
-from ..iq_rx_stream import IQStreamBlock
+from ..iq_rx_stream import IQStreamBlock, IQStreamPacket
 
 
 def _tone(receiver, scope, center, offset, rate, backoff, timeout):
@@ -12,11 +12,13 @@ def _tone(receiver, scope, center, offset, rate, backoff, timeout):
     generations = {i: receiver.boards[i].iq.get_config()["config_generation"] for i in scope.active}
     frames = []
     wake = threading.Event()
-    bins = np.fft.fftfreq(128, 1 / rate)
-    window = np.hanning(128)
+    n = IQStreamPacket.SAMPLE_COUNT
+    bins = np.fft.fftfreq(n, 1 / rate)
+    window = np.hanning(n)
+    board, antenna = scope.pairs[0]
+    pos = (board, *receiver.boards[board].revision.antenna_id_to_row_col(antenna))
+    reference = np.flatnonzero(scope.mask.ravel()).searchsorted(np.ravel_multi_index(pos, scope.mask.shape))
     # The reference synthesizer rounds the requested RF frequency. Fit the measured tone.
-    search = abs(bins - offset) <= 2000
-    positions = np.flatnonzero(search)
     epoch = None
     origin = None
 
@@ -30,7 +32,7 @@ def _tone(receiver, scope, center, offset, rate, backoff, timeout):
         spectrum = np.fft.fft((iq - iq.mean(axis=-1, keepdims=True)) * window, axis=-1)
         power = np.sum(abs(spectrum) ** 2, axis=0)
         peak = int(np.argmax(power))
-        if peak not in positions:
+        if abs(bins[peak] - offset) > 2000:
             return
         tone = spectrum[:, peak] / window.sum()
         if min(abs(tone)) < 2 or max(abs(tone)) > 480:
@@ -38,7 +40,11 @@ def _tone(receiver, scope, center, offset, rate, backoff, timeout):
         if epoch is None or not np.array_equal(epoch[scope.mask], block.fire_time_ns[scope.mask]):
             epoch, origin = block.fire_time_ns.copy(), block.grid_origin_ns.copy()
             frames.clear()
-        frames.append((bins[peak], tone * np.conj(tone[0])))
+        # Refine the frequency within one FFT bin using the Hann main lobe.
+        left, mid, right = np.log(np.maximum(power[[(peak-1) % n, peak, (peak+1) % n]], 1e-30))
+        curvature = left - 2 * mid + right
+        fraction = (left - right) / (2 * curvature) if curvature < 0 else 0
+        frames.append((bins[peak] + fraction * rate / n, tone * np.conj(tone[reference])))
         if len(frames) == 16:
             wake.set()
 
@@ -67,12 +73,15 @@ def _tone(receiver, scope, center, offset, rate, backoff, timeout):
 
 def measure(receiver, scope, center, rate, backoff, timeout):
     """Fit three tones across the passband and verify on a fourth tone."""
+    # Alternate sides so buffered samples from the previous tone cannot pass
+    # the next tone's frequency check, including at the lowest output rate.
     observations = [_tone(receiver, scope, center, round(x * rate), rate, backoff, timeout)
-                    for x in (-0.30, -0.11, 0.30, 0.14)]
+                    for x in (-0.30, 0.30, -0.13, 0.16)]
     f, phase, epochs, origins = zip(*observations)
     if any(not np.array_equal(t[scope.mask], epochs[0][scope.mask]) for t in epochs[1:]):
         raise RuntimeError("Narrowband receiver restarted during calibration")
-    slope, intercept = np.polyfit(f[:3], np.unwrap(phase[:3], axis=0), 1)
+    order = np.argsort(f[:3])
+    slope, intercept = np.polyfit(np.asarray(f)[order], np.unwrap(np.asarray(phase)[order], axis=0), 1)
     residual = abs(np.angle(np.exp(1j * (phase[3] - (slope * f[3] + intercept)))))
     if max(residual) > 0.15:
         raise RuntimeError(f"Narrowband reference validation residual {max(residual):.3f} rad")

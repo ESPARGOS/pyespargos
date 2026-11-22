@@ -20,6 +20,7 @@ from demos.common.application import ESPARGOSApplication
 from espargos import Pool, iq_tone
 from espargos.iq_cluster import CHUNK_SAMPLES
 from espargos.iq_packet import DECIM_TO_FS
+from espargos.iq_rx_stream import receive_sample_rate
 from espargos.iq_receiver import IQReceiver, iq_receiver_config
 
 __all__ = ["ESPARGOSIQApplication", "IQController"]
@@ -69,6 +70,7 @@ class IQController(PyQt6.QtCore.QObject):
         self._config_worker = None
         self._io_workers = []
         self._closing = False
+        self.receiver.add_stream_callback(self._observe_capture)
         self.receiver.add_callback(self._observe_capture)
         self.receiver.add_accumulation_callback(self._observe_capture)
 
@@ -94,7 +96,8 @@ class IQController(PyQt6.QtCore.QObject):
         rate = self.receiver.calibration_sample_rate
         frequencies = [r.get("rf_freq_hz", center) for r in config.get("receivers", [])]
         frequencies.append(config.get("rf_freq_hz", center))
-        if self.receiver.calibration is None or any(f != center for f in frequencies) or DECIM_TO_FS.get(config.get("adc_decimation"), rate) != rate:
+        capture_rate = receive_sample_rate(config) if "adc_decimation" in config or config.get("trigger", {}).get("mode") == "stream" else rate
+        if self.receiver.calibration is None or any(f != center for f in frequencies) or capture_rate != rate:
             self._set_sync_needed(True)
 
     def _begin_reference(self):
