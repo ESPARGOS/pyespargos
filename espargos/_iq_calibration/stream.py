@@ -149,14 +149,30 @@ def _measure_noise(receiver, scope, center, rate, timeout, bandwidth_fraction=1.
         offsets = (spacing, outer)
     elif center + spacing > TONE_MAX_HZ:
         offsets = (-spacing, -outer)
+    if rate == 16000 and backoff >= 40:
+        # A narrow slice can fall in a spectral null. Try another frequency
+        # for that observation without discarding an already coherent fit.
+        side = -1 if center > (TONE_MIN_HZ + TONE_MAX_HZ) / 2 else 1
+        offsets += (side * 625000, side * 1250000, side * 15625000)
+    failure = None
     reference = _reference_index(receiver, scope)
     trials = []
     for offset in offsets:
         receiver.master_board.iq.set_reference("iq", int(center + offset), backoff)
         frames, epoch, origin = _observe(receiver, scope, center, rate, timeout, 200, lambda x: x, "noise reference")
         # Discard the reference transition and any buffered samples preceding it.
-        delay, phase = _fit_noise(frames[24:], reference, bandwidth_fraction)
+        try:
+            delay, phase = _fit_noise(frames[24:], reference, bandwidth_fraction)
+        except RuntimeError as error:
+            if len(offsets) == 2:
+                raise
+            failure = error
+            continue
         trials.append((delay, phase, epoch, origin))
+        if len(trials) == 2:
+            break
+    else:
+        raise RuntimeError("Two coherent Bluetooth reference measurements are required") from failure
     (d1, p1, epoch, origin), (d2, p2, second_epoch, _) = trials
     if not np.array_equal(epoch[scope.mask], second_epoch[scope.mask]):
         raise RuntimeError("Narrowband receiver restarted during calibration")
