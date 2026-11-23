@@ -126,6 +126,25 @@ def reference_session(pool, center_hz=None, rx_gain=None, scope=None, keep_bluet
         pool._reference_lock.release()
 
 
+def configure_timing_capture(scope, center, gain):
+    """Switch trigger and radio path together, including on a downsample retry."""
+    scope.apply_rx(
+        {
+            "mode": "iq",
+            "capture_path": "wifi",
+            "adc_source_sel": 15,
+            "loopback": 0,
+            "tx_tone_enable": 0,
+            "adc_decimation": 1,
+            "rf_switch": 1,
+            "gain_mode": "manual",
+            "rx_gain": gain,
+            "rf_freq_hz": center,
+            "trigger": {"mode": "interval", "interval_chunks": 16384, "burst_chunks": 1},
+        }
+    )
+
+
 @contextmanager
 def _reference_session(pool, center_hz=None, rx_gain=None, scope=None, keep_bluetooth_epoch=False):
     """Restore each board's settings on every exit, including failed acquisition."""
@@ -162,21 +181,7 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None, keep_blue
             # samples. Reuse the live PLL and ADC until a new grid is needed.
             scope.apply_rx({"mode": "iq", "rf_switch": 1})
         else:
-            scope.apply_rx(
-                {
-                    "mode": "iq",
-                    "capture_path": "wifi",
-                    "adc_source_sel": 15,
-                    "loopback": 0,
-                    "tx_tone_enable": 0,
-                    "adc_decimation": 1,
-                    "rf_switch": 1,
-                    "gain_mode": "manual",
-                    "rx_gain": rx_gain,
-                    "rf_freq_hz": timing_center,
-                    "trigger": {"mode": "interval", "interval_chunks": 16384, "burst_chunks": 1},
-                }
-            )
+            configure_timing_capture(scope, timing_center, rx_gain)
         _map(lambda bi: _wait(pool.boards[bi], lambda state: all(state["sensors"][a]["applied_mode"] == "iq_rx" for a in scope.ids[bi]), 3), scope.active)
         yield center, fs
     finally:

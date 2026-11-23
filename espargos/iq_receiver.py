@@ -995,7 +995,7 @@ class IQReceiver(ClusterAssembler):
                         if not board.is_stream_connected:
                             board.start(transports=self._owner._transports)
                     if bluetooth and attempt:
-                        scope.apply_rx({"capture_path": "wifi", "adc_decimation": 1, "adc_source_sel": 15, "loopback": 0, "tx_tone_enable": 0, "gain_mode": "manual", "rx_gain": coarse_gain, "rf_freq_hz": timing_center})
+                        iq_reference.configure_timing_capture(scope, timing_center, coarse_gain)
                     if keep_bluetooth_epoch and attempt == 0:
                         seqs = None
                     elif preserve_grid or (warm_grid and attempt == 0):
