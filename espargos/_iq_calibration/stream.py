@@ -139,15 +139,16 @@ def _fit_noise(blocks, reference, bandwidth_fraction=1.0):
     return delay, np.angle(mean)
 
 
-def _measure_noise(receiver, scope, center, rate, timeout, bandwidth_fraction=1.0, backoff=0):
+def _measure_noise(receiver, scope, center, rate, timeout, bandwidth_fraction=1.0, backoff=0, spacing=4000000):
     # A full-power CW can clip high-gain receivers even at maximum backoff.
     # Spread reference power over the wider analog band and validate the fit
     # with a second, independently tuned reference.
-    offsets = (4e6, -4e6)
-    if center - 4e6 < TONE_MIN_HZ:
-        offsets = (4e6, 6e6)
-    elif center + 4e6 > TONE_MAX_HZ:
-        offsets = (-4e6, -6e6)
+    outer = round(1.5 * spacing / 1000) * 1000
+    offsets = (spacing, -spacing)
+    if center - spacing < TONE_MIN_HZ:
+        offsets = (spacing, outer)
+    elif center + spacing > TONE_MAX_HZ:
+        offsets = (-spacing, -outer)
     reference = _reference_index(receiver, scope)
     trials = []
     for offset in offsets:
@@ -187,6 +188,10 @@ def measure_bluetooth(receiver, scope, configs, center, rate, timeout, attempt, 
     # A raw capture covers the analog passband. Independent broadband probes
     # avoid the compression seen with a CW even at modest receiver gains.
     # Vary the reference power on retries, preserving the measured RF state.
+    if streaming and prefer_noise and rate <= 16000:
+        # Reduce compression first, then move to an occupied OFDM subcarrier.
+        trial = attempt % 3
+        return _measure_noise(receiver, scope, center, rate, timeout, bandwidth / rate, (80, 40, 0)[trial], 4000000 if trial == 0 else 3125000)
     if streaming:
         noise = attempt % 3 == (0 if prefer_noise else 1)
     else:
