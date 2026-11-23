@@ -229,8 +229,8 @@ def _iq_rx(ctx, options):
         _board_wide(ctx)
         bw = options["bandwidth_mhz"]
         if path == "bluetooth":
-            if bw not in (1.2, 1.5, 2.1, 2.9, 3.8, 5.2, 8.3):
-                raise ValueError("Unsupported Bluetooth filter bandwidth")
+            if not 1.2 <= bw <= 8.3:
+                raise ValueError("Bluetooth filter bandwidth must be 1.2 to 8.3 MHz")
             settings["bluetooth_filter_khz"] = round(bw * 1000)
         else:
             if bw != 0 and (bw != int(bw) or not 13 <= bw <= 54):
