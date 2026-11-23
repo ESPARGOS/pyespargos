@@ -310,6 +310,23 @@ def test_narrow_high_gain_reference_at_tuning_limits(monkeypatch, attempt, backo
     expected = [center + direction * offset for offset in [spacing, round(1.5 * spacing / 1000) * 1000]]
     assert [call.args for call in iq.set_reference.call_args_list] == [("iq", frequency, backoff) for frequency in expected]
 
+    # A null between two usable observations must keep the first fit.
+    # The next independent observation still measures the same receiver.
+    fit = stream._fit_noise
+    observed = []
+
+    def null_on_second(*args):
+        observed.append(phase)
+        if len(observed) == 2:
+            raise RuntimeError("Insufficient coherent bandwidth")
+        return fit(*args)
+
+    monkeypatch.setattr(stream, "_fit_noise", null_on_second)
+    _, recovered, _, _ = stream.measure_bluetooth(receiver, scope, configs, center, 16000, 3, attempt)
+    np.testing.assert_allclose(recovered, measured, atol=1e-7)
+    assert len(observed) == 3
+    monkeypatch.setattr(stream, "_fit_noise", fit)
+
     # Keep both training waveforms individually coherent, but change the
     # phase on the independent measurement. The two fits must disagree.
     def disagree(*args):
