@@ -104,6 +104,11 @@ class IQChunkPacket:
     def is_signal_last(self) -> bool:
         return bool(self.flags & IQ_CHUNK_FLAG_SIGNAL_LAST)
 
+    @property
+    def capture_path(self):
+        """Front end used for this capture."""
+        return "bluetooth" if self.adc_decimation == 0 else "wifi"
+
     def decode_iq(self):
         """Complex baseband samples. Each 32-bit dump word packs I in bits 0-9 and
         Q in bits 10-19 (both 10-bit signed two's complement); bits 20-31 carry

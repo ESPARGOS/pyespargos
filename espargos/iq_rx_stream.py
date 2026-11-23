@@ -16,6 +16,8 @@ def receive_sample_rate(config):
     trigger = config.get("trigger", {})
     if trigger.get("mode") == "stream":
         return trigger.get("sample_rate_hz", 16000)
+    if config.get("capture_path") == "bluetooth":
+        return config["bluetooth_sample_rate_hz"]
     return DECIM_TO_FS[config["adc_decimation"]]
 
 

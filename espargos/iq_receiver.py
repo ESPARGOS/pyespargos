@@ -704,7 +704,7 @@ class IQReceiver(ClusterAssembler):
         if self._owner.calibrations.groups:
             from .calibration import Antenna
 
-            sensitive = {"adc_decimation", "adc_source_sel", "bw_mhz", "second_chan", "filter_bw_mhz", "loopback", "tx_tone_enable", "mode", "modes"}
+            sensitive = {"capture_path", "bluetooth_sample_rate_hz", "bluetooth_filter_khz", "adc_decimation", "adc_source_sel", "bw_mhz", "second_chan", "filter_bw_mhz", "loopback", "tx_tone_enable", "mode", "modes"}
             if "trigger" in config or sensitive.intersection(config) or config.get("receivers"):
                 invalid = set()
                 for board in self.boards:

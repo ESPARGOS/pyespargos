@@ -50,6 +50,42 @@ that is ``(1, 2, 4, 256)``.
 and invokes their registered callbacks.
 Do not also call :meth:`run() <espargos.pool.Pool.run>` from your own loop while that thread is running.
 
+Capture paths
+-------------
+
+Both modem paths can capture an arbitrary RF waveform. The WiFi path is useful
+for wider signals. The Bluetooth path offers smaller analog bandwidths and can
+sample down to 1.6 MSa/s. Selecting it does not require a Bluetooth transmitter.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Capture path
+     - Complex sample rates (MSa/s)
+     - Approximate analog bandwidth (MHz)
+   * - WiFi
+     - 80, 40, 20, 10, 8, 4
+     - 13 to 54 in the 20 MHz channel configuration
+   * - Bluetooth
+     - 32, 16, 8, 4, 3.2, 1.6
+     - 1.2, 1.5, 2.1, 2.9, 3.8, 5.2, 8.3
+
+For example, to capture a signal near 2467 MHz on all antennas::
+
+   pool.configure(mode="iq_rx", frequency_hz=2467e6, capture_path="bluetooth",
+                  sample_rate_hz=4e6, bandwidth_mhz=2.1)
+
+The bandwidths are full widths around the tuned frequency. A 2.1 MHz filter
+extends about 1.05 MHz to either side. Leave room for the filter to roll off
+before the Nyquist frequency when strong signals occupy adjacent channels.
+Changing the capture rate alone does not narrow the analog filter.
+
+For array accumulation, establish the sample grid on the WiFi path first,
+then switch to Bluetooth. The WiFi phase correction does not transfer across
+that switch. Triggered Bluetooth capture currently provides uncalibrated IQ. For a
+continuous low-rate stream, see :doc:`iq-receive-streaming`. That mode selects
+its own analog filter and digitally filters the signal before reducing the rate.
+
 The Trigger Modes
 -----------------
 

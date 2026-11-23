@@ -43,6 +43,8 @@ class CalibrationScope:
         Firmware synchronization is board-wide and cannot run alongside TX.
         Do not silently recruit unselected sensors to acquire a new grid.
         """
+        if any(configs[i].get("capture_path") == "bluetooth" and configs[i]["trigger"]["mode"] != "stream" for i in self.active):
+            raise ValueError("Phase calibration of triggered Bluetooth IQ captures is not available")
         outside = any(c["modes"][a] in ("iq_rx", "iq_tx") for bi, c in enumerate(configs) if bi in self.active for a in range(8) if a not in self.ids[bi])
         if outside:
             if not all(configs[bi].get("coarse_synced", False) for bi in self.active):

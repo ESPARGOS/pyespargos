@@ -179,7 +179,7 @@ def _wifi(ctx, options):
 
 
 def _iq_rx(ctx, options):
-    _validate(options, ("frequency_hz", "sample_rate_hz", "rx_gain", "gain_mode", "output"))
+    _validate(options, ("frequency_hz", "sample_rate_hz", "rx_gain", "gain_mode", "output", "capture_path", "bandwidth_mhz"))
     settings, receivers, invalidated = {}, {}, set()
     receiver = {}
     if "frequency_hz" in options:
@@ -202,18 +202,47 @@ def _iq_rx(ctx, options):
             invalidated.add(Antenna(ctx.board.host, a))
     if receivers:
         settings["receivers"] = list(receivers.values())
+    path = options.get("capture_path", ctx.snapshot.get("capture_path", "wifi"))
+    if path not in ("wifi", "bluetooth"):
+        raise ValueError("capture_path must be wifi or bluetooth")
+    if options.keys() & {"capture_path", "bandwidth_mhz"}:
+        if options.get("sample_rate_hz") in IQ_RX_STREAM_RATES:
+            raise ValueError("Continuous streaming selects its own capture path and analog bandwidth")
+        if ctx.snapshot.get("trigger", {}).get("mode") == "stream":
+            settings["trigger"] = {"mode": "interval"}
+    if "capture_path" in options:
+        _board_wide(ctx)
+        settings["capture_path"] = path
+        if path != ctx.snapshot.get("capture_path", "wifi"):
+            invalidated.update(_identities(ctx))
+    if "bandwidth_mhz" in options:
+        _board_wide(ctx)
+        bw = options["bandwidth_mhz"]
+        if path == "bluetooth":
+            if bw not in (1.2, 1.5, 2.1, 2.9, 3.8, 5.2, 8.3):
+                raise ValueError("Unsupported Bluetooth filter bandwidth")
+            settings["bluetooth_filter_khz"] = round(bw * 1000)
+        else:
+            if bw != 0 and (bw != int(bw) or not 13 <= bw <= 54):
+                raise ValueError("WiFi filter bandwidth must be 0 or 13 to 54 MHz")
+            settings["filter_bw_mhz"] = int(bw)
+        invalidated.update(_identities(ctx))
     if "sample_rate_hz" in options:
         _board_wide(ctx)
         rates = {v: k for k, v in DECIM_TO_FS.items()}
         rate = options["sample_rate_hz"]
         if rate in IQ_RX_STREAM_RATES:
             settings["trigger"] = {"mode": "stream", "sample_rate_hz": int(rate)}
-        elif rate in rates:
+        elif path == "bluetooth" and rate in (32e6, 16e6, 8e6, 4e6, 3.2e6, 1.6e6):
+            settings["bluetooth_sample_rate_hz"] = int(rate)
+            if ctx.snapshot.get("trigger", {}).get("mode") == "stream":
+                settings["trigger"] = {"mode": "interval"}
+        elif path == "wifi" and rate in rates:
             settings["adc_decimation"] = rates[rate]
             if ctx.snapshot.get("trigger", {}).get("mode") == "stream":
                 settings["trigger"] = {"mode": "interval"}
         else:
-            raise ValueError(f"sample_rate_hz must be one of {(*IQ_RX_STREAM_RATES, *rates)}")
+            raise ValueError(f"Unsupported {path} IQ receive sample rate {rate}")
         if rate != receive_sample_rate(ctx.snapshot):
             invalidated.update(_identities(ctx))
     if "output" in options:

@@ -94,7 +94,7 @@ class IQCluster(SensorCluster):
         # no correction to one chunk is preferable to killing the pool's
         # processing thread (and phase-only compensation is irrelevant to
         # single-channel consumers such as the WiFi packet receiver).
-        if self._gain_phase_enabled and np.all(rx_gain < RX_GAIN_TABLE_ENTRIES):
+        if self._gain_phase_enabled and getattr(payload, "capture_path", "wifi") == "wifi" and np.all(rx_gain < RX_GAIN_TABLE_ENTRIES):
             iq = gain_phase_calibration.apply(iq, rx_gain)
         if self._completion[position]:
             if np.array_equal(self._iq[position], iq):

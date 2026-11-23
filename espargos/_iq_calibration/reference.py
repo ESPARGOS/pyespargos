@@ -116,7 +116,7 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None):
             _rpc(pool.boards[bi], "set_iq_tx", {"muted": True})
             _wait(pool.boards[bi], lambda state: all(not x["enabled"] or abs(x["applied_amplitude"]) < 1e-8 for x in state["sensors"]), 3)
         pool.master_board.iq.set_reference()
-        scope.apply_rx({"mode": "iq", "adc_decimation": 1, "rf_switch": 1, "gain_mode": "manual", "rx_gain": rx_gain, "rf_freq_hz": center, "trigger": {"mode": "interval", "interval_chunks": 16384, "burst_chunks": 1}})
+        scope.apply_rx({"mode": "iq", "capture_path": "wifi", "adc_decimation": 1, "rf_switch": 1, "gain_mode": "manual", "rx_gain": rx_gain, "rf_freq_hz": center, "trigger": {"mode": "interval", "interval_chunks": 16384, "burst_chunks": 1}})
         _map(lambda bi: _wait(pool.boards[bi], lambda state: all(state["sensors"][a]["applied_mode"] == "iq_rx" for a in scope.ids[bi]), 3), scope.active)
         yield center, fs
     finally:
@@ -129,6 +129,8 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None):
                 bi, config = pair
                 board = pool.boards[bi]
                 restore = {k: config[k] for k in ("rf_switch", "trigger", "adc_decimation")}
+                if "capture_path" in config:
+                    restore["capture_path"] = config["capture_path"]
                 restore["receivers"] = [config["receivers"][a] for a in scope.ids[bi]]
                 # An explicitly requested calibration retune becomes the new operating frequency.
                 if center_hz is not None:

@@ -62,19 +62,20 @@ class AntennaSelection:
             raise ValueError("Selection contains no antennas")
         return AntennaSelection(owner, selected)
 
-    def configure(self, *, mode=None, frequency_hz=None, sample_rate_hz=None, rx_gain=None, gain_mode=None, rf_gain=None, bandwidth_mhz=None, output=None, channel=None, secondary_channel=None, boot_sync=None):
+    def configure(self, *, mode=None, capture_path=None, frequency_hz=None, sample_rate_hz=None, rx_gain=None, gain_mode=None, rf_gain=None, bandwidth_mhz=None, output=None, channel=None, secondary_channel=None, boot_sync=None):
         """Update only selected antennas; mode changes do not calibrate or start TX.
 
         RX sample rate and RX output routing require all eight antennas on a
-        board. For IQ RX, 16000 and 32000 Sa/s select continuous narrowband
-        streaming. A wideband rate selects triggered capture and preserves the
-        current trigger if it is already a wideband mode. TX sample rate is shared by all transmitters: select every IQ TX
+        board. For triggered IQ RX, capture_path selects the WiFi or Bluetooth
+        receiver, and bandwidth_mhz selects its analog filter. Streaming
+        rates from 16 to 100 kSa/s use a fixed Bluetooth front end.
+        TX sample rate is shared by all transmitters: select every IQ TX
         antenna on each affected board to change it.
         WiFi tuning uses channel/secondary_channel (or a channel-center frequency).
         WiFi gain controls remain available through board.wifi_rx.
         """
         from .configuration import configure
-        return configure(self, mode=mode, frequency_hz=frequency_hz, sample_rate_hz=sample_rate_hz,
+        return configure(self, mode=mode, capture_path=capture_path, frequency_hz=frequency_hz, sample_rate_hz=sample_rate_hz,
                          rx_gain=rx_gain, gain_mode=gain_mode, rf_gain=rf_gain,
                          bandwidth_mhz=bandwidth_mhz, output=output, channel=channel,
                          secondary_channel=secondary_channel, boot_sync=boot_sync)
