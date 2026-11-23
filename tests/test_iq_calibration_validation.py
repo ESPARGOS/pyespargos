@@ -59,3 +59,41 @@ def test_held_out_broadband_reference(phase_change):
             np.testing.assert_allclose(corrected, 1, atol=0.015)
 
     board.start.assert_called_once_with(transports=["websocket"])
+
+
+def test_downsample_pilot_retry_switches_radio_and_trigger_together():
+    from espargos._iq_calibration import stream
+
+    center, rate = 2440000000, 16000
+    board = Mock()
+    board.is_stream_connected = True
+    board.revision.antenna_id_to_row_col.return_value = (0, 0)
+    config = dict(
+        trigger=dict(mode="downsample", sample_rate_hz=rate),
+        capture_path="bluetooth",
+        bluetooth_filter_khz=1200,
+    )
+    board.iq.get_config.return_value = config.copy()
+    receiver = object.__new__(IQReceiver)
+    receiver.boards = [board]
+    receiver._logger = Mock()
+    scope = Mock(active=[0], pairs=[(0, 0)])
+    scope.has_grid.return_value = True
+    scope.check_sync.return_value = False
+
+    def apply(patch):
+        config.update(patch)
+        assert config["trigger"]["mode"] != "downsample" or config["capture_path"] == "bluetooth"
+
+    scope.apply_rx.side_effect = apply
+    with (
+        patch.object(reference, "reference_gain", return_value=30),
+        patch.object(reference, "reference_session", return_value=nullcontext((center, rate))),
+        patch.object(reference, "acquire_grid", return_value=[1]) as acquire,
+        patch.object(stream, "measure_bluetooth", side_effect=[RuntimeError("first pilot lost"), RuntimeError("second pilot observed")]) as measure,
+        pytest.raises(IQCalibrationError, match="second pilot observed"),
+    ):
+        receiver._sync(scope=scope, attempts=2)
+    acquire.assert_called_once()
+    assert [call.args[6] for call in measure.call_args_list] == [0, 1]
+    assert config["capture_path"] == "bluetooth" and config["trigger"]["sample_rate_hz"] == rate
