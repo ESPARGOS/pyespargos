@@ -280,3 +280,43 @@ def test_partial_filter_change_preserves_only_definitively_rejected_boards(rejec
     models.without.assert_called_once_with({Antenna(host, a) for host in changed_hosts for a in range(8)})
     assert np.isnan(receiver._calibration.phase_offsets[0]).all()
     assert np.isnan(receiver._calibration.phase_offsets[1]).all() == ("second" in changed_hosts)
+
+
+@pytest.mark.parametrize("attempt,backoff,spacing", [(0, 80, 4000000), (1, 40, 3125000), (2, 0, 3125000)])
+@pytest.mark.parametrize("center,direction", [(2310000000, 1), (2640000000, -1)])
+def test_narrow_high_gain_reference_at_tuning_limits(monkeypatch, attempt, backoff, spacing, center, direction):
+    from unittest.mock import Mock
+    from espargos._iq_calibration import stream
+
+    mask = np.ones((1, 1, 2), dtype=bool)
+    scope = SimpleNamespace(active=[0], ids={0: [0, 1]}, pairs=[(0, 0), (0, 1)], mask=mask)
+    iq = Mock()
+    board = SimpleNamespace(iq=iq, revision=SimpleNamespace(antenna_id_to_row_col=lambda antenna: (0, antenna)))
+    receiver = SimpleNamespace(boards=[board], master_board=board)
+    gains = [dict(antid=a, gain_mode="manual", rx_gain=g) for a, g in enumerate([46, 65])]
+    configs = [dict(trigger=dict(mode="downsample"), bluetooth_filter_khz=1200, receivers=gains)]
+    random = np.random.default_rng(54)
+    epoch = np.ones(mask.shape, dtype=np.uint64)
+    phase = 0.81
+
+    def observe(receiver, scope, center, rate, timeout, count, extract, description):
+        tone = random.normal(size=(count, 128)) + 1j * random.normal(size=(count, 128))
+        return np.stack([tone, tone * np.exp(1j * phase)], axis=1), epoch, epoch
+
+    monkeypatch.setattr(stream, "_observe", observe)
+    _, measured, _, _ = stream.measure_bluetooth(receiver, scope, configs, center, 16000, 3, attempt)
+    np.testing.assert_allclose(measured.ravel(), [0, phase], atol=1e-7)
+    iq.set_config.assert_called_once_with({"receivers": gains})
+    expected = [center + direction * offset for offset in [spacing, round(1.5 * spacing / 1000) * 1000]]
+    assert [call.args for call in iq.set_reference.call_args_list] == [("iq", frequency, backoff) for frequency in expected]
+
+    # Keep both training waveforms individually coherent, but change the
+    # phase on the independent measurement. The two fits must disagree.
+    def disagree(*args):
+        nonlocal phase
+        phase += 0.4
+        return observe(*args)
+
+    monkeypatch.setattr(stream, "_observe", disagree)
+    with pytest.raises(RuntimeError, match="validation residual"):
+        stream.measure_bluetooth(receiver, scope, configs, center, 16000, 3, attempt)
