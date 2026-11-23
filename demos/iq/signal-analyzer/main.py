@@ -596,7 +596,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
     def _create_receiver(self, owner):
         receiver = super()._create_receiver(owner)
         if self.args.stream:
-            receiver.apply_config({"trigger": {"mode": "stream", "sample_rate_hz": self.args.stream}})
+            receiver.apply_config({"trigger": {"mode": "downsample", "sample_rate_hz": self.args.stream}})
         return receiver
 
     def _start_iq_gui(self):

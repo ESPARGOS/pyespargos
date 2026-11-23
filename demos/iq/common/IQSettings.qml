@@ -37,8 +37,11 @@ GridLayout {
 
 	property bool _loading: true
     property bool allowStreaming: false
+    readonly property var bluetoothRates: [32000000, 16000000, 8000000, 4000000, 3200000, 1600000]
+    readonly property var bluetoothFilters: [1200, 1500, 2100, 2900, 3800, 5200, 8300]
+    readonly property bool bluetooth: streaming || capturePath.currentIndex === 1
     readonly property var streamRates: [16000, 32000, 64000, 80000, 100000]
-    readonly property bool streaming: triggerModes[triggerCombo.currentIndex]?.mode === "stream"
+    readonly property bool streaming: triggerModes[triggerCombo.currentIndex]?.mode === "downsample"
 
 	// Named trigger fields, matching the controller HTTP API.
 	property var triggerModes: [
@@ -59,7 +62,7 @@ GridLayout {
 			{k: "capture_chunks", l: "Capture chunks (56–112)", v: "56"},
 			{k: "quiet_threshold", l: "Quiet threshold", v: "0"}
 		]}
-	].concat(allowStreaming ? [{name: "Continuous stream", mode: "stream", fields: []}] : [])
+	].concat(allowStreaming ? [{name: "Digital downsampling", mode: "downsample", fields: []}] : [])
 	property var triggerValues: triggerModes[0].fields.map(d => d.v)
 
 	function triggerModeIndex(mode) {
@@ -81,6 +84,9 @@ GridLayout {
 		})
         if (streaming) trigger.sample_rate_hz = streamRates[streamRate.currentIndex]
         let settings = {
+            "capture_path": bluetooth ? "bluetooth" : "wifi",
+            "bluetooth_sample_rate_hz": streaming ? 1600000 : bluetoothRates[btRate.currentIndex],
+            "bluetooth_filter_khz": streaming ? 1200 : bluetoothFilters[btFilter.currentIndex],
             "rf_freq_hz": Math.round(parseFloat(freqField.text) * 1e6),
 			"adc_decimation": parseInt(decimationCombo.currentValue),
 			"adc_source_sel": 15,
@@ -114,7 +120,10 @@ GridLayout {
 				? cfg.receivers[0] : {}
 			if (rx.rf_freq_hz)
 				freqField.text = String(rx.rf_freq_hz / 1e6)
-			if (cfg.adc_decimation !== undefined) {
+			capturePath.currentIndex = cfg.capture_path === "bluetooth" ? 1 : 0
+            btRate.currentIndex = Math.max(0, bluetoothRates.indexOf(cfg.bluetooth_sample_rate_hz))
+            btFilter.currentIndex = Math.max(0, bluetoothFilters.indexOf(cfg.bluetooth_filter_khz))
+            if (cfg.adc_decimation !== undefined) {
 				var di = decimationCombo.indexOfValue(cfg.adc_decimation)
 				if (di >= 0) decimationCombo.currentIndex = di
 			}
@@ -131,7 +140,7 @@ GridLayout {
 				rxGainSlider.value = Math.min(Math.max(rx.rx_gain, rxGainSlider.from), rxGainSlider.to)
 			if (cfg.trigger !== undefined) {
 				triggerCombo.currentIndex = triggerModeIndex(cfg.trigger.mode)
-                if (cfg.trigger.mode === "stream") streamRate.currentIndex = Math.max(0, streamRates.indexOf(cfg.trigger.sample_rate_hz))
+                if (cfg.trigger.mode === "downsample") streamRate.currentIndex = Math.max(0, streamRates.indexOf(cfg.trigger.sample_rate_hz))
 				var defs = triggerModes[triggerCombo.currentIndex].fields
 				var vals = []
 				for (var i = 0; i < defs.length; ++i) {
@@ -191,10 +200,19 @@ GridLayout {
 		onEditingFinished: pushConfig()
 	}
 
-	Label { text: "Sample rate"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+	Label { text: "Capture path"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+    ComboBox {
+        id: capturePath
+        model: ["WiFi", "Bluetooth"]
+        displayText: iqsettings.streaming ? "Bluetooth" : currentText
+        enabled: !iqsettings.streaming
+        implicitWidth: 210
+        onActivated: pushConfig()
+    }
+    Label { text: iqsettings.streaming ? "Output rate" : "Sample rate"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 	ComboBox {
 		id: decimationCombo
-        visible: !iqsettings.streaming
+        visible: !iqsettings.bluetooth
 		implicitWidth: 210
 		textRole: "text"
 		valueRole: "value"
@@ -208,6 +226,13 @@ GridLayout {
 	}
 
     ComboBox {
+        id: btRate
+        visible: iqsettings.bluetooth && !iqsettings.streaming
+        implicitWidth: 210
+        model: iqsettings.bluetoothRates.map(hz => (hz / 1e6) + " MSa/s")
+        onActivated: pushConfig()
+    }
+    ComboBox {
         id: streamRate
         visible: iqsettings.streaming
         implicitWidth: 210
@@ -218,19 +243,19 @@ GridLayout {
 	// on = continuous cap-DAC tuning over the calibrated 13..54 MHz range
 	// (firmware interpolates to the 6-bit DAC, ~0.5 MHz effective steps).
 	// Only effective in the 20 MHz CBW path.
-	Label { visible: !iqsettings.streaming; text: "Enable LPF"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+	Label { visible: !iqsettings.bluetooth; text: "Enable LPF"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 	Switch {
 		id: lpfSwitch
-        visible: !iqsettings.streaming
+        visible: !iqsettings.bluetooth
 		checked: true
 		onToggled: pushConfig()
 		ToolTip.visible: hovered
 		ToolTip.text: "Analog RX low-pass filter ahead of the ADC (anti-aliasing / adjacent-channel rejection). Off = open (widest, ~54 MHz)."
 	}
 
-	Label { visible: !iqsettings.streaming; text: "Bandwidth"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+	Label { visible: !iqsettings.bluetooth; text: "Bandwidth"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 	RowLayout {
-        visible: !iqsettings.streaming
+        visible: !iqsettings.bluetooth
 		spacing: 14
 		Slider {
 			id: lpfBwSlider
@@ -245,7 +270,18 @@ GridLayout {
 		}
 	}
 
-	Label { text: "RF input"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+	Label { visible: iqsettings.bluetooth; text: "Analog bandwidth"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
+    ComboBox {
+        id: btFilter
+        visible: iqsettings.bluetooth
+        enabled: !iqsettings.streaming
+        implicitWidth: 210
+        displayText: iqsettings.streaming ? "1.2 MHz" : currentText
+        model: iqsettings.bluetoothFilters.map(khz => (khz / 1000) + " MHz")
+        onActivated: pushConfig()
+    }
+
+    Label { text: "RF input"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
     Common.RFSwitchControl {
         id: rfSwitchCombo
         onActivated: pushConfig()

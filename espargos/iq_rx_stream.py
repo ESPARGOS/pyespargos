@@ -14,7 +14,7 @@ IQ_RX_STREAM_TYPE_HEADER = int.from_bytes(b"IRS1", "little")
 
 def receive_sample_rate(config):
     trigger = config.get("trigger", {})
-    if trigger.get("mode") == "stream":
+    if trigger.get("mode") == "downsample":
         return trigger.get("sample_rate_hz", 16000)
     if config.get("capture_path") == "bluetooth":
         return config["bluetooth_sample_rate_hz"]

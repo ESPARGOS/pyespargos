@@ -94,7 +94,7 @@ all trigger settings, using defaults for fields you leave out. Omit ``trigger``
 to keep the current settings. :meth:`pool.boards[0].iq.get_config()["trigger"] <espargos.board_iq.IQCapability.get_config>` returns the
 full applied configuration, including defaults.
 
-**Stream** delivers consecutive narrowband samples. See :doc:`iq-receive-streaming`
+**Downsample** low-pass filters the input and delivers consecutive samples at a lower rate. See :doc:`iq-receive-streaming`
 for the supported sample rates and callback.
 
 **Interval** captures short bursts at regular intervals. Start here for general

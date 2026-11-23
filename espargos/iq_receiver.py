@@ -716,7 +716,7 @@ class IQReceiver(ClusterAssembler):
                     for r in config.get("receivers", []):
                         previous = old["receivers"][r["antid"]]
                         retuned = "rf_freq_hz" in r and r["rf_freq_hz"] != previous["rf_freq_hz"]
-                        if retuned or (old.get("trigger", {}).get("mode") == "stream" and gain_changed(previous, r)):
+                        if retuned or (old.get("trigger", {}).get("mode") == "downsample" and gain_changed(previous, r)):
                             invalid.add(Antenna(board.host, r["antid"]))
                 self._owner.calibrations = self._owner.calibrations.without(invalid)
                 self._invalidate_stream_phases(invalid)
@@ -913,7 +913,7 @@ class IQReceiver(ClusterAssembler):
         bi, a = scope.pairs[0]
         row, col = self.boards[bi].revision.antenna_id_to_row_col(a)
         ref = bi * 8 + row * 4 + col
-        streaming = configs[bi].get("trigger", {}).get("mode") == "stream"
+        streaming = configs[bi].get("trigger", {}).get("mode") == "downsample"
         with iq_reference.reference_session(self, center_hz, rx_gain, scope) as (center, fs):
             self._calibration = None
             for attempt in range(attempts):

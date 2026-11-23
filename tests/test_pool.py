@@ -55,7 +55,7 @@ class PoolTests(unittest.TestCase):
         with Pool("a") as pool:
             pool.configure(mode="iq_rx", sample_rate_hz=16000)
             iq = pool.boards[0].iq
-            self.assertEqual(iq.config["trigger"], {"mode": "stream", "sample_rate_hz": 16000})
+            self.assertEqual(iq.config["trigger"], {"mode": "downsample", "sample_rate_hz": 16000})
             pool.configure(sample_rate_hz=32e3)
             self.assertEqual(iq.config["trigger"]["sample_rate_hz"], 32000)
             pool.configure(sample_rate_hz=20e6)

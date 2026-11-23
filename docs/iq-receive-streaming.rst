@@ -7,9 +7,11 @@ example, you can follow a carrier as it drifts or demodulate a signal that
 crosses many block boundaries. For short events that need several MHz of
 bandwidth, use the triggered captures in :doc:`iq-reception`.
 
-The narrowband hardware filter reaches its −3 dB points about 600 kHz on
-either side of the tuned frequency. The sensors then filter the samples
-digitally before reducing the rate.
+Continuous capture uses the downsample trigger in IQ RX mode. The Bluetooth
+capture path supplies 1.6 MSa/s through the 1.2 MHz analog filter. Each sensor
+digitally low-pass filters those samples before reducing them to the requested
+output rate. The SDK selects this input configuration when you request one of
+the output rates below.
 
 The IQ receivers on a board share a sample rate. Each sensor can tune to
 a different center frequency. Choose the lowest rate that covers your signal

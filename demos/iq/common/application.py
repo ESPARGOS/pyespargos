@@ -96,7 +96,7 @@ class IQController(PyQt6.QtCore.QObject):
         rate = self.receiver.calibration_sample_rate
         frequencies = [r.get("rf_freq_hz", center) for r in config.get("receivers", [])]
         frequencies.append(config.get("rf_freq_hz", center))
-        capture_rate = receive_sample_rate(config) if "adc_decimation" in config or config.get("trigger", {}).get("mode") == "stream" else rate
+        capture_rate = receive_sample_rate(config) if "adc_decimation" in config or config.get("trigger", {}).get("mode") == "downsample" else rate
         if self.receiver.calibration is None or any(f != center for f in frequencies) or capture_rate != rate:
             self._set_sync_needed(True)
 

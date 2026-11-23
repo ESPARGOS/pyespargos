@@ -195,7 +195,7 @@ def _iq_rx(ctx, options):
         old = tx["sensors"][a]["frequency_hz"] if ctx.before[a] == "iq_tx" else ctx.snapshot["receivers"][a]["rf_freq_hz"]
         if ctx.before[a] == "iq_tx" and "frequency_hz" not in options:
             receivers.setdefault(a, {"antid": a})["rf_freq_hz"] = old
-        if (ctx.snapshot.get("trigger", {}).get("mode") == "stream"
+        if (ctx.snapshot.get("trigger", {}).get("mode") == "downsample"
                 and gain_changed(ctx.snapshot["receivers"][a], receiver)):
             invalidated.add(Antenna(ctx.board.host, a))
         if "frequency_hz" in options and options["frequency_hz"] != old:
@@ -203,12 +203,22 @@ def _iq_rx(ctx, options):
     if receivers:
         settings["receivers"] = list(receivers.values())
     path = options.get("capture_path", ctx.snapshot.get("capture_path", "wifi"))
+    bluetooth_rates = (32e6, 16e6, 8e6, 4e6, 3.2e6, 1.6e6)
+    rate = options.get("sample_rate_hz")
+    if rate in IQ_RX_STREAM_RATES and "capture_path" not in options:
+        path = "bluetooth"
+    if "capture_path" not in options and rate not in IQ_RX_STREAM_RATES and rate is not None:
+        candidates = [p for p, rates in (("wifi", DECIM_TO_FS.values()), ("bluetooth", bluetooth_rates)) if rate in rates]
+        if len(candidates) == 1 and path != candidates[0]:
+            path = settings["capture_path"] = candidates[0]
+            invalidated.update(_identities(ctx))
     if path not in ("wifi", "bluetooth"):
         raise ValueError("capture_path must be wifi or bluetooth")
     if options.keys() & {"capture_path", "bandwidth_mhz"}:
-        if options.get("sample_rate_hz") in IQ_RX_STREAM_RATES:
-            raise ValueError("Continuous streaming selects its own capture path and analog bandwidth")
-        if ctx.snapshot.get("trigger", {}).get("mode") == "stream":
+        if options.get("sample_rate_hz") in IQ_RX_STREAM_RATES and (
+                options.get("capture_path", "bluetooth") != "bluetooth" or options.get("bandwidth_mhz", 1.2) != 1.2):
+            raise ValueError("Continuous downsampling requires Bluetooth with the 1.2 MHz filter")
+        if ctx.snapshot.get("trigger", {}).get("mode") == "downsample":
             settings["trigger"] = {"mode": "interval"}
     if "capture_path" in options:
         _board_wide(ctx)
@@ -232,14 +242,15 @@ def _iq_rx(ctx, options):
         rates = {v: k for k, v in DECIM_TO_FS.items()}
         rate = options["sample_rate_hz"]
         if rate in IQ_RX_STREAM_RATES:
-            settings["trigger"] = {"mode": "stream", "sample_rate_hz": int(rate)}
-        elif path == "bluetooth" and rate in (32e6, 16e6, 8e6, 4e6, 3.2e6, 1.6e6):
+            settings.update(capture_path="bluetooth", bluetooth_sample_rate_hz=1600000, bluetooth_filter_khz=1200)
+            settings["trigger"] = {"mode": "downsample", "sample_rate_hz": int(rate)}
+        elif path == "bluetooth" and rate in bluetooth_rates:
             settings["bluetooth_sample_rate_hz"] = int(rate)
-            if ctx.snapshot.get("trigger", {}).get("mode") == "stream":
+            if ctx.snapshot.get("trigger", {}).get("mode") == "downsample":
                 settings["trigger"] = {"mode": "interval"}
         elif path == "wifi" and rate in rates:
             settings["adc_decimation"] = rates[rate]
-            if ctx.snapshot.get("trigger", {}).get("mode") == "stream":
+            if ctx.snapshot.get("trigger", {}).get("mode") == "downsample":
                 settings["trigger"] = {"mode": "interval"}
         else:
             raise ValueError(f"Unsupported {path} IQ receive sample rate {rate}")
