@@ -63,6 +63,13 @@ def relative_lag(samples, reference, expected_lag=None):
     return int(lags[best]), float(score[best])
 
 
+def reference_gain(pool, gain):
+    if gain is not None:
+        return gain
+    external = pool.master_board.wifi_rx.get_config()["calib-source"] != 0
+    return REFERENCE_EXTERNAL_RX_GAIN if external else REFERENCE_RX_GAIN
+
+
 @contextmanager
 def reference_session(pool, center_hz=None, rx_gain=None, scope=None):
     if not pool._reference_lock.acquire(blocking=False):
@@ -102,11 +109,7 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None):
         raise ValueError("All boards must use the same IQ sample rate")
     if any(saved[bi]["receivers"][a]["rf_freq_hz"] != center for bi, a in scope.pairs) and center_hz is None:
         raise ValueError("All receivers must use the same center frequency")
-    if rx_gain is None:
-        # The external splitter/cables attenuate REF before it reaches the
-        # sensors. Keep the lower gain for a board's direct internal path.
-        external = pool.master_board.wifi_rx.get_config()["calib-source"] != 0
-        rx_gain = REFERENCE_EXTERNAL_RX_GAIN if external else REFERENCE_RX_GAIN
+    rx_gain = reference_gain(pool, rx_gain)
     from ..iq_tx_control import _rpc, _wait
 
     muted = {bi: _rpc(pool.boards[bi], "get_iq_tx")["muted"] for bi in scope.active}

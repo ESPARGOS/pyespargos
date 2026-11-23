@@ -195,7 +195,7 @@ def _iq_rx(ctx, options):
         old = tx["sensors"][a]["frequency_hz"] if ctx.before[a] == "iq_tx" else ctx.snapshot["receivers"][a]["rf_freq_hz"]
         if ctx.before[a] == "iq_tx" and "frequency_hz" not in options:
             receivers.setdefault(a, {"antid": a})["rf_freq_hz"] = old
-        if (ctx.snapshot.get("trigger", {}).get("mode") == "downsample"
+        if ((ctx.snapshot.get("capture_path") == "bluetooth" or ctx.snapshot.get("trigger", {}).get("mode") == "downsample")
                 and gain_changed(ctx.snapshot["receivers"][a], receiver)):
             invalidated.add(Antenna(ctx.board.host, a))
         if "frequency_hz" in options and options["frequency_hz"] != old:

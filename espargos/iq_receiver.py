@@ -716,7 +716,7 @@ class IQReceiver(ClusterAssembler):
                     for r in config.get("receivers", []):
                         previous = old["receivers"][r["antid"]]
                         retuned = "rf_freq_hz" in r and r["rf_freq_hz"] != previous["rf_freq_hz"]
-                        if retuned or (old.get("trigger", {}).get("mode") == "downsample" and gain_changed(previous, r)):
+                        if retuned or ((old.get("capture_path") == "bluetooth" or old.get("trigger", {}).get("mode") == "downsample") and gain_changed(previous, r)):
                             invalid.add(Antenna(board.host, r["antid"]))
                 self._owner.calibrations = self._owner.calibrations.without(invalid)
                 self._invalidate_stream_phases(invalid)
@@ -914,19 +914,31 @@ class IQReceiver(ClusterAssembler):
         row, col = self.boards[bi].revision.antenna_id_to_row_col(a)
         ref = bi * 8 + row * 4 + col
         streaming = configs[bi].get("trigger", {}).get("mode") == "downsample"
+        bluetooth = configs[bi].get("capture_path") == "bluetooth" or streaming
+        profile = (bluetooth, streaming, configs[bi].get("bluetooth_filter_khz") if bluetooth else None)
+        for idx in scope.active:
+            downsample = configs[idx].get("trigger", {}).get("mode") == "downsample"
+            bt = configs[idx].get("capture_path") == "bluetooth" or downsample
+            if (bt, downsample, configs[idx].get("bluetooth_filter_khz") if bt else None) != profile:
+                raise IQCalibrationError("Select the same capture path, bandwidth and sampling mode on participating boards")
         with iq_reference.reference_session(self, center_hz, rx_gain, scope) as (center, fs):
             self._calibration = None
             for attempt in range(attempts):
                 try:
+                    if bluetooth and attempt:
+                        scope.apply_rx({"capture_path": "wifi", "adc_decimation": 1, "gain_mode": "manual",
+                                        "rx_gain": iq_reference.reference_gain(self, rx_gain)})
                     if reuse_grid:
                         self.master_board.iq.set_reference("iq", center, iq_reference.REFERENCE_BACKOFF)
                         scope.apply_rx({"trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 4}})
                         seqs = None
                     else:
                         seqs = iq_reference.acquire_grid(self, center, timeout, scope)
-                    if streaming:
+                    if bluetooth:
                         from ._iq_calibration.stream import measure_at_operating_gain
-                        scope.apply_rx({"trigger": configs[bi]["trigger"]})
+                        trigger = configs[bi]["trigger"] if streaming else {
+                            "mode": "interval", "interval_chunks": max(64, round(fs / 256 / 100)), "burst_chunks": 4}
+                        scope.apply_rx({"capture_path": "bluetooth", "trigger": trigger})
                         timing, phi, epoch, grid_origin = measure_at_operating_gain(self, scope, configs, center, fs, iq_ready_timeout)
                         break
                     training = iq_reference.collect(self, count=32, timeout=iq_ready_timeout, seqs=seqs, mask=scope.mask)
@@ -943,11 +955,11 @@ class IQReceiver(ClusterAssembler):
                     if attempt + 1 == attempts:
                         raise IQCalibrationError(str(error)) from error
                     self._logger.info("Acquiring a fresh broadband grid: %s", error)
-            if not streaming:
+            if not bluetooth:
                 timing = tau / 80e6
                 epoch = np.where(scope.mask, training[0].fire_time_ns, 0).astype(np.uint64).tobytes()
                 grid_origin = training[0].grid_origin_ns.copy()
-            if not streaming and fs != 80e6:
+            if not bluetooth and fs != 80e6:
                 # The ADC subsamples without anti-alias filtering. Measure
                 # the full reference band at 80 MS/s, then transfer the delay
                 # using the measured starts of the two capture epochs.
@@ -972,7 +984,7 @@ class IQReceiver(ClusterAssembler):
         self._calibration_grid_origin = grid_origin
         self._calibration_sample_rate = fs
         self._calibration_center_frequency = center
-        if streaming:
+        if bluetooth:
             self._logger.info("Narrowband calibration verified at %d Sa/s in %.3f s", fs, time.monotonic() - t0)
         else:
             self._logger.info("Broadband calibration verified: coherence %.3f, residual %.3f rad, %.3f s", np.nanmin(quality), np.nanmax(residual), time.monotonic() - t0)

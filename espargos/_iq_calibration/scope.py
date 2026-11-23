@@ -43,12 +43,10 @@ class CalibrationScope:
         Firmware synchronization is board-wide and cannot run alongside TX.
         Do not silently recruit unselected sensors to acquire a new grid.
         """
-        if any(configs[i].get("capture_path") == "bluetooth" and configs[i]["trigger"]["mode"] != "downsample" for i in self.active):
-            raise ValueError("Phase calibration of triggered Bluetooth IQ captures is not available")
         outside = any(c["modes"][a] in ("iq_rx", "iq_tx") for bi, c in enumerate(configs) if bi in self.active for a in range(8) if a not in self.ids[bi])
         if outside:
             if not all(configs[bi].get("coarse_synced", False) for bi in self.active):
                 raise ValueError("Subgroup calibration requires an existing synchronized grid. Calibrate all IQ sensors on the participating boards once first.")
-            if any(configs[bi]["adc_decimation"] != 1 for bi in self.active):
+            if any(configs[bi].get("capture_path") == "bluetooth" or configs[bi]["adc_decimation"] != 1 for bi in self.active):
                 raise ValueError("Subgroup calibration sharing a board with other IQ sensors requires 80 MSa/s to preserve their sample timing")
         return outside

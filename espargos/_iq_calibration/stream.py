@@ -4,6 +4,8 @@ import time
 
 import numpy as np
 
+from ..iq_cluster import IQCluster
+from ..iq_packet import IQ_CHUNK_SAMPLE_WORDS, IQ_SYNC_INFO_GRID_SYNCED, IQ_SYNC_INFO_FIRE_TIME_VALID
 from ..iq_rx_stream import IQStreamBlock, IQStreamPacket
 from ..iq_tone import TONE_MAX_HZ, TONE_MIN_HZ
 
@@ -22,7 +24,16 @@ def _observe(receiver, scope, center, rate, timeout, count, extract, description
 
     def collect(block):
         nonlocal epoch, origin
-        if wake.is_set() or not block.synchronized or (block.center_freq_hz, block.sample_rate_hz) != (center, rate):
+        if wake.is_set():
+            return
+        if isinstance(block, IQStreamBlock):
+            valid = block.synchronized and (block.center_freq_hz, block.sample_rate_hz) == (center, rate)
+        else:
+            flags = IQ_SYNC_INFO_GRID_SYNCED | IQ_SYNC_INFO_FIRE_TIME_VALID
+            valid = (np.all((block.sync_info[scope.mask] & flags) == flags)
+                     and np.all(block.center_freq_hz[scope.mask] == center)
+                     and np.all(block.sample_rate_hz[scope.mask] == rate))
+        if not valid:
             return
         if any(np.any(block.config_generation[i][scope.mask[i]] != g) for i, g in generations.items()):
             return
@@ -36,7 +47,7 @@ def _observe(receiver, scope, center, rate, timeout, count, extract, description
                 wake.set()
 
     handle = receiver.add_cluster_callback(collect, callback_predicate=lambda c:
-        isinstance(c, IQStreamBlock) and np.all(c.completion[scope.mask]))
+        isinstance(c, (IQStreamBlock, IQCluster)) and np.all(c.completion[scope.mask]))
     try:
         deadline = time.monotonic() + timeout
         while not wake.is_set():
@@ -55,7 +66,7 @@ def _observe(receiver, scope, center, rate, timeout, count, extract, description
 def _tone(receiver, scope, center, offset, rate, backoff, timeout):
     receiver.master_board.iq.set_reference("cw", center + offset, backoff)
     reference = _reference_index(receiver, scope)
-    n = IQStreamPacket.SAMPLE_COUNT
+    n = IQStreamPacket.SAMPLE_COUNT if rate <= 100000 else IQ_CHUNK_SAMPLE_WORDS
     bins = np.fft.fftfreq(n, 1 / rate)
     window = np.hanning(n)
 
@@ -63,10 +74,10 @@ def _tone(receiver, scope, center, offset, rate, backoff, timeout):
         spectrum = np.fft.fft((iq - iq.mean(axis=-1, keepdims=True)) * window, axis=-1)
         power = np.sum(abs(spectrum) ** 2, axis=0)
         peak = int(np.argmax(power))
-        if abs(bins[peak] - offset) > 2000:
+        if abs(bins[peak] - offset) > max(2000, rate / n):
             return
         tone = spectrum[:, peak] / window.sum()
-        if min(abs(tone)) < 2 or max(abs(tone)) > 480:
+        if min(abs(tone)) < (2 if rate <= 100000 else 0.5) or max(abs(tone)) > 480:
             return
         # Refine the frequency within one FFT bin using the Hann main lobe.
         left, mid, right = np.log(np.maximum(power[[(peak-1) % n, peak, (peak+1) % n]], 1e-30))
@@ -155,29 +166,32 @@ def measure_at_operating_gain(receiver, scope, configs, center, rate, timeout):
         receivers = []
         for antenna in scope.ids[board]:
             config = configs[board]["receivers"][antenna]
-            if config["gain_mode"] == "auto":
-                continue
+
             gain = {key: config[key] for key in ("antid", "gain_mode", "rx_gain", "expert_gain_words") if key in config}
             receivers.append(gain)
             use_noise |= config["gain_mode"] == "expert" or config["rx_gain"] > 30
         if receivers:
             receiver.boards[board].iq.set_config({"receivers": receivers})
+    if configs[scope.active[0]].get("trigger", {}).get("mode") != "downsample":
+        bandwidth = min(rate, 1000 * configs[scope.active[0]]["bluetooth_filter_khz"])
+        return measure(receiver, scope, center, rate, 0, timeout, bandwidth=bandwidth)
     if use_noise:
         return _measure_noise(receiver, scope, center, rate, timeout)
     return measure(receiver, scope, center, rate, 80, timeout)
 
 
-def measure(receiver, scope, center, rate, backoff, timeout):
+def measure(receiver, scope, center, rate, backoff, timeout, bandwidth=None):
     """Fit three tones across the passband and verify on a fourth tone."""
     # Alternate sides so buffered samples from the previous tone cannot pass
     # the next tone's frequency check, including at the lowest output rate.
+    bandwidth = bandwidth or rate
     offsets = (-0.30, 0.30, -0.13, 0.16)
     # At either end of the RF tuning range, fit tones on the available side.
-    if center - 0.30 * rate < TONE_MIN_HZ:
+    if center - 0.30 * bandwidth < TONE_MIN_HZ:
         offsets = (0.16, 0.36, 0.09, 0.26)
-    elif center + 0.30 * rate > TONE_MAX_HZ:
+    elif center + 0.30 * bandwidth > TONE_MAX_HZ:
         offsets = (-0.16, -0.36, -0.09, -0.26)
-    observations = [_tone(receiver, scope, center, round(x * rate), rate, backoff, timeout)
+    observations = [_tone(receiver, scope, center, round(x * bandwidth), rate, backoff, timeout)
                     for x in offsets]
     f, phase, epochs, origins = zip(*observations)
     if any(not np.array_equal(t[scope.mask], epochs[0][scope.mask]) for t in epochs[1:]):

@@ -13,6 +13,7 @@ from .array_geometry import ArrayGeometry
 from .board import Board
 from . import board as board_module
 from .calibration import Antenna, Calibration
+from .iq_rx_stream import receive_sample_rate
 from .iq_transmitter import IQTransmitter
 from .iq_tx_control import _rpc, _wait
 
@@ -202,7 +203,7 @@ class AntennaSelection:
                         frequency = tx_states[bi]["sensors"][a]["frequency_hz"] if direction == "tx" else config["receivers"][a]["rf_freq_hz"]
                         keys.append((antenna, direction, frequency))
                         if direction == "rx":
-                            iq_rates.add(config["adc_decimation"])
+                            iq_rates.add(receive_sample_rate(config))
             if wifi_selected:
                 from .csi_scoped_calibration import states
 

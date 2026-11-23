@@ -80,11 +80,13 @@ extends about 1.05 MHz to either side. Leave room for the filter to roll off
 before the Nyquist frequency when strong signals occupy adjacent channels.
 Changing the capture rate alone does not narrow the analog filter.
 
-For array accumulation, establish the sample grid on the WiFi path first,
-then switch to Bluetooth. The WiFi phase correction does not transfer across
-that switch. Triggered Bluetooth capture currently provides uncalibrated IQ. For a
-continuous low-rate stream, see :doc:`iq-receive-streaming`. That mode selects
-its own analog filter and digitally filters the signal before reducing the rate.
+For phase-coherent capture, select the rate, filter and receiver gain first,
+then call ``pool.calibrate()``. On the Bluetooth path the SDK briefly uses the
+WiFi path to align the sensors' sample grids. It switches back to Bluetooth
+to measure the relative phase and delay through the filters you selected.
+Repeat calibration after changing the frequency, capture path, rate, filter
+or manual gain. For continuous, digitally filtered IQ at lower rates,
+see :doc:`iq-receive-streaming`.
 
 The Trigger Modes
 -----------------

@@ -36,7 +36,7 @@ def test_held_out_broadband_reference(phase_change):
     board.revision.antenna_id_to_row_col.return_value = (0, 0)
     receiver.boards = [board]
     receiver._logger = Mock()
-    scope = SimpleNamespace(mask=np.ones((1, 2, 4), bool), pairs=[(0, 0)], check_sync=lambda configs: False)
+    scope = SimpleNamespace(mask=np.ones((1, 2, 4), bool), pairs=[(0, 0)], active=[0], check_sync=lambda configs: False)
     with (patch.object(reference, "reference_session", return_value=nullcontext((center, rate))),
           patch.object(reference, "acquire_grid", return_value=[1]),
           patch.object(reference, "collect", side_effect=[capture(0), capture(phase_change)]),
