@@ -51,3 +51,20 @@ def test_rotation_cannot_hide_adc_clipping():
     np.testing.assert_array_equal(c.adc_peak, 511)
     with pytest.raises(RuntimeError, match="Only 0/1"):
         collect(pool(c), count=1, timeout=0.01, seqs=[1])
+
+
+def test_one_raw_chunk_uses_one_generation_per_controller():
+    c = IQCluster(0, [Revision(), Revision()])
+    for antenna in range(8):
+        for board, generation in enumerate([0xFFFFFFFF, 17]):
+            packet = SimpleNamespace(decode_iq=lambda: np.zeros(256, np.complex64), sample_rx_gain=lambda: np.zeros(256, np.uint8), chunk_counter=0, sync_info=0x10001, config_generation=generation)
+            msg = SimpleNamespace(antenna_id=antenna, payload=packet)
+            if antenna == 7:
+                packet.config_generation = 1
+                assert not c.add_message(board, msg)
+                assert not c.is_complete
+                packet.config_generation = generation
+            assert c.add_message(board, msg)
+    assert c.is_complete
+    np.testing.assert_array_equal(c.config_generation[0], 0xFFFFFFFF)
+    np.testing.assert_array_equal(c.config_generation[1], 17)

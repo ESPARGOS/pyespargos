@@ -37,6 +37,10 @@ class CalibrationScope:
                 payload["modes"] = self.modes(bi, modes)
             self.boards[bi].iq.set_config(payload)
 
+    def has_grid(self, configs):
+        """Whether every selected receiver still has a boot-matched grid anchor."""
+        return all(configs[bi].get("coarse_synced") or all(configs[bi].get("coarse_synced_mask", 0) & (1 << a) for a in self.ids[bi]) for bi in self.active)
+
     def check_sync(self, configs):
         """Reuse established grids when unrelated IQ sensors share a board.
 
@@ -45,7 +49,7 @@ class CalibrationScope:
         """
         outside = any(c["modes"][a] in ("iq_rx", "iq_tx") for bi, c in enumerate(configs) if bi in self.active for a in range(8) if a not in self.ids[bi])
         if outside:
-            if not all(configs[bi].get("coarse_synced", False) for bi in self.active):
+            if not self.has_grid(configs):
                 raise ValueError("Subgroup calibration requires an existing synchronized grid. Calibrate all IQ sensors on the participating boards once first.")
             if any(configs[bi].get("capture_path") == "bluetooth" or configs[bi]["adc_decimation"] != 1 for bi in self.active):
                 raise ValueError("Subgroup calibration sharing a board with other IQ sensors requires 80 MSa/s to preserve their sample timing")

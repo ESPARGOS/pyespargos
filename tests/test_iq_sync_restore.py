@@ -1,4 +1,5 @@
 """Restore a selected board independently of a controller-only reference master."""
+
 from threading import Lock
 from types import SimpleNamespace
 from unittest.mock import Mock, call
@@ -20,11 +21,9 @@ def test_scoped_reference_restores_board_and_master(fail):
     selected = dict(antid=3, rf_freq_hz=2437000000, gain_mode="auto", rx_gain=54)
     modes = ["wifi"] * 8
     modes[3] = "iq_rx"
-    config = dict(adc_decimation=2, rf_switch=3, trigger={"mode": "signal"},
-                  receivers=[dict(selected, antid=a) for a in range(8)], modes=modes)
+    config = dict(adc_decimation=2, rf_switch=3, trigger={"mode": "signal"}, receivers=[dict(selected, antid=a) for a in range(8)], modes=modes)
     array.iq.get_config.return_value = config
-    array.control.get_json.return_value = {
-        "muted": False, "sensors": [dict(enabled=False, applied_mode=mode) for mode in modes]}
+    array.control.get_json.return_value = {"muted": False, "sensors": [dict(enabled=False, applied_mode=mode) for mode in modes]}
     array.control.post_json.return_value = "ok"
     pool = SimpleNamespace(boards=boards, master_board=master, _reference_lock=Lock(), _calibrating=False)
     scope = CalibrationScope(pool, [Antenna("array", 3)])
@@ -44,9 +43,41 @@ def test_scoped_reference_restores_board_and_master(fail):
     assert not pool._calibrating
     master.iq.set_config.assert_not_called()
     assert master.iq.set_reference.call_count == 2
-    assert master.control.post_json.call_args_list == [
-        call("set_controller_mode", {"mode": "iq"}), call("set_controller_mode", {"mode": "wifi"})]
-    assert array.iq.set_config.call_args.args[0] == dict(
-        rf_switch=3, trigger=config["trigger"], adc_decimation=2, receivers=[selected])
-    assert array.control.post_json.call_args_list == [
-        call("set_iq_tx", {"muted": True}), call("set_iq_tx", {"muted": False})]
+    assert master.control.post_json.call_args_list == [call("set_controller_mode", {"mode": "iq"}), call("set_controller_mode", {"mode": "wifi"})]
+    assert array.iq.set_config.call_args.args[0] == dict(rf_switch=3, trigger=config["trigger"], adc_decimation=2, receivers=[selected])
+    assert array.control.post_json.call_args_list == [call("set_iq_tx", {"muted": True}), call("set_iq_tx", {"muted": False})]
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        {"mode": "cw", "freq_khz": 2440123, "backoff_qdb": 75, "cw_tuning": {"cbw": 3, "cap": 0, "offset": -2}},
+        {"mode": "iq", "freq_khz": 2437000, "backoff_qdb": 11, "gate_open": False},
+        {"mode": "off"},
+    ],
+)
+def test_existing_reference_or_monitor_resumes_after_failed_acquisition(reference):
+    from contextlib import contextmanager
+    from unittest.mock import patch
+
+    board = Mock()
+    monitor_enabled = reference["mode"] == "off"
+    board.iq.get_reference.return_value = reference
+    board.control.get_json.side_effect = lambda path: ({"mode": "iq"} if path == "get_controller_mode" else {"enabled": monitor_enabled})
+    pool = SimpleNamespace(master_board=board, _reference_lock=Lock())
+
+    @contextmanager
+    def acquire(*args):
+        yield 2440e6, 3.2e6
+
+    with patch("espargos._iq_calibration.reference._reference_session", acquire):
+        with pytest.raises(TimeoutError):
+            with reference_session(pool):
+                raise TimeoutError()
+    if monitor_enabled:
+        assert board.control.post_json.call_args_list == [call("set_iq_monitor", {"enabled": False}), call("set_iq_monitor", {"enabled": True})]
+    else:
+        board.control.post_json.assert_called_once_with("set_iq_reference", {k: v for k, v in reference.items() if k != "gate_open"})
+    if reference.get("gate_open") is False:
+        board.control.command.assert_called_once_with("gate_iq_reference", {"open": False})
+    assert not pool._reference_lock.locked()

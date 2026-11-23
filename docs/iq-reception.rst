@@ -80,13 +80,15 @@ extends about 1.05 MHz to either side. Leave room for the filter to roll off
 before the Nyquist frequency when strong signals occupy adjacent channels.
 Changing the capture rate alone does not narrow the analog filter.
 
-For phase-coherent capture, select the rate, filter and receiver gain first,
-then call ``pool.calibrate()``. On the Bluetooth path the SDK briefly uses the
-WiFi path to align the sensors' sample grids. It switches back to Bluetooth
-to measure the relative phase and delay through the filters you selected.
-Repeat calibration after changing the frequency, capture path, rate, filter
-or manual gain. For continuous, digitally filtered IQ at lower rates,
-see :doc:`iq-receive-streaming`.
+For phase-coherent capture, select the rate and filter first,
+then call ``pool.calibrate()``. The SDK can reuse a live Bluetooth sample grid on a
+single board. To establish a new common grid it briefly uses the WiFi path
+and then measures
+Bluetooth phase and delay at the selected analog bandwidth and receiver gains.
+Raw capture uses two independently tuned broadband references. Retries can
+change the reference waveform or its power while keeping the receiver gains.
+A gain edit retains calibration. The physical phase response can still change
+with gain, so calibrate at the intended operating gains for phase measurements.
 
 The Trigger Modes
 -----------------
@@ -94,7 +96,19 @@ The Trigger Modes
 Set ``trigger`` to an object with a mode name and its settings. This replaces
 all trigger settings, using defaults for fields you leave out. Omit ``trigger``
 to keep the current settings. :meth:`pool.boards[0].iq.get_config()["trigger"] <espargos.board_iq.IQCapability.get_config>` returns the
-full applied configuration, including defaults.
+controller configuration, including defaults. To wait until every selected IQ
+receiver has applied a change, use ``board.iq.set_config_and_wait(settings)``.
+It returns the acknowledged generation, including for quiet triggers. A timeout
+identifies the unconfirmed sensors. Ordinary ``board.iq.set_config(settings)``
+returns when the controller accepts the write. For diagnostics,
+``board.iq.get_rx_status()`` reports the generation and age in milliseconds
+of each sensor's last acknowledgement, indexed by antenna ID. An unreported
+generation is null. The status also includes per-antenna boot IDs.
+Controller and sensor firmware with IQ configuration format 4 bind each timing
+anchor to its sensor's boot ID. Update both firmware images together. If a
+receiver restarts, it resumes free-running capture and needs a new reference
+measurement before it can rejoin the synchronized array.
+
 
 **Downsample** low-pass filters the input and delivers consecutive samples at a lower rate. See :doc:`iq-receive-streaming`
 for the supported sample rates and callback.
@@ -178,7 +192,10 @@ delivers :class:`IQAccumCluster <espargos.iq_accum_cluster.IQAccumCluster>` obje
 :attr:`iq <espargos.iq_accum_cluster.IQAccumCluster.iq>` contains the averages.
 By default, a callback receives a window only when all active receivers have
 accumulated matching source chunks. This keeps their measurements comparable
-when packets are lost or acquisition falls behind.
+when packets are lost or acquisition falls behind. At high input rates the
+firmware selects a common stride between repetitions so all sensors can drain
+their partial sums. Each packet reports the nominal and actual count per lane
+and a hash of the source chunks used.
 
 Longer averaging reduces uncorrelated noise, but also reduces the output rate
 and can suppress signals whose phase changes during the window, including

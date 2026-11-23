@@ -21,15 +21,6 @@ def receive_sample_rate(config):
     return DECIM_TO_FS[config["adc_decimation"]]
 
 
-def gain_changed(previous, update):
-    """Compare the gain settings that actually drive the narrowband receiver."""
-    mode = update.get("gain_mode", previous.get("gain_mode"))
-    if mode != previous.get("gain_mode"):
-        return True
-    key = {"manual": "rx_gain", "expert": "expert_gain_words"}.get(mode)
-    return key in update and update[key] != previous.get(key)
-
-
 class IQStreamPacket:
     """One sensor's consecutive complex samples, indexed on the output grid."""
 
@@ -40,7 +31,7 @@ class IQStreamPacket:
         if len(data) != self._HEADER.size + self.SAMPLE_COUNT * 4 + 4:
             raise ValueError("Invalid IQ stream block length")
         magic, self.config_generation, self.sync_info, self.center_freq_hz, self.first_sample, self.fire_time_ns, self.grid_origin_ns, self.sample_rate_hz = self._HEADER.unpack_from(data)
-        if magic != IQ_RX_STREAM_TYPE_HEADER or self.sample_rate_hz not in IQ_RX_STREAM_RATES:
+        if magic != IQ_RX_STREAM_TYPE_HEADER or self.sample_rate_hz not in IQ_RX_STREAM_RATES or self.first_sample % self.SAMPLE_COUNT:
             raise ValueError("Invalid IQ stream header")
         if zlib.crc32(memoryview(data)[:-4]) != struct.unpack_from("<I", data, len(data) - 4)[0]:
             raise ValueError("Invalid IQ stream checksum")
@@ -65,6 +56,7 @@ class IQStreamBlock(SensorCluster):
 
     def __init__(self, packet, revisions):
         super().__init__(revisions)
+        self._board_generations = {}
         self.sync_info = packet.sync_info
         self.first_sample = packet.first_sample
         self.sample_rate_hz = packet.sample_rate_hz
@@ -79,6 +71,8 @@ class IQStreamBlock(SensorCluster):
     def add_message(self, board_index, message):
         packet = message.payload
         position = self.get_sensor_position(board_index, message.antenna_id)
+        if self._board_generations.setdefault(board_index, packet.config_generation) != packet.config_generation:
+            return False
         x = packet.decode_iq()
         if self.completion[position]:
             if np.array_equal(self.iq[position], x):

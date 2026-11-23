@@ -50,6 +50,18 @@ class BroadbandTests(unittest.TestCase):
             lag, _ = relative_lag(reference, samples, expected_lag=0)
             self.assertEqual(lag, offset)
 
+    def test_dominant_carrier_does_not_define_timing(self):
+        rng = np.random.default_rng(50)
+        source = rng.normal(size=2048) + 1j * rng.normal(size=2048)
+        k = np.arange(1024)
+        carrier = 5 * np.exp(2j * np.pi * 0.1864 * k)
+        second = 4 * np.exp(-2j * np.pi * 0.2619 * k)
+        reference = source[400:1424] + carrier + second
+        samples = source[371:1395] + carrier * np.exp(1.3j) + second * np.exp(-0.7j)
+        self.assertEqual(relative_lag(samples, reference, expected_lag=21)[0], 29)
+        with self.assertRaisesRegex(RuntimeError, "insufficient broadband"):
+            relative_lag(carrier + second, carrier * np.exp(0.4j) + second, expected_lag=21)
+
     def test_unrelated_snapshots_rejected(self):
         rng = np.random.default_rng(31)
         with self.assertRaises(RuntimeError):
@@ -120,15 +132,19 @@ class ReferenceSessionTests(unittest.TestCase):
 
         writes = []
         control = SimpleNamespace(
-            get_json=lambda path: {"get_controller_mode": {"mode": "iq"}, "get_iq_tx": {"muted": True}}[path],
+            get_json=lambda path: {"get_controller_mode": {"mode": "iq"}, "get_iq_tx": {"muted": True}, "get_iq_monitor": {"enabled": False}}[path],
             post_json=lambda path, payload: "ok",
         )
         board = SimpleNamespace(
-            host="test", revision=BoardRevisionDensiflorus(), control=control,
+            host="test",
+            revision=BoardRevisionDensiflorus(),
+            control=control,
             wifi_rx=SimpleNamespace(get_config=lambda: {"calib-source": source}),
             iq=SimpleNamespace(
                 get_config=lambda: dict(config, modes=["iq_rx"] * 8),
-                set_reference=lambda: writes.append("off"), set_config=writes.append,
+                get_reference=lambda: {"mode": "off"},
+                set_reference=lambda: writes.append("off"),
+                set_config=writes.append,
             ),
         )
         pool = SimpleNamespace(boards=[board], master_board=board, _reference_lock=threading.Lock(), _calibrating=False)
@@ -156,6 +172,16 @@ class ReferenceSessionTests(unittest.TestCase):
             self.assertEqual(writes[-1][key], saved[key])
         self.assertEqual(writes[-2], "off")
 
+    def test_warm_bluetooth_reference_keeps_live_receiver_epoch(self):
+        from espargos.iq_reference import reference_session
+
+        saved = dict(capture_path="bluetooth", bluetooth_sample_rate_hz=3200000, rf_switch=2, adc_decimation=1, trigger={"mode": "interval"}, receivers=[dict(antid=a, rf_freq_hz=2440000000) for a in range(8)])
+        pool, writes = self.reference_pool(saved)
+        with reference_session(pool, keep_bluetooth_epoch=True) as state:
+            self.assertEqual(state, (2440000000, 3200000))
+            self.assertEqual(writes[-1], {"modes": ["iq_rx"] * 8, "rf_switch": 1})
+        self.assertEqual(writes[-1]["receivers"], saved["receivers"])
+
     def test_reference_gain_follows_routing_and_allows_override(self):
         from espargos.iq_reference import reference_session
 
@@ -172,7 +198,7 @@ class ReferenceSessionTests(unittest.TestCase):
         pool.boards = [None]
         keys = []
         for sequence, rate in [(7, 80_000_000), (7, 40_000_000), (8, 80_000_000)]:
-            message = SimpleNamespace(payload=SimpleNamespace(sync_info=sequence, sample_rate_hz=rate, config_generation=4))
+            message = SimpleNamespace(antenna_id=0, payload=SimpleNamespace(fire_time_ns=0, sync_info=sequence, sample_rate_hz=rate, config_generation=4))
             keys.append(pool._resolve_cluster_key("chunks", 123, {}, 0, message))
         self.assertEqual(len(set(keys)), 3)
 
@@ -183,12 +209,14 @@ class ReferenceSessionTests(unittest.TestCase):
         receiver = IQReceiver.__new__(IQReceiver)
         receiver.boards = [None, None]
 
-        def key(board, generation, sync=0):
-            payload = SimpleNamespace(sync_info=sync, sample_rate_hz=80_000_000, config_generation=generation)
-            return receiver._resolve_cluster_key("chunks", 16384, {}, board, SimpleNamespace(payload=payload))
+        def key(board, generation, sync=0, antenna=0, fire=1):
+            payload = SimpleNamespace(sync_info=sync, fire_time_ns=fire, sample_rate_hz=80_000_000, config_generation=generation)
+            return receiver._resolve_cluster_key("chunks", 16384, {}, board, SimpleNamespace(antenna_id=antenna, payload=payload))
 
         self.assertNotEqual(key(0, 557), key(0, 558))
         self.assertNotEqual(key(0, 557), key(1, 557))
+        self.assertNotEqual(key(0, 557), key(0, 557, antenna=3))
+        self.assertNotEqual(key(0, 557), key(0, 557, fire=2))
         sync = IQ_SYNC_INFO_GRID_SYNCED | 9
         self.assertEqual(key(0, 557, sync), key(1, 22, sync))
         receiver.boards.pop()
@@ -200,12 +228,25 @@ class ReferenceSessionTests(unittest.TestCase):
 
         pool = IQReceiver.__new__(IQReceiver)
         pool._unwrap_lock = threading.Lock()
-        pool._unwrap_epoch = 0
-        pool._unwrap_last = None
+        from collections import OrderedDict
+
+        pool._unwrap_latest = OrderedDict()
+        pool._unwrap_limit = 32
         wrap = 1 << 24
         raw = [wrap - 2, 0, wrap - 1, 1, 0, 2]
-        indices = [pool._get_cluster_key(0, SimpleNamespace(payload=SimpleNamespace(is_signal_capture=False, source_chunk_index=i))) for i in raw]
+        from espargos.iq_packet import IQ_SYNC_INFO_GRID_SYNCED
+
+        def observe(index, sync, antenna=0, fire=0):
+            payload = SimpleNamespace(is_signal_capture=False, source_chunk_index=index, sync_info=sync, sample_rate_hz=80_000_000, fire_time_ns=fire)
+            return pool._get_cluster_key(0, SimpleNamespace(antenna_id=antenna, payload=payload))
+
+        indices = [observe(i, IQ_SYNC_INFO_GRID_SYNCED | 1) for i in raw]
         self.assertEqual(indices, [wrap - 2, wrap, wrap - 1, wrap + 1, wrap, wrap + 2])
+        self.assertEqual(observe(0, 0, antenna=5, fire=11), 0)
+        self.assertEqual(observe(wrap - 2, 0, antenna=6, fire=12), wrap - 2)
+        self.assertEqual(observe(0, 0, antenna=6, fire=12), wrap)
+        self.assertEqual(observe(0, 0, antenna=6, fire=13), 0)
+        self.assertEqual(observe(0, IQ_SYNC_INFO_GRID_SYNCED | 2), 0)
 
     def test_iq_api_version_compatibility(self):
         from espargos.board import EspargosAPIVersionError

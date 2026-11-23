@@ -1,11 +1,12 @@
 """Measure the phase and delay of the narrowband receive path in its live epoch."""
+
 import threading
 import time
 
 import numpy as np
 
 from ..iq_cluster import IQCluster
-from ..iq_packet import IQ_CHUNK_SAMPLE_WORDS, IQ_SYNC_INFO_GRID_SYNCED, IQ_SYNC_INFO_FIRE_TIME_VALID
+from ..iq_packet import IQ_CHUNK_SAMPLE_WORDS, IQ_SYNC_INFO_GRID_SYNCED, IQ_SYNC_INFO_FIRE_TIME_VALID, IQ_SYNC_INFO_SEQ_MASK
 from ..iq_rx_stream import IQStreamBlock, IQStreamPacket
 from ..iq_tone import TONE_MAX_HZ, TONE_MIN_HZ
 
@@ -17,7 +18,7 @@ def _reference_index(receiver, scope):
 
 
 def _observe(receiver, scope, center, rate, timeout, count, extract, description):
-    generations = {i: receiver.boards[i].iq.get_config()["config_generation"] for i in scope.active}
+    configs = {i: receiver.boards[i].iq.get_config() for i in scope.active}
     frames = []
     wake = threading.Event()
     epoch = origin = None
@@ -30,13 +31,17 @@ def _observe(receiver, scope, center, rate, timeout, count, extract, description
             valid = block.synchronized and (block.center_freq_hz, block.sample_rate_hz) == (center, rate)
         else:
             flags = IQ_SYNC_INFO_GRID_SYNCED | IQ_SYNC_INFO_FIRE_TIME_VALID
-            valid = (np.all((block.sync_info[scope.mask] & flags) == flags)
-                     and np.all(block.center_freq_hz[scope.mask] == center)
-                     and np.all(block.sample_rate_hz[scope.mask] == rate))
+            valid = np.all((block.sync_info[scope.mask] & flags) == flags) and np.all(block.center_freq_hz[scope.mask] == center) and np.all(block.sample_rate_hz[scope.mask] == rate)
         if not valid:
             return
-        if any(np.any(block.config_generation[i][scope.mask[i]] != g) for i, g in generations.items()):
-            return
+        for i, config in configs.items():
+            if np.any(block.config_generation[i][scope.mask[i]] != config["config_generation"]):
+                return
+            seq = config.get("sync_seq")
+            if seq is not None:
+                actual = block.sync_info if isinstance(block, IQStreamBlock) else block.sync_info[i][scope.mask[i]]
+                if not seq or np.any((actual & IQ_SYNC_INFO_SEQ_MASK) != (seq & IQ_SYNC_INFO_SEQ_MASK)):
+                    return
         if epoch is None or not np.array_equal(epoch[scope.mask], block.fire_time_ns[scope.mask]):
             epoch, origin = block.fire_time_ns.copy(), block.grid_origin_ns.copy()
             frames.clear()
@@ -46,8 +51,7 @@ def _observe(receiver, scope, center, rate, timeout, count, extract, description
             if len(frames) == count:
                 wake.set()
 
-    handle = receiver.add_cluster_callback(collect, callback_predicate=lambda c:
-        isinstance(c, (IQStreamBlock, IQCluster)) and np.all(c.completion[scope.mask]))
+    handle = receiver.add_cluster_callback(collect, callback_predicate=lambda c: isinstance(c, (IQStreamBlock, IQCluster)) and np.all(c.completion[scope.mask]))
     try:
         deadline = time.monotonic() + timeout
         while not wake.is_set():
@@ -71,6 +75,8 @@ def _tone(receiver, scope, center, offset, rate, backoff, timeout):
     window = np.hanning(n)
 
     def extract(iq):
+        if np.any(np.abs(iq.real) >= 510) or np.any(np.abs(iq.imag) >= 510):
+            return
         spectrum = np.fft.fft((iq - iq.mean(axis=-1, keepdims=True)) * window, axis=-1)
         power = np.sum(abs(spectrum) ** 2, axis=0)
         peak = int(np.argmax(power))
@@ -80,7 +86,7 @@ def _tone(receiver, scope, center, offset, rate, backoff, timeout):
         if min(abs(tone)) < (2 if rate <= 100000 else 0.5) or max(abs(tone)) > 480:
             return
         # Refine the frequency within one FFT bin using the Hann main lobe.
-        left, mid, right = np.log(np.maximum(power[[(peak-1) % n, peak, (peak+1) % n]], 1e-30))
+        left, mid, right = np.log(np.maximum(power[[(peak - 1) % n, peak, (peak + 1) % n]], 1e-30))
         curvature = left - 2 * mid + right
         fraction = (left - right) / (2 * curvature) if curvature < 0 else 0
         return bins[peak] + fraction * rate / n, tone * np.conj(tone[reference])
@@ -91,32 +97,34 @@ def _tone(receiver, scope, center, offset, rate, backoff, timeout):
     mean = z.mean(axis=0)
     coherence = abs(mean) / np.mean(abs(z), axis=0)
     if min(coherence) < 0.98:
-        raise RuntimeError(f"Unstable narrowband reference phase (coherence {min(coherence):.3f})")
+        worst = tuple(np.argwhere(scope.mask)[np.argmin(coherence)])
+        raise RuntimeError(f"Unstable narrowband reference phase on {receiver.boards[worst[0]].host} " f"row {worst[1]}, column {worst[2]} (coherence {min(coherence):.3f})")
     return frequency, np.angle(mean), epoch, origin
 
 
-def _fit_noise(blocks, reference):
+def _fit_noise(blocks, reference, bandwidth_fraction=1.0):
     """Fit relative phase and delay using the coherent part of the passband."""
     iq = np.stack(blocks)
     n = iq.shape[-1]
     frequency = np.fft.fftfreq(n)
-    keep = (abs(frequency) > 0.07) & (abs(frequency) < 0.37)
+    keep = (abs(frequency) > 0.07 * bandwidth_fraction) & (abs(frequency) < 0.37 * bandwidth_fraction)
     frequency = frequency[keep]
     spectrum = np.fft.fft((iq - iq.mean(axis=-1, keepdims=True)) * np.hanning(n), axis=-1)[:, :, keep]
-    cross = (spectrum * spectrum[:, reference:reference + 1].conj()).mean(axis=0)
+    cross = (spectrum * spectrum[:, reference : reference + 1].conj()).mean(axis=0)
     power = (abs(spectrum) ** 2).mean(axis=0)
     coherence = abs(cross) ** 2 / np.maximum(power * power[reference], 1e-25)
     # Suppress the finite-record noise floor and cap the influence of narrow lines.
     weight = np.maximum(coherence - 3 / len(iq), 0) / np.maximum(1 - coherence, 0.08)
     weight /= np.maximum(weight.sum(axis=1, keepdims=True), 1e-20)
     spread = np.sum(weight * (frequency - (weight * frequency).sum(axis=1, keepdims=True)) ** 2, axis=1)
-    if np.any(spread < 0.10 ** 2) or np.any((weight ** 2).sum(axis=1) > 0.20):
+    if np.any(spread < (0.10 * bandwidth_fraction) ** 2) or np.any((weight**2).sum(axis=1) > 0.20):
         raise RuntimeError("Insufficient coherent bandwidth in the narrowband reference")
 
     # The coarse synchronization has already aligned the ADC grids. Search the
-    # remaining few output samples without phase unwrapping across noisy bins.
+    # remaining delay in units of inverse passband width. This stays well
+    # conditioned for a 1.2 MHz analog filter sampled at 32 MS/s.
     unit = cross / np.maximum(abs(cross), 1e-25)
-    delays = np.linspace(-4, 4, 65)
+    delays = np.linspace(-4, 4, 65) / bandwidth_fraction
     response = abs((weight * unit) @ np.exp(-2j * np.pi * frequency[:, None] * delays)) ** 2
     peak = response.argmax(axis=1)
     if np.any((peak == 0) | (peak == len(delays) - 1)):
@@ -131,7 +139,7 @@ def _fit_noise(blocks, reference):
     return delay, np.angle(mean)
 
 
-def _measure_noise(receiver, scope, center, rate, timeout):
+def _measure_noise(receiver, scope, center, rate, timeout, bandwidth_fraction=1.0, backoff=0):
     # A full-power CW can clip high-gain receivers even at maximum backoff.
     # Spread reference power over the wider analog band and validate the fit
     # with a second, independently tuned reference.
@@ -143,15 +151,15 @@ def _measure_noise(receiver, scope, center, rate, timeout):
     reference = _reference_index(receiver, scope)
     trials = []
     for offset in offsets:
-        receiver.master_board.iq.set_reference("iq", int(center + offset), 0)
+        receiver.master_board.iq.set_reference("iq", int(center + offset), backoff)
         frames, epoch, origin = _observe(receiver, scope, center, rate, timeout, 200, lambda x: x, "noise reference")
         # Discard the reference transition and any buffered samples preceding it.
-        delay, phase = _fit_noise(frames[24:], reference)
+        delay, phase = _fit_noise(frames[24:], reference, bandwidth_fraction)
         trials.append((delay, phase, epoch, origin))
     (d1, p1, epoch, origin), (d2, p2, second_epoch, _) = trials
     if not np.array_equal(epoch[scope.mask], second_epoch[scope.mask]):
         raise RuntimeError("Narrowband receiver restarted during calibration")
-    error = abs(np.angle(np.exp(1j * (p1 - p2)))) + 2 * np.pi * 0.375 * abs(d1 - d2)
+    error = abs(np.angle(np.exp(1j * (p1 - p2)))) + 2 * np.pi * 0.375 * bandwidth_fraction * abs(d1 - d2)
     if max(error) > 0.22:
         raise RuntimeError(f"Narrowband reference validation residual {max(error):.3f} rad")
     delay, phase = (np.full(scope.mask.shape, np.nan) for _ in range(2))
@@ -160,24 +168,34 @@ def _measure_noise(receiver, scope, center, rate, timeout):
     return delay, phase, np.where(scope.mask, epoch, 0).tobytes(), origin
 
 
-def measure_at_operating_gain(receiver, scope, configs, center, rate, timeout):
-    use_noise = False
+def measure_bluetooth(receiver, scope, configs, center, rate, timeout, attempt, gain_override=None):
+    config = configs[scope.active[0]]
+    streaming = config["trigger"]["mode"] == "downsample"
+    bandwidth = min(rate, 1000 * config["bluetooth_filter_khz"])
+    prefer_noise = False
     for board in scope.active:
         receivers = []
         for antenna in scope.ids[board]:
-            config = configs[board]["receivers"][antenna]
+            settings = configs[board]["receivers"][antenna]
+            selected = {key: settings[key] for key in ("antid", "gain_mode", "rx_gain", "expert_gain_words") if key in settings}
+            if gain_override is not None:
+                selected.update(gain_mode="manual", rx_gain=gain_override)
+            receivers.append(selected)
+            prefer_noise |= selected["gain_mode"] == "expert" or (selected["gain_mode"] == "manual" and selected["rx_gain"] >= 30)
+        receiver.boards[board].iq.set_config({"receivers": receivers})
 
-            gain = {key: config[key] for key in ("antid", "gain_mode", "rx_gain", "expert_gain_words") if key in config}
-            receivers.append(gain)
-            use_noise |= config["gain_mode"] == "expert" or config["rx_gain"] > 30
-        if receivers:
-            receiver.boards[board].iq.set_config({"receivers": receivers})
-    if configs[scope.active[0]].get("trigger", {}).get("mode") != "downsample":
-        bandwidth = min(rate, 1000 * configs[scope.active[0]]["bluetooth_filter_khz"])
-        return measure(receiver, scope, center, rate, 0, timeout, bandwidth=bandwidth)
-    if use_noise:
-        return _measure_noise(receiver, scope, center, rate, timeout)
-    return measure(receiver, scope, center, rate, 80, timeout)
+    # A raw capture covers the analog passband. Independent broadband probes
+    # avoid the compression seen with a CW even at modest receiver gains.
+    # Vary the reference power on retries, preserving the measured RF state.
+    if streaming:
+        noise = attempt % 3 == (0 if prefer_noise else 1)
+    else:
+        noise = attempt % 3 != 1
+    if noise:
+        backoff = 40 if not streaming and attempt % 3 == 2 else 0
+        return _measure_noise(receiver, scope, center, rate, timeout, bandwidth / rate, backoff)
+    backoff = 80 if attempt % 3 < 2 else 0
+    return measure(receiver, scope, center, rate, backoff, timeout, bandwidth=bandwidth)
 
 
 def measure(receiver, scope, center, rate, backoff, timeout, bandwidth=None):
@@ -191,16 +209,19 @@ def measure(receiver, scope, center, rate, backoff, timeout, bandwidth=None):
         offsets = (0.16, 0.36, 0.09, 0.26)
     elif center + 0.30 * bandwidth > TONE_MAX_HZ:
         offsets = (-0.16, -0.36, -0.09, -0.26)
-    observations = [_tone(receiver, scope, center, round(x * bandwidth), rate, backoff, timeout)
-                    for x in offsets]
+    observations = [_tone(receiver, scope, center, round(x * bandwidth / 1000) * 1000, rate, backoff, timeout) for x in offsets]
     f, phase, epochs, origins = zip(*observations)
     if any(not np.array_equal(t[scope.mask], epochs[0][scope.mask]) for t in epochs[1:]):
         raise RuntimeError("Narrowband receiver restarted during calibration")
     order = np.argsort(f[:3])
     slope, intercept = np.polyfit(np.asarray(f)[order], np.unwrap(np.asarray(phase)[order], axis=0), 1)
-    residual = abs(np.angle(np.exp(1j * (phase[3] - (slope * f[3] + intercept)))))
-    if max(residual) > 0.15:
-        raise RuntimeError(f"Narrowband reference validation residual {max(residual):.3f} rad")
+    predicted = slope * np.asarray(f)[:, None] + intercept
+    errors = np.abs(np.angle(np.exp(1j * (np.asarray(phase) - predicted))))
+    residual = errors.max()
+    if residual > 0.15:
+        pilot, channel = np.unravel_index(errors.argmax(), errors.shape)
+        bi, row, col = np.argwhere(scope.mask)[channel]
+        raise RuntimeError(f"Narrowband reference validation residual {residual:.3f} rad on " f"{receiver.boards[bi].host} row {row}, column {col} at {f[pilot]:+.0f} Hz")
     delay, phi = (np.full(scope.mask.shape, np.nan) for _ in range(2))
     delay[scope.mask], phi[scope.mask] = slope / (2 * np.pi), intercept
     return delay, phi, np.where(scope.mask, epochs[0], 0).tobytes(), origins[0]

@@ -14,7 +14,7 @@ import math
 from .calibration import Antenna
 from .csi_processing import get_center_frequency
 from .iq_packet import DECIM_TO_FS
-from .iq_rx_stream import IQ_RX_STREAM_RATES, gain_changed, receive_sample_rate
+from .iq_rx_stream import IQ_RX_STREAM_RATES, receive_sample_rate
 from .iq_tx_control import _rpc, _wait
 
 _ROUTES = {"isolated": 0, "reference": 1, "antenna_r": 2, "antenna_l": 3, "random": 4}
@@ -135,6 +135,7 @@ def _wifi_iq(ctx, options):
         settings["rf_switch"] = _ROUTES[settings.pop("output")]
     if settings and any(mode == "wifi_iq" and a not in ctx.antennas for a, mode in enumerate(ctx.modes)):
         raise ValueError("Select every WiFi IQ sensor on the board to change shared capture settings")
+
     def apply():
         receiver = ctx.pool._receivers.get("wifi_iq")
         if receiver is None:
@@ -195,9 +196,6 @@ def _iq_rx(ctx, options):
         old = tx["sensors"][a]["frequency_hz"] if ctx.before[a] == "iq_tx" else ctx.snapshot["receivers"][a]["rf_freq_hz"]
         if ctx.before[a] == "iq_tx" and "frequency_hz" not in options:
             receivers.setdefault(a, {"antid": a})["rf_freq_hz"] = old
-        if ((ctx.snapshot.get("capture_path") == "bluetooth" or ctx.snapshot.get("trigger", {}).get("mode") == "downsample")
-                and gain_changed(ctx.snapshot["receivers"][a], receiver)):
-            invalidated.add(Antenna(ctx.board.host, a))
         if "frequency_hz" in options and options["frequency_hz"] != old:
             invalidated.add(Antenna(ctx.board.host, a))
     if receivers:
@@ -215,10 +213,9 @@ def _iq_rx(ctx, options):
     if path not in ("wifi", "bluetooth"):
         raise ValueError("capture_path must be wifi or bluetooth")
     if options.keys() & {"capture_path", "bandwidth_mhz"}:
-        if options.get("sample_rate_hz") in IQ_RX_STREAM_RATES and (
-                options.get("capture_path", "bluetooth") != "bluetooth" or options.get("bandwidth_mhz", 1.2) != 1.2):
+        if options.get("sample_rate_hz") in IQ_RX_STREAM_RATES and (options.get("capture_path", "bluetooth") != "bluetooth" or options.get("bandwidth_mhz", 1.2) != 1.2):
             raise ValueError("Continuous downsampling requires Bluetooth with the 1.2 MHz filter")
-        if ctx.snapshot.get("trigger", {}).get("mode") == "downsample":
+        if ctx.snapshot.get("trigger", {}).get("mode") == "downsample" and (path != "bluetooth" or options.get("bandwidth_mhz", 1.2) != 1.2):
             settings["trigger"] = {"mode": "interval"}
     if "capture_path" in options:
         _board_wide(ctx)
@@ -236,7 +233,11 @@ def _iq_rx(ctx, options):
             if bw != 0 and (bw != int(bw) or not 13 <= bw <= 54):
                 raise ValueError("WiFi filter bandwidth must be 0 or 13 to 54 MHz")
             settings["filter_bw_mhz"] = int(bw)
-        invalidated.update(_identities(ctx))
+        key = "bluetooth_filter_khz" if path == "bluetooth" else "filter_bw_mhz"
+        steps = ctx.snapshot.get("bluetooth_filter_steps_khz") if path == "bluetooth" else None
+        applied = min(steps, key=lambda step: (abs(step - settings[key]), step)) if steps else settings[key]
+        if applied != ctx.snapshot.get(key):
+            invalidated.update(_identities(ctx))
     if "sample_rate_hz" in options:
         _board_wide(ctx)
         rates = {v: k for k, v in DECIM_TO_FS.items()}
@@ -349,7 +350,7 @@ def configure(selection, *, mode=None, **options):
         owner.calibrations = owner.calibrations.without(invalidated)
         iq_receiver = owner._receivers.get("iq")
         if iq_receiver is not None and invalidated:
-            iq_receiver._invalidate_stream_phases(invalidated)
+            iq_receiver._invalidate_rx_phases(invalidated)
         try:
             for bi, board, before, modes, iq, updates in plans:
                 for update in updates:

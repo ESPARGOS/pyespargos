@@ -44,6 +44,7 @@ class IQCluster(SensorCluster):
     ):
         super().__init__(board_revisions)
         self.chunk_index = int(chunk_index)
+        self._board_generations = {}
         self.signal_board_index: int | None = None
         self._gain_phase_enabled = bool(gain_phase_compensation)
         #: Set by the pool once the cluster's settle window has elapsed: no
@@ -84,6 +85,11 @@ class IQCluster(SensorCluster):
     def add_message(self, board_index: int, sensor_message: sensor.SensorMessage) -> bool:
         position = self.get_sensor_position(board_index, int(sensor_message.antenna_id))
         payload = sensor_message.payload
+        generation = int(getattr(payload, "config_generation", 0))
+        # Boards have independent counters. If a local edit splits this
+        # sample index, publish only a partial snapshot for this board.
+        if self._board_generations.setdefault(board_index, generation) != generation:
+            return False
         iq = payload.decode_iq()
         adc_peak = max(np.max(np.abs(iq.real)), np.max(np.abs(iq.imag)))
         rx_gain = payload.sample_rx_gain()
@@ -100,9 +106,7 @@ class IQCluster(SensorCluster):
             if np.array_equal(self._iq[position], iq):
                 return False
             raise ClusterCollisionError(
-                f"different IQ data for chunk {self.chunk_index} at {position}, "
-                f"configuration {self._config_generation[position]} / {payload.config_generation}, "
-                f"capture origin {self._fire_time_ns[position]} / {payload.fire_time_ns} ns"
+                f"different IQ data for chunk {self.chunk_index} at {position}, " f"configuration {self._config_generation[position]} / {payload.config_generation}, " f"capture origin {self._fire_time_ns[position]} / {payload.fire_time_ns} ns"
             )
         self._iq[position] = iq
         self._adc_peak[position] = adc_peak
@@ -110,7 +114,7 @@ class IQCluster(SensorCluster):
         self._flags[position] = int(getattr(payload, "flags", 0))
         self._sample_rate_hz[position] = int(getattr(payload, "sample_rate_hz", 0))
         self._center_freq_hz[position] = int(getattr(payload, "center_freq_hz", 0))
-        self._config_generation[position] = int(getattr(payload, "config_generation", 0))
+        self._config_generation[position] = generation
         self._sync_info[position] = int(getattr(payload, "sync_info", 0))
         self._fire_time_ns[position] = int(getattr(payload, "fire_time_ns", 0))
         self._dropped_chunks[position] = int(getattr(payload, "dropped_chunks", 0))

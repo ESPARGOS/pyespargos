@@ -6,6 +6,9 @@ control, sync anchors, and the IQ chunk stream subscription.
 ``board.iq`` groups the controller operations of the IQ-sampling mode.
 """
 
+import json
+import math
+import time
 from typing import Any, Callable
 
 from espargos.board import BoardCapability, SensorMessageSubscription
@@ -51,6 +54,42 @@ class IQCapability(BoardCapability):
         """
         self._board.control.command("set_iq_control", config)
 
+    def set_config_and_wait(self, config: dict, timeout: float = 5.0) -> int:
+        """Apply settings and wait for every selected IQ receiver to report the generation.
+
+        This also works for a quiet trigger that produces no samples. Requires
+        firmware supporting generation receipts and sensor acknowledgements.
+        Raises if a newer configuration supersedes the requested generation.
+        """
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be positive and finite")
+        response = self._board.control.post_json("set_iq_control", {**config, "return_generation": True})
+        if response == "ok":
+            raise RuntimeError("Controller accepted IQ settings but does not support generation receipts")
+        generation = json.loads(response)["config_generation"]
+        deadline = time.monotonic() + timeout
+        while True:
+            current = self.get_rx_status()
+            if current["config_generation"] != generation:
+                raise RuntimeError(f"IQ generation {generation} was superseded by {current['config_generation']}")
+            pending = [a for a, applied in enumerate(current["applied_generations"]) if current["receiver_mask"] & (1 << a) and applied != generation]
+            if not pending:
+                return generation
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"IQ generation {generation} unconfirmed on sensors {pending}")
+            time.sleep(min(0.1, remaining))
+
+    def get_rx_status(self) -> dict:
+        """Return the selected receiver mask and last generation reported by each antenna.
+
+        An entry is null until the controller receives status from a sensor
+        supporting RX acknowledgements. Zero denotes an inactive receiver.
+        Controllers exposing report_age_ms give the age of the corresponding
+        acknowledgement in milliseconds, indexed by antenna ID.
+        """
+        return self._board.control.get_json("get_iq_rx_status")
+
     def get_config(self) -> dict:
         """Return the controller's canonical eight-receiver IQ configuration."""
         return self._board.control.get_json("get_iq_control")
@@ -93,15 +132,21 @@ class IQCapability(BoardCapability):
         """Apply the same receiver settings to all eight IQ receivers."""
         self.set_config({"receivers": [{"antid": antenna_id, **settings} for antenna_id in range(8)]})
 
-    def set_sync_anchor(self, anchor_ns: list, seq=None) -> str:
+    def set_sync_anchor(self, anchor_ns: list, seq=None, *, boot_ids=None) -> str:
         """Post CPU-cycle reference timestamps (one per antenna ID, encoded in ns).
 
         The controller schedules a coordinated IQ engine (re)start based on the
-        anchors. Returns the controller response (the new sync sequence).
+        anchors. Pass the eight ``boot_ids`` from RX status before acquiring
+        the reference to reject a sensor restart during the measurement.
+        Returns the controller response (the new sync sequence).
         """
         if len(anchor_ns) != 8:
             raise ValueError("anchor_ns must contain one entry per antenna ID (8)")
         payload = {"anchor_ns": [int(value) for value in anchor_ns]}
+        if boot_ids is not None:
+            if len(boot_ids) != 8:
+                raise ValueError("boot_ids must contain one entry per antenna ID (8)")
+            payload["boot_ids"] = [None if boot is None else int(boot) for boot in boot_ids]
         if seq is not None:
             payload["seq"] = int(seq)
         return self._board.control.post_json("set_iq_sync_anchor", payload)

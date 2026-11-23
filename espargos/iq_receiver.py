@@ -8,7 +8,7 @@ partial clusters when their predicate allows them.
 
 Reference calibration aligns the sample grids and measures phase and delay,
 including REF path compensation. The 24-bit chunk counter is unwrapped into
-monotonic cluster keys across counter wraps and synchronization restarts.
+monotonic indices within each sample grid, including across counter wraps.
 """
 
 from collections import OrderedDict
@@ -19,6 +19,7 @@ import numpy as np
 
 import espargos
 from espargos import constants
+from espargos.board import EspargosHTTPStatusError
 from espargos.clustering import ClusterAssembler
 from espargos.sensor_calibration import SensorCalibration, compute_reference_path_delays
 from espargos.calibration import Calibration
@@ -26,7 +27,7 @@ from espargos.calibration import Calibration
 from ._iq_calibration import reference as iq_reference
 from . import iq_tone
 from .iq_accum_cluster import IQAccumCluster
-from .iq_rx_stream import IQ_RX_STREAM_RATES, IQStreamBlock, IQStreamPacket, gain_changed, receive_sample_rate
+from .iq_rx_stream import IQ_RX_STREAM_RATES, IQStreamBlock, IQStreamPacket, receive_sample_rate
 from .iq_cluster import CHUNK_SAMPLES, IQCluster
 from .iq_packet import DECIM_TO_FS, IQ_SYNC_INFO_GRID_SYNCED, IQAccumPacket
 from .iq_signal_capture import IQSignalAssembler
@@ -337,16 +338,11 @@ class IQReceiver(ClusterAssembler):
         self._master_index = master_index
         self._gain_phase_enabled = bool(gain_phase_compensation)
 
-        # 24-bit chunk-index unwrap state (module docstring); the grid is
-        # common to all boards by construction, so one global tracker
-        # suffices — inter-board arrival skew (<~ms) is far below the 2^23
-        # wrap threshold. Post-sync stragglers from the old time base briefly
-        # inflate the epoch, keeping the unwrapped index monotonic through
-        # the transition; their spurious clusters age out via the settle
-        # timeout.
+        # A synchronized grid shares one 24-bit counter across antennas.
+        # Before sync, or after a single-sensor reboot, counters advance independently.
         self._unwrap_lock = threading.Lock()
-        self._unwrap_epoch = 0
-        self._unwrap_last = None
+        self._unwrap_latest = OrderedDict()
+        self._unwrap_limit = 4 * (1 + len(self.boards) * SENSOR_COUNT)
 
         self._calibration: SensorCalibration | None = None
         # capture parameters the stored calibration was computed at (needed to
@@ -392,7 +388,7 @@ class IQReceiver(ClusterAssembler):
 
         By default only clusters containing every antenna currently in IQ RX mode are delivered, immediately on completion. With
         ``include_partial``, settled incomplete clusters are delivered as well
-        (after ``chunk_settle_timeout``, once no more chunks are expected) —
+        (immediately on a local grid, after ``chunk_settle_timeout`` on a shared grid) —
         such consumers must tolerate out-of-order chunk indices between the
         immediate complete and the delayed partial deliveries. A custom
         ``callback_predicate`` overrides both behaviors; it can consult
@@ -421,6 +417,7 @@ class IQReceiver(ClusterAssembler):
 
     def add_stream_callback(self, callback, *, include_partial=False):
         """Receive aligned narrowband blocks. Partial blocks retain NaNs for missing antennas."""
+
         def ready(block):
             return not isinstance(block, IQStreamBlock) or self._complete(block) or (include_partial and block.settled)
 
@@ -538,8 +535,7 @@ class IQReceiver(ClusterAssembler):
         self._clear_cluster_cache(_CACHE_SIGNAL_CHUNKS)
         self._clear_cluster_cache(_CACHE_ACCUMULATIONS)
         with self._unwrap_lock:
-            self._unwrap_epoch = 0
-            self._unwrap_last = None
+            self._unwrap_latest.clear()
 
     def _get_cluster_cache_name(self, board_index, sensor_message) -> str:
         payload = sensor_message.payload
@@ -562,6 +558,7 @@ class IQReceiver(ClusterAssembler):
         if isinstance(sensor_message.payload, IQAccumPacket):
             payload = sensor_message.payload
             return (
+                int(payload.sync_info) & 0xFFFF,
                 int(payload.source_chunk_start),
                 int(payload.source_chunk_end),
                 int(payload.vector_chunks),
@@ -577,17 +574,20 @@ class IQReceiver(ClusterAssembler):
             # this synthetic, contiguous key is association-only.
             return (1 << 128) | (int(board_index) << 96) | (int(payload.config_generation) << 64) | (int(payload.capture_id) << 32) | int(payload.capture_chunk_offset)
         raw = int(payload.source_chunk_index) & 0x00FFFFFF
+        if payload.sync_info & IQ_SYNC_INFO_GRID_SYNCED:
+            domain = (payload.sync_info & 0xFFFF, payload.sample_rate_hz)
+        else:
+            domain = (board_index, sensor_message.antenna_id, payload.fire_time_ns)
         with self._unwrap_lock:
-            # Different sensors can straddle a wrap in arrival order. Keep
-            # the newest index as the reference; a delayed pre-wrap packet
-            # belongs to the previous epoch and must not cause another wrap.
-            if self._unwrap_last is None:
-                self._unwrap_last = raw
-            newest = (self._unwrap_epoch << 24) + self._unwrap_last
-            delta = (raw - self._unwrap_last + (1 << 23)) % (1 << 24) - (1 << 23)
+            # Keep the newest observation in each domain. An out-of-order
+            # pre-wrap packet maps to the previous turn of that same counter.
+            newest = self._unwrap_latest.get(domain, raw)
+            delta = (raw - newest + (1 << 23)) % (1 << 24) - (1 << 23)
             index = newest + delta
-            if index > newest:
-                self._unwrap_epoch, self._unwrap_last = divmod(index, 1 << 24)
+            self._unwrap_latest[domain] = max(index, newest)
+            self._unwrap_latest.move_to_end(domain)
+            if len(self._unwrap_latest) > self._unwrap_limit:
+                self._unwrap_latest.popitem(last=False)
             return index
 
     def _resolve_cluster_key(self, cache_name, proposed_key, cache, board_index, sensor_message):
@@ -598,8 +598,12 @@ class IQReceiver(ClusterAssembler):
             # A local engine restart can reuse an index while old chunks are
             # still in flight. Only a synchronized grid names the same sample
             # across boards, whose configuration counters are independent.
-            local = len(self.boards) == 1 or not payload.sync_info & IQ_SYNC_INFO_GRID_SYNCED
-            session = (board_index, payload.config_generation) if local else None
+            if not payload.sync_info & IQ_SYNC_INFO_GRID_SYNCED:
+                session = (board_index, sensor_message.antenna_id, payload.fire_time_ns, payload.config_generation)
+            elif len(self.boards) == 1:
+                session = (board_index, payload.config_generation)
+            else:
+                session = None
             return (payload.sync_info & 0xFFFF, payload.sample_rate_hz, session, proposed_key)
         return proposed_key
 
@@ -617,7 +621,9 @@ class IQReceiver(ClusterAssembler):
 
     def _create_cluster(self, cache_name, cluster_key, board_index, first_message) -> IQCluster:
         if cache_name == _CACHE_STREAM:
-            return IQStreamBlock(first_message.payload, self.board_revisions)
+            block = IQStreamBlock(first_message.payload, self.board_revisions)
+            block.settled = not block.synchronized
+            return block
         if cache_name == _CACHE_ACCUMULATIONS:
             return IQAccumCluster(
                 first_message.payload,
@@ -630,12 +636,18 @@ class IQReceiver(ClusterAssembler):
             gain_phase_compensation=self._gain_phase_enabled,
         )
 
-        if cache_name == _CACHE_SIGNAL_CHUNKS:
+        if cache_name == _CACHE_CHUNKS:
+            cluster.settled = not (first_message.payload.sync_info & IQ_SYNC_INFO_GRID_SYNCED)
+        elif cache_name == _CACHE_SIGNAL_CHUNKS:
             cluster.signal_board_index = board_index
         return cluster
 
     def _on_cluster_updated(self, cache_name, cluster_key, sensor_cluster) -> bool:
         all_callbacks_fired = self._try_callbacks(sensor_cluster)
+        # A free-running antenna is the sole member of its local grid. Holding
+        # its partial record for the array settle timeout cannot add a peer.
+        if sensor_cluster.settled:
+            return True
         # TX/WiFi antennas cannot complete an IQ cluster in a mixed-mode pool.
         if cache_name == _CACHE_SIGNAL_CHUNKS:
             return all_callbacks_fired and self._signal_ready(sensor_cluster)
@@ -668,8 +680,8 @@ class IQReceiver(ClusterAssembler):
 
     # ---- configuration ----
 
-    def _invalidate_stream_phases(self, antennas):
-        if self._calibration is None or self._calibration_sample_rate not in IQ_RX_STREAM_RATES:
+    def _invalidate_rx_phases(self, antennas):
+        if self._calibration is None:
             return
         for antenna in antennas:
             bi = self._owner.hosts.index(antenna.host)
@@ -693,6 +705,8 @@ class IQReceiver(ClusterAssembler):
                 value = config.pop(key)
                 canonical_key = "expert_gain_words" if key == "expert_gain_word" else key
                 if canonical_key == "gain_mode" and isinstance(value, int):
+                    if not 0 <= value <= 2:
+                        raise ValueError("gain_mode must be auto, manual, or expert")
                     value = ("auto", "manual", "expert")[value]
                 receiver_update[canonical_key] = value
         if receiver_update:
@@ -700,28 +714,64 @@ class IQReceiver(ClusterAssembler):
                 raise ValueError("cannot combine array-wide receiver fields with receivers")
             config["receivers"] = [{"antid": antenna_id, **receiver_update} for antenna_id in range(SENSOR_COUNT)]
 
-        # Narrowband phase also depends on the active receiver gain.
-        if self._owner.calibrations.groups:
+        invalid = set()
+        # Gain and antenna routing preserve the sample epoch.
+        if self._calibration is not None or self._owner.calibrations.groups:
             from .calibration import Antenna
 
-            sensitive = {"capture_path", "bluetooth_sample_rate_hz", "bluetooth_filter_khz", "adc_decimation", "adc_source_sel", "bw_mhz", "second_chan", "filter_bw_mhz", "loopback", "tx_tone_enable", "mode", "modes"}
-            if "trigger" in config or sensitive.intersection(config) or config.get("receivers"):
-                invalid = set()
+            shared = {
+                "capture_path",
+                "bluetooth_sample_rate_hz",
+                "bluetooth_filter_khz",
+                "adc_decimation",
+                "adc_source_sel",
+                "bw_mhz",
+                "second_chan",
+                "filter_bw_mhz",
+                "loopback",
+                "tx_tone_enable",
+                "tx_tone0_step",
+                "loopback_tx_gain",
+                "loopback_rx_gain",
+                "loopback_bb_gain",
+            }
+            tuning = [r for r in config.get("receivers", []) if "rf_freq_hz" in r]
+            if shared.intersection(config) or {"trigger", "mode", "modes"}.intersection(config) or tuning:
                 for board in self.boards:
                     old = board.iq.get_config()
-                    if "trigger" in config and receive_sample_rate(old) != receive_sample_rate(old | config):
+                    updated = old | config
+                    if "bluetooth_filter_khz" in config and old.get("bluetooth_filter_steps_khz"):
+                        khz = config["bluetooth_filter_khz"]
+                        updated["bluetooth_filter_khz"] = min(old["bluetooth_filter_steps_khz"], key=lambda step: (abs(step - khz), step))
+                    if updated.get("capture_path") == "bluetooth":
+                        active_fields = {"capture_path", "bluetooth_sample_rate_hz", "bluetooth_filter_khz"}
+                    else:
+                        active_fields = shared - {"bluetooth_sample_rate_hz", "bluetooth_filter_khz"}
+                    if 0 < updated.get("filter_bw_mhz", 0) < 13:
+                        updated["filter_bw_mhz"] = 13
+                    if "trigger" in config and receive_sample_rate(old) != receive_sample_rate(updated) or any(updated[k] != old.get(k) for k in active_fields.intersection(config)):
                         invalid.update(Antenna(board.host, a) for a, mode in enumerate(old["modes"]) if mode == "iq_rx")
-                    if any(key in config and config[key] != old.get(key) for key in sensitive):
-                        invalid.update(Antenna(board.host, a) for a in range(8))
-                    for r in config.get("receivers", []):
-                        previous = old["receivers"][r["antid"]]
-                        retuned = "rf_freq_hz" in r and r["rf_freq_hz"] != previous["rf_freq_hz"]
-                        if retuned or ((old.get("capture_path") == "bluetooth" or old.get("trigger", {}).get("mode") == "downsample") and gain_changed(previous, r)):
+                    modes = old["modes"]
+                    if "mode" in config:
+                        modes = ["iq_rx" if config["mode"] in ("iq", True) else "wifi"] * SENSOR_COUNT
+                    for a, mode in enumerate(config.get("modes", modes)):
+                        if mode != old["modes"][a]:
+                            invalid.add(Antenna(board.host, a))
+                    for r in tuning:
+                        previous = iq_receiver_config(old, r["antid"])
+                        if r["rf_freq_hz"] != previous["rf_freq_hz"]:
                             invalid.add(Antenna(board.host, r["antid"]))
-                self._owner.calibrations = self._owner.calibrations.without(invalid)
-                self._invalidate_stream_phases(invalid)
 
         errors = self._fanout(lambda board_obj: board_obj.iq.set_config(dict(config)))
+        if invalid:
+            # Firmware validates before applying a 400/409 response. Keep that
+            # board's measured phases. A timeout or 5xx can follow a physical
+            # change, so those boards must be invalidated along with successes.
+            rejected = {b.host for b, error in zip(self.boards, errors) if isinstance(error, EspargosHTTPStatusError) and error.status in (400, 409)}
+            changed = {antenna for antenna in invalid if antenna.host not in rejected}
+            if changed:
+                self._owner.calibrations = self._owner.calibrations.without(changed)
+                self._invalidate_rx_phases(changed)
         failed = [f"{self.boards[i].host}: {e}" for i, e in enumerate(errors) if e is not None]
         if failed:
             raise RuntimeError("set_iq_control failed on " + "; ".join(failed))
@@ -849,15 +899,21 @@ class IQReceiver(ClusterAssembler):
         Unhandled restarts and retunes remain detectable as a mismatch."""
         if self._calibration is None or self._calibration_epoch is None:
             return False
-        if isinstance(source, IQStreamBlock):
-            if (not source.synchronized or source.center_freq_hz != self._calibration_center_frequency
-                    or source.sample_rate_hz != self._calibration_sample_rate):
-                return False
-            present = source.completion
-            epochs = np.frombuffer(self._calibration_epoch, np.uint64).reshape(source.shape)
-            return bool(np.any(present) and np.all(np.isfinite(self._calibration.phase_offsets[present]))
-                        and np.array_equal(epochs[present], source.fire_time_ns[present]))
-        return self._calibration_epoch == np.asarray(source.fire_time_ns, dtype=np.uint64).tobytes()
+        if isinstance(source, IQStreamBlock) and not source.synchronized:
+            return False
+        fire = np.asarray(source.fire_time_ns, dtype=np.uint64)
+        phases = self._calibration.phase_offsets
+        if fire.shape != phases.shape:
+            return False
+        present = getattr(source, "completion", None)
+        if present is None:  # A published Signal capture includes every sensor.
+            present = np.ones(fire.shape, dtype=bool)
+        if not np.any(present) or not np.all(np.isfinite(phases[present])):
+            return False
+        epochs = np.frombuffer(self._calibration_epoch, np.uint64).reshape(fire.shape)
+        centers = np.broadcast_to(source.center_freq_hz, fire.shape)
+        rates = np.broadcast_to(source.sample_rate_hz, fire.shape)
+        return bool(np.array_equal(epochs[present], fire[present]) and np.all(centers[present] == self._calibration_center_frequency) and np.all(rates[present] == self._calibration_sample_rate))
 
     def cal_correction(self, fft_size=CHUNK_SAMPLES):
         """Per-bin correction vectors synthesized from the stored calibration
@@ -899,8 +955,8 @@ class IQReceiver(ClusterAssembler):
         then restore receive settings and publish the calibration atomically.
         By default, choose RX gain for the configured internal or external
         reference path. Pass ``rx_gain`` to override acquisition gain. The
-        narrowband phase measurement uses the operating gain of each receiver
-        configured for manual or expert gain.
+        Bluetooth phase measurement uses the operating receiver gains unless
+        explicitly overridden. Retries vary the reference waveform and power.
         """
         t0 = time.monotonic()
         if attempts < 1:
@@ -909,7 +965,10 @@ class IQReceiver(ClusterAssembler):
 
         scope = scope or CalibrationScope(self)
         configs = [b.iq.get_config() for b in self.boards]
-        reuse_grid = scope.check_sync(configs)
+        preserve_grid = scope.check_sync(configs)
+        # Separate boards can have independently established local grids.
+        # Only reuse a local grid for a single board, or a required subgroup.
+        warm_grid = len(scope.active) == 1 and scope.has_grid(configs)
         bi, a = scope.pairs[0]
         row, col = self.boards[bi].revision.antenna_id_to_row_col(a)
         ref = bi * 8 + row * 4 + col
@@ -921,25 +980,36 @@ class IQReceiver(ClusterAssembler):
             bt = configs[idx].get("capture_path") == "bluetooth" or downsample
             if (bt, downsample, configs[idx].get("bluetooth_filter_khz") if bt else None) != profile:
                 raise IQCalibrationError("Select the same capture path, bandwidth and sampling mode on participating boards")
-        with iq_reference.reference_session(self, center_hz, rx_gain, scope) as (center, fs):
+        coarse_gain = iq_reference.reference_gain(self, rx_gain) if bluetooth else rx_gain
+        keep_bluetooth_epoch = bluetooth and warm_grid
+        with iq_reference.reference_session(self, center_hz, coarse_gain, scope, keep_bluetooth_epoch) as (center, fs):
+            timing_center = iq_reference.BLUETOOTH_TIMING_CENTER_HZ if bluetooth else center
             self._calibration = None
             for attempt in range(attempts):
                 try:
+                    # The transport can time out while a controller services a
+                    # firmware update. A new REF acquisition needs a live data
+                    # subscription even when its HTTP requests still succeed.
+                    for board_index in scope.active:
+                        board = self.boards[board_index]
+                        if not board.is_stream_connected:
+                            board.start(transports=self._owner._transports)
                     if bluetooth and attempt:
-                        scope.apply_rx({"capture_path": "wifi", "adc_decimation": 1, "gain_mode": "manual",
-                                        "rx_gain": iq_reference.reference_gain(self, rx_gain)})
-                    if reuse_grid:
-                        self.master_board.iq.set_reference("iq", center, iq_reference.REFERENCE_BACKOFF)
+                        scope.apply_rx({"capture_path": "wifi", "adc_decimation": 1, "adc_source_sel": 15, "loopback": 0, "tx_tone_enable": 0, "gain_mode": "manual", "rx_gain": coarse_gain, "rf_freq_hz": timing_center})
+                    if keep_bluetooth_epoch and attempt == 0:
+                        seqs = None
+                    elif preserve_grid or (warm_grid and attempt == 0):
+                        self.master_board.iq.set_reference("iq", timing_center, iq_reference.REFERENCE_BACKOFF)
                         scope.apply_rx({"trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 4}})
                         seqs = None
                     else:
-                        seqs = iq_reference.acquire_grid(self, center, timeout, scope)
+                        seqs = iq_reference.acquire_grid(self, timing_center, timeout, scope)
                     if bluetooth:
-                        from ._iq_calibration.stream import measure_at_operating_gain
-                        trigger = configs[bi]["trigger"] if streaming else {
-                            "mode": "interval", "interval_chunks": max(64, round(fs / 256 / 100)), "burst_chunks": 4}
-                        scope.apply_rx({"capture_path": "bluetooth", "trigger": trigger})
-                        timing, phi, epoch, grid_origin = measure_at_operating_gain(self, scope, configs, center, fs, iq_ready_timeout)
+                        from ._iq_calibration.stream import measure_bluetooth
+
+                        trigger = configs[bi]["trigger"] if streaming else {"mode": "interval", "interval_chunks": max(64, round(fs / 256 / 100)), "burst_chunks": 4}
+                        scope.apply_rx({"capture_path": "bluetooth", "rf_freq_hz": center, "trigger": trigger})
+                        timing, phi, epoch, grid_origin = measure_bluetooth(self, scope, configs, center, fs, iq_ready_timeout, attempt, rx_gain)
                         break
                     training = iq_reference.collect(self, count=32, timeout=iq_ready_timeout, seqs=seqs, mask=scope.mask)
                     tau, phi, quality = iq_reference.fit(training, ref, scope.mask)

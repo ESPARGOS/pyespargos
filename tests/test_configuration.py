@@ -43,6 +43,30 @@ class ConfigurationTests(unittest.TestCase):
                 self.assertEqual(path, "set_iq_tx")
                 self.assertEqual(payload["transmitters"], [dict(antid=a, output="isolated") for a in range(8)])
 
+    def test_iq_gain_and_equivalent_filters_preserve_calibration(self):
+        from espargos.calibration import Antenna
+        from espargos.configuration import ConfigurationContext, _iq_rx
+
+        board = FakeBoard()
+        modes = ("iq_rx",) * 8
+        snapshot = dict(
+            receivers=[{"rf_freq_hz": 2440e6}] * 8,
+            modes=modes,
+            capture_path="bluetooth",
+            bluetooth_sample_rate_hz=1600000,
+            bluetooth_filter_khz=1200,
+            bluetooth_filter_steps_khz=[1200, 1220, 1250],
+            trigger={"mode": "downsample", "sample_rate_hz": 16000},
+        )
+        ctx = ConfigurationContext(None, board, 0, tuple(range(8)), modes, modes, snapshot)
+        for options in ({"rx_gain": 46}, {"capture_path": "bluetooth"}, {"bandwidth_mhz": 1.2}, {"sample_rate_hz": 16000}):
+            update = _iq_rx(ctx, options)
+            self.assertFalse(update.invalidated)
+            self.assertNotEqual(update.iq_settings.get("trigger", {}).get("mode"), "interval")
+        snapshot["trigger"] = {"mode": "interval"}
+        self.assertFalse(_iq_rx(ctx, {"bandwidth_mhz": 1.209}).invalidated)
+        self.assertEqual(_iq_rx(ctx, {"bandwidth_mhz": 1.22}).invalidated, {Antenna(board.host, a) for a in range(8)})
+
     def test_validate_every_board_before_writing(self):
         a, b = FakeBoard("a"), FakeBoard("b")
         b.modes[7] = "wifi"

@@ -88,7 +88,7 @@ class IQAccumCluster(SensorCluster):
         slot = position + (lane,)
         iq = payload.decode_iq()
         adc_peak = max(np.max(np.abs(iq.real)), np.max(np.abs(iq.imag)))
-        if self._gain_phase_enabled:
+        if self._gain_phase_enabled and self.adc_decimation != 0:
             rx_gain = payload.sample_rx_gain()
             # The scalar wire gain is sampled from the live AGC register and
             # can transiently read the DC-offset servo's shadow slot (see

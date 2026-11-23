@@ -116,6 +116,10 @@ class ScopeTests(unittest.TestCase):
         self.configs[1]["coarse_synced"] = False
         with self.assertRaisesRegex(ValueError, "existing synchronized grid"):
             self.scope.check_sync(self.configs)
+        self.configs[1]["coarse_synced_mask"] = (1 << 2) | (1 << 5)
+        self.assertTrue(self.scope.check_sync(self.configs))
+        self.configs[1]["coarse_synced_mask"] = 1 << 5
+        self.assertFalse(self.scope.has_grid(self.configs))
         self.configs[1].update(coarse_synced=True, adc_decimation=2)
         with self.assertRaisesRegex(ValueError, "80 MSa/s"):
             self.scope.check_sync(self.configs)

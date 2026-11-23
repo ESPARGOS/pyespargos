@@ -114,8 +114,9 @@ the callback registration in the example above:
 
 Choose a fixed gain before calibrating for phase measurements. Each receiver
 is measured at its operating gain. An automatic gain change can shift phase
-during reception. After changing manual gain, center frequency or sample rate,
-recalibrate and get a new correction. See :doc:`calibration` for reference
+during reception. Manual gain edits preserve the capture epoch and stored
+correction. After changing center frequency or sample rate, recalibrate
+and get a new correction. See :doc:`calibration` for reference
 cable settings.
 
 Recording consecutive samples

@@ -19,6 +19,7 @@ def _packet(lane, antenna_id=0, count=7, coverage_hash=None):
         coverage_hash = 1000 + lane
     return SimpleNamespace(
         fire_time_ns=1000000,
+        sync_info=(1 << 16) | 1,
         window_index=9,
         source_chunk_start=4096,
         source_chunk_end=4224,
@@ -169,6 +170,9 @@ def test_accumulation_key_is_shared_across_controller_generations():
     second.__dict__.update(vars(_packet(0)))
     second.config_generation += 10
     assert receiver._get_cluster_key(0, _message(0, first)) == receiver._get_cluster_key(1, _message(0, second))
+    second.sync_info += 1
+    assert receiver._get_cluster_key(0, _message(0, first)) != receiver._get_cluster_key(1, _message(0, second))
+    second.sync_info = first.sync_info
     second.source_chunk_start += 64
     assert receiver._get_cluster_key(0, _message(0, first)) != receiver._get_cluster_key(1, _message(0, second))
 
@@ -201,3 +205,11 @@ def test_accumulated_peak_precedes_phase_correction_and_resets_with_generation()
     cluster.add_message(0, _message(0, newer))
     assert np.isnan(cluster.adc_peak[0, 0, 0, 0])
     assert cluster.adc_peak[0, 0, 0, 1] == 1
+
+
+def test_bluetooth_accumulation_keeps_measured_phase():
+    packet = _packet(1)
+    packet.adc_decimation = 0
+    cluster = IQAccumCluster(packet, [_Revision()], gain_phase_compensation=True)
+    cluster.add_message(0, _message(0, packet))
+    np.testing.assert_array_equal(cluster.iq_sections[0, 0, 0, 1], packet.decode_iq())

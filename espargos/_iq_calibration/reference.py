@@ -2,17 +2,19 @@
 
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
+from ..board import EspargosHTTPStatusError
 from ..iq_packet import IQChunkPacket, IQ_CHUNK_TYPE_HEADER, IQ_CHUNK_FLAG_REFERENCE, IQ_CHUNK_FLAG_REFERENCE_READY
 
 REFERENCE = IQ_CHUNK_FLAG_REFERENCE
 READY = IQ_CHUNK_FLAG_REFERENCE_READY
 
 # Reduce antenna leakage, using a stronger wired reference for a clear onset.
+BLUETOOTH_TIMING_CENTER_HZ = 2440000000
 REFERENCE_RX_GAIN = 30
 REFERENCE_EXTERNAL_RX_GAIN = 42
 REFERENCE_THRESHOLD = 48
@@ -37,10 +39,36 @@ def transfer_delay(timing_seconds, old_origin_ns, new_origin_ns, reference):
     return np.asarray(timing_seconds) + delta * 1e-9
 
 
+def _timing_samples(samples):
+    """Remove DC and dominant narrow carriers before estimating broadband delay."""
+    x = np.asarray(samples) - np.mean(samples)
+    n = len(x)
+    original = np.vdot(x, x).real
+    energy = original
+    if not energy:
+        return x
+    # Strip only lines accounting for >=10% of the remaining energy. A pair
+    # of carriers can yield a convincing but arbitrary lag after removing
+    # just the strongest. Bound the work even on a line-only recording.
+    for _ in range(5):
+        power = np.abs(np.fft.fft(x, 4 * n)) ** 2
+        peak = int(np.argmax(power))
+        if power[peak] < 0.1 * n * energy:
+            break
+        left, top, right = power.take([peak - 1, peak, peak + 1], mode="wrap")
+        delta = 0.5 * (left - right) / (left + right - 2 * top)
+        carrier = np.exp(2j * np.pi * (peak + delta) * np.arange(n) / len(power))
+        x = x - carrier * (np.vdot(carrier, x) / n)
+        energy = np.vdot(x, x).real
+        if energy < 0.01 * original:
+            raise RuntimeError("Reference snapshot contains insufficient broadband energy for timing")
+    return x
+
+
 def relative_lag(samples, reference, expected_lag=None):
     """Sample in ``samples`` coincident with reference[0], plus confidence."""
-    x = np.asarray(samples) - np.mean(samples)
-    y = np.asarray(reference) - np.mean(reference)
+    x = _timing_samples(samples)
+    y = _timing_samples(reference)
     n = len(y)
     lags = np.arange(-n + 1, len(x))
     cross = np.correlate(x, y, mode="full")
@@ -71,29 +99,35 @@ def reference_gain(pool, gain):
 
 
 @contextmanager
-def reference_session(pool, center_hz=None, rx_gain=None, scope=None):
+def reference_session(pool, center_hz=None, rx_gain=None, scope=None, keep_bluetooth_epoch=False):
     if not pool._reference_lock.acquire(blocking=False):
         raise RuntimeError("Synchronization or calibration is already running")
     try:
         board = pool.master_board
         previous_mode = board.control.get_json("get_controller_mode")
-        changed_mode = previous_mode["mode"] != "iq"
-        if changed_mode:
-            board.control.post_json("set_controller_mode", {"mode": "iq"})
-        try:
-            with _reference_session(pool, center_hz, rx_gain, scope) as state:
+        with ExitStack() as cleanup:
+            if previous_mode["mode"] != "iq":
+                board.control.post_json("set_controller_mode", {"mode": "iq"})
+                cleanup.callback(board.control.post_json, "set_controller_mode", previous_mode)
+            else:
+                monitor = board.control.get_json("get_iq_monitor")
+                if monitor["enabled"]:
+                    board.control.post_json("set_iq_monitor", {"enabled": False})
+                    cleanup.callback(board.control.post_json, "set_iq_monitor", {"enabled": True})
+                reference = board.iq.get_reference()
+                if reference["mode"] != "off":
+                    if reference.get("gate_open") is False:
+                        cleanup.callback(board.control.command, "gate_iq_reference", {"open": False})
+                    settings = {k: reference[k] for k in ("mode", "freq_khz", "backoff_qdb", "cw_tuning") if k in reference}
+                    cleanup.callback(board.control.post_json, "set_iq_reference", settings)
+            with _reference_session(pool, center_hz, rx_gain, scope, keep_bluetooth_epoch) as state:
                 yield state
-        finally:
-            # The reference session stops IQ generation before restoring the
-            # controller personality, including when acquisition fails.
-            if changed_mode:
-                board.control.post_json("set_controller_mode", previous_mode)
     finally:
         pool._reference_lock.release()
 
 
 @contextmanager
-def _reference_session(pool, center_hz=None, rx_gain=None, scope=None):
+def _reference_session(pool, center_hz=None, rx_gain=None, scope=None, keep_bluetooth_epoch=False):
     """Restore each board's settings on every exit, including failed acquisition."""
     from .scope import CalibrationScope
 
@@ -102,6 +136,7 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None):
     bi, a = scope.pairs[0]
     center = int(center_hz or saved[bi]["receivers"][a]["rf_freq_hz"])
     from ..iq_rx_stream import receive_sample_rate
+
     fs = receive_sample_rate(saved[bi])
     if not 2310e6 <= center <= 2640e6:
         raise ValueError("Broadband reference requires a center frequency from 2310 to 2640 MHz")
@@ -109,6 +144,9 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None):
         raise ValueError("All boards must use the same IQ sample rate")
     if any(saved[bi]["receivers"][a]["rf_freq_hz"] != center for bi, a in scope.pairs) and center_hz is None:
         raise ValueError("All receivers must use the same center frequency")
+    if any(saved[i].get("capture_path") != "bluetooth" and saved[i].get("loopback") for i in scope.active):
+        raise ValueError("Turn off internal loopback to calibrate against REF")
+    timing_center = BLUETOOTH_TIMING_CENTER_HZ if saved[bi].get("capture_path") == "bluetooth" else center
     rx_gain = reference_gain(pool, rx_gain)
     from ..iq_tx_control import _rpc, _wait
 
@@ -119,7 +157,26 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None):
             _rpc(pool.boards[bi], "set_iq_tx", {"muted": True})
             _wait(pool.boards[bi], lambda state: all(not x["enabled"] or abs(x["applied_amplitude"]) < 1e-8 for x in state["sensors"]), 3)
         pool.master_board.iq.set_reference()
-        scope.apply_rx({"mode": "iq", "capture_path": "wifi", "adc_decimation": 1, "rf_switch": 1, "gain_mode": "manual", "rx_gain": rx_gain, "rf_freq_hz": center, "trigger": {"mode": "interval", "interval_chunks": 16384, "burst_chunks": 1}})
+        if keep_bluetooth_epoch:
+            # The independent pilot measurements below require synchronized
+            # samples. Reuse the live PLL and ADC until a new grid is needed.
+            scope.apply_rx({"mode": "iq", "rf_switch": 1})
+        else:
+            scope.apply_rx(
+                {
+                    "mode": "iq",
+                    "capture_path": "wifi",
+                    "adc_source_sel": 15,
+                    "loopback": 0,
+                    "tx_tone_enable": 0,
+                    "adc_decimation": 1,
+                    "rf_switch": 1,
+                    "gain_mode": "manual",
+                    "rx_gain": rx_gain,
+                    "rf_freq_hz": timing_center,
+                    "trigger": {"mode": "interval", "interval_chunks": 16384, "burst_chunks": 1},
+                }
+            )
         _map(lambda bi: _wait(pool.boards[bi], lambda state: all(state["sensors"][a]["applied_mode"] == "iq_rx" for a in scope.ids[bi]), 3), scope.active)
         yield center, fs
     finally:
@@ -131,7 +188,7 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None):
             def restore_board(pair):
                 bi, config = pair
                 board = pool.boards[bi]
-                restore = {k: config[k] for k in ("rf_switch", "trigger", "adc_decimation")}
+                restore = {k: config[k] for k in ("rf_switch", "trigger", "adc_decimation", "adc_source_sel", "loopback", "tx_tone_enable") if k in config}
                 if "capture_path" in config:
                     restore["capture_path"] = config["capture_path"]
                 restore["receivers"] = [config["receivers"][a] for a in scope.ids[bi]]
@@ -145,10 +202,13 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None):
 
             _map(restore_board, [(bi, saved[bi]) for bi in scope.active])
             pool._calibrating = False
-            if errors:
-                raise RuntimeError(f"Failed to restore receive settings: {errors}")
             for bi, was_muted in muted.items():
-                _rpc(pool.boards[bi], "set_iq_tx", {"muted": was_muted})
+                try:
+                    _rpc(pool.boards[bi], "set_iq_tx", {"muted": was_muted})
+                except Exception as error:
+                    errors.append(error)
+            if errors:
+                raise RuntimeError(f"Failed to restore reference session settings: {errors}") from errors[0]
 
 
 def acquire_grid(pool, center, timeout=3.0, scope=None):
@@ -204,7 +264,7 @@ def _acquire_grid(pool, center, timeout=3.0, scope=None):
         with changed:
             if p.flags & READY:
                 ready[key] = p.config_generation
-            else:
+            elif p.capture_chunk_offset < 4:
                 snapshots.setdefault((key, p.config_generation), {})[p.capture_chunk_offset] = p
             changed.notify_all()
 
@@ -230,8 +290,10 @@ def _acquire_grid(pool, center, timeout=3.0, scope=None):
         pool.master_board.iq.set_reference("iq", center, REFERENCE_BACKOFF)
         pool.master_board.control.command("gate_iq_reference", {"open": False})
         scope.apply_rx({"adc_decimation": 1, "trigger": {"mode": "reference", "threshold": REFERENCE_THRESHOLD}})
-        generations = dict(enumerate(_map(lambda b: b.iq.get_config()["config_generation"], pool.boards)))
+        configs = dict(zip(scope.active, _map(lambda i: pool.boards[i].iq.get_config(), scope.active)))
+        generations = {i: cfg["config_generation"] for i, cfg in configs.items()}
         wait(lambda: all(ready.get((bi, a)) == generations[bi] for bi, a in scope.pairs), "quiet REF readiness")
+        boots = {i: pool.boards[i].iq.get_rx_status()["boot_ids"] for i, cfg in configs.items() if cfg.get("format_version", 0) >= 4}
         pool.master_board.control.command("gate_iq_reference", {"open": True})
         wait(lambda: all(len(snapshots.get(((bi, a), generations[bi]), {})) == 4 for bi, a in scope.pairs), "reference onset snapshots")
         ref_bi, ref_a = scope.pairs[0]
@@ -253,7 +315,18 @@ def _acquire_grid(pool, center, timeout=3.0, scope=None):
             anchors.append(values)
         # One sequence names this grid across every board in the pool.
         pool._reference_sequence = (pool._reference_sequence + 1) & 0xFFFFFFFF or 1
-        _map(lambda pair: pair[0].iq.set_sync_anchor(pair[1], seq=pool._reference_sequence), zip([pool.boards[bi] for bi in scope.active], anchors))
+
+        def set_anchor(pair):
+            i, values = pair
+            expected = {"boot_ids": boots[i]} if i in boots else {}
+            try:
+                pool.boards[i].iq.set_sync_anchor(values, seq=pool._reference_sequence, **expected)
+            except EspargosHTTPStatusError as error:
+                if error.status != 409:
+                    raise
+                raise RuntimeError(f"{pool.boards[i].host}: receiver changed during reference acquisition") from error
+
+        _map(set_anchor, zip(scope.active, anchors))
         scope.apply_rx({"trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 4}})
         pool.clear_chunks()
         pool._logger.info("Broadband onset correlation min %.3f", min(scores))
