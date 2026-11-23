@@ -282,7 +282,7 @@ def test_partial_filter_change_preserves_only_definitively_rejected_boards(rejec
     assert np.isnan(receiver._calibration.phase_offsets[1]).all() == ("second" in changed_hosts)
 
 
-@pytest.mark.parametrize("attempt,backoff,spacing", [(0, 80, 4000000), (1, 40, 3125000), (2, 0, 3125000)])
+@pytest.mark.parametrize("attempt,backoff,spacing", [(0, 80, 3125000), (1, 80, 4000000), (2, 40, 3125000)])
 @pytest.mark.parametrize("center,direction", [(2310000000, 1), (2640000000, -1)])
 def test_narrow_high_gain_reference_at_tuning_limits(monkeypatch, attempt, backoff, spacing, center, direction):
     from unittest.mock import Mock

@@ -189,9 +189,9 @@ def measure_bluetooth(receiver, scope, configs, center, rate, timeout, attempt, 
     # avoid the compression seen with a CW even at modest receiver gains.
     # Vary the reference power on retries, preserving the measured RF state.
     if streaming and prefer_noise and rate <= 16000:
-        # Reduce compression first, then move to an occupied OFDM subcarrier.
+        # Start on an occupied OFDM subcarrier at low power to avoid compression.
         trial = attempt % 3
-        return _measure_noise(receiver, scope, center, rate, timeout, bandwidth / rate, (80, 40, 0)[trial], 4000000 if trial == 0 else 3125000)
+        return _measure_noise(receiver, scope, center, rate, timeout, bandwidth / rate, 40 if trial == 2 else 80, 4000000 if trial == 1 else 3125000)
     if streaming:
         noise = attempt % 3 == (0 if prefer_noise else 1)
     else:
