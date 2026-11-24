@@ -245,6 +245,12 @@ For custom spatial weights, we use :class:`Weights <espargos.steering.Weights>` 
        {antenna_a: 1.0, antenna_b: 0.5j},
    )
 
+To shift a looped waveform in time on individual antennas, set
+``signal.delay_samples = {antenna_b: 1.5}``. Here antenna B plays the
+waveform 1.5 samples later, wrapping at the end of the loop. The delay is
+relative to the calibrated timing and uses the selected playback rate.
+Other antennas use zero delay. Scheduled steering preserves these delays.
+
 Unspecified antennas use unit weight. Each sensor applies its weight after calibration. Starting a geometric beam requires valid TX
 corrections with a common reference for its antennas. Independently calibrated
 groups must be calibrated together before using them in the same beam.

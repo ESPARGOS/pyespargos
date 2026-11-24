@@ -1,10 +1,9 @@
 """Shared TX command acknowledgement helpers."""
 
 import json
-import struct
 import threading
 import time
-import zlib
+from . import iq_stream_protocol, sensor_status
 from .board import EspargosHTTPStatusError
 
 
@@ -12,6 +11,14 @@ class _SensorTXError(RuntimeError):
     def __init__(self, board, antenna, code):
         self.code = code
         super().__init__(f"{board.host}, sensor {antenna}: waveform error {code}")
+
+
+def estimated_playback_sample(sensor):
+    """Project the last sensor clock reading to the time of the controller reply."""
+    age_ms = sensor["sample_age_ms"]
+    if age_ms > 2000:
+        raise RuntimeError("Sensor playback clock is stale")
+    return sensor["sample_position"] + age_ms * sensor["applied_sample_rate_hz"] // 1000
 
 
 def _rpc(board, path, payload=None):
@@ -65,73 +72,83 @@ def _waveform(board, recipe, timeout, wait=_wait):
                 time.sleep(0.1)
 
 
-_SENSOR_MODES = {0: "wifi", 1: "iq_rx", 2: "iq_tx", 3: "ble", 4: "wifi_iq", 255: "transitioning"}
-
-
 class TXStatus:
     """Wait for streamed TX acknowledgements, with bounded HTTP recovery."""
 
     def __init__(self, boards):
         self.changed = threading.Condition()
+        self.clock = sensor_status.ReportClock()
+        self.stream_clock = sensor_status.ReportClock()
         self.status = {b: [None] * 8 for b in boards}
+        self.streams = {}
+        self.queues = {}
         self.subscriptions = []
+        report_types = (sensor_status.MAGIC, iq_stream_protocol.TXSTREAM_STATUS)
         try:
-            for b in boards:
-                self.subscriptions.append((b, b.subscribe_sensor_messages(0xA3F1720B, lambda m, b=b: self.receive_status(b, m))))
+            for board in boards:
+                subscription = board.subscribe_sensor_messages(
+                    report_types, lambda message, b=board: self.receive_status(b, message))
+                self.subscriptions.append((board, subscription))
         except Exception:
             self.close()
             raise
 
     def receive_status(self, board, message):
-        data = message.payload
-        offset, state = 4, None
-        while offset + 3 <= len(data):
-            tag, size = struct.unpack_from("<BH", data, offset)
-            start = offset
-            offset += 3
-            if offset + size > len(data):
-                return
-            if tag == 6 and size in (100, 108, 112, 132):
-                v = struct.unpack_from("<9I3f" + str((size - 48) // 4) + "I", data, offset)
-                if v[13] not in _SENSOR_MODES:
-                    return
-                state = dict(
-                    zip(
-                        (
-                            "generation",
-                            "samples",
-                            "crc32",
-                            "error",
-                            "enabled",
-                            "clipped_samples",
-                            "update_us",
-                            "boot_id",
-                            "sequence",
-                            "phase_deg",
-                            "delay_samples",
-                            "applied_amplitude",
-                        ),
-                        v[:12],
-                    )
-                )
-                state.update(applied_mode=_SENSOR_MODES[v[13]], epoch=v[15], origin_ns=(v[25] | v[26] << 32) if size >= 108 else 0, sample_rate_hz=v[27] if size >= 112 else 80000000)
-                if size == 132:
-                    state.update(sync_seq=v[16], applied_generation=v[18], applied_sample_rate_hz=v[27],
-                                 sample_position=v[19] | v[20] << 32, applied_sample=v[23] | v[24] << 32,
-                                 steer_id=v[28], steer_loaded=v[29], steer_applied=v[30],
-                                 steer_error=v[31], steer_state=v[32])
-            if tag == 255:
-                if size != 4 or offset + size != len(data) or zlib.crc32(data[:start]) != struct.unpack_from("<I", data, offset)[0]:
-                    return
-                if state is not None:
-                    with self.changed:
-                        old = self.status[board][message.antenna_id]
-                        if old and old["boot_id"] == state["boot_id"] and (state["sequence"] - old["sequence"]) % (1 << 32) >= (1 << 31):
-                            return
-                        self.status[board][message.antenna_id] = state
+        if int.from_bytes(message.payload[:4], "little") == iq_stream_protocol.TXSTREAM_STATUS:
+            report = iq_stream_protocol.decode_status(message)
+            if report is not None:
+                key = (board, report.antenna)
+                with self.changed:
+                    if self.stream_clock.accept(key, report):
+                        self.streams[key] = (time.monotonic(), report.state)
                         self.changed.notify_all()
+            return
+        report = sensor_status.decode(message)
+        if report is None:
+            return
+        a = report.antenna
+        key = (board, a)
+        with self.changed:
+            last_report = self.clock.latest.get(key)
+            if not self.clock.accept(key, report):
                 return
-            offset += size
+            if last_report and (last_report.boot_id != report.boot_id or
+                                last_report.mode == 2 and report.mode != 2):
+                self.queues.pop(key, None)
+            previous_stream = self.stream_clock.latest.get(key)
+            if self.stream_clock.accept(key, report) and (
+                    previous_stream is None or previous_stream.boot_id != report.boot_id or
+                    previous_stream.stream_session != report.stream_session):
+                # Wait for positive FIFO credit from the new session. A sparse
+                # header can revoke old credit but never refresh its receipt time.
+                if report.stream_session:
+                    self.streams.pop(key, None)
+                else:
+                    self.streams[key] = (time.monotonic(), dict(
+                        session=0, state="closed", error=0, antid=a, boot_id=report.boot_id, available=True))
+
+            state = sensor_status.playback_state(report)
+            previous = self.status[board][a]
+            if previous and previous["boot_id"] != report.boot_id:
+                previous = None
+                self.status[board][a] = None
+            queue = sensor_status.steering_state(report)
+            if queue is not None:
+                self.queues[key] = (report.boot_id, queue)
+            mode = sensor_status.mode_name(report.mode)
+            if state is None and (previous is None or previous["applied_mode"] != mode):
+                if report.mode != 2:
+                    state = dict(boot_id=report.boot_id, applied_mode=mode, enabled=False,
+                                 samples=0, generation=0, error=0, sync_seq=0)
+                self.status[board][a] = state
+            elif state is None and queue is not None:
+                state = dict(previous)
+            if state is not None:
+                cached = self.queues.get(key)
+                if cached and cached[0] == report.boot_id:
+                    state.update(cached[1])
+                self.status[board][a] = state
+            self.changed.notify_all()
 
     def wait(self, board, predicate, timeout, *, antennas=()):
         """Prefer streamed acknowledgements, recover dropped UDP status via HTTP.

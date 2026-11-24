@@ -1,12 +1,15 @@
 """Exercise stream transport acknowledgements, credit and failure recovery."""
 
 import struct
+import zlib
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 import numpy as np
 from espargos.calibration import Antenna
 from espargos.iq_stream import IQStream
+from espargos.iq_tx_control import TXStatus
+from espargos.iq_stream_protocol import Uplink
 from espargos.stream_sources import psk31_bits, GFSK, ble_le1m_packet
 
 
@@ -26,7 +29,7 @@ class Device:
         "max_render_us",
         "max_late_us",
         "clipped",
-        "sequence",
+        "max_refill_wait_us",
         "max_source_us",
         "max_expand_us",
         "missing",
@@ -45,7 +48,7 @@ class Device:
         self.frames = []
         self.wire_frames = []
         self.sensors = [dict(available=True, boot_id=10 + a, session=0, state="closed", error=0, accepted=0, consumed=0, capacity=IQStream.CAPACITY, end=None, missing=0, late=0, table_received=0) for a in range(2)]
-        self.board = SimpleNamespace(host="test", control=SimpleNamespace(fetch=self.send), send_stream_data=lambda data: self.send("data", data), subscribe_controller_messages=self.subscribe, unsubscribe_controller_messages=lambda sub: None)
+        self.board = SimpleNamespace(host="test", send_stream_data=lambda data: self.send("data", data), subscribe_sensor_messages=self.subscribe, unsubscribe_sensor_messages=lambda sub: None)
 
         # IQStream keys feedback by Board identity, as real Board objects do.
         class Board:
@@ -54,12 +57,15 @@ class Device:
         board = Board()
         board.__dict__.update(self.board.__dict__)
         self.board = board
-        sensors = [dict(applied_mode="iq_tx", applied_sample_rate_hz=16000000, samples=1024, boot_id=10 + a, frequency_hz=2437000000, enabled=True, sync_seq=7, sample_position=0, epoch=1) for a in range(8)]
+        sensors = [dict(applied_mode="iq_tx", applied_sample_rate_hz=16000000, samples=1024, boot_id=10 + a, crc32=12345 + a, frequency_hz=2437000000, enabled=True, sync_seq=7, sample_age_ms=0, sample_position=0, epoch=1) for a in range(8)]
         self.tx_state = dict(sensors=sensors, modes=["iq_tx"] * 8, muted=False, sample_rate_hz=16000000)
         self.tx = SimpleNamespace(boards=[self.board], states=[self.tx_state], read=lambda: None, signals=SimpleNamespace(_antennas=lambda _: [Antenna("test", a) for a in range(2)], _check_beam_calibration=lambda: None))
 
+        self.tx.capture = TXStatus(self.tx.boards)
+        self.tx.uplink = Uplink(self.tx.boards)
+
     def subscribe(self, magic, callback):
-        assert magic == 0x32535449
+        assert magic == (0x31535453, 0x31535854)
         self.callback = callback
         self.publish()
         return callback
@@ -68,10 +74,9 @@ class Device:
         if not self.callback:
             return
         self.sequence += 1
-        words = [0x32535449, 4, self.sequence, 0, 0, 0]
         for a in range(8):
             state = self.sensors[a] if a < 2 else dict(boot_id=10 + a, state="closed")
-            words += [state["boot_id"], int(a < 2)]
+            words = []
             for key in self.fields:
                 value = state.get(key, 0)
                 if key == "state":
@@ -79,7 +84,11 @@ class Device:
                 if key == "end" and value is None:
                     value = 0xFFFFFFFF
                 words.append(value)
-        self.callback(struct.pack("<182I", *words))
+            header = struct.pack("<7I", 0x31535453, a, state["boot_id"], self.sequence, 2, 0,
+                                 state.get("session", 0) if state["state"] != "closed" else 0)
+            packet = (struct.pack("<4I20I", 0x31535854, a, state["boot_id"], self.sequence, *words)
+                      if words[0] else header)
+            self.callback(SimpleNamespace(antenna_id=a, payload=packet + struct.pack("<I", zlib.crc32(packet))))
 
     def sleep(self, seconds):
         self.now += max(seconds, 0.001)
@@ -92,7 +101,7 @@ class Device:
 
     def send(self, path, data):
         magic, version, command, mask, reserved, session, offset, count = struct.unpack_from("<IBBBBIII", data)
-        assert magic == 0x31535449 and version == 4 and not reserved
+        assert magic == 0x31535449 and version == 6 and not reserved
         payload = data[20:]
         self.frames.append((path, command, count))
         self.wire_frames.append(bytes(data))
@@ -168,15 +177,15 @@ class StreamTests(TestCase):
             stream.write(bytes(8192))
             self.device.sensors[1]["accepted"] = 1024
             self.device.publish()
-            original_send = self.device.board.control.fetch
-            def send(path, data):
+            original_send = self.device.board.send_stream_data
+            def send(data):
                 if data[5] == 3:
                     self.assertEqual(self.device.sensors[1]["accepted"], 4096)
-                return original_send(path, data)
+                return original_send(data)
             def deliver(seconds):
                 self.device.sensors[1]["accepted"] = 4096
                 self.device.sleep(seconds)
-            self.device.board.control.fetch = send
+            self.device.board.send_stream_data = send
             with patch("espargos.iq_stream.time.sleep", deliver):
                 stream.start()
 
@@ -472,17 +481,17 @@ class StreamTests(TestCase):
 
     def test_open_memory_failure_is_reported_and_closed(self):
         d = self.device
-        original = d.board.control.fetch
+        original = d.board.send_stream_data
 
-        def reject_open(path, frame):
-            result = original(path, frame)
+        def reject_open(frame):
+            result = original(frame)
             if frame[5] == 1:
                 for sensor in d.sensors:
                     sensor.update(state="fault", error=0x101)
                 d.publish()
             return result
 
-        d.board.control.fetch = reject_open
+        d.board.send_stream_data = reject_open
         with self.assertRaisesRegex(RuntimeError, "insufficient sensor memory"):
             IQStream(d.tx)
         self.assertTrue(all(sensor["state"] == "closed" for sensor in d.sensors))
@@ -493,7 +502,7 @@ class StreamTests(TestCase):
         stream = IQStream(d.tx)
         d.now += 1
         # No new reports while the clock advances through condition waits.
-        with patch.object(stream._feedback_changed, "wait", side_effect=lambda seconds: setattr(d, "now", d.now + seconds)):
+        with patch.object(stream._reports.changed, "wait", side_effect=lambda seconds: setattr(d, "now", d.now + seconds)):
             with self.assertRaisesRegex(TimeoutError, "feedback is stale"):
                 stream._states()
         d.publish()
@@ -503,15 +512,40 @@ class StreamTests(TestCase):
         d = self.device
         with IQStream(d.tx) as stream:
             stream.write(bytes(4096))
-            old = stream._feedback[d.board]
+            old = stream._reports.streams[d.board, 0]
             d.sequence -= 2
             d.sensors[0]["consumed"] = 9999
             d.publish()
-            self.assertEqual(stream._feedback[d.board], old)
+            self.assertEqual(stream._reports.streams[d.board, 0], old)
             d.sensors[0]["consumed"] = 0
             d.sequence += 3
             d.publish()
-            self.assertEqual(stream.transport_status()["test"]["rejected"], 0)
+
+    def test_sparse_status_revokes_but_never_refreshes_fifo_credit(self):
+        d = self.device
+        with IQStream(d.tx) as stream:
+            key = (d.board, 0)
+            credit = stream._reports.streams[key]
+
+            def report(session):
+                d.sequence += 1
+                frame = struct.pack("<7I", 0x31535453, 0, d.sensors[0]["boot_id"],
+                                    d.sequence, 2, 0, session)
+                d.callback(SimpleNamespace(antenna_id=0, payload=frame + struct.pack("<I", zlib.crc32(frame))))
+
+            d.now += 0.1
+            report(stream.session)
+            self.assertIs(stream._reports.streams[key], credit)
+            report(stream.session + 1)
+            self.assertNotIn(key, stream._reports.streams)
+            report(0)
+            self.assertEqual(stream._reports.streams[key][1]["state"], "closed")
+            # A delayed credit report cannot reopen the session.
+            words = [stream.session, 1, 0, 512] + [0] * 16
+            frame = struct.pack("<24I", 0x31535854, 0, d.sensors[0]["boot_id"], d.sequence - 1, *words)
+            d.callback(SimpleNamespace(antenna_id=0, payload=frame + struct.pack("<I", zlib.crc32(frame))))
+            self.assertEqual(stream._reports.streams[key][1]["state"], "closed")
+            d.publish()
 
     def test_closed_status_is_last_received_snapshot(self):
         d = self.device
@@ -585,6 +619,8 @@ class MultiArrayStreamTests(TestCase):
             positions=np.array([[[bi + a * .06, 0, 0] for a in range(8)] for bi in range(2)]),
             workers=concurrent.futures.ThreadPoolExecutor(max_workers=2),
         )
+        self.tx.capture = TXStatus(self.tx.boards)
+        self.tx.uplink = Uplink(self.tx.boards)
         self.tx._parallel = MethodType(IQTransmitter._parallel, self.tx)
         self.addCleanup(self.tx.workers.shutdown)
         for target, value in [("espargos.iq_stream._rpc", self.rpc),
@@ -638,16 +674,12 @@ class MultiArrayStreamTests(TestCase):
                     self.assertEqual(arms[0][0], stream.start_sample)
                     self.assertEqual(stream.start_sample % 32, 0)
                     latest = max(s["sample_position"] for d in self.devices for s in d.tx_state["sensors"][:2])
-                    self.assertGreaterEqual(stream.start_sample - latest, .5 * IQStream.RATE)
+                    self.assertGreaterEqual(stream.start_sample - latest, .55 * IQStream.RATE)
                     for d, arm in zip(self.devices, arms):
                         self.assertEqual(arm[2:10], tuple(s["epoch"] for s in d.tx_state["sensors"]))
                         opened = [f for f in d.wire_frames if f[5] == 1][-1]
-                        config = struct.unpack_from("<4I16f", opened, 20)
-                        bi = self.devices.index(d)
-                        for a in range(2):
-                            weight = steering.coefficients(self.tx.positions[bi, a], 2437000000, None)
-                            self.assertAlmostEqual(config[4 + a], weight.real * .1, places=6)
-                            self.assertAlmostEqual(config[12 + a], weight.imag * .1, places=6)
+                        config = struct.unpack_from("<12I", opened, 20)
+                        self.assertEqual(config[4:], (12345, 12346, 0, 0, 0, 0, 0, 0))
                     self.assertNotEqual(arms[0][2:10], arms[1][2:10])
                     self.assertEqual(self.devices[0].received[0], self.devices[1].received[0])
 
@@ -655,12 +687,12 @@ class MultiArrayStreamTests(TestCase):
         import threading
         barrier = threading.Barrier(2)
         for d in self.devices:
-            original = d.board.control.fetch
-            def send(path, data, original=original):
+            original = d.board.send_stream_data
+            def send(data, original=original):
                 if data[5] == 3:
                     barrier.wait(timeout=2)
-                return original(path, data)
-            d.board.control.fetch = send
+                return original(data)
+            d.board.send_stream_data = send
         with IQStream(self.tx) as stream:
             stream.write(bytes(4096))
             stream.start()
@@ -710,14 +742,14 @@ class MultiArrayStreamTests(TestCase):
         import threading
         barrier = threading.Barrier(2)
         for bi, d in enumerate(self.devices):
-            original = d.board.control.fetch
-            def send(path, data, original=original, bi=bi):
+            original = d.board.send_stream_data
+            def send(data, original=original, bi=bi):
                 if data[5] == 3:
                     barrier.wait(timeout=2)
                     if bi == 0:
                         raise ConnectionError("array A disconnected")
-                return original(path, data)
-            d.board.control.fetch = send
+                return original(data)
+            d.board.send_stream_data = send
         with IQStream(self.tx) as stream:
             stream.write(bytes(4096))
             with self.assertRaisesRegex(ConnectionError, "disconnected"):

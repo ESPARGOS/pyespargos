@@ -18,6 +18,7 @@ from espargos.tx_signal import TXSignals
 def transmitter(boards=1):
     tx = IQTransmitter.__new__(IQTransmitter)
     tx.closed = False
+    tx._stream_scene = {}
     tx.owner = SimpleNamespace(calibrations=Calibration(()), _lock=RLock())
     tx.boards = [SimpleNamespace(host=f"board{i}") for i in range(boards)]
     tx.states = [dict(modes=["iq_tx"] * 8, sensors=[dict(frequency_hz=2380e6, samples=1024, enabled=True, boot_id=1) for _ in range(8)], schedule_epoch=42) for _ in range(boards)]
@@ -75,7 +76,7 @@ class SignalTests(unittest.TestCase):
         self.assertEqual(plans[0][0][0], [3])
         self.assertEqual(plans[0][0][1][0][1]["waveform"]["amplitude"], 0)
 
-    def test_stream_beam_prepares_silence_and_opens_its_own_source(self):
+    def test_stream_beam_declares_and_opens_its_own_source(self):
         tx = transmitter()
         tx._stream = None
         tx.states[0]["sample_rate_hz"] = 16_000_000
@@ -85,7 +86,8 @@ class SignalTests(unittest.TestCase):
         beam = tx.signals.add(waveform=source, steering=direction, antennas=selected, amplitude=.25)
         antennas, records = tx._apply_signals.call_args.args[0][0][0]
         self.assertEqual(antennas, [2])
-        self.assertEqual(records[0][1]["waveform"]["amplitude"], 0)
+        self.assertEqual(records[0][1]["waveform"]["type"], "stream")
+        self.assertAlmostEqual(abs(complex(records[0][1]["real"][2], records[0][1]["imag"][2])), .25)
         with self.assertRaisesRegex(ValueError, "one beam"):
             tx.signals.add(waveform=source)
         self.assertEqual(list(tx.signals), [beam])

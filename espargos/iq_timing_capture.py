@@ -72,7 +72,7 @@ def measure(owner, antennas, path, reference_delays_s, timeout):
     success = False
     try:
         for b in boards:
-            _rpc(b, "set_iq_tx", {"muted": True, "steering": {"phase_deg": [0] * 8}})
+            _rpc(b, "set_iq_tx", {"muted": True, "steering": {"phase_deg": [0] * 8, "delay_samples": [0] * 8}})
             b.iq.set_config({"rf_switch": routes[path], "receivers": [{"antid": a.antid, "rx_gain": 30, "gain_mode": "manual"} for a in rx if a.host == b.host], "trigger": {"mode": "interval", "interval_chunks": 8192, "burst_chunks": 4}})
         for transmitter in tx:
             bi = board_index[transmitter.host]

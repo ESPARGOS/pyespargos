@@ -297,7 +297,7 @@ class IQTxController(QObject):
             bandwidth_mhz=self.data["bandwidth"],
             output=self.data["output"],
             amplitude=1.0,  # Waveform amplitude is controlled per beam.
-            steering=dict(phase_deg=[0] * 8),
+            steering=dict(phase_deg=[0] * 8, delay_samples=[0] * 8),
         )
         return (beams, self.data["samples"], self.data["frequency"] * 1e6), rf, copy.deepcopy(self.data["modes"])
 

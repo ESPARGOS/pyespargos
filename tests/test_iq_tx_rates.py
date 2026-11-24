@@ -36,6 +36,21 @@ def test_beam_compilation_uses_board_rate():
     assert set(recipe) == {'waveform', 'real', 'imag'}
 
 
+def test_manual_delay_survives_weight_updates():
+    tx = transmitter()
+    a = Antenna("board0", 2)
+    delays = {a: -1.5}
+    beam = tx.signals.add(waveform=CW(), antennas=[a], delay_samples=delays)
+    delays.clear()
+    beam.steering = Weights({a: 1j})
+    plans = tx._apply_signals.call_args.args[0]
+    record = plans[0][0][1][0][1]
+    assert record["delay_samples"] == [0, 0, -1.5, 0, 0, 0, 0, 0]
+    with pytest.raises(ValueError):
+        beam.delay_samples = {a: float("nan")}
+    assert beam.delay_samples[a] == -1.5
+
+
 @pytest.mark.parametrize('ratio', [1, 2, 2.5, 4, 5])
 def test_oversampled_monitor_uses_main_band_without_aliasing(ratio):
     n = 256
@@ -96,8 +111,7 @@ def test_rate_only_configuration_has_no_empty_transmitter_list(monkeypatch):
         configuration._iq_tx(ctx, {'sample_rate_hz':20_000_000})
 
 
-@pytest.mark.parametrize('size', [100, 108, 112])
-def test_streamed_tx_status_rate_and_backward_compatibility(size):
+def test_streamed_playback_clock_and_steering_credit():
     import struct
     import zlib
     from types import SimpleNamespace
@@ -111,19 +125,22 @@ def test_streamed_tx_status_rate_and_backward_compatibility(size):
 
     board = Board()
     status = TXStatus([board])
-    values = [0] * (size // 4)
-    values[13] = 2
-    if size >= 108:
-        values[25:27] = [123, 1]
-    if size == 112:
-        values[27] = 40_000_000
-    payload = struct.pack('<9I3f' + str(size//4-12) + 'I', *values)
-    frame = bytes(4) + struct.pack('<BH', 6, size) + payload
-    frame += struct.pack('<BHI', 255, 4, zlib.crc32(frame))
-    status.receive_status(board, SimpleNamespace(payload=frame, antenna_id=0))
+    values = [0] * 28
+    values[7], values[13] = 19, 2
+    values[25:28] = [123, 1, 40_000_000]
+    def publish(seq, tag, payload, mode=2):
+        frame = struct.pack("<7IHH", 0x31535453, 0, 19, seq, mode, 0, 0, tag, len(payload)) + payload
+        frame += struct.pack("<I", zlib.crc32(frame))
+        status.receive_status(board, SimpleNamespace(payload=frame, antenna_id=0))
+    publish(1, 7, struct.pack("<10I", 1234, 20, 3, 239, 0, 0, 0, 0, 0, 0))
+    publish(2, 6, struct.pack("<9I3f16I", *values))
     parsed = status.status[board][0]
-    assert parsed['sample_rate_hz'] == (40_000_000 if size == 112 else 80_000_000)
-    assert parsed['origin_ns'] == (123 + (1 << 32) if size >= 108 else 0)
+    assert parsed["sample_rate_hz"] == 40_000_000
+    assert parsed["origin_ns"] == 123 + (1 << 32)
+    assert parsed["steer_received"] == 20 and parsed["steer_free"] == 239
+    publish(3, 2, bytes(4), mode=1)
+    publish(4, 6, struct.pack("<9I3f16I", *values))
+    assert "steer_received" not in status.status[board][0]
     status.close()
 
 

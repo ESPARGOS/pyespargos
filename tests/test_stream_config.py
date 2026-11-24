@@ -29,7 +29,7 @@ class StreamConfigTests(TestCase):
                        table_hex=SingleCarrier.psk31().payload.hex(), beam=beam)
         tx = SimpleNamespace(owner=SimpleNamespace(_lock=threading.RLock()), boards=[board],
                              states=[dict(sensors=[dict(boot_id=10, crc32=33, samples=1024) for _ in range(8)])],
-                             read=lambda: None, open_stream=lambda **settings: settings)
+                             read=lambda: None, _open_writer=lambda **settings: settings)
         return tx, profile
 
     def test_saved_beam_weights_and_targets_are_used(self):
@@ -41,6 +41,14 @@ class StreamConfigTests(TestCase):
         self.assertEqual(result["modulation"].payload.hex(), profile["table_hex"])
         for value in result["steering"].values.values():
             self.assertEqual(value, .1+.05j)
+
+    def test_only_boards_with_a_stream_source_participate(self):
+        tx, profile = self.configured()
+        tx.boards.insert(0, SimpleNamespace(host="reference"))
+        tx.states.insert(0, {})
+        with patch("espargos.iq_transmitter._rpc", side_effect=[{"beam": {"antennas": []}}, profile]):
+            result = IQTransmitter.open_configured_stream(tx)
+        self.assertEqual([(a.host, a.antid) for a in result["antennas"]], [("test", 0), ("test", 3)])
 
     def test_saved_gfsk_configuration(self):
         tx, profile = self.configured()

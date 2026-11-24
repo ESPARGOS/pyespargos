@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, replace
 from contextlib import contextmanager
+from types import MappingProxyType
 
 import numpy as np
 
@@ -18,6 +19,15 @@ class _SignalSettings:
     amplitude: float
     antennas: tuple
     steering: object = None
+    delay_samples: object = None
+
+    def __post_init__(self):
+        delays = {a: _finite(value, "delay_samples") for a, value in (self.delay_samples or {}).items()}
+        if any(a not in self.antennas or abs(value) > 8192 for a, value in delays.items()):
+            raise ValueError("Delays must address this beam’s antennas and lie within ±8192 samples")
+        if isinstance(self.waveform, Stream) and any(delays.values()):
+            raise ValueError("Per-antenna sample delays require a looped waveform")
+        object.__setattr__(self, "delay_samples", MappingProxyType(delays))
 
 
 class TXSignal:
@@ -33,6 +43,15 @@ class TXSignal:
             if "antennas" in settings:
                 settings["antennas"] = self._collection._antennas(settings["antennas"])
             self._settings = replace(self._settings, **settings)
+
+    @property
+    def delay_samples(self):
+        """Cyclic delay per antenna, in playback samples. Omitted antennas use zero."""
+        return self._settings.delay_samples
+
+    @delay_samples.setter
+    def delay_samples(self, value):
+        self.update(delay_samples=value)
 
     def open_stream(self):
         """Open the writer for this beam using its configured source and steering."""
@@ -105,9 +124,9 @@ class TXSignals:
             raise ValueError("Select antennas belonging to this pool")
         return result
 
-    def add(self, *, waveform, amplitude=0.1, antennas=None, steering=None):
+    def add(self, *, waveform, amplitude=0.1, antennas=None, steering=None, delay_samples=None):
         with self.transmitter.update():
-            signal = TXSignal(self, _SignalSettings(waveform, amplitude, self._antennas(antennas), steering))
+            signal = TXSignal(self, _SignalSettings(waveform, amplitude, self._antennas(antennas), steering, delay_samples))
             self._items.append(signal)
         return signal
 
@@ -141,6 +160,8 @@ class TXSignals:
                     raise ValueError("start_sample must be a nonnegative replay-buffer boundary below 2**53")
                 yield tx
                 plans, targets = self._compile()
+                for schedule in tuple(getattr(tx, "_schedules", ())):
+                    schedule.close()
                 tx._apply_signals(plans, start_sample)
                 self._targets = targets
             except BaseException:
@@ -221,8 +242,15 @@ class TXSignals:
                     if isinstance(s.waveform, Stream):
                         if rate != 16_000_000 or self._samples > 2048:
                             raise ValueError("Stream beams require 16 MSa/s playback and at most 2048 replay samples")
-                        continue
-                    records.append((s.waveform, dict(waveform={**s.waveform.recipe(self._samples, sample_rate_hz=rate), "amplitude": 1.0, "antennas": antennas}, real=weights.real.tolist(), imag=weights.imag.tolist())))
+                        recipe = {"type": "stream", "samples": self._samples}
+                    else:
+                        recipe = s.waveform.recipe(self._samples, sample_rate_hz=rate)
+                    record = dict(waveform={**recipe,
+                                            "amplitude": 1.0, "antennas": antennas},
+                                  real=weights.real.tolist(), imag=weights.imag.tolist())
+                    if s.delay_samples:
+                        record["delay_samples"] = [s.delay_samples.get(Antenna(board.host, a), 0.0) for a in range(8)]
+                    records.append((s.waveform, record))
                 if np.any(total > 1.000001):
                     raise ValueError("Sum of signal amplitude × weight magnitude must not exceed 1 per sensor")
                 if not records:

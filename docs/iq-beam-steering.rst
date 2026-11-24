@@ -10,6 +10,13 @@ With ``tx.schedule_steering()``, you send the directions ahead of time. Each
 sensor applies its phase changes against the transmit sample clock, while the
 waveform keeps playing. Use :doc:`iq-transmission` for occasional direction
 changes and :doc:`iq-transmit-streaming` to send new waveform samples.
+
+For a looped beam you can set a fractional delay for each antenna, for example
+``beam.delay_samples = {beam.antennas[0]: 0.5}``. This shifts that antenna's
+waveform by half a playback sample. Each scheduled turn applies its complex
+weight to the same delayed waveform. Assigning new delays through the SDK
+closes the current schedule. Start a new schedule to continue the sweep.
+
 A steering schedule works with either source.
 
 Run the examples from the SDK checkout with transmit authorization enabled.
@@ -65,17 +72,19 @@ at broadside as a pilot. Only the moving signal appears in the schedule.
    At 80 MSa/s, 800,000 playback samples separate the turns by 10 ms.
 
 Each tuple specifies a playback sample offset, a signal and its new steering.
-Offset zero refers to ``sweep.start_sample``. The SDK chooses a future start
-after the sensors have prepared the changes. To choose the start yourself,
-pass ``start_sample`` and allow time for preparation.
-To turn two beams together, give them entries at the same offset. Each sensor
-can queue 256 changes across its beams.
+Offset zero refers to ``sweep.start_sample``. The SDK chooses a future sample
+on the calibrated playback clock and sends
+each turn ahead of its deadline. To set the first sample yourself, pass
+``start_sample``. Give both beams the same offset to turn them together.
 
-``wait()`` returns after the last change. Leaving the schedule early cancels
-the remaining changes. If a sensor misses a deadline, it holds its last
-direction and ``wait()`` raises an exception. With 1024-sample loops at
-80 MSa/s, an eight-sensor board swept 16 angles at 500 µs per angle. The
-achievable interval depends on the waveforms and directions.
+Each sensor can hold 256 future turns. For longer schedules the SDK waits
+for free slots as it sends. ``wait()`` checks that every selected sensor
+applied all its turns and reports missing updates or missed deadlines.
+If a turn arrives late or its UDP datagram is lost, that sensor keeps its
+previous direction until the next accepted turn. Leaving the schedule early
+cancels future turns. On a live stream, samples already prepared for the
+radio play out before cancellation takes effect. You can then schedule a
+new sweep on the same antennas.
 
 Per-antenna weights
 -------------------
@@ -244,11 +253,12 @@ calibration, which requires a bidirectional reference path.
    Predicted patterns at 2.44 GHz with all eight antennas enabled and zero elevation.
 
 For a longer transmission, keep feeding the stream while the schedule runs.
-The 2 µs grid describes timing resolution. The shortest sustainable dwell
-depends on modulation, sample rate and the number of distinct directions.
-In an eight-sensor LE 1M test, alternating between two directions worked at
-256 µs per packet. A 16-angle sweep worked at 1024 µs per packet and missed
-a deadline at 512 µs.
+If the stream runs dry and restarts, schedule a new sweep for that session.
+The 2 µs grid describes timing resolution. Dwell time also depends on the
+waveform. In an over-the-air test with 80 queued changes, two antennas
+stepped through eight relative phases at 250 µs per turn for streamed Raw IQ
+and 500 µs per turn for a looped tone. The looped tone missed a deadline
+at 250 µs. For a sustained sweep, allow time to send the next set of turns.
 
 During Raw IQ or low-rate Single Carrier streaming you can include a nonzero
 looped signal on the same antennas in the stream's steering schedule. With

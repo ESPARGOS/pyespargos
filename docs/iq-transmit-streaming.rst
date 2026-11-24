@@ -118,7 +118,8 @@ output. For an over-the-air test, select an antenna output and check the
 Streaming supports cyclic buffer lengths of 256, 512, 1024 or 2048
 samples. Keep the buffer length and RF settings fixed until the stream
 closes. The source sets the input format. The beam sets amplitude, antenna
-selection and steering, just as it does for a repeating waveform. See :doc:`iq-transmission` for more on
+selection and steering, just as it does for a repeating waveform. Closing a
+writer leaves the beam prepared for the next connection. See :doc:`iq-transmission` for more on
 preparing waveforms and monitor calibration.
 
 In Raw IQ mode, pass CS8 bytes, a two-column NumPy ``int8`` array or
@@ -249,9 +250,11 @@ Custom GFSK settings
 ~~~~~~~~~~~~~~~~~~~~
 
 A packet can contain up to 1,020 bytes. Its bits and the following pause
-must fit within 65,536 symbol intervals. At 2 Mbaud, allow a pause between
-packets so the sensors have time to generate the next burst. Keep stored
-waveforms silent on the antennas carrying the 2 Mbaud stream.
+must fit within 65,536 symbol intervals. At 2 Mbaud, the packet length
+and gap determine how much data the host must deliver. For example, eight
+sensors played 251-byte packets with a 300 µs gap while steering every
+8 ms. Shortening the gap to 150 µs caused an underrun in the same test.
+Keep stored waveforms silent on the antennas carrying the 2 Mbaud stream.
 
 If you are matching a radio other than Bluetooth LE, start with its symbol
 rate and frequency deviation. The modulation index is twice the deviation
@@ -266,17 +269,16 @@ Buffer status and underruns
 ---------------------------
 
 The client sends samples, indices or packets over the board's UDP or
-WebSocket stream. The controller reports buffer space and stream state
-over that same connection. The client prefills the sensors and schedules
-a common start. By default ``start()`` allows half a second of lead time.
+WebSocket stream. Each sensor sends its buffer space, stream state and error
+counters back in a cumulative ``TXSTREAM_STATUS`` report on that connection. The client prefills the sensors and schedules
+a common start. By default ``start()`` allows half a second to deliver the
+command, plus 50 ms for the sensors to prepare playback.
 For live audio or a GUI, put writes on a worker thread. A write can wait
 if any sensor runs low on buffer space.
 
 Use ``stream.status()`` to see how many samples or symbols have reached
 each sensor and how far it has played. Check ``missing`` separately for
 gaps and ``clipped`` for samples outside the output range.
-``stream.transport_status()`` reports controller packet and rejection
-counters, accumulated since boot.
 
 UDP uses packet offsets to keep later data aligned. Missing data becomes
 silence and the client does not retransmit it. If the buffer runs dry, the

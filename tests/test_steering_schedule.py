@@ -10,7 +10,7 @@ import pytest
 from espargos.calibration import Antenna, AntennaCorrection, Calibration, CalibrationGroup, CalibrationState
 from espargos.iq_transmitter import IQTransmitter
 from espargos.iq_stream import IQStream
-from espargos.iq_stream_protocol import Command, HEADER
+from espargos.iq_stream_protocol import Command, HEADER, Uplink
 from espargos.iq_steering_schedule import SteeringSchedule
 from espargos.steering import Beamspace, Weights
 from espargos.stream_sources import Stream
@@ -22,8 +22,8 @@ class Board:
     def __init__(self, host, epoch):
         self.host = host
         self.state = {"sensors": [dict(enabled=True, applied_sample_rate_hz=80_000_000,
-                                       frequency_hz=2440000000, sync_seq=8, sample_position=2**35, epoch=epoch + a,
-                                       boot_id=99, applied_generation=31, steer_id=0, steer_error=0, steer_applied=0)
+                                       frequency_hz=2440000000, sync_seq=8, sample_age_ms=0, sample_position=2**35, epoch=epoch + a,
+                                       boot_id=99, applied_generation=31, steer_id=0, steer_error=0, steer_applied=0, steer_missing=0, steer_free=256, steer_received=0)
                                   for a in range(8)]}
         self.control = SimpleNamespace(fetch=lambda _, frame: self.send_stream_data(frame),
                                        get_json=lambda _: self.state)
@@ -35,28 +35,35 @@ class Board:
     def send_stream_data(self, frame):
         _, _, command, mask, _, session, offset, count = HEADER.unpack_from(frame)
         data = frame[HEADER.size:]
+        absolute = None
+        if command == Command.STEER_AT:
+            absolute, seq = struct.unpack_from("<QI", data)
+            cursor = 12
+            self.arms.append(absolute)
         for a, s in enumerate(self.state["sensors"]):
             if not mask & (1 << a):
                 continue
-            if command == Command.STEER_LOAD:
-                if self.drop:
-                    s.update(steer_id=session, steer_loaded=0, steer_error=1)
-                    continue
-                assert offset == len(self.points[a])
-                self.points[a].extend(struct.iter_unpack("<IIff", data))
-                s.update(steer_id=session, steer_loaded=offset + count, steer_state=0)
-            elif command == Command.STEER_PREPARE:
-                assert count == len(self.points[a])
-                assert struct.unpack("<I", data)[0] == self.sessions.get(a, 0)
-                s["steer_state"] = 1
-            elif command == Command.STEER_ARM:
-                start, seq, *epochs, stream = struct.unpack("<QI8II", data)
-                assert epochs[a] == s["epoch"] and seq == s["sync_seq"]
-                assert stream == self.sessions.get(a, 0)
-                self.arms.append(start)
-                s.update(steer_state=2, steer_applied=count)
-            elif command == Command.STEER_CANCEL and s["steer_id"] == session:
-                s.update(steer_id=0, steer_state=0)
+            if command == Command.STEER_AT:
+                epoch, generation, live = struct.unpack_from("<III", data, cursor)
+                assert (epoch, generation, live) == (s["epoch"], s["applied_generation"], self.sessions.get(a, 0))
+                assert seq == s["sync_seq"]
+                cursor += 12
+                for slot in range(5):
+                    if count & 1 << slot:
+                        real, imag = struct.unpack_from("<ff", data, cursor)
+                        cursor += 8
+                        if self.drop != (a, offset):
+                            self.points[a].append((absolute, slot, real, imag))
+                if self.drop != (a, offset):
+                    missed = offset - s["steer_received"]
+                    s.update(steer_id=session, steer_received=offset + 1,
+                             steer_applied=s["steer_applied"] + 1, steer_missing=s["steer_missing"] + missed)
+            elif command == Command.STEER_CANCEL:
+                s["steer_cancelled"] = session
+                if s["steer_id"] == session:
+                    s.update(steer_id=0)
+        if absolute is not None:
+            assert cursor == len(data)
 
 
 def fixture():
@@ -67,6 +74,7 @@ def fixture():
         assert predicate(board.state)
         return board.state
     tx.capture = SimpleNamespace(wait=wait)
+    tx.uplink = Uplink(boards)
     tx._parallel = lambda f, boards: [f(i, b) for i, b in enumerate(tx.boards) if b in boards]
     first, second = Antenna("left", 1), Antenna("right", 4)
     narrow = TXSignal(None, _SignalSettings(CW(), .2, (first, second), None))
@@ -81,30 +89,59 @@ def test_shared_sample_different_local_slots():
     target = Weights({a: 1j, b: -1})
     with SteeringSchedule(tx, [(23, beam, target), (23, pilot, Weights({b: 1}))],
                           start_sample=2**35 + 80_000_000) as schedule:
-        assert tx.boards[0].arms == tx.boards[1].arms == [schedule.start_sample]
-        assert tx.boards[0].points[1][0] == pytest.approx((23, 0, 0, .2))
-        assert tx.boards[1].points[4][0] == pytest.approx((23, 0, .1, 0))
-        assert tx.boards[1].points[4][1] == pytest.approx((23, 1, -.2, 0))
+        assert tx.boards[0].arms == tx.boards[1].arms == [schedule.start_sample + 23]
+        assert tx.boards[0].points[1][0] == pytest.approx((schedule.start_sample + 23, 0, 0, .2))
+        assert tx.boards[1].points[4][0] == pytest.approx((schedule.start_sample + 23, 0, .1, 0))
+        assert tx.boards[1].points[4][1] == pytest.approx((schedule.start_sample + 23, 1, -.2, 0))
         schedule.wait()
         assert beam.steering is target
 
 
-def test_missing_chunk_never_arms_other_board():
+def test_missing_turn_does_not_block_later_turn_or_other_board():
     tx, beam, _, _ = fixture()
-    tx.boards[1].drop = True
-    with pytest.raises(RuntimeError, match="steering error"):
-        SteeringSchedule(tx, [(1, beam, Weights({}))])
-    assert all(not b.arms for b in tx.boards)
+    tx.boards[1].drop = (4, 0)
+    with SteeringSchedule(tx, [(1, beam, Weights({})), (2, beam, Weights({}))]) as sweep:
+        with pytest.raises(RuntimeError, match="missing steering"):
+            sweep.wait()
+        assert len(tx.boards[0].points[1]) == 2
+        assert len(tx.boards[1].points[4]) == 1
 
 
-def test_limit_and_sync_checked_before_upload():
+def test_missing_last_turn_surfaces_when_playback_passes_it():
     tx, beam, _, _ = fixture()
-    with pytest.raises(ValueError, match="256"):
-        SteeringSchedule(tx, [(i, beam, Weights({})) for i in range(257)])
+    board = tx.boards[1]
+    board.drop = (4, 1)
+    with SteeringSchedule(tx, [(1, beam, Weights({})), (2, beam, Weights({}))]) as sweep:
+        board.state["sensors"][4]["sample_position"] = sweep.start_sample + 3
+        with pytest.raises(RuntimeError, match="final steering update missing"):
+            sweep.wait()
+
+
+def test_reuse_queue_slots(monkeypatch):
+    tx, beam, _, _ = fixture()
+    monkeypatch.setattr("espargos.iq_steering_schedule.time.sleep", lambda _: None)
+    with SteeringSchedule(tx, [(i, beam, Weights({})) for i in range(260)]) as sweep:
+        sweep.wait()
+    assert len(tx.boards[1].points[4]) == 260
+
+
+def test_sync_checked_before_upload():
+    tx, beam, _, _ = fixture()
     tx.boards[1].state["sensors"][4]["sync_seq"] += 1
     with pytest.raises(ValueError, match="common calibrated"):
         SteeringSchedule(tx, [(1, beam, Weights({}))])
     assert all(not any(b.points) for b in tx.boards)
+
+
+def test_short_lead_accounts_for_age_of_playback_clock():
+    tx, beam, _, _ = fixture()
+    sensor = tx.boards[0].state["sensors"][1]
+    sensor["sample_age_ms"] = 370
+    with SteeringSchedule(tx, [(0, beam, Weights({}))], lead_time=0.1) as sweep:
+        assert sweep.start_sample >= sensor["sample_position"] + 37_600_000
+    sensor["sample_age_ms"] = 2500
+    with pytest.raises(RuntimeError, match="playback clock is stale"):
+        SteeringSchedule(tx, [(0, beam, Weights({}))])
 
 
 def test_independent_schedules_can_overlap_on_different_clocks():
@@ -149,18 +186,21 @@ def test_board_and_sensor_specific_stream_sessions():
                (96, stream, Weights({a: 0})), (128, stream, uniform),
                (7, third, Weights({})), (9, third, Weights({}))]
     with IQTransmitter.schedule_steering(tx, changes) as sweep:
-        assert all(start == sweep.start_sample for board in tx.boards for start in board.arms)
+        start = sweep.start_sample
         left, right = tx.boards
         assert left.points[a.antid] == [
-            pytest.approx((64, 0, .2, 0)),       # Unspecified loop antenna has unit weight.
-            pytest.approx((64, 4, .03, -.04)),  # Live amplitude is .1.
-            (96, 4, 0, 0),
-            pytest.approx((128, 4, .1, 0)),
+            pytest.approx((start + 64, 0, .2, 0)),       # Unspecified loop antenna has unit weight.
+            pytest.approx((start + 64, 4, .03, -.04)),  # Live amplitude is .1.
+            (start + 96, 4, 0, 0),
+            pytest.approx((start + 128, 4, .1, 0)),
         ]
-        assert right.points[b.antid] == [pytest.approx((64, 1, 0, -.1))]
+        assert right.points[b.antid] == [pytest.approx((start + 64, 1, 0, -.1))]
         sweep.wait()
         assert beam.steering is loop_weights
         assert stream.steering is live_beam.steering is uniform
+        stream.session += 1
+        with pytest.raises(RuntimeError, match="live stream closed or restarted"):
+            sweep.wait()
 
 
 def test_unstarted_stream_on_another_array_does_not_constrain_loop():
@@ -173,7 +213,7 @@ def test_unstarted_stream_on_another_array_does_not_constrain_loop():
 def test_overlap_rejected_before_any_upload_or_cancel():
     tx, beam, _, (a, _) = fixture()
     sensor = tx.boards[0].state["sensors"][a.antid]
-    sensor.update(steer_id=1234, steer_state=2, steer_loaded=8, steer_applied=3)
+    sensor.update(steer_id=1234, steer_free=251, steer_received=8, steer_applied=3)
     with pytest.raises(RuntimeError, match="another steering schedule"):
         SteeringSchedule(tx, [(64, beam, Weights({}))])
     assert sensor["steer_id"] == 1234

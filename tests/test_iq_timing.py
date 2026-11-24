@@ -153,7 +153,7 @@ def test_timing_failure_restores_every_board_and_keeps_tx_muted(restore_failure)
         calls.append((board.host, path, payload))
         if path == "get_iq_tx":
             return state
-        if payload == {"muted": True, "steering": {"phase_deg": [0] * 8}}:
+        if payload == {"muted": True, "steering": {"phase_deg": [0] * 8, "delay_samples": [0] * 8}}:
             raise RuntimeError("prepare failed")
 
     with patch("espargos.iq_timing_capture._rpc", side_effect=rpc), patch("espargos.iq_timing_capture._Captures") as captures, patch("espargos.iq_timing_capture.compute_reference_path_delays", return_value=np.zeros((2, 2, 4))):

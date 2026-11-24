@@ -88,7 +88,7 @@ def measure(owner, antennas, path, reference_delays_s, timeout):
     success = False
     try:
         for bi, b in enumerate(boards):
-            _rpc(b, "set_iq_tx", {"muted": True, "steering": {"phase_deg": [0] * 8}})
+            _rpc(b, "set_iq_tx", {"muted": True, "steering": {"phase_deg": [0] * 8, "delay_samples": [0] * 8}})
             decimation = 1 if any(a.host == b.host for a in rx) else configs[bi]["adc_decimation"]
             b.iq.set_config(
                 {
