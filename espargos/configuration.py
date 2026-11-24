@@ -180,7 +180,7 @@ def _wifi(ctx, options):
 
 
 def _iq_rx(ctx, options):
-    _validate(options, ("frequency_hz", "sample_rate_hz", "rx_gain", "gain_mode", "output", "capture_path", "bandwidth_mhz"))
+    _validate(options, ("frequency_hz", "sample_rate_hz", "rx_gain", "gain_mode", "output", "capture_path", "bandwidth_mhz", "bluetooth_filter_mode"))
     settings, receivers, invalidated = {}, {}, set()
     receiver = {}
     if "frequency_hz" in options:
@@ -221,6 +221,14 @@ def _iq_rx(ctx, options):
         _board_wide(ctx)
         settings["capture_path"] = path
         if path != ctx.snapshot.get("capture_path", "wifi"):
+            invalidated.update(_identities(ctx))
+    if "bluetooth_filter_mode" in options:
+        _board_wide(ctx)
+        mode = options["bluetooth_filter_mode"]
+        if mode not in ("centered", "low_if"):
+            raise ValueError("bluetooth_filter_mode must be centered or low_if")
+        settings["bluetooth_filter_mode"] = mode
+        if path == "bluetooth" and mode != ctx.snapshot.get("bluetooth_filter_mode", "centered"):
             invalidated.update(_identities(ctx))
     if "bandwidth_mhz" in options:
         _board_wide(ctx)

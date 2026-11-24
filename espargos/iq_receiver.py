@@ -723,6 +723,7 @@ class IQReceiver(ClusterAssembler):
                 "capture_path",
                 "bluetooth_sample_rate_hz",
                 "bluetooth_filter_khz",
+                "bluetooth_filter_mode",
                 "adc_decimation",
                 "adc_source_sel",
                 "bw_mhz",
@@ -744,9 +745,9 @@ class IQReceiver(ClusterAssembler):
                         khz = config["bluetooth_filter_khz"]
                         updated["bluetooth_filter_khz"] = min(old["bluetooth_filter_steps_khz"], key=lambda step: (abs(step - khz), step))
                     if updated.get("capture_path") == "bluetooth":
-                        active_fields = {"capture_path", "bluetooth_sample_rate_hz", "bluetooth_filter_khz"}
+                        active_fields = {"capture_path", "bluetooth_sample_rate_hz", "bluetooth_filter_khz", "bluetooth_filter_mode"}
                     else:
-                        active_fields = shared - {"bluetooth_sample_rate_hz", "bluetooth_filter_khz"}
+                        active_fields = shared - {"bluetooth_sample_rate_hz", "bluetooth_filter_khz", "bluetooth_filter_mode"}
                     if 0 < updated.get("filter_bw_mhz", 0) < 13:
                         updated["filter_bw_mhz"] = 13
                     if "trigger" in config and receive_sample_rate(old) != receive_sample_rate(updated) or any(updated[k] != old.get(k) for k in active_fields.intersection(config)):
@@ -974,12 +975,14 @@ class IQReceiver(ClusterAssembler):
         ref = bi * 8 + row * 4 + col
         streaming = configs[bi].get("trigger", {}).get("mode") == "downsample"
         bluetooth = configs[bi].get("capture_path") == "bluetooth" or streaming
-        profile = (bluetooth, streaming, configs[bi].get("bluetooth_filter_khz") if bluetooth else None)
-        for idx in scope.active:
-            downsample = configs[idx].get("trigger", {}).get("mode") == "downsample"
-            bt = configs[idx].get("capture_path") == "bluetooth" or downsample
-            if (bt, downsample, configs[idx].get("bluetooth_filter_khz") if bt else None) != profile:
-                raise IQCalibrationError("Select the same capture path, bandwidth and sampling mode on participating boards")
+        def capture_profile(config):
+            downsample = config.get("trigger", {}).get("mode") == "downsample"
+            bt = config.get("capture_path") == "bluetooth" or downsample
+            return (bt, downsample, config.get("bluetooth_filter_khz") if bt else None,
+                    config.get("bluetooth_filter_mode", "centered") if bt else None)
+
+        if any(capture_profile(configs[idx]) != capture_profile(configs[bi]) for idx in scope.active):
+            raise IQCalibrationError("Select the same capture path, filter and sampling mode on participating boards")
         coarse_gain = iq_reference.reference_gain(self, rx_gain) if bluetooth else rx_gain
         keep_bluetooth_epoch = bluetooth and warm_grid
         with iq_reference.reference_session(self, center_hz, coarse_gain, scope, keep_bluetooth_epoch) as (center, fs):

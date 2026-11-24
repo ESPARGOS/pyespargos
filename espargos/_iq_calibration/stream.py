@@ -208,25 +208,30 @@ def measure_bluetooth(receiver, scope, configs, center, rate, timeout, attempt, 
         # Start on an occupied OFDM subcarrier at low power to avoid compression.
         trial = attempt % 3
         return _measure_noise(receiver, scope, center, rate, timeout, bandwidth / rate, 40 if trial == 2 else 80, 4000000 if trial == 1 else 3125000)
-    if streaming:
+    below_lo = not streaming and config.get("bluetooth_filter_mode") == "low_if"
+    if below_lo:
+        noise = attempt % 3 == (0 if prefer_noise else 2)
+    elif streaming:
         noise = attempt % 3 == (0 if prefer_noise else 1)
     else:
         noise = attempt % 3 != 1
     if noise:
-        backoff = 40 if not streaming and attempt % 3 == 2 else 0
+        backoff = 40 if not streaming and (below_lo or attempt % 3 == 2) else 0
         return _measure_noise(receiver, scope, center, rate, timeout, bandwidth / rate, backoff)
-    backoff = 80 if attempt % 3 < 2 else 0
-    return measure(receiver, scope, center, rate, backoff, timeout, bandwidth=bandwidth)
+    backoff = 80 if attempt % 3 < (1 if below_lo and not prefer_noise else 2) else 0
+    return measure(receiver, scope, center, rate, backoff, timeout, bandwidth=bandwidth, below_lo=below_lo)
 
 
-def measure(receiver, scope, center, rate, backoff, timeout, bandwidth=None):
+def measure(receiver, scope, center, rate, backoff, timeout, bandwidth=None, below_lo=False):
     """Fit three tones across the passband and verify on a fourth tone."""
     # Alternate sides so buffered samples from the previous tone cannot pass
     # the next tone's frequency check, including at the lowest output rate.
     bandwidth = bandwidth or rate
     offsets = (-0.30, 0.30, -0.13, 0.16)
     # At either end of the RF tuning range, fit tones on the available side.
-    if center - 0.30 * bandwidth < TONE_MIN_HZ:
+    if below_lo and center - 0.40 * bandwidth >= TONE_MIN_HZ:
+        offsets = (-0.18, -0.40, -0.29, -0.23)
+    elif center - 0.30 * bandwidth < TONE_MIN_HZ:
         offsets = (0.16, 0.36, 0.09, 0.26)
     elif center + 0.30 * bandwidth > TONE_MAX_HZ:
         offsets = (-0.16, -0.36, -0.09, -0.26)

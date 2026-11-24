@@ -75,18 +75,26 @@ For example, to capture a signal near 2467 MHz on all antennas::
    pool.configure(mode="iq_rx", frequency_hz=2467e6, capture_path="bluetooth",
                   sample_rate_hz=4e6, bandwidth_mhz=2.1)
 
-The Bluetooth filter uses the nearest available setting. The bandwidths are approximate full widths around the tuned frequency. A 2.1 MHz filter
+The Bluetooth filter uses the nearest available setting. With the default centered filter, the bandwidths are approximate full widths around the tuned frequency. A 2.1 MHz filter
 extends about 1.05 MHz to either side. Leave room for the filter to roll off
 before the Nyquist frequency when strong signals occupy adjacent channels.
 Changing the capture rate alone does not narrow the analog filter.
 
+Use ``bluetooth_filter_mode="low_if"`` to receive a signal below the local
+oscillator (LO) while attenuating interference at its mirror frequency. For
+example, with the LO at 2437 MHz and ``bandwidth_mhz=3.4``, the measured
+passband extends from about 2433.7 to 2436.6 MHz. A 2435 MHz tone appears at
+−2 MHz in the IQ samples. Changing the filter does not shift the samples to
+baseband. Choose a sample rate that covers the selected passband to avoid
+aliasing. Continuous downsampling still selects frequencies around DC.
+Set ``bluetooth_filter_mode="centered"`` to receive on both sides of the LO.
+
 For phase-coherent capture, select the rate and filter first,
 then call ``pool.calibrate()``. The SDK can reuse a live Bluetooth sample grid on a
-single board. To establish a new common grid it briefly uses the WiFi path
-and then measures
-Bluetooth phase and delay at the selected analog bandwidth and receiver gains.
-Raw capture uses two independently tuned broadband references. Retries can
-change the reference waveform or its power while keeping the receiver gains.
+single board. To establish a new common grid it briefly uses the WiFi path,
+then measures Bluetooth phase and delay at the selected filter setting and
+receiver gains. Depending on the passband and gain, it uses either two
+independently tuned broadband references or four pilot tones.
 A gain edit retains calibration. The physical phase response can still change
 with gain, so calibrate at the intended operating gains for phase measurements.
 
