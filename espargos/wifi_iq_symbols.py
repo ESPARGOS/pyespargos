@@ -3,69 +3,37 @@
 import numpy as np
 
 from .wifi_iq_estimator import _Observation, _PILOTS, _PILOT_SIGNS, _POLARITY, _TONES
+from .wifi_iq_spatial import _configuration, _decode
 
-from .wifi_iq_spatial import _HT_TONES, _HT_PILOTS, _HE_TONES, _HE_PILOTS, _ht_model, _he_model
+_HT_PILOTS = np.array([-21, -7, 7, 21])
 
 
 def _combine(h, y):
-    """Noise-whitened least squares on each tone. Omit unsupported dimensions."""
-    if h.shape[-1] == 1:
-        h = h[:, :, 0]
-        power = np.sum(abs(h) ** 2, axis=0)
-        return np.divide(np.sum(h.conj() * y, axis=0), power, out=np.full(power.shape, np.nan + 0j), where=power >= 1)[:, None]
-    h = h.transpose(1, 0, 2)
-    valid = np.isfinite(h).all(axis=(1, 2))
-    result = np.full((len(h), h.shape[-1]), np.nan + 0j)
-    if valid.any() and h.shape[1] >= h.shape[2]:
-        u, s, vh = np.linalg.svd(h[valid], full_matrices=False)
-        strong = (s[:, -1] > 0.05 * s[:, 0]) & (s[:, -1] ** 2 > 5)
-        z = (u[strong].conj().transpose(0, 2, 1) @ y.T[valid][strong, :, None]) / s[strong, :, None]
-        result[np.flatnonzero(valid)[strong]] = (vh[strong].conj().transpose(0, 2, 1) @ z)[:, :, 0]
-    return result
+    """Maximum-ratio combination of whitened legacy OFDM observations."""
+    h = h[:, :, 0]
+    power = np.sum(abs(h) ** 2, axis=0)
+    return np.divide(np.sum(h.conj() * y, axis=0), power, out=np.full(power.shape, np.nan + 0j), where=power >= 1)[:, None]
 
 
-def _symbols(models, offsets, size, tones, pilot_tones, pilot_signs, sections, field, stbc=False):
+def _symbols(models, offsets, size, tones, pilot_tones, pilot_signs, sections, field):
     pilots = np.isin(tones, pilot_tones)
-    previous = {}
     for n, offset in enumerate(offsets):
-        channels, samples, pairs = [], [], []
-        if n % 2 == 0:
-            previous.clear()
-        for i, (row, h, hp, gain, noise) in enumerate(models):
+        channels, samples = [], []
+        for row, h, hp, gain, noise in models:
             y = row.spectrum(offset, size, gain=gain)
             if y is None:
                 continue
             y = y[tones]
-            expected = (hp * pilot_signs(n)).sum(axis=1)
+            expected = hp[:, 0] * pilot_signs(n)[:, 0]
             cross = y[pilots] * expected.conj()
             if abs(cross.sum()) <= 0.7 * np.sum(abs(cross)):
                 continue
             rotation = np.exp(-1j * np.angle(cross.sum()))
-            sections["Pilots"].extend((y[pilots] * rotation * expected.conj() / np.maximum(abs(expected) ** 2, 1e-12) * pilot_signs(n)[:, 0])[abs(expected) > noise])
-            y = y * rotation / noise
-            if stbc:
-                if n % 2 == 0:
-                    previous[i] = y
-                    continue
-                if i not in previous:
-                    continue
-                pairs.append(previous[i])
+            sections["Pilots"].extend((cross * rotation * pilot_signs(n)[:, 0] / np.maximum(abs(expected) ** 2, 1e-12))[abs(expected) > noise])
             channels.append(h / noise)
-            samples.append(y)
-        if not samples:
-            continue
-        h, y = np.array(channels), np.array(samples)
-        if stbc:
-            a, b = h[:, :, 0], h[:, :, 1]
-            u = np.array(pairs)
-            power = (abs(a) ** 2 + abs(b) ** 2).sum(axis=0)
-            z = np.stack([(a.conj() * u + b * y.conj()).sum(axis=0), (a.conj() * y - b * u.conj()).sum(axis=0)], axis=1)
-            z /= np.where(power >= 1, power, np.nan)[:, None]
-            previous.clear()
-        else:
-            z = _combine(h, y)
-        data = z[~pilots]
-        if h.shape[-1] == 1 or np.isfinite(data).sum() >= data.size // 2:
+            samples.append(y * rotation / noise)
+        if samples:
+            data = _combine(np.array(channels), np.array(samples))[~pilots]
             sections[field].extend(data[np.isfinite(data)])
 
 
@@ -127,47 +95,25 @@ def symbol_constellation(packets):
             break
     else:
         return sections
-    sig = header["prefix"]
-    if p.phy == 2:
-        mcs = header["mcs"]
-        streams = mcs // 8 + 1
-        stbc = header["stbc"]
-        if sig[0] & 128 or sig[4] & 3 or streams > 4 or stbc and (streams != 1 or stbc != 1):
-            return sections
-        paths = streams + stbc
-        stride = 72 if sig[3] & 128 else 80
+    settings = _configuration(header)
+    if settings is None:
+        return sections
+    config, streams = settings
+    alamouti = config[0] == 2 and streams == 1 and config[1] == 2
+    if config[1] != streams and not alamouti:
+        return sections
+    if config[0] == 4 and (header["he"]["doppler"] or header["he"]["dcm"]):
+        return sections
+    count = 8
+    if config[0] == 2:
         rates = (26, 52, 78, 104, 156, 208, 234, 260)
-        count = min(8, int(np.ceil((16 + 8 * p.length + 6) / (streams * rates[mcs % 8]))))
-        ht = []
-        for r, _, _, _, noise in models:
-            model = _ht_model(r, paths)
-            if model is not None:
-                h, gain = model
-                ht.append((r, h, h[np.isin(_HT_TONES, _HT_PILOTS)], gain, noise))
-        # IEEE 802.11n Table 20-18, ordered by space-time stream.
-        patterns = (
-            [[1, 1, 1, -1]],
-            [[1, 1, -1, -1], [1, -1, -1, 1]],
-            [[1, 1, -1, -1], [1, -1, 1, -1], [-1, 1, 1, -1]],
-            [[1, 1, 1, -1], [1, 1, -1, 1], [1, -1, 1, 1], [-1, 1, 1, 1]],
-        )
-        pattern = np.asarray(patterns[paths - 1]).T
-        ltf_count = (1, 2, 4, 4)[paths - 1]
-        _symbols(ht, 464 + 80 * (ltf_count - 1) + stride * (1 + np.arange(count)), 64, _HT_TONES, _HT_PILOTS, lambda n: np.roll(pattern, -n, axis=0) * _POLARITY[n + 3], sections, "Data", bool(stbc))
-    else:
-        cfg = header["he"]
-        if cfg["bandwidth_mhz"] != 20 or cfg["space_time_streams"] != cfg["spatial_streams"] or cfg["doppler"] or cfg["dcm"]:
-            return sections
-        streams = cfg["spatial_streams"]
-        count = (1, 2, 4, 4, 6, 6, 8, 8)[streams - 1]
-        ltf, gi = cfg["ltf_size"], cfg["guard_interval_ns"] // 50
-        he = []
-        for r, _, _, _, noise in models:
-            model = _he_model(r, streams, count, ltf, gi)
-            if model:
-                h, pilot, gain, guard_noise = model
-                he.append((r, h, pilot[:, None], gain, max(2 * noise, guard_noise)))
-        offsets = 528 + count * (64 * ltf + gi) + gi + np.arange(8) * (256 + gi)
-        base = np.array([1, 1, 1, -1, -1, 1, 1, 1])[:, None]
-        _symbols(he, offsets, 256, _HE_TONES, _HE_PILOTS, lambda n: np.roll(base, -n, axis=0) * _POLARITY[n + 1], sections, "Data")
+        count = min(count, int(np.ceil((16 + 8*p.length + 6) / (streams * rates[header["mcs"] % 8]))))
+    result = _decode([(row, noise**2) for row, _, _, _, noise in models], config, count, alamouti)
+    if result is not None:
+        _, z, _ = result
+        tones = np.arange(z.shape[1]) - z.shape[1] // 2
+        pilots = np.isin(tones, _HT_PILOTS if config[0] == 2 else [-116, -90, -48, -22, 22, 48, 90, 116])
+        for key, mask in (("Data", ~pilots), ("Pilots", pilots)):
+            values = z[:, mask]
+            sections[key].extend(values[np.isfinite(values)])
     return sections

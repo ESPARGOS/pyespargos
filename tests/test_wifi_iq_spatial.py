@@ -163,3 +163,16 @@ def test_adc_positions_distinguish_consecutive_identical_phy_headers():
     assert timing.compare_packet(*first)
     assert not timing.compare_packet(first[0], (b, 3, 98 + 4096))
     assert timing.compare_packet(first[0], (b, 4, 98)) is None
+
+
+def test_he_constellation_recovers_both_payload_streams(generators):
+    from espargos.wifi_iq_symbols import symbol_constellation
+
+    _, he = generators
+    tx, expected, _ = he.stimulus(streams=2, cp=3, symbols=2)
+    packets = [candidate(tx @ h) for h in ([1, .25j], [.15j, 1])]
+    for packet in packets:
+        packet.phy = packet.phy_header["phy"]
+    data = np.asarray(symbol_constellation(packets)["Data"]).reshape(expected.shape)
+    assert np.linalg.norm(data - expected) / np.linalg.norm(expected) < .05
+    assert not symbol_constellation([packets[0], packets[0]])["Data"]

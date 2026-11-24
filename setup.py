@@ -17,7 +17,7 @@ setup(
     ext_modules=[
         Extension(
             "_pyespargos_packet_decoders._native",
-            sources=[DECODERS + "/" + source for source in ("bindings/python.c", "bindings/bridge.c", "src/wifi.c", "src/ble.c")],
+            sources=[DECODERS + "/" + source for source in ("bindings/python.c", "bindings/bridge.c", "src/wifi.c", "src/spatial.c", "src/ble.c")],
             include_dirs=[DECODERS + "/include", DECODERS + "/bindings"],
             libraries=[] if sys.platform == "win32" else ["m"],
             extra_compile_args=["/std:c11"] if sys.platform == "win32" else ["-std=c99"],
