@@ -19,6 +19,7 @@ __all__ = [
     "csi_interp_eigenvec_per_subcarrier",
     "csi_interp_iterative",
     "csi_interp_iterative_by_array",
+    "csi_to_fft_grid",
     "estimate_phase_time_offsets",
     "extract_ht20_subcarriers_from_ht40",
     "extract_lltf_subcarriers_from_ht20",
@@ -120,6 +121,51 @@ def interpolate_he20ltf_gaps(csi_he20: np.ndarray) -> None:
     right = csi_he20[..., index_right]
     interp = (missing_indices - index_left) / (index_right - index_left)
     csi_he20[..., missing_indices] = interp * right[..., np.newaxis] + (1 - interp) * left[..., np.newaxis]
+
+
+_DEFAULT_FFT_SIZES = {"lltf": 64, "ht20": 64, "ht40": 128, "he20": 256}
+
+
+def csi_to_fft_grid(csi: np.ndarray, csi_format: str, fft_size: int | None = None) -> np.ndarray:
+    """
+    Place CSI onto a natural-order FFT grid, ready for :func:`numpy.fft.ifft`.
+
+    Deserialized CSI is stored in ascending subcarrier order, see
+    :func:`espargos.csi_packet.get_csi_format_subcarrier_indices`. For HT40 this
+    is ``-58..58`` (117 values): 57 lower-channel subcarriers ``-58..-2``, the
+    3-subcarrier gap ``-1, 0, 1`` around DC, and 57 upper-channel subcarriers
+    ``2..58``. Subcarrier ``k`` belongs at FFT bin ``k % fft_size``, so the gap
+    sits at bins ``fft_size - 1, 0, 1`` (not in the middle of the grid) and all
+    unused bins around ``fft_size // 2`` stay zero.
+
+    The gap / DC values carry no valid channel estimate, so fill them first
+    (e.g. with :func:`interpolate_ht40ltf_gap`) if they should not be zero.
+
+    Example, channel impulse response with tap 0 at index 0 and negative delays
+    wrapped to the end of the array::
+
+        cir = np.fft.ifft(csi_to_fft_grid(csi_ht40, "ht40"), axis=-1)
+        cir_centered = np.fft.fftshift(cir, axes=-1)  # delay -64..63 samples
+
+    :param csi: Complex CSI array whose last dimension holds the subcarriers of
+        ``csi_format`` in ascending order. Leading dimensions are preserved.
+    :param csi_format: One of ``"lltf"``, ``"ht20"``, ``"ht40"``, ``"he20"``.
+    :param fft_size: FFT length. Defaults to the format's native size (64 for
+        L-LTF and HT20, 128 for HT40, 256 for HE20). Larger values zero-pad
+        in frequency, i.e. oversample the impulse response in time.
+    :return: Complex array of shape ``csi.shape[:-1] + (fft_size,)``.
+    """
+    indices = csi_packet.get_csi_format_subcarrier_indices(csi_format)
+    if fft_size is None:
+        fft_size = _DEFAULT_FFT_SIZES[csi_format]
+    if csi.shape[-1] != len(indices):
+        raise ValueError(f"Expected {len(indices)} subcarriers for {csi_format!r}, got {csi.shape[-1]}")
+    if fft_size < len(indices):
+        raise ValueError(f"fft_size {fft_size} is smaller than the number of subcarriers ({len(indices)})")
+
+    grid = np.zeros(csi.shape[:-1] + (fft_size,), dtype=np.result_type(csi.dtype, np.complex64))
+    grid[..., indices % fft_size] = csi
+    return grid
 
 
 def extract_lltf_subcarriers_from_ht40(csi_ht40: np.ndarray, secondary_channel_relative: int):
