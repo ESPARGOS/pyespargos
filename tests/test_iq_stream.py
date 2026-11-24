@@ -65,7 +65,7 @@ class Device:
         self.tx.uplink = Uplink(self.tx.boards)
 
     def subscribe(self, magic, callback):
-        assert magic == (0x31535453, 0x31535854)
+        assert magic == (0x32535453, 0x31535854)
         self.callback = callback
         self.publish()
         return callback
@@ -84,7 +84,7 @@ class Device:
                 if key == "end" and value is None:
                     value = 0xFFFFFFFF
                 words.append(value)
-            header = struct.pack("<7I", 0x31535453, a, state["boot_id"], self.sequence, 2, 0,
+            header = struct.pack("<4IHHIHHI", 0x32535453, a, state["boot_id"], self.sequence, 1, 4, 2, 8, 4,
                                  state.get("session", 0) if state["state"] != "closed" else 0)
             packet = (struct.pack("<4I20I", 0x31535854, a, state["boot_id"], self.sequence, *words)
                       if words[0] else header)
@@ -529,11 +529,15 @@ class StreamTests(TestCase):
 
             def report(session):
                 d.sequence += 1
-                frame = struct.pack("<7I", 0x31535453, 0, d.sensors[0]["boot_id"],
-                                    d.sequence, 2, 0, session)
+                frame = struct.pack("<4I", 0x32535453, 0, d.sensors[0]["boot_id"],
+                                    d.sequence)
+                if session is not None:
+                    frame += struct.pack("<HHI", 8, 4, session)
                 d.callback(SimpleNamespace(antenna_id=0, payload=frame + struct.pack("<I", zlib.crc32(frame))))
 
             d.now += 0.1
+            report(None)
+            self.assertIs(stream._reports.streams[key], credit)
             report(stream.session)
             self.assertIs(stream._reports.streams[key], credit)
             report(stream.session + 1)

@@ -125,21 +125,25 @@ def test_streamed_playback_clock_and_steering_credit():
 
     board = Board()
     status = TXStatus([board])
-    values = [0] * 28
-    values[7], values[13] = 19, 2
-    values[25:28] = [123, 1, 40_000_000]
-    def publish(seq, tag, payload, mode=2):
-        frame = struct.pack("<7IHH", 0x31535453, 0, 19, seq, mode, 0, 0, tag, len(payload)) + payload
+    def publish(seq, fields, mode=None):
+        frame = struct.pack("<4I", 0x32535453, 0, 19, seq)
+        if mode is not None:
+            fields = [(1, [mode]), *fields]
+        for tag, words in fields:
+            frame += struct.pack("<HH", tag, 4 * len(words)) + struct.pack(f"<{len(words)}I", *words)
         frame += struct.pack("<I", zlib.crc32(frame))
         status.receive_status(board, SimpleNamespace(payload=frame, antenna_id=0))
-    publish(1, 7, struct.pack("<10I", 1234, 20, 3, 239, 0, 0, 0, 0, 0, 0))
-    publish(2, 6, struct.pack("<9I3f16I", *values))
+
+    publish(1, [(42, [1234, 20, 3, 239, 55])], mode=2)
+    publish(2, [(40, [123, 1]), (41, [40_000_000, 77])])
+    publish(3, [(37, [321, 0])])
     parsed = status.status[board][0]
     assert parsed["sample_rate_hz"] == 40_000_000
     assert parsed["origin_ns"] == 123 + (1 << 32)
     assert parsed["steer_received"] == 20 and parsed["steer_free"] == 239
-    publish(3, 2, bytes(4), mode=1)
-    publish(4, 6, struct.pack("<9I3f16I", *values))
+    assert parsed["sample_position"] == 321
+    publish(4, [], mode=1)
+    publish(5, [(41, [40_000_000])], mode=2)
     assert "steer_received" not in status.status[board][0]
     status.close()
 

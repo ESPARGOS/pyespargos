@@ -112,41 +112,45 @@ class TXStatus:
             last_report = self.clock.latest.get(key)
             if not self.clock.accept(key, report):
                 return
-            if last_report and (last_report.boot_id != report.boot_id or
-                                last_report.mode == 2 and report.mode != 2):
-                self.queues.pop(key, None)
-            previous_stream = self.stream_clock.latest.get(key)
-            if self.stream_clock.accept(key, report) and (
-                    previous_stream is None or previous_stream.boot_id != report.boot_id or
-                    previous_stream.stream_session != report.stream_session):
-                # Wait for positive FIFO credit from the new session. A sparse
-                # header can revoke old credit but never refresh its receipt time.
-                if report.stream_session:
-                    self.streams.pop(key, None)
-                else:
-                    self.streams[key] = (time.monotonic(), dict(
-                        session=0, state="closed", error=0, antid=a, boot_id=report.boot_id, available=True))
-
-            state = sensor_status.playback_state(report)
+            rebooted = last_report is not None and last_report.boot_id != report.boot_id
             previous = self.status[board][a]
-            if previous and previous["boot_id"] != report.boot_id:
-                previous = None
-                self.status[board][a] = None
+            if rebooted:
+                self.queues.pop(key, None)
+                self.status[board][a] = previous = None
+            mode = sensor_status.mode_name(report.mode) if report.mode is not None else None
+            if mode is not None and mode != "iq_tx":
+                self.queues.pop(key, None)
+
+            previous_stream = self.stream_clock.latest.get(key)
+            stream_rebooted = previous_stream is not None and previous_stream.boot_id != report.boot_id
+            if (report.stream_session is not None or stream_rebooted) and self.stream_clock.accept(key, report):
+                if (previous_stream is None or previous_stream.boot_id != report.boot_id
+                        or previous_stream.stream_session != report.stream_session):
+                    self.streams.pop(key, None)
+                    if report.stream_session == 0:
+                        self.streams[key] = (time.monotonic(), dict(
+                            session=0, state="closed", error=0, antid=a, boot_id=report.boot_id, available=True))
+
+            playback = sensor_status.playback_state(report)
             queue = sensor_status.steering_state(report)
-            if queue is not None:
-                self.queues[key] = (report.boot_id, queue)
-            mode = sensor_status.mode_name(report.mode)
-            if state is None and (previous is None or previous["applied_mode"] != mode):
-                if report.mode != 2:
-                    state = dict(boot_id=report.boot_id, applied_mode=mode, enabled=False,
-                                 samples=0, generation=0, error=0, sync_seq=0)
-                self.status[board][a] = state
-            elif state is None and queue is not None:
-                state = dict(previous)
-            if state is not None:
+            if queue and mode in (None, "iq_tx"):
                 cached = self.queues.get(key)
-                if cached and cached[0] == report.boot_id:
-                    state.update(cached[1])
+                self.queues[key] = (report.boot_id, {**(cached[1] if cached else {}), **queue})
+            mode_changed = mode is not None and (previous or {}).get("applied_mode") != mode
+            if playback or queue or mode_changed:
+                state = dict(previous or {}, boot_id=report.boot_id, report_sequence=report.sequence)
+                if mode_changed:
+                    for field in tuple(state):
+                        if field.startswith("steer_"):
+                            del state[field]
+                    state["applied_mode"] = mode
+                    if mode != "iq_tx":
+                        state.update(enabled=False, sync_seq=0)
+                        for field in ("generation", "error", "samples"):
+                            state.setdefault(field, 0)
+                state.update(playback)
+                if key in self.queues:
+                    state.update(self.queues[key][1])
                 self.status[board][a] = state
             self.changed.notify_all()
 
@@ -170,8 +174,12 @@ class TXStatus:
                 complete = all(s is not None for s in sensors)
                 if complete:
                     state = {"sensors": sensors}
-                    if predicate(state):
-                        return state
+                    try:
+                        if predicate(state):
+                            return state
+                    except KeyError:
+                        # A newly attached client may have only a position or queue update.
+                        complete = False
                 now = time.monotonic()
                 left = next_poll - now
                 if left > 0:
