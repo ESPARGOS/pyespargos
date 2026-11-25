@@ -88,11 +88,16 @@ class CameraView(PyQt6.QtCore.QObject):
 
         if "enable" in camera_cfg:
             self.enabledChanged.emit()
-        if self.enabled and self.video_camera is not None and "device" in camera_cfg:
-            self.video_camera.setDevice(camera_cfg.get("device"))
-            self.appconfig.set({"camera": {"device": self.video_camera.getDevice(), "format": self.video_camera.getFormat()}})
-        if self.enabled and self.video_camera is not None and "format" in camera_cfg:
-            self.video_camera.setFormat(camera_cfg.get("format"))
+        camera = self.video_camera
+        if self.enabled and camera is not None and ("device" in camera_cfg or "format" in camera_cfg):
+            try:
+                if "device" in camera_cfg and camera_cfg["device"] != camera.getDevice():
+                    camera.setDevice(camera_cfg["device"])
+                if "format" in camera_cfg and camera_cfg["format"] != camera.getFormat():
+                    camera.setFormat(camera_cfg["format"])
+            except (ValueError, video_camera.CameraUnavailableError) as error:
+                self.appconfig.emitShowError("Could not change video input", str(error))
+            self.appconfig.set({"camera": {"device": camera.getDevice(), "format": camera.getFormat()}})
         if "flip_camera" in camera_cfg:
             self.flipCameraChanged.emit()
         if "flip_overlay" in camera_cfg:

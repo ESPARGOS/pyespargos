@@ -32,20 +32,25 @@ class VideoCamera(QCamera):
             fmt = availableFormats[-1]
             self.setCameraFormat(fmt)
 
-    def setDevice(self, device_str: str):
-        device = self._find_device(device_str)
-        self.setCameraDevice(device)
+    def setDevice(self, device_str: str | None):
+        device = QMediaDevices.defaultVideoInput() if device_str is None else self._find_device(device_str)
         formats = device.videoFormats()
         if not formats:
             raise CameraUnavailableError(f"Camera '{device.description()}' has no usable formats")
+        self.setCameraDevice(device)
         self.setCameraFormat(formats[-1])
 
         # Notify that available formats may have changed
         self.availableFormatsChanged.emit()
 
-    def setFormat(self, format_str: str):
-        fmt = self._find_format(format_str)
-        self.setCameraFormat(fmt)
+    def setFormat(self, format_str: str | None):
+        if format_str is None:
+            formats = self.cameraDevice().videoFormats()
+            if not formats:
+                raise CameraUnavailableError("The selected camera has no usable formats")
+            self.setCameraFormat(formats[-1])
+        else:
+            self.setCameraFormat(self._find_format(format_str))
 
     def getDevice(self) -> str:
         return self._device_to_string(self.cameraDevice())
