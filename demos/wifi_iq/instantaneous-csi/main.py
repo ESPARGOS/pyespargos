@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from PyQt6.QtCore import QPointF, pyqtSlot
-from espargos.wifi_iq_symbols import symbol_constellation
+from espargos.wifi_iq.symbols import symbol_constellation
 from demos.wifi.common.instantaneous_csi import InstantaneousCSI
 from demos.wifi_iq.common.application import WiFiIQApplication
 

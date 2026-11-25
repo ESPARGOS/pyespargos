@@ -86,7 +86,7 @@ def test_delayed_datagram_after_reboot_and_generation_wrap():
 
 def test_reference_sequence_groups_reports_despite_uart_clock_offset():
     from dataclasses import replace
-    from espargos.wifi_iq_receiver import _Frame
+    from espargos.wifi_iq.receiver import _Frame
 
     board = SimpleNamespace(revision=BoardRevisionDensiflorus(), wifi_iq=Mock())
     receiver = WiFiIQReceiver(SimpleNamespace(boards=[board]))
@@ -109,7 +109,7 @@ def test_training_crossing_missing_chunk_is_excluded():
 
 def test_calibrated_channel_tracks_gain_changes_and_excludes_unknown_gains():
     from espargos.gain_phase_calibration import GAIN_PHASE_SHIFT_BY_GAIN_RAD
-    from espargos.wifi_iq_receiver import _PhaseCorrection
+    from espargos.wifi_iq.receiver import _PhaseCorrection
 
     frame = SimpleNamespace(clock_epoch=1, frequency=2432000000, generation=4, rf_switch=2)
     cluster = SimpleNamespace(frame=frame, timing=None, epochs=np.ones(3), rx_gain=np.full(3, 30.0), completion=np.ones(3, bool))
@@ -126,7 +126,7 @@ def test_calibrated_channel_tracks_gain_changes_and_excludes_unknown_gains():
 
 
 def test_fft_window_timing_preserves_channel_delay_and_missing_antennas():
-    from espargos.wifi_iq_receiver import _WindowTiming, _WINDOW_ROTATION
+    from espargos.wifi_iq.receiver import _WindowTiming, _WINDOW_ROTATION
 
     timing = _WindowTiming((3,))
     # Derive counter origins from a common packet near the ring wrap. The next
@@ -147,7 +147,7 @@ def test_fft_window_timing_preserves_channel_delay_and_missing_antennas():
 
 
 def test_fft_window_timing_links_disjoint_partial_packets():
-    from espargos.wifi_iq_receiver import _WindowTiming
+    from espargos.wifi_iq.receiver import _WindowTiming
 
     clock = _WindowTiming((4,))
     for positions in ([10, 15, -1, -1], [-1, -1, 50, 47], [-1, 25, 33, -1]):
@@ -157,7 +157,7 @@ def test_fft_window_timing_links_disjoint_partial_packets():
 
 
 def test_estimator_uses_selected_fields_and_skips_missing_samples():
-    from espargos.wifi_iq_estimator import refine_channels
+    from espargos.wifi_iq.estimator import refine_channels
 
     packet = WiFiIQPacket(record(b"WFN2"))
     packet.half_rate = 12
@@ -172,7 +172,7 @@ def test_estimator_uses_selected_fields_and_skips_missing_samples():
 
 
 def test_symbol_constellation_contains_measured_data_and_drops_missing_payload():
-    from espargos.wifi_iq_symbols import symbol_constellation
+    from espargos.wifi_iq.symbols import symbol_constellation
 
     packet = WiFiIQPacket(record(b"WFN2"))
     packet.half_rate = 12
@@ -181,7 +181,7 @@ def test_symbol_constellation_contains_measured_data_and_drops_missing_payload()
     assert points["Pilots"] and not points["HT-SIG"]
     data = np.asarray(points["Data"])
     assert data.size == 384
-    error = np.sqrt(np.mean(np.minimum(abs(data - 1), abs(data + 1))**2))
+    error = np.sqrt(np.mean(np.minimum(abs(data - 1), abs(data + 1)) ** 2))
     assert 0.001 < error < 0.3
     first_data_chunk = (packet.ofdm[0] + 224) // 32
     packet.invalid_chunks = ((1 << 64) - 1) ^ ((1 << first_data_chunk) - 1)
@@ -191,15 +191,14 @@ def test_symbol_constellation_contains_measured_data_and_drops_missing_payload()
 
 def test_barker_channel_and_symbols_from_recorded_cck_packet():
     from espargos.packet_decoders import wifi
-    from espargos.wifi_iq_symbols import symbol_constellation
+    from espargos.wifi_iq.symbols import symbol_constellation
 
     with np.load(FIXTURE.with_name("wifi_cck_iq.npz")) as fixture:
         raw = fixture["native_rate7"]
     decoded = wifi(raw)
     board = SimpleNamespace(revision=BoardRevisionDensiflorus(), wifi_iq=Mock())
     rx = WiFiIQReceiver(SimpleNamespace(boards=[board]))
-    backlog = CSIBacklog(rx, fields=["lltf", "dsss", "iq_packets"], apply_calibration=False,
-                         callback_predicate=lambda c: c.completion.sum() == 2)
+    backlog = CSIBacklog(rx, fields=["lltf", "dsss", "iq_packets"], apply_calibration=False, callback_predicate=lambda c: c.completion.sum() == 2)
     # Remove one SYNC symbol from the second antenna's training window and
     # rotate its entire waveform by 180 degrees. Both shifts must survive
     # association without introducing a phase slope or a polarity ambiguity.
@@ -215,14 +214,14 @@ def test_barker_channel_and_symbols_from_recorded_cck_packet():
     assert np.isnan(backlog.get_latest("lltf")).all()
     a, b = (backlog.get_latest("dsss")[(0, *board.revision.antenna_id_to_row_col(i))] for i in (0, 1))
     assert a.shape == (35,) and np.isfinite(a).all()
-    np.testing.assert_allclose(b, -a, atol=.05 * np.max(abs(a)))
+    np.testing.assert_allclose(b, -a, atol=0.05 * np.max(abs(a)))
     symbols = symbol_constellation(backlog.get_latest("iq_packets"))
     assert len(symbols["Preamble"]) > 10 and len(symbols["Data"]) > 100
     assert not symbols["Pilots"]
 
 
 def test_rejoining_receiver_learns_a_new_ring_origin():
-    from espargos.wifi_iq_receiver import _WindowTiming
+    from espargos.wifi_iq.receiver import _WindowTiming
 
     clock = _WindowTiming((3,), period=256)
     clock.shifts(np.array([100, 120, 140]), np.array([1, 1, 1]))
@@ -233,7 +232,7 @@ def test_rejoining_receiver_learns_a_new_ring_origin():
 
 
 def test_first_preamble_can_already_have_different_fft_starts():
-    from espargos.wifi_iq_receiver import _WindowTiming
+    from espargos.wifi_iq.receiver import _WindowTiming
 
     clock = _WindowTiming((2,), period=256)
     tones = np.arange(-26, 27)

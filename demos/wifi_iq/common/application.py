@@ -60,8 +60,7 @@ class WiFiIQApplication(CSIApplication):
         if not stream:
             return super()._read_channel_fields(additional_keys, allow_incomplete)
         measurements, *extra = self.backlog.get_multiple(["spatial_csi", *additional_keys])
-        selected = [(i, m) for i, m in enumerate(measurements)
-                    if m is not None and m.coefficients.shape[-2] >= stream]
+        selected = [(i, m) for i, m in enumerate(measurements) if m is not None and m.coefficients.shape[-2] >= stream]
         if not selected:
             return None
         phy = selected[-1][1].phy
@@ -76,11 +75,9 @@ class WiFiIQApplication(CSIApplication):
                 values = measurement.coefficients[pos][stream - 1]
                 valid = np.isfinite(values)
                 if valid.sum() >= 2:
-                    channels[(j, *pos)] = np.interp(frequencies, measurement.frequencies_hz[valid],
-                                                     values[valid], left=np.nan, right=np.nan)
+                    channels[(j, *pos)] = np.interp(frequencies, measurement.frequencies_hz[valid], values[valid], left=np.nan, right=np.nan)
         indices = [i for i, _ in selected]
         return phy.lower(), [channels, *(field[indices] for field in extra)]
-
 
     def _extend_default_config(self, config):
         super()._extend_default_config(config)
@@ -93,7 +90,8 @@ class WiFiIQApplication(CSIApplication):
             raise ValueError("csi.space_time_stream must be 0 (common preamble) or 1 through 8")
         self.initial_config["backlog"]["fields"]["spatial_csi"] = bool(stream)
         settings = self.initial_config["wifi_iq"]
-        from espargos.wifi_iq_estimator import MODES
+        from espargos.wifi_iq.estimator import MODES
+
         if settings["estimator"] not in MODES:
             raise ValueError(f"wifi_iq.estimator must be one of {MODES}")
         if type(settings["boot_sync"]) is not bool:
@@ -109,15 +107,15 @@ class WiFiIQApplication(CSIApplication):
         try:
             from espargos import packet_decoders  # Loads the native extension.
         except ImportError as exc:
-            raise RuntimeError("Build the packet decoders with this Python interpreter: "
-                               f"{sys.executable} -m pip install -e . (from the pyespargos checkout)") from exc
+            raise RuntimeError("Build the packet decoders with this Python interpreter: " f"{sys.executable} -m pip install -e . (from the pyespargos checkout)") from exc
         if len(owner.boards) != 1:
             raise ValueError("The WiFi IQ drawer controls one receiving board")
         owner.configure(mode="wifi_iq")
         receiver = owner.wifi_iq
-        receiver.configure_buffering(BufferPolicy(capacity=256, max_age=.4, batch_size=32))
+        receiver.configure_buffering(BufferPolicy(capacity=256, max_age=0.4, batch_size=32))
         self.controls = WiFiIQControls(owner, self)
         if self._uses_backlog():
+
             def attach():
                 self.controls.attach_backlog(self.backlog)
                 self._select_channel(self.csiconfig.get("space_time_stream"))

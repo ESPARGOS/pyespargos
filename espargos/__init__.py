@@ -99,8 +99,8 @@ board.Board.register_capability("wifi_rx", board_wifi_rx.WiFiRxCapability)
 board.Board.register_capability("wifi_tx", board_wifi_tx.WiFiTxCapability)
 board.Board.register_capability("iq", board_iq.IQCapability)
 
-from .wifi_iq_packet import WiFiIQPacket, WiFiIQCapability
-from .wifi_iq_receiver import WiFiIQReceiver
+from . import wifi_iq_packet, wifi_iq_receiver, wifi_iq_estimator
+from .wifi_iq import WiFiIQPacket, WiFiIQCapability, WiFiIQReceiver
 from .board_ble import BLECapability
 from .ble_packet import BLEPacket
 from .ble_cluster import BLECluster
