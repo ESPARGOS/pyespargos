@@ -23,7 +23,7 @@ class CameraOverlayModel(QtCore.QObject):
         self.appconfig = appconfig
         self._markers = []
         self._images = OverlayImages()
-        self._image_revision = 0
+        self._image_revision = {"spatial": 0, "polarization": 0}
         signal = appconfig.updateAppState if update_signal is None else update_signal
         signal.connect(self._shared_update)
 
@@ -32,16 +32,16 @@ class CameraOverlayModel(QtCore.QObject):
 
     def publish_image(self, name, rgba):
         self._images.publish(name, rgba)
-        self._image_revision += 1
+        self._image_revision[name] += 1
         self.imageRevisionChanged.emit()
 
     @QtCore.pyqtProperty(str, notify=imageRevisionChanged)
     def spatialImageSource(self):
-        return f"image://radio-overlay/spatial?{self._image_revision}"
+        return f"image://radio-overlay/spatial?{self._image_revision['spatial']}"
 
     @QtCore.pyqtProperty(str, notify=imageRevisionChanged)
     def polarizationImageSource(self):
-        return f"image://radio-overlay/polarization?{self._image_revision}"
+        return f"image://radio-overlay/polarization?{self._image_revision['polarization']}"
 
     def publish_polarization(self, vertical, horizontal):
         # Two opaque RGB tiles retain all four Jones components without using

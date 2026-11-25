@@ -49,6 +49,19 @@ def test_csi_overlay_uses_same_shared_projection_state():
     assert overlay.markers == []
 
 
+def test_overlay_refreshes_only_the_published_texture():
+    app = QCoreApplication.instance() or QCoreApplication([])
+    overlay = CameraOverlayModel(ConfigManager(EspargosIQCamera.DEFAULT_CONFIG))
+    spatial, polarization = overlay.spatialImageSource, overlay.polarizationImageSource
+    overlay.publish_image("spatial", np.zeros((6, 8, 4), dtype=np.uint8))
+    assert overlay.spatialImageSource != spatial
+    assert overlay.polarizationImageSource == polarization
+    spatial = overlay.spatialImageSource
+    overlay.publish_polarization(np.zeros((8, 6)), np.ones((8, 6)))
+    assert overlay.spatialImageSource == spatial
+    assert overlay.polarizationImageSource != polarization
+
+
 def test_image_provider_keeps_its_own_rgba_buffer():
     from PyQt6.QtCore import QSize
     from demos.common.camera.images import OverlayImages
