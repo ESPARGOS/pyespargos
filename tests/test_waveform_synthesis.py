@@ -10,7 +10,7 @@ import unittest
 import numpy as np
 from espargos.waveforms import CW, TwoTone, LFM, Noise, QPSK, IQSamples
 
-ROOT = Path(__file__).resolve().parents[2]
+FIRMWARE = Path(__file__).resolve().parents[2] / "sensor-firmware"
 
 
 class Recipe(c.Structure):
@@ -22,12 +22,11 @@ class Recipe(c.Structure):
 
 
 class SynthesisTest(unittest.TestCase):
+    @unittest.skipUnless(FIRMWARE.is_dir(), "requires a sibling sensor-firmware checkout")
     def test_sensor_agreement(self):
-        scratch = ROOT / ".cache"
-        scratch.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=scratch) as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             lib = Path(tmp) / "synthesis.so"
-            subprocess.run(["cc", "-shared", "-fPIC", "-O2", "-I" + str(ROOT / "sensor-firmware/main"), str(ROOT / "sensor-firmware/main/iq/tx/iq_tx_synthesis.c"), "-o", str(lib)], check=True)
+            subprocess.run(["cc", "-shared", "-fPIC", "-O2", "-I" + str(FIRMWARE / "main"), str(FIRMWARE / "main/iq/tx/iq_tx_synthesis.c"), "-o", str(lib)], check=True)
             generate = c.CDLL(str(lib)).iq_tx_synthesize
             for n in (256, 512, 1024, 2048, 4096, 8192):
                 for source in (CW(1.234e6), CW(-2.345e6), TwoTone(-3.1e6, 7.7e6), TwoTone(30e6, -35e6), TwoTone(1e6, 1e6), LFM(), LFM(-9.3e6, 7.7e6, 1e-6, 0.2e-6), Noise(0), Noise(0xFFFFFFFF), QPSK(123)):
