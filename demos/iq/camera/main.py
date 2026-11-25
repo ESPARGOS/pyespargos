@@ -33,6 +33,7 @@ import espargos
 from demos.common.camera.view import CameraView
 from demos.common.application import CombinedArrayMixin
 from espargos import CHUNK_SAMPLES
+from espargos.iq_packet import IQ_SYNC_INFO_GRID_SYNCED
 from demos.iq.common.application import ESPARGOSIQApplication
 from demos.iq.camera.processing import DirectionHistory, peak_directions
 from demos.iq.camera.worker import process_capture, initialize_processor
@@ -47,10 +48,15 @@ except ImportError:
 ADC_FULL_SCALE = 512.0
 WATERFALL_HEIGHT = 180
 STATE_POLL_INTERVAL_S = 2.0
+SIGNAL_PREVIEW_STRIDE = 8
 # Signal-mode trigger threshold in standard deviations of the noise in I and Q.
 # The sensors compare single samples, and captures are a scarce resource (about
 # ten per second): a lower threshold spends them on noise and marginal signals.
 TRIGGER_THRESHOLD_SIGMA = 12.0
+
+
+def _is_signal_preview(source):
+    return isinstance(source, espargos.IQCluster) and source.signal_board_index is not None
 
 
 class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
@@ -132,7 +138,7 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
         self._correction = None
         self._correction_source = None
         self._capture_time = 0.0
-        self._latest_signal_identity = None
+        self._latest_signal_position = None
         self._reset_image()
         self.appConfigChanged.connect(self._view_changed)
 
@@ -190,24 +196,41 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
     # ---- capture events (pool processing thread) ----
 
     def _on_iq_cluster(self, cluster):
-        if np.all(cluster.capture_id == 0xFFFFFFFF):  # chunks of Signal captures arrive assembled in _on_capture
-            self._on_capture(cluster)
+        if _is_signal_preview(cluster):
+            # A 56-chunk event takes about 110 ms to arrive. Sample the live
+            # transfer while leaving verification and ACK of the full event to
+            # the receiver. A preview must never displace a queued full capture.
+            offset = int(cluster.capture_chunk_offset.flat[0])
+            if offset % SIGNAL_PREVIEW_STRIDE != SIGNAL_PREVIEW_STRIDE // 2 or self._pending.full():
+                return
+            if not cluster.is_complete or not np.all(cluster.source_chunk_index == cluster.source_chunk_index.flat[0]):
+                return
+            sync = int(cluster.sync_info.flat[0])
+            if not sync & IQ_SYNC_INFO_GRID_SYNCED or not np.all(cluster.sync_info == sync):
+                return
+        elif not np.all(cluster.capture_id == 0xFFFFFFFF):
+            return
+        self._on_capture(cluster)
 
     def _on_capture(self, source):
         received_at = time.monotonic()
         self._capture_time = received_at
         if self._stop.is_set() or self.receiver.calibrating or not self.receiver.calibration_applies_to(source):
             return
-        if isinstance(source, espargos.IQSignalCapture):
-            identity = (int(np.ravel(source.config_generation)[0]), int(source.capture_id))
-            previous = self._latest_signal_identity
-            if previous is not None and previous[0] == identity[0] and not 0 < (identity[1] - previous[1]) & 0xFFFFFFFF < 0x80000000:
-                # Replay can finish an older event after a newer one. Keep
-                # its validation/ACK in the receiver, but never rewind video.
-                self.dropped_captures += 1
-                self.late_captures += 1
-                return
-            self._latest_signal_identity = identity
+        preview = _is_signal_preview(source)
+        if preview or isinstance(source, espargos.IQSignalCapture):
+            generation = int(source.config_generation.flat[0])
+            capture = int(source.capture_id.flat[0]) if preview else source.capture_id
+            offset = int(source.capture_chunk_offset.flat[0]) if preview else source.chunk_count
+            previous = self._latest_signal_position
+            if previous is not None and generation == previous[0]:
+                advance = (capture - previous[1]) & 0xFFFFFFFF
+                if advance >= 0x80000000 or (advance == 0 and offset <= previous[2]):
+                    # Repaired chunks and full events can arrive after a newer one.
+                    self.dropped_captures += 1
+                    self.late_captures += 1
+                    return
+            self._latest_signal_position = (generation, capture, offset)
         try:
             self._pending.put_nowait((received_at, source))
         except queue.Full:
@@ -259,8 +282,13 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
         samples = self._combine(source.iq).reshape(self.n_rows * self.n_cols, -1, CHUNK_SAMPLES)
         # AGC can choose a new gain on every chunk. Reset the noise estimator
         # for commanded hardware changes, never for one sensor's first sample.
-        noise_key = (type(source).__name__, sample_rate, center, tuple(generations[:, 0]))
-        args = (samples, self._correction, self._window, (self.n_rows, self.n_cols), center, sample_rate, noise_key, dict(beamformer), dict(self.appconfig.get("visualization")), now)
+        preview = _is_signal_preview(source)
+        kind = "signal" if preview or isinstance(source, espargos.IQSignalCapture) else type(source).__name__
+        noise_key = (kind, sample_rate, center, tuple(generations[:, 0]))
+        visualization = dict(self.appconfig.get("visualization"))
+        if preview:
+            visualization["waterfall"] = False  # The full event supplies every waterfall row once.
+        args = (samples, self._correction, self._window, (self.n_rows, self.n_cols), center, sample_rate, noise_key, dict(beamformer), visualization, now)
         result = self._dsp_executor.submit(process_capture, *args).result()
         self.dsp_ms = result["dsp_ms"]
         with self._lock:
@@ -355,7 +383,7 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
         with self.iqcontrol._reference_io_lock:
             self.pool.reconnect()
             self.receiver.clear_chunks()
-            self._latest_signal_identity = None
+            self._latest_signal_position = None
             if any(any(mode != "iq_rx" for mode in board.iq.get_config()["modes"]) for board in self.pool.boards):
                 self.pool.configure(mode="iq_rx")
                 self.receiver.apply_config(self._capture_config)

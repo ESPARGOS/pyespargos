@@ -29,7 +29,8 @@ threshold in RX controls when the hardware records a signal capture.
 
 * **Signal** is the default on one board. All eight sensors record the same
   56-chunk capture when a selected sensor crosses the amplitude threshold.
-  The receiver adapts the threshold to the observed noise. Uncheck
+  The camera can already show a direction from synchronized chunks while
+  the complete capture is arriving. The receiver adapts the trigger threshold to the observed noise. Uncheck
   **Automatic trigger threshold** in RX to set it manually.
 * **Interval** is the default on a combined array. It samples all boards on a
   shared grid. Single-board signal triggers cannot form a synchronized event

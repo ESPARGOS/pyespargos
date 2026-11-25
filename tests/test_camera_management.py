@@ -48,7 +48,7 @@ def test_late_repaired_capture_cannot_rewind_live_camera():
     app = SimpleNamespace(
         _stop=threading.Event(),
         receiver=SimpleNamespace(calibrating=False, calibration_applies_to=lambda _: True),
-        _latest_signal_identity=None,
+        _latest_signal_position=None,
         dropped_captures=0,
         queue_dropped_captures=0,
         late_captures=0,
@@ -123,11 +123,11 @@ def test_reconnect_restores_requested_settings_only_after_role_loss(reboot):
     camera.iqcontrol = Mock(_reference_io_lock=threading.Lock(), syncNeeded=False)
     camera._capture_config = {"rf_freq_hz": 2457000000, "trigger": {"mode": "interval"}}
     camera._capture_config_applied({"rx_gain": 28})
-    camera._latest_signal_identity = (3, 45)
+    camera._latest_signal_position = (3, 45, 56)
     camera._reconnect_capture()
     camera.pool.reconnect.assert_called_once()
     camera.receiver.clear_chunks.assert_called_once()
-    assert camera._latest_signal_identity is None
+    assert camera._latest_signal_position is None
     if reboot:
         camera.pool.configure.assert_called_once_with(mode="iq_rx")
         camera.receiver.apply_config.assert_called_once_with({"rf_freq_hz": 2457000000, "rx_gain": 28, "trigger": {"mode": "interval"}})
@@ -167,3 +167,47 @@ def test_queued_initialization_after_shutdown_cannot_reopen_the_pool():
     stopped = threading.Event()
     stopped.set()
     EspargosIQCamera._start_iq_camera(SimpleNamespace(_stop=stopped))
+
+
+def test_signal_previews_use_one_grid_and_never_rewind_a_complete_capture():
+    import queue
+    from espargos import IQSignalCapture
+    from test_iq_signal_capture import _cluster
+
+    camera = EspargosIQCamera.__new__(EspargosIQCamera)
+    camera._stop = threading.Event()
+    camera._pending = queue.Queue(maxsize=1)
+    camera._latest_signal_position = None
+    camera.dropped_captures = camera.queue_dropped_captures = camera.late_captures = 0
+    camera.receiver = SimpleNamespace(calibrating=False, calibration_applies_to=lambda _: True)
+
+    def part(event, offset):
+        cluster = _cluster(event, offset, chunk_count=56)
+        cluster.signal_board_index = 0
+        return cluster
+
+    camera._on_iq_cluster(part(10, 0))  # Between preview offsets.
+    mismatched = part(10, 4)
+    mismatched._source_chunk_index.flat[0] += 1
+    camera._on_iq_cluster(mismatched)
+    assert camera._pending.empty()
+    unsynchronized = part(10, 4)
+    unsynchronized._sync_info[:] = 0
+    camera._on_iq_cluster(unsynchronized)
+    assert camera._pending.empty()
+
+    first = part(10, 4)
+    camera._on_iq_cluster(first)
+    camera._on_iq_cluster(part(10, 12))
+    assert camera._pending.get_nowait()[1] is first
+    complete = IQSignalCapture(10, 80_000_000, 2457000000, first.config_generation, first.fire_time_ns, 0, first.source_chunk_index, first.source_chunk_index + 55, first.iq.repeat(56, axis=-1), first.sample_rx_gain.repeat(56, axis=-1))
+    camera._on_capture(complete)
+    camera._on_iq_cluster(part(11, 4))
+    assert camera._pending.get_nowait()[1] is complete
+    camera._on_iq_cluster(part(10, 20))
+    assert camera._pending.empty()
+    newer = part(11, 12)
+    camera._on_iq_cluster(newer)
+    assert camera._pending.get_nowait()[1] is newer
+    camera._on_capture(complete)
+    assert camera._pending.empty()
