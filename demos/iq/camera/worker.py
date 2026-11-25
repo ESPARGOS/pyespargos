@@ -21,9 +21,9 @@ class CaptureProcessor:
         frequencies = center + np.fft.fftshift(np.fft.fftfreq(bins, d=1 / sample_rate))
         spectra = channelize(samples, window, beamformer["reject_dc"]) * correction
         power = np.mean(np.abs(spectra) ** 2, axis=0)
-        rows = power_db_row(10 * np.log10(np.maximum(power, 1e-12)), bins)
+        rows = power_db_row(10 * np.log10(np.maximum(power, 1e-12)), bins) if visualization["waterfall"] else None
         grid = direction_grid(*shape, center, beamformer["resolution_azimuth"], beamformer["resolution_elevation"])
-        image = np.zeros(grid.shape[:2], dtype=np.float32)
+        image = None
         strongest = None
         if noise_key != self.noise_key:
             self.noise = NoiseFloor(spectra.shape[0])
@@ -41,16 +41,22 @@ class CaptureProcessor:
             for emission in emissions:
                 if np.ptp(np.flatnonzero(emission.bins)) + 1 < min_bins:
                     continue
-                spectrum, purity = locate(emission.covariance, grid, beamformer["type"], snapshots=emission.snapshots, dynamic_range_db=beamformer.get("source_dynamic_range_db", 12.0))
+                mode = visualization["display_mode"]
+                render_roots = beamformer["type"] == "MUSIC" and mode == "flashes"
+                spectrum, purity = locate(
+                    emission.covariance, grid, beamformer["type"], snapshots=emission.snapshots, dynamic_range_db=beamformer.get("source_dynamic_range_db", 12.0), marker_width_deg=visualization["flash_width_deg"] if render_roots else None
+                )
                 if purity < beamformer["min_purity"]:
                     continue
                 # A reflected plane wave can also have high purity. This
                 # weights fit quality, not confidence in line of sight.
                 weight = emission.power * purity**2
-                mode = visualization["display_mode"]
-                if mode in ("flashes", "azimuth"):
+                if mode in ("flashes", "azimuth") and not render_roots:
                     spectrum = flash_image(spectrum, visualization["flash_width_deg"], azimuth_only=mode == "azimuth")
-                np.maximum(image, weight * spectrum, out=image)
+                if image is None:
+                    image = np.asarray(weight * spectrum, dtype=np.float32)
+                else:
+                    np.maximum(image, weight * spectrum, out=image)
                 if strongest is None or weight > strongest[0]:
                     occupied = frequencies[emission.bins] / 1e6
                     strongest = (weight, emission.power, occupied[0], occupied[-1], purity)

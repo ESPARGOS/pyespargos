@@ -1,5 +1,6 @@
 """Every captured FFT row survives GUI refresh coalescing."""
 
+import time
 import threading
 from types import SimpleNamespace
 import numpy as np
@@ -15,6 +16,8 @@ def test_capture_rows_are_preserved_before_gui_refresh_and_during_warmup():
             value = EspargosIQCamera.DEFAULT_CONFIG
             for key in keys:
                 value = value[key]
+            if keys == ("visualization",):
+                return {**value, "waterfall": True}
             return value
 
     processor = CaptureProcessor()
@@ -43,7 +46,30 @@ def test_capture_rows_are_preserved_before_gui_refresh_and_during_warmup():
         spectra = channelize(iq.reshape(8, 56, 256), window)
         power = np.mean(abs(spectra) ** 2, axis=0)
         rows.extend(power_db_row(10 * np.log10(np.maximum(power, 1e-12)), CHUNK_SAMPLES))
-        EspargosIQCamera._locate_emissions(app, source)
+        EspargosIQCamera._locate_emissions(app, source, time.monotonic())
     assert app._waterfall_dirty
     assert np.isclose(app._waterfall_row_us, 3.2)
     np.testing.assert_array_equal(app.waterfall.data, np.asarray(rows)[-180:][::-1])
+
+
+def test_capture_finishing_after_clear_cannot_repopulate_display():
+    # Simulate Clear while the DSP process owns this capture.
+    def submit(*_):
+        EspargosIQCamera._reset_image(app)
+        return SimpleNamespace(result=lambda: dict(dsp_ms=5))
+
+    app = SimpleNamespace(
+        receiver=SimpleNamespace(calibrating=False, calibration=object(), calibration_applies_to=lambda _: True, cal_correction=lambda _: np.ones((1, 2, 4, CHUNK_SAMPLES))),
+        _lock=threading.Lock(),
+        _dsp_executor=SimpleNamespace(submit=submit),
+        _correction_source=None,
+        _combine=lambda x: x[0],
+        n_rows=2,
+        n_cols=4,
+        _window=np.ones(CHUNK_SAMPLES),
+        appconfig=SimpleNamespace(get=lambda *_: {}),
+    )
+    source = SimpleNamespace(config_generation=np.zeros((1, 8)), center_freq_hz=2472e6, sample_rate_hz=80e6, iq=np.ones((1, 2, 4, CHUNK_SAMPLES)))
+    EspargosIQCamera._reset_image(app)
+    EspargosIQCamera._locate_emissions(app, source, time.monotonic())
+    assert app._history.power is None and not app._waterfall_dirty

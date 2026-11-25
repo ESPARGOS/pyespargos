@@ -124,6 +124,44 @@ def detect_emissions(spectra: np.ndarray, floor: np.ndarray, threshold_db: float
     return emissions
 
 
+class DirectionHistory:
+    """Average independent power maps and expire the last observation in a quiet scene."""
+
+    def __init__(self):
+        self.power = None
+        self.received = None
+        self.level = 0.0
+
+    def add(self, power, received, persistence):
+        peak = float(np.max(power))
+        if peak <= 0 or not np.isfinite(peak) or (self.received is not None and received <= self.received):
+            return
+        relative = power / peak
+        dt = np.inf if self.received is None else received - self.received
+        if self.power is None or self.power.shape != power.shape or dt >= 3.5 * persistence:
+            self.power = relative
+            self.level = peak
+        else:
+            # Weak incidental arrivals have less influence, while a single loud
+            # packet must not suppress a moving transmitter for several seconds.
+            # With a continuous interval stream, four or five independent
+            # observations arrive much sooner than one signal-trigger event.
+            # Let fresh measurements replace history at either cadence.
+            alpha = max(0.2, -np.expm1(-dt / persistence))
+            weight = alpha * np.clip(peak / self.level, 0.25, 4.0)
+            fraction = weight / (1 - alpha + weight)
+            self.power = (1 - fraction) * self.power + fraction * relative
+            self.level += alpha * (np.clip(peak, self.level / 4, self.level * 4) - self.level)
+        self.received = received
+
+    def opacity(self, now, persistence):
+        if self.received is None:
+            return 0.0
+        # Preserve burst brightness between captures. Only fade after a gap.
+        age = max(0.0, now - self.received)
+        return float(np.clip((3.5 * persistence - age) / persistence, 0, 1))
+
+
 @dataclass(frozen=True)
 class DirectionGrid:
     """Array geometry and display dimensions; contains no steering-vector scan."""
@@ -143,7 +181,7 @@ def direction_grid(rows, columns, frequency_hz, resolution_azimuth, resolution_e
     return DirectionGrid(rows, columns, frequency_hz, resolution_azimuth, resolution_elevation)
 
 
-def locate(covariance, steering, method="MUSIC", *, snapshots=1024, dynamic_range_db=12.0):
+def locate(covariance, steering, method="MUSIC", *, snapshots=1024, dynamic_range_db=12.0, marker_width_deg=None):
     """Locate using algebraic roots or a spatial FFT, then render the result.
 
     MUSIC pixels are Gaussian markers of estimated roots, not a sampled
@@ -158,9 +196,12 @@ def locate(covariance, steering, method="MUSIC", *, snapshots=1024, dynamic_rang
         spectrum = np.zeros(g.shape[:2])
         # Render only after solving directions. Width is a display choice.
         sigma = max(2 / min(g.shape[:2]), 0.025)
+        if marker_width_deg is not None:
+            sigma = max(np.sin(np.radians(marker_width_deg)), 0.01)
         for (x, y), power in zip(directions, powers):
-            distance = ((u[:, None] - x) ** 2 + (v[None, :] - y) ** 2) / sigma**2
-            np.maximum(spectrum, power * np.exp(-0.5 * distance), out=spectrum)
+            horizontal = np.exp(-0.5 * ((u - x) / sigma) ** 2)
+            vertical = np.exp(-0.5 * ((v - y) / sigma) ** 2)
+            np.maximum(spectrum, power * horizontal[:, None] * vertical, out=spectrum)
     else:
         spectrum = bartlett_fft_2d(covariance, g.rows, g.columns, *g.shape[:2], frequency_hz=g.frequency_hz)
         i, j = np.unravel_index(np.argmax(spectrum), spectrum.shape)
@@ -190,7 +231,14 @@ def peak_directions(spectrum: np.ndarray, minimum: float, limit: int = 4, separa
                 offset = 0.5 * (below - above) / curvature
         return (2.0 * (index + offset) + 1.0) / len(values) - 1.0
 
-    remaining = np.array(spectrum, dtype=np.float64)
+    # Only pick maxima in the original spectrum. Masking around a broad
+    # Bartlett lobe and searching again otherwise labels its slopes as sources.
+    padded = np.pad(spectrum, 1, mode="edge")
+    nx, ny = spectrum.shape
+    maxima = (spectrum >= minimum) & (spectrum > 0)
+    for i, j in ((0, 0), (0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1), (2, 2)):
+        maxima &= spectrum >= padded[i : i + nx, j : j + ny]
+    remaining = np.where(maxima, spectrum, 0)
     columns = max(1, int(round(separation * remaining.shape[0] / 2.0)))
     directions = []
     while len(directions) < limit:
@@ -238,12 +286,22 @@ def spatial_noise_power(spectra):
     fewer independent signal modes than receivers, not any waveform format.
     """
     antennas, segments, bins = spectra.shape
+    # Interval captures supply only about 24 independent observations after
+    # pooling bins. A 32-sensor covariance would be rank deficient even for
+    # pure noise. Estimate the floor on groups and use the full aperture only
+    # for direction finding.
+    if antennas > 8:
+        groups = np.array_split(spectra, (antennas + 7) // 8)
+        return np.average([spatial_noise_power(group) for group in groups], axis=0, weights=[len(group) for group in groups])
     covariance = np.einsum("atf,btf->fab", spectra, spectra.conj(), optimize=True) / segments
     if segments < 16:
         width = min(bins, max(3, int(np.ceil(24 / segments))))
         left, right = width // 2, width - 1 - width // 2
-        padded = np.pad(covariance, ((left, right), (0, 0), (0, 0)), mode="edge")
-        sums = np.concatenate([np.zeros_like(padded[:1]), np.cumsum(padded, axis=0)])
+        # FFT bins wrap at Nyquist. Repeating the end bin would count the
+        # same snapshot many times, artificially lowering the noise estimate
+        # and producing directional flashes at both edges of an empty band.
+        padded = np.pad(covariance, ((left, right), (0, 0), (0, 0)), mode="wrap")
+        sums = np.concatenate([np.zeros_like(padded[:1]), np.cumsum(padded, axis=0, dtype=np.complex128)])
         covariance = (sums[width:] - sums[:-width]) / width
     values = np.linalg.eigvalsh(covariance)
     return np.maximum(np.mean(values[:, : max(1, antennas // 2)], axis=1), 1e-20)

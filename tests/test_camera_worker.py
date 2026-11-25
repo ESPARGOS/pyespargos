@@ -15,7 +15,7 @@ def test_spawned_processor_matches_local_processor():
     tone = 20 * np.exp(2j * np.pi * 32 * np.arange(8 * 256) / 256)
     samples = (rng.normal(size=(8, 8 * 256)) + 1j * rng.normal(size=(8, 8 * 256)) + wave[:, None] * tone).astype(np.complex64).reshape(8, 8, 256)
     config = EspargosIQCamera.DEFAULT_CONFIG
-    args = (samples, np.ones((8, 1, 256), np.complex64), (np.hanning(256) / np.hanning(256).sum()).astype(np.float32), (2, 4), 299792458 / (2 * 0.06), 80e6, ("test",), config["beamformer"], config["visualization"], 1.0)
+    args = (samples, np.ones((8, 1, 256), np.complex64), (np.hanning(256) / np.hanning(256).sum()).astype(np.float32), (2, 4), 299792458 / (2 * 0.06), 80e6, ("test",), config["beamformer"], {**config["visualization"], "waterfall": True}, 1.0)
     expected = CaptureProcessor().process(*args)
     with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn")) as pool:
         actual = pool.submit(process_capture, *args).result(timeout=20)

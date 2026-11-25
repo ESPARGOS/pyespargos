@@ -43,7 +43,7 @@ def estimate_signal_count(eigenvalues, *, dynamic_range_db=None):
     n = len(values)
     ceiling = max(4 * values[max(0, n // 2 - 1)], values[-1] * 1e-5, 1e-30)
     if dynamic_range_db is not None:
-        noise = np.median(values[:max(1, n // 2)])
+        noise = np.median(values[: max(1, n // 2)])
         ceiling = max(ceiling, noise + (values[-1] - noise) * 10 ** (-float(dynamic_range_db) / 10))
     return min(max(1, int(np.count_nonzero(values > ceiling))), max(1, n // 2))
 
@@ -170,7 +170,7 @@ def root_music_2d(covariance, rows, columns, *, frequency_hz, snapshots=1024, so
         # small calibration/model errors otherwise become extra "sources".
         # Do not spend subspace dimensions on modes below the requested useful
         # power range. This is a declared resolution limit, not an SNR estimate.
-        noise_floor = max(float(np.median(values[:max(1, n // 2)])), 0.0)
+        noise_floor = max(float(np.median(values[: max(1, n // 2)])), 0.0)
         threshold = noise_floor + max(values[-1] - noise_floor, 0) * 10 ** (-float(dynamic_range_db) / 10)
         count = min(count, int(np.count_nonzero(values > threshold)))
     count = min(max(count, 0), n - rows)
@@ -179,10 +179,8 @@ def root_music_2d(covariance, rows, columns, *, frequency_hz, snapshots=1024, so
         return empty
     noise = vectors[:, : n - count]
     projector = (noise @ noise.conj().T).reshape(rows, columns, rows, columns)
-    coefficients = np.zeros((rows, rows, 2 * columns - 1), complex)
-    for c in range(columns):
-        for d in range(columns):
-            coefficients[:, :, d - c + columns - 1] += projector[:, c, :, d]
+    # Equal column separations contribute to the same polynomial coefficient.
+    coefficients = np.stack([projector.trace(offset=k, axis1=1, axis2=3) for k in range(1 - columns, columns)], axis=-1)
     roots = _inside_roots(_polynomial_determinant(coefficients))
     scale = 2 * np.pi * constants.ANTENNA_SEPARATION * frequency_hz / constants.SPEED_OF_LIGHT
     roots = roots[np.abs(np.angle(roots)) <= scale + 1e-7][:count]
@@ -280,8 +278,8 @@ def spatial_smoothing_2d(covariance, rows, columns):
     blocks = []
     for r in range(rows - sub_rows + 1):
         for c in range(columns - sub_columns + 1):
-            selection = indices[r:r + sub_rows, c:c + sub_columns].ravel()
+            selection = indices[r : r + sub_rows, c : c + sub_columns].ravel()
             blocks.append(np.asarray(covariance)[np.ix_(selection, selection)])
     result = np.mean(blocks, axis=0)
-    result = .5 * (result + result[::-1, ::-1].conj())
+    result = 0.5 * (result + result[::-1, ::-1].conj())
     return result, sub_rows, sub_columns

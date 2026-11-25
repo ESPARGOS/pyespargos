@@ -33,13 +33,13 @@ class IQCameraOverlay(CameraOverlayModel):
             self._spectrum_status = status
             self.spectrumStatusChanged.emit()
 
-    def publish_spatial_spectrum(self, power, reference):
+    def publish_spatial_spectrum(self, power, reference, opacity=1.0):
         """Show ``power`` on a dB scale whose top is ``reference``."""
         db = 10.0 * np.log10(np.maximum(np.asarray(power, dtype=np.float64) / max(reference, 1e-30), 1e-15))
         dynamic_range = max(1.0, float(self.appconfig.get("visualization", "dynamic_range_db")))
         intensity = np.clip((db + dynamic_range) / dynamic_range, 0.0, 1.0) ** 2
         image = np.zeros(4 * power.size, dtype=np.uint8)
-        image[1::4] = np.asarray(np.swapaxes(intensity, 0, 1).ravel() * 255.0, dtype=np.uint8)
+        image[1::4] = np.asarray(np.swapaxes(intensity, 0, 1).ravel() * (255.0 * opacity), dtype=np.uint8)
         image[3::4] = 255
         self.publish_image("spatial", image.reshape(power.shape[1], power.shape[0], 4))
 

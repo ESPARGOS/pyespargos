@@ -1,84 +1,69 @@
 # Wireless signal camera
 
-Display directions estimated from raw IQ as short flashes over a live camera
-image. This demo uses the current application framework and `Pool.iq`.
-It does not decode packets, look for WiFi preambles, or require a particular
-modulation. The default 2472 MHz tuning is an example. Select the frequency,
-receiver filter and sampling rate for the signals you want to observe.
-
-From the repository root, with the demo dependencies installed:
+The IQ camera estimates arrival directions from synchronized raw IQ. It can
+display WiFi, Bluetooth, tones and other signals without decoding packets.
+Tune the receiver to the transmitter you want to see. For example, to look
+at WiFi channel 10 on a single ESPARGOS board, run:
 
 ```sh
-python demos/iq/camera/main.py -s 192.168.0.234 \
-  -o 'app.camera.device="MX Brio"' \
-  -o 'app.camera.format="1920x1080"'
+./demos/iq/camera/main.py -s 172.16.0.212 -o app.capture.rf_freq_hz=2457000000
 ```
 
-Use `-s HOST` for one array or `-c layout.yml` for a configured array layout.
-Bare positional host addresses are not accepted.
+Use `-c config/special-8x4-horizontal-kit.yml` for the combined array.
+Use `--no-camera` to show the overlay on black. Without a frequency override,
+the demo starts at 2472 MHz.
 
-Use `--no-camera` (or `-o app.camera.enable=false`) to display on black. RX opens the shared IQ receiver controls;
-App opens detection, presentation and camera controls. Calibration runs on
-startup and after incompatible receiver changes. Exit restores WiFi mode.
+**RX** controls the frequency, gain, input and trigger. Startup synchronizes
+and calibrates the array. After a change that invalidates calibration, open
+RX and press **Sync + Calibration**. Changes to manual gain preserve calibration.
+Expand **Show advanced settings** for the sample rate, capture path and filter.
+If a controller reboots, the camera restores the capture settings. Press
+**Sync + Calibration** to resume direction estimates. Exiting the demo returns the sensors to WiFi mode.
 
-## Capture and display
+**App** controls the detection threshold above the noise floor, beamforming
+method, direction labels, optional waterfall and the shared camera settings.
+The detection threshold selects emissions for display. The separate trigger
+threshold in RX controls when the hardware records a signal capture.
 
-All three trigger modes are supported. Signal is the default, with a 10 ms
-holdoff and 56 chunks per event. It captures any signal crossing the amplitude
-threshold, including unrelated devices. Automatic threshold adaptation and
-alternation between the R and L feeds can each be disabled in App.
-Signal captures currently require one ESPARGOS board: independent board
-triggers do not form a synchronized combined-array event. The shared IQ
-receiver retains failed acknowledgements and retries them from its existing
-processing loop, including when no more captures arrive. Interval and
-Accumulate support configured combined arrays.
+## Choosing a trigger
 
-For frequent short observations, start with Interval / 1024 interval chunks /
-1 burst chunk. For Accumulate, try 4096 interval chunks / 4 vector chunks.
-Accumulation favors signals repeating coherently at the accumulation period. Nonperiodic bursts can be attenuated. Mode and timing are editable in RX, or:
+* **Signal** is the default on one board. All eight sensors record the same
+  56-chunk capture when a selected sensor crosses the amplitude threshold.
+  The receiver adapts the threshold to the observed noise. Uncheck
+  **Automatic trigger threshold** in RX to set it manually.
+* **Interval** is the default on a combined array. It samples all boards on a
+  shared grid. Single-board signal triggers cannot form a synchronized event
+  across independent controllers. A shorter interval samples more often and
+  uses more bandwidth. For example, 4096 chunks at 80 MS/s gives one snapshot
+  every 13.1 ms.
+* **Accumulate** combines observations coherently at the configured period.
+  This is useful for periodic signals.
 
-```sh
-python demos/iq/camera/main.py -s 192.168.0.234 \
-  -o 'app.capture.trigger.mode="interval"' \
-  -o app.capture.trigger.interval_chunks=1024
-```
+Use `-o app.capture.trigger.mode=interval` to start a single board in interval
+mode. One antenna feed stays selected until you change it in RX. Switching
+feeds can change which direct or reflected arrival is strongest.
 
-Each capture is split into time/frequency emissions above an adaptive noise
-floor. Each emission gets an independent spatial covariance and direction
-estimate. Continuous signals are retained using a spatial noise estimate,
-provided that signal modes do not occupy the whole antenna space. Detection
-has no minimum WiFi-like bandwidth. DC rejection excludes five center FFT
-bins by default. Disable it for signals there, with the possibility of ADC
-leakage appearing as a source.
+## Reading the overlay
 
-Burst flashes use a compact marker at each estimated peak, with brightness
-based on received power weighted by direction quality. Weak background signals
-therefore do not appear as bright as a nearby strong transmitter. MUSIC uses
-MDL source-count estimation and paired 2-D root-MUSIC on the covariance.
-Automatic source counts also exclude modes more than 12 dB below the strongest
-noise-subtracted eigenvalue (`app.beamformer.source_dynamic_range_db`). This
-limits spurious roots from small calibration/array-model errors at high SNR. It can also omit a genuine weak simultaneous source. Explicit source counts
-bypass that guard. Source powers use a nonnegative covariance fit, avoiding
-unstable inverse-manifold powers for nearly coincident roots.
-Bartlett uses a 2-D FFT of spatial covariance lags. Neither method scans a
-dense steering grid. Coherent multipath can still collapse to one observable
-mode and bias its estimated direction. **The flash
-width is a presentation setting, not the array's angular resolution or an
-uncertainty estimate.** Spatial spectrum
-mode displays the Bartlett response or the rendered MUSIC roots for diagnosis. The optional
-Azimuth flashes display uses vertical stripes and explicitly omits elevation. It is useful when a short vertical aperture or reflections make elevation
-unreliable. Two-dimensional Burst flashes remain the default. The default
-120 ms exponential persistence fades a burst below the 12 dB display range
-in about 330 ms. Freeze holds the radio overlay while live video continues. Clear removes its history. Directions outside the
-camera field of view get explicitly labeled edge arrows when markers are
-enabled. These are not projected onto objects inside the image.
+Each capture is split into emissions using an adaptive frequency-dependent
+noise floor. The camera estimates a direction for each emission using MUSIC
+or Bartlett, then combines recent spatial estimates. Color stays steady across
+short packet gaps and fades after activity stops. The camera and radio update
+independently. During overload the camera processes the most recent waiting
+capture. A marker width describes the drawing, rather than angular accuracy.
 
-Processing runs in a persistent spawned process, separate from acquisition and Qt. A bounded queue discards old captures when input
-exceeds processing capacity. The status shows processed captures per second,
-DSP time, queue-plus-processing latency, and skipped captures. That latency does
-not include RF acquisition, transport or screen refresh. The overlay updates
-at up to 40 Hz independently of video. Power is received digital power in
-dBFS, not calibrated incident RF power.
+The optional waterfall shows the FFT rows from processed captures. At
+80 MS/s each row represents 3.2 µs. Time between captures is omitted.
+Power is digital power at the ADC in dBFS.
+
+For narrowband measurements, select a frequency region with
+`app.beamformer.band_limit=true`, `app.beamformer.band_low_mhz` and
+`app.beamformer.band_high_mhz`. The default DC rejection excludes the five
+center FFT bins. A tone at the center frequency needs
+`app.beamformer.reject_dc=false`, or a small offset in tuning.
+`app.beamformer.persistence_s` controls how quickly new direction estimates
+replace earlier ones. `app.visualization.display_mode=spectrum` shows the
+full Bartlett response or the MUSIC roots.
 
 ## Camera alignment and interpretation
 
@@ -107,8 +92,8 @@ because this demo does not decode WiFi.
 `demos/common/camera` owns video capture, camera settings, camera/beamspace
 projection, marker projection, texture delivery, overlay shaders and common
 Qt properties. This demo, `demos/wifi/camera` and `demos/ble/camera` use those components.
-`espargos.array_processing.steering_vectors_2d` supplies the steering grid;
-IQ uses physical spacing and the selected frequency. IQ capture controls and
+MUSIC estimates directions from polynomial roots and Bartlett uses a spatial
+FFT. Both use physical antenna spacing and the selected frequency. IQ capture controls and
 waterfall rendering come from `demos/iq/common`. Only IQ emission detection,
 its presentation policy and acquisition management live here.
 
@@ -116,11 +101,6 @@ Shaders are precompiled in the shared directory. After changing GLSL, run
 `demos/common/camera/compile_shader.sh` (or `.bat`) with Qt Shader Baker
 available. Tests in `tests/test_camera_*.py` cover generic emissions, noise,
 projection/model sharing and calibration filter restoration.
-
-The waterfall retains every 256-sample FFT row from each processed capture,
-including while the detector warms up. GUI refreshes do not pool rows. At
-80 MS/s each row represents 3.2 µs of captured samples. Gaps between captures
-are omitted. The rolling history naturally discards its oldest rows.
 
 SciPy is optional (`pip install scipy`) and accelerates the short FFTs on
 installations where NumPy's single-precision FFT is slower. NumPy remains

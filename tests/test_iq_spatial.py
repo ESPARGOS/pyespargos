@@ -71,3 +71,60 @@ def test_peaks_must_be_separated_in_azimuth():
     directions = peak_directions(image, 0.1)
     assert len(directions) == 2
     np.testing.assert_allclose(directions, [(0.3, -0.1), (-0.5, 0.1)], atol=0.02)
+
+
+def test_history_handles_bursts_motion_and_loss_of_signal():
+    from demos.iq.camera.processing import DirectionHistory
+
+    history = DirectionHistory()
+    tau = 0.2
+    left, right = np.eye(2, dtype=np.float32)
+    for stamp, power in [(0.0, 1), (0.1, 20), (0.23, 0.02)]:
+        history.add(power * left, stamp, tau)
+        assert history.opacity(stamp + 0.2, tau) == 1
+        np.testing.assert_array_equal(history.power, left)
+    # Neither a late event nor an empty capture extends the lifetime.
+    history.add(right, 0.17, tau)
+    history.add(0 * right, 0.31, tau)
+    assert history.received == 0.23
+    for stamp in (0.33, 0.43, 0.53):
+        history.add(right, stamp, tau)
+    assert history.power.argmax() == 1
+    assert 0 < history.opacity(1.13, tau) < 1
+    assert history.opacity(1.24, tau) == 0
+    history.add(left, 1.25, tau)
+    np.testing.assert_array_equal(history.power, left)
+
+
+def test_broad_single_lobe_generates_one_direction_label():
+    u, v = np.mgrid[-1:1:128j, -1:1:64j]
+    lobe = np.exp(-3 * (u**2 + v**2))
+    directions = peak_directions(lobe, 0.1)
+    assert len(directions) == 1
+    np.testing.assert_allclose(directions[0], (0, 0), atol=0.01)
+
+
+def test_short_capture_noise_floor_is_translation_invariant_across_nyquist():
+    from demos.iq.camera.processing import spatial_noise_power
+
+    rng = np.random.default_rng(507)
+    for antennas in (8, 32):
+        spectra = (rng.standard_normal((antennas, 1, 256)) + 1j * rng.standard_normal((antennas, 1, 256))).astype(np.complex64)
+        floor = spatial_noise_power(spectra)
+        shifted = spatial_noise_power(np.roll(spectra, 27, axis=-1))
+        np.testing.assert_allclose(shifted, np.roll(floor, 27), rtol=1e-5)
+        # Twenty-four snapshots cannot support an unrestricted 32-sensor
+        # covariance. Independent unit-scale receiver noise must stay finite.
+        assert np.median(floor) > 0.7
+
+
+def test_fast_interval_stream_tracks_a_step_within_five_new_observations():
+    from demos.iq.camera.processing import DirectionHistory
+
+    left, right = np.eye(2, dtype=np.float32)
+    history = DirectionHistory()
+    for index in range(30):
+        history.add(left, index * 0.013, 0.2)
+    for index in range(30, 35):
+        history.add(right, index * 0.013, 0.2)
+    assert history.power.argmax() == 1
