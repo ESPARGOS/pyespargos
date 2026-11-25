@@ -83,7 +83,7 @@ pip install -e .
 If you want to run the demo applications:
 
 ```bash
-pip install pyqt6 pyqt6-charts pyyaml matplotlib
+pip install pyqt6 pyqt6-charts matplotlib
 ```
 
 Demos such as `camera` and `azimuth-delay` use shaders, which are shipped in pre-compiled form (`.qsb` files) in this repository, so normally no additional steps are required. Only if these demos do not work should you re-compile the shaders yourself using the `compile_shader.sh` scripts, which requires the Qt Shader Baker (`qsb`):
@@ -153,7 +153,7 @@ pip install -e .
 If you want to run the demo applications:
 
 ```cmd
-pip install pyqt6 pyqt6-charts pyyaml matplotlib
+pip install pyqt6 pyqt6-charts matplotlib
 ```
 
 Demos such as `camera` and `azimuth-delay` use shaders, which are shipped in pre-compiled form (`.qsb` files) in this repository, so normally no additional steps are required. Only if these demos do not work should you re-compile the shaders yourself using the `.bat` scripts, which requires Qt 6 so that `qsb.exe` (Qt Shader Baker) is available. The simplest option is to use the Qt Online Installer and install a desktop Qt 6 kit.
@@ -218,7 +218,7 @@ pip install -e .
 If you want to run the demo applications:
 
 ```bash
-pip install pyqt6 pyqt6-charts pyyaml matplotlib
+pip install pyqt6 pyqt6-charts matplotlib
 ```
 
 Demos such as `camera` and `azimuth-delay` use shaders, which are shipped in pre-compiled form (`.qsb` files) in this repository, so normally no additional steps are required. Only if these demos do not work should you re-compile the shaders yourself using the `compile_shader.sh` scripts, which requires the Qt Shader Baker (`qsb`). One option is:
