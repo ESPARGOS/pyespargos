@@ -25,8 +25,7 @@ class BLEController(QtCore.QObject):
         self.buffering = buffering
         self.logger = logger or logging.getLogger("demo.BLEController")
         self.pool = self.receiver = None
-        self._callback_handle = None
-        self._last_calibrated = None
+        self._last_calibrated = False
         self._saved_buffer_policy = None
         self._saved = None
         self._started_processing = False
@@ -35,6 +34,9 @@ class BLEController(QtCore.QObject):
         self._status = "Not connected"
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ble-control")
         self._finished.connect(self._complete)
+        self._calibration_timer = QtCore.QTimer(self, interval=250)
+        self._calibration_timer.timeout.connect(self._refresh_calibration)
+        self._calibration_timer.start()
 
     @staticmethod
     def receiver_settings(config):
@@ -71,6 +73,7 @@ class BLEController(QtCore.QObject):
         connected = self.receiver is not None and not self._ready
         self._ready = self.receiver is not None
         self._busy = self._calibrating = False
+        self._last_calibrated = self._ready and self.receiver.is_calibrated(self.board_index)
         if self._config["polarization"] in (0, 1):
             status = "RF input is isolated" if self._config["polarization"] == 0 else "RF input uses the reference network"
         else:
@@ -97,7 +100,6 @@ class BLEController(QtCore.QObject):
             board.control.post_json("set_controller_mode", {"mode": "ble"})
             self.pool.select(boards=[board.host]).configure(mode="ble")
             self.receiver = self.pool.ble
-            self._callback_handle = self.receiver.add_callback(self._observe_calibration, lambda cluster: True)
             if self.buffering is not None:
                 self._saved_buffer_policy = self.receiver.buffer_policy
                 self.receiver.configure_buffering(self.buffering)
@@ -111,12 +113,14 @@ class BLEController(QtCore.QObject):
 
         self._submit(connect, "Connecting and calibrating" if calibrate else "Connecting", calibrating=calibrate)
 
-    def _observe_calibration(self, cluster):
-        if self._closed or cluster.board_index != self.board_index:
+    def _refresh_calibration(self):
+        if self._busy or not self._ready:
             return
         calibrated = self.receiver.is_calibrated(self.board_index)
         if calibrated != self._last_calibrated:
             self._last_calibrated = calibrated
+            if self._status in ("Receiving", "Reference calibration is needed"):
+                self._status = "Receiving" if calibrated else "Reference calibration is needed"
             self.stateChanged.emit()
 
     @QtCore.pyqtSlot("QVariantMap")
@@ -166,7 +170,7 @@ class BLEController(QtCore.QObject):
 
     @QtCore.pyqtProperty(bool, notify=stateChanged)
     def needsCalibration(self):
-        return self.receiver is None or not self.receiver.is_calibrated(self.board_index)
+        return not self._last_calibrated
 
     @QtCore.pyqtProperty(bool, notify=stateChanged)
     def calibrating(self):
@@ -189,11 +193,9 @@ class BLEController(QtCore.QObject):
         if self._closed:
             return
         self._closed = True
+        self._calibration_timer.stop()
         self._executor.shutdown(wait=True, cancel_futures=True)
         errors = []
-        if self._callback_handle is not None:
-            self.receiver.remove_callback(self._callback_handle)
-            self._callback_handle = None
         if self._started_processing:
             try:
                 self.pool.stop_processing()

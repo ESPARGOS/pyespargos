@@ -30,8 +30,8 @@ The receiver listens on one channel at a time. RX exposes all 40 channels,
 LE 1M and LE 2M, automatic or fixed gain, sample rate and capture size.
 Settings apply immediately. Channel, PHY and expert gain changes
 invalidate calibration. Feed, ordinary gain, sample rate and capture length
-changes preserve it. The highlighted Trigger Calibration
-button in RX acquires a fresh reference when needed.
+changes preserve it. After startup, the RX drawer shows **Trigger Calibration**
+in red whenever a fresh reference is needed. Press it to recalibrate.
 First polarization and automatic gain are the defaults. The manual gain slider
 also sets the fixed gain used briefly for reference calibration.
 

@@ -56,7 +56,11 @@ class ControllerTests(unittest.TestCase):
         self.wait_idle(controller)
         self.assertFalse(controller.needsCalibration)
         self.assertEqual(changed[-1]["polarization"], 4)
-        with patch.object(pool.ble, "calibrate", side_effect=RuntimeError("reference absent")):
+        with patch.object(pool.ble, "calibrate", side_effect=RuntimeError("reference absent")) as calibrate:
+            controller.configureReceiver({"channel": 38})
+            self.wait_idle(controller)
+            self.assertTrue(controller.needsCalibration)
+            calibrate.assert_not_called()
             controller.calibrate()
             self.wait_idle(controller)
         self.assertEqual(controller.status, "reference absent")
@@ -84,17 +88,16 @@ class ControllerTests(unittest.TestCase):
             controller.start(lambda: pool, calibrate=False)
             self.wait_idle(controller)
         seed(pool.ble)
-        controller._last_calibrated = True
+        controller._refresh_calibration()
         notifications = []
         controller.stateChanged.connect(lambda: notifications.append(controller.needsCalibration))
         for antenna in range(8):
-            board.emit(antenna, clock_epoch=2, generation=board.config['generation'])
-        deadline = time.monotonic()+1
+            board.emit(antenna, clock_epoch=2, generation=board.config["generation"])
+        deadline = time.monotonic() + 1
         while not notifications and time.monotonic() < deadline:
             self.app.processEvents()
-            time.sleep(.001)
+            time.sleep(0.001)
         self.assertIn(True, notifications)
-        self.assertEqual(len(pool.ble._cluster_callbacks), 1)
         controller.close()
         self.assertEqual(len(pool.ble._cluster_callbacks), 0)
 

@@ -31,6 +31,9 @@ class WiFiIQControls(QtCore.QObject):
         self._closed = False
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wifi-iq-control")
         self._finished.connect(self._complete)
+        self._calibration_timer = QtCore.QTimer(self, interval=250)
+        self._calibration_timer.timeout.connect(self._refresh_calibration)
+        self._calibration_timer.start()
 
     @QtCore.pyqtProperty(bool, notify=changed)
     def busy(self):
@@ -68,10 +71,7 @@ class WiFiIQControls(QtCore.QObject):
         actual, error = None, ""
         try:
             if settings:
-                receiver = self.pool.wifi_iq
-                was_calibrated = receiver.has_calibration()
-                actual = receiver.configure(settings)
-                calibrate = calibrate or (was_calibrated and not receiver.has_calibration())
+                actual = self.pool.wifi_iq.configure(settings)
             if calibrate:
                 self.pool.wifi_iq.calibrate()
         except Exception as exc:
@@ -101,6 +101,14 @@ class WiFiIQControls(QtCore.QObject):
         self.settingsChanged.emit()
         self.acquisitionChanged.emit()
         self.changed.emit()
+
+    def _refresh_calibration(self):
+        if self._busy:
+            return
+        calibrated = self.pool.wifi_iq.has_calibration()
+        if self._calibrated != calibrated:
+            self._calibrated = calibrated
+            self.changed.emit()
 
     def start(self, channel, rx_gain, *, gain_mode="manual", boot_sync=True, estimator="headers", calibrate=True):
         self.setEstimator(estimator)
@@ -148,4 +156,5 @@ class WiFiIQControls(QtCore.QObject):
 
     def close(self):
         self._closed = True
+        self._calibration_timer.stop()
         self._executor.shutdown(wait=True)

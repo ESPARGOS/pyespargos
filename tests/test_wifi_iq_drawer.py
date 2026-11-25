@@ -54,10 +54,41 @@ def test_edits_during_radio_update_apply_latest_values_without_recalibrating():
             app.processEvents()
             time.sleep(0.001)
         assert not controls.busy
-        assert [c.args[0] for c in pool.wifi_iq.configure.call_args_list] == [
-            {"rx_gain": 24}, {"max_pps": 50, "rx_gain": 36}
-        ]
+        assert [c.args[0] for c in pool.wifi_iq.configure.call_args_list] == [{"rx_gain": 24}, {"max_pps": 50, "rx_gain": 36}]
         pool.wifi_iq.calibrate.assert_not_called()
+    finally:
+        controls.close()
+
+
+def test_channel_change_waits_for_manual_calibration_and_tracks_external_loss():
+    app = QApplication.instance() or QApplication([])
+    pool = Mock()
+    pool.boards = [Mock()]
+    receiver = pool.wifi_iq
+    receiver.has_calibration.return_value = True
+
+    def configure(settings):
+        receiver.has_calibration.return_value = False
+        return settings
+
+    receiver.configure.side_effect = configure
+    receiver.calibrate.side_effect = lambda: setattr(receiver.has_calibration, "return_value", True)
+    controls = WiFiIQControls(pool)
+    try:
+        controls._refresh_calibration()
+        assert controls.calibrated
+        controls._submit({"channel": 7}).result(timeout=2)
+        app.processEvents()
+        assert not controls.calibrated
+        receiver.calibrate.assert_not_called()
+        controls.calibrate()
+        controls._executor.submit(lambda: None).result(timeout=2)
+        app.processEvents()
+        assert controls.calibrated
+        receiver.has_calibration.return_value = False
+        controls._refresh_calibration()
+        assert not controls.calibrated
+        receiver.calibrate.assert_called_once()
     finally:
         controls.close()
 
@@ -79,6 +110,7 @@ def test_mac_filter_uses_backlog_without_touching_radio():
         pool.boards[0].wifi_iq.set_config.assert_not_called()
     finally:
         controls.close()
+
 
 @pytest.mark.parametrize("receiver_type", [WiFiIQReceiver, WiFiTransceiver])
 def test_backlog_drawer_applies_only_fields_provided_by_receiver(receiver_type):

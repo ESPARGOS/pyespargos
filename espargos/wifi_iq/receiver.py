@@ -234,6 +234,7 @@ class _PhaseCorrection:
         # Factor out the reference gain correction so each packet can use its measured gain.
         self.gain_adjusted_weights = gain_phase_calibration.apply(weights.conj(), self.gains).conj()
         self.generation = None
+        self.epochs_valid = True
 
     def for_cluster(self, cluster):
         frame = cluster.frame
@@ -473,6 +474,10 @@ class WiFiIQReceiver(ClusterAssembler):
     def _on_cluster_updated(self, name, key, cluster):
         if self._superseded(cluster.board_index, cluster.frame.clock_epoch, cluster.frame.generation):
             return True
+        correction = self._corrections.get(cluster.board_index)
+        if correction is not None and correction.timing is cluster.timing:
+            if np.any(cluster.completion & np.isfinite(correction.gains) & (cluster.epochs != correction.epochs)):
+                correction.epochs_valid = False
         cluster.window_shifts = cluster.timing.shifts(cluster.ring_positions, cluster.epochs, cluster._channel)
         self._try_callbacks(cluster)
         return False
@@ -503,7 +508,11 @@ class WiFiIQReceiver(ClusterAssembler):
         self._clear_cluster_cache("packets")
 
     def has_calibration(self, board_index=0):
-        return board_index in self._corrections
+        correction = self._corrections.get(board_index)
+        if correction is None or not correction.epochs_valid:
+            return False
+        state = self._applied_settings.get(board_index)
+        return state is None or state[:2] == (correction.clock_epoch, correction.generation)
 
     def configure(self, settings, board_index=0):
         """Apply radio settings and retain a compatible phase reference."""

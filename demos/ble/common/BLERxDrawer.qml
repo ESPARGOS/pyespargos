@@ -66,14 +66,11 @@ Common.AppDrawer {
     }
 
     Label { Layout.columnSpan: 2; text: "Calibration"; color: "#9fb3c8" }
-    Button {
+    Common.CalibrationButton {
         objectName: "bleCalibrate"
         text: root.calibrating ? "Calibrating…" : "Trigger Calibration"
-        Layout.columnSpan: 2
-        Layout.alignment: Qt.AlignHCenter
         enabled: !root.busy && root.calibrationSupported
-        Material.background: root.needsCalibration && root.calibrationSupported ? "#7f1d1d" : root.Material.background
-        Material.foreground: "white"
+        needCalibration: root.needsCalibration && root.calibrationSupported
         onClicked: root.calibrationRequested()
     }
     ProgressBar {

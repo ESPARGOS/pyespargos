@@ -84,6 +84,25 @@ def test_delayed_datagram_after_reboot_and_generation_wrap():
     assert deliver(812, 1, 50000)
 
 
+@pytest.mark.parametrize("changed", ["generation", "clock_epoch", "receiver_epoch"])
+def test_stream_reports_invalidate_calibration(changed):
+    from espargos.wifi_iq.receiver import _PhaseCorrection
+
+    board = SimpleNamespace(revision=BoardRevisionDensiflorus(), wifi_iq=Mock())
+    receiver = WiFiIQReceiver(SimpleNamespace(boards=[board]))
+    first = WiFiIQPacket(record(b"WFN2"))
+    _, _, cluster = receiver._add_sensor_message(0, SensorMessage(1, 0, first))
+    calibration = _PhaseCorrection(cluster, np.where(cluster.completion[..., None], 1 + 0j, np.nan))
+    calibration.generation = first.generation
+    receiver._corrections[0] = calibration
+    assert receiver.has_calibration()
+    second = WiFiIQPacket(record(b"WFN2", 30000))
+    setattr(second, changed, getattr(first, changed) + 1)
+    update = receiver._add_sensor_message(0, SensorMessage(1, 0, second))
+    receiver._on_cluster_updated(*update)
+    assert not receiver.has_calibration()
+
+
 def test_reference_sequence_groups_reports_despite_uart_clock_offset():
     from dataclasses import replace
     from espargos.wifi_iq.receiver import _Frame

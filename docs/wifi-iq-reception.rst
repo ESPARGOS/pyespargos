@@ -178,8 +178,8 @@ gain mode and analog filter there. Enable **Automatic** to let each sensor set i
 a common **RX Gain**. Under **Packet capture**, select the
 capture duration, packet rate limit and which sensors can trigger a shared capture.
 Edits take effect immediately. **Waveform fields** selects the estimator for both
-demos and defaults to training plus header. A calibrated demo measures a new
-reference when you change channel or analog filter. **Trigger Calibration** measures a new reference for those settings. The MAC
+demos and defaults to training plus header. After a channel or analog filter change, **Trigger Calibration** turns red.
+Press it to measure a new reference. The demo calibrates automatically only at startup. The MAC
 filter selects a transmitter from the received packets and can be changed
 without recalibrating.
 
