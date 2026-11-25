@@ -220,15 +220,20 @@ def root_music_2d(covariance, rows, columns, *, frequency_hz, snapshots=1024, so
     # Fit nonnegative covariance contributions, not inverse-manifold amplitudes.
     # Nearly coincident roots made the latter explode and render a weak/spurious
     # pair brighter than the measured signal itself.
-    gram = np.abs(manifold.conj().T @ manifold) ** 2
     rhs = np.real(np.einsum("ai,ab,bi->i", manifold.conj(), original, manifold))
-    powers = np.maximum(np.linalg.lstsq(gram, rhs, rcond=1e-6)[0], 0)
-    for _ in range(32):
-        previous = powers.copy()
-        for i in range(len(powers)):
-            powers[i] = max(0.0, powers[i] + (rhs[i] - gram[i] @ powers) / gram[i, i])
-        if np.max(np.abs(powers - previous)) <= 1e-6 * max(np.max(powers), 1e-30):
-            break
+    if len(directions) == 1:
+        # A unit-modulus steering vector has squared norm n. The scalar
+        # nonnegative covariance fit has a closed-form solution.
+        powers = np.maximum(rhs / n**2, 0)
+    else:
+        gram = np.abs(manifold.conj().T @ manifold) ** 2
+        powers = np.maximum(np.linalg.lstsq(gram, rhs, rcond=1e-6)[0], 0)
+        for _ in range(32):
+            previous = powers.copy()
+            for i in range(len(powers)):
+                powers[i] = max(0.0, powers[i] + (rhs[i] - gram[i] @ powers) / gram[i, i])
+            if np.max(np.abs(powers - previous)) <= 1e-6 * max(np.max(powers), 1e-30):
+                break
     # Fit quality is evaluated only at algebraically estimated directions.
     principal = vectors[:, -1]
     if transposed:
