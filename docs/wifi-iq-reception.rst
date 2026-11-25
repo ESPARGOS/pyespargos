@@ -193,7 +193,7 @@ Launch the camera on the channel you want to observe::
 The camera calibrates one array, then overlays the directions of received
 802.11b and OFDM packets on the video. It uses the same beamformers and camera
 alignment controls as the native CSI camera. In either WiFi IQ demo, the
-**Training channel** selector switches between the common preamble and an
+**Spatial stream** selector switches between the common preamble and an
 individual space-time stream. To start on stream 2, add
 ``-o csi.space_time_stream=2``. Add ``--no-camera`` to view the
 radio overlay alone. Power in WiFi IQ mode is relative to ADC full scale.

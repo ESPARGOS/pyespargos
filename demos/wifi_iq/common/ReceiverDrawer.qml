@@ -47,6 +47,11 @@ Drawer {
         filter.currentIndex = cfg.filter_bw_mhz === 255 ? 1 : cfg.filter_bw_mhz > 0 ? 2 : 0
         if (!bandwidth.pressed) bandwidth.value = filter.currentIndex === 2 ? cfg.filter_bw_mhz : 20
     }
+    Common.ConfigManager {
+        id: trainingConfig
+        endpoint: csiconfig
+        Component.onCompleted: fetchAndApply()
+    }
     Component.onCompleted: readSettings()
     Connections {
         target: wifiIQControls
@@ -90,13 +95,13 @@ Drawer {
                 visible: !wifiIQControls.busy && text.length > 0 && text !== "Calibrated" && text !== "Configured"
             }
             Section { text: "Signal Path / Format" }
-            FieldLabel { text: "Training channel" }
+            FieldLabel { text: "Spatial stream" }
             ComboBox {
                 property string configKey: "space_time_stream"
                 property string configProp: "currentIndex"
-                model: ["Common preamble", ...Array.from({length: 8}, (_, i) => "Space-time stream " + (i + 1))]
-                Component.onCompleted: csiconfig.register(this)
-                onActivated: csiconfig.onControlChanged(this)
+                model: ["Common preamble", ...Array.from({length: 8}, (_, i) => "Stream " + (i + 1))]
+                Component.onCompleted: trainingConfig.register(this)
+                onActivated: trainingConfig.onControlChanged(this)
             }
             FieldLabel { text: "RF input" }
             Common.RFSwitchControl { id: feed; modes: [0, 2, 3, 4, 1]; onActivated: wifiIQControls.apply({rf_switch: value}) }
