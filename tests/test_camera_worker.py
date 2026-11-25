@@ -3,9 +3,9 @@
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 import numpy as np
-from demos.camera.worker import CaptureProcessor, process_capture
-from demos.camera.main import EspargosIQCamera
-from demos.camera.processing import peak_directions
+from demos.iq.camera.worker import CaptureProcessor, process_capture
+from demos.iq.camera.main import EspargosIQCamera
+from demos.iq.camera.processing import peak_directions
 
 
 def test_spawned_processor_matches_local_processor():

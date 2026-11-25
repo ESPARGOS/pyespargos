@@ -7,8 +7,8 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtCore import QCoreApplication
 from demos.common.config_manager import ConfigManager
 from demos.common.camera.overlay import CameraOverlayModel
-from demos.camera.main import EspargosIQCamera
-from demos.camera.iq_overlay import IQCameraOverlay
+from demos.iq.camera.main import EspargosIQCamera
+from demos.iq.camera.iq_overlay import IQCameraOverlay
 
 
 def test_iq_overlay_inherits_shared_qt_properties_and_notifications():

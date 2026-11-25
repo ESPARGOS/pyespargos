@@ -3,10 +3,10 @@
 import threading
 from types import SimpleNamespace
 import numpy as np
-from demos.camera.main import EspargosIQCamera, CHUNK_SAMPLES
+from demos.iq.camera.main import EspargosIQCamera, CHUNK_SAMPLES
 from demos.iq.common.iq_waterfall import WaterfallImageProvider, power_db_row
-from demos.camera.processing import channelize
-from demos.camera.worker import CaptureProcessor
+from demos.iq.camera.processing import channelize
+from demos.iq.camera.worker import CaptureProcessor
 
 
 def test_capture_rows_are_preserved_before_gui_refresh_and_during_warmup():

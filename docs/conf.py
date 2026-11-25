@@ -15,7 +15,6 @@ author = "Florian Euchner"
 
 extensions = ["sphinx.ext.todo", "sphinx.ext.viewcode", "sphinx.ext.autodoc", "sphinx.ext.mathjax"]
 
-templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 # -- Autodoc -----------------------------------------------------------------

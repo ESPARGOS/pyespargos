@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("PyQt6")
-from demos.camera.main import EspargosIQCamera
+from demos.iq.camera.main import EspargosIQCamera
 
 
 def test_threshold_update_cannot_restore_a_stale_trigger_mode():
@@ -43,7 +43,16 @@ def test_late_repaired_capture_cannot_rewind_live_camera():
     import numpy as np
     from espargos import IQSignalCapture
 
-    app = SimpleNamespace(_capture_arrived=threading.Event(), _stop=threading.Event(), receiver=SimpleNamespace(calibrating=False, calibration_applies_to=lambda _: True), _latest_signal_identity=None, dropped_captures=0, queue_dropped_captures=0, late_captures=0, _pending=queue.Queue())
+    app = SimpleNamespace(
+        _capture_arrived=threading.Event(),
+        _stop=threading.Event(),
+        receiver=SimpleNamespace(calibrating=False, calibration_applies_to=lambda _: True),
+        _latest_signal_identity=None,
+        dropped_captures=0,
+        queue_dropped_captures=0,
+        late_captures=0,
+        _pending=queue.Queue(),
+    )
 
     def capture(generation, identity):
         data = np.zeros((1, 2, 4))
