@@ -96,16 +96,19 @@ Rectangle {
     }
 
     Repeater {
-        model: overlayModel.markers
+        model: overlayModel.markers.length
         Item {
             id: directionMarker
-            required property var modelData
-            x: spatialSpectrumShader.x + modelData.x * spatialSpectrumShader.width
-            y: spatialSpectrumShader.y + modelData.y * spatialSpectrumShader.height
-            Rectangle { visible: !parent.modelData.offscreen; anchors.centerIn: parent; width: 16; height: 16; radius: 8; color: "transparent"; border.color: "#e9fbff" }
-            Text { visible: parent.modelData.offscreen; anchors.centerIn: parent; text: "➤"; rotation: parent.modelData.rotation; color: "#ffd970"; font.pixelSize: 22 }
+            required property int index
+            // Numeric models keep their delegates while a direction moves.
+            // During removal the final delegate may briefly outlive its entry.
+            readonly property var point: overlayModel.markers[index] ?? ({x: 0, y: 0, label: "", offscreen: false, rotation: 0})
+            x: spatialSpectrumShader.x + point.x * spatialSpectrumShader.width
+            y: spatialSpectrumShader.y + point.y * spatialSpectrumShader.height
+            Rectangle { visible: !parent.point.offscreen; anchors.centerIn: parent; width: 16; height: 16; radius: 8; color: "transparent"; border.color: "#e9fbff" }
+            Text { visible: parent.point.offscreen; anchors.centerIn: parent; text: "➤"; rotation: parent.point.rotation; color: "#ffd970"; font.pixelSize: 22 }
             Rectangle {
-                x: directionMarker.modelData.x > 0.7 ? -width - 12 : 12
+                x: directionMarker.point.x > 0.7 ? -width - 12 : 12
                 y: -height - 10
                 width: directionLabel.implicitWidth + 8
                 height: directionLabel.implicitHeight + 6
@@ -114,8 +117,8 @@ Rectangle {
                 Text {
                     id: directionLabel
                     anchors.centerIn: parent
-                    text: directionMarker.modelData.label
-                    color: directionMarker.modelData.offscreen ? "#ffd970" : "white"
+                    text: directionMarker.point.label
+                    color: directionMarker.point.offscreen ? "#ffd970" : "white"
                     font.pixelSize: 13
                 }
             }
