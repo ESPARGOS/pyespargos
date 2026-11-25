@@ -57,7 +57,7 @@ class CaptureProcessor:
                     image = np.asarray(weight * spectrum, dtype=np.float32)
                 else:
                     np.maximum(image, weight * spectrum, out=image)
-                if strongest is None or weight > strongest[0]:
+                if rows is not None and (strongest is None or weight > strongest[0]):
                     occupied = frequencies[emission.bins] / 1e6
                     strongest = (weight, emission.power, occupied[0], occupied[-1], purity)
         return dict(rows=rows, image=image, strongest=strongest, noise=self.noise.power, span=(frequencies[0] / 1e6, frequencies[-1] / 1e6), dsp_ms=(time.perf_counter() - started) * 1000)

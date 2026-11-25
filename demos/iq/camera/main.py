@@ -56,7 +56,6 @@ TRIGGER_THRESHOLD_SIGMA = 12.0
 class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
     """IQ camera for a rectangular ESPARGOS combined array."""
 
-    liveStatsChanged = PyQt6.QtCore.pyqtSignal()
     autoThresholdChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {
@@ -126,7 +125,6 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
         self.dropped_captures = 0
         self.queue_dropped_captures = 0
         self.late_captures = 0
-        self.processing_ms = 0.0
         self.capture_to_process_ms = 0.0
         self._manager = threading.Thread(target=self._manage_capture, daemon=True)
         self._status = "Synchronizing"  # overrides the calibration status while set
@@ -136,9 +134,6 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
         self._capture_time = 0.0
         self._latest_signal_identity = None
         self._reset_image()
-        self._stats_time = time.monotonic()
-        self._stats_count = 0
-        self._capture_rate = 0.0
         self.appConfigChanged.connect(self._view_changed)
 
         self.waterfall = WaterfallImageProvider(CHUNK_SAMPLES, WATERFALL_HEIGHT)
@@ -230,7 +225,6 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
                 received_at, source = self._pending.get(timeout=0.1)
             except queue.Empty:
                 continue
-            started = time.monotonic()
             try:
                 if received_at < self._cleared_at:
                     continue
@@ -238,9 +232,7 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
                     self.processed_captures += 1
             except Exception:
                 self.logger.exception("Could not process a capture")
-            finished = time.monotonic()
-            self.processing_ms = (finished - started) * 1000
-            self.capture_to_process_ms = (finished - received_at) * 1000
+            self.capture_to_process_ms = (time.monotonic() - received_at) * 1000
 
     def _locate_emissions(self, source, received_at):
         """Locate the emissions in one capture event and add them to the image."""
@@ -280,7 +272,7 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
                 self._waterfall_dirty = True
             self._waterfall_row_us = CHUNK_SAMPLES / sample_rate * 1e6
             self._span_mhz = result["span"]
-            if result["strongest"] is not None:
+            if result["image"] is not None:
                 self._history.add(result["image"], received_at, max(beamformer["persistence_s"], 1e-3))
             strongest = result["strongest"]
             if strongest is not None and (self._strongest is None or strongest[0] > self._strongest[0]):
@@ -298,15 +290,12 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
         if self._stop.is_set():
             return
         now = time.monotonic()
-        if now - self._stats_time >= 0.5:
-            self._capture_rate = (self.processed_captures - self._stats_count) / (now - self._stats_time)
-            self._stats_count, self._stats_time = self.processed_captures, now
-            self.liveStatsChanged.emit()
         with self._lock:
             image = self._history.power
             opacity = self._history.opacity(now, max(self.appconfig.get("beamformer", "persistence_s"), 1e-3))
             render_key = (self._history.received, round(255 * opacity))
-            waterfall_dirty, strongest, span = self._waterfall_dirty, self._strongest, self._span_mhz
+            waterfall_dirty, strongest = self._waterfall_dirty, self._strongest
+            span, row_us = self._span_mhz, self._waterfall_row_us
             self._waterfall_dirty = False
             self._strongest = None
 
@@ -329,28 +318,21 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
             markers = opacity > 0.1 and self.appconfig.get("visualization", "markers") and self.appconfig.get("visualization", "display_mode") != "azimuth"
             self.overlay.publish_markers(peak_directions(image, visible) if markers else [])
         if waterfall_dirty:
-            self.overlay.publish_waterfall(*span)
+            self.overlay.publish_waterfall(*span, row_us)
         if strongest is not None:
             _weight, power, low, high, purity = strongest
             self.overlay.publish_emission(10.0 * np.log10(max(power, 1e-12)), low, high, purity)
-            self._emission_time = time.monotonic()
-        elif time.monotonic() > self._emission_time + 2.0:
+            self._emission_time = now
+        elif self._emission_time and now - self._emission_time > 2.0:
+            self._emission_time = 0.0
             self.overlay.publish_emission(float("-inf"), None, None, None)
-
-    @PyQt6.QtCore.pyqtProperty(str, notify=liveStatsChanged)
-    def liveStats(self):
-        return f"{self._capture_rate:.0f} captures/s · {self.dsp_ms:.1f} ms DSP · {self.capture_to_process_ms:.0f} ms queued + processing · {self.queue_dropped_captures} processing drops · {self.late_captures} late"
-
-    @PyQt6.QtCore.pyqtProperty(str, notify=liveStatsChanged)
-    def waterfallTimeDescription(self):
-        return f"{self._waterfall_row_us:.1f} µs/row · capture gaps omitted"
 
     @PyQt6.QtCore.pyqtSlot()
     def clearImage(self):
         with self._lock:
             self._reset_image()
             self.waterfall.clear()
-        self.overlay.publish_waterfall(0.0, 0.0)
+        self.overlay.publish_waterfall(0.0, 0.0, 0.0)
         self.overlay.publish_emission(-np.inf, None, None, None)
         self.overlay.publish_spatial_spectrum(np.zeros((self.overlay.resolutionAzimuth, self.overlay.resolutionElevation)), 1)
         self.overlay.publish_markers([])

@@ -94,7 +94,7 @@ Common.ESPARGOSApplication {
 
     IQ.IQWaterfall {
         visible: overlayModel.waterfallVisible
-        timeDescription: backend.waterfallTimeDescription
+        timeDescription: overlayModel.waterfallTimeDescription
         model: overlayModel
         anchors.right: parent.right
         anchors.bottom: parent.bottom

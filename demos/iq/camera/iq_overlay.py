@@ -13,7 +13,6 @@ class IQCameraOverlay(CameraOverlayModel):
     spectrumStatusChanged = PyQt6.QtCore.pyqtSignal()
     frequencySpanChanged = PyQt6.QtCore.pyqtSignal()
     captureStatusChanged = PyQt6.QtCore.pyqtSignal()
-    displayModeChanged = PyQt6.QtCore.pyqtSignal()
 
     def __init__(self, appconfig, parent=None, update_signal=None):
         super().__init__(appconfig, parent, update_signal)
@@ -22,7 +21,7 @@ class IQCameraOverlay(CameraOverlayModel):
         self._capture_status = "Starting"
         self._frequency_low_mhz = 0.0
         self._frequency_high_mhz = 0.0
-        self._markers = []
+        self._row_us = 0.0
         signal = self.appconfig.updateAppState if update_signal is None else update_signal
         signal.connect(self._on_update_app_state)
 
@@ -43,8 +42,9 @@ class IQCameraOverlay(CameraOverlayModel):
         image[3::4] = 255
         self.publish_image("spatial", image.reshape(power.shape[1], power.shape[0], 4))
 
-    def publish_waterfall(self, low_mhz, high_mhz):
-        span_changed = low_mhz != self._frequency_low_mhz or high_mhz != self._frequency_high_mhz
+    def publish_waterfall(self, low_mhz, high_mhz, row_us):
+        span_changed = (low_mhz, high_mhz, row_us) != (self._frequency_low_mhz, self._frequency_high_mhz, self._row_us)
+        self._row_us = row_us
         self._frequency_low_mhz = float(low_mhz)
         self._frequency_high_mhz = float(high_mhz)
         if span_changed:
@@ -62,12 +62,10 @@ class IQCameraOverlay(CameraOverlayModel):
     def _on_update_app_state(self, changes):
         if "waterfall" in changes.get("visualization", {}):
             self.waterfallVisibleChanged.emit()
-        if "display_mode" in changes.get("visualization", {}):
-            self.displayModeChanged.emit()
 
-    @PyQt6.QtCore.pyqtProperty(str, notify=displayModeChanged)
-    def displayMode(self):
-        return self.appconfig.get("visualization", "display_mode")
+    @PyQt6.QtCore.pyqtProperty(str, notify=frequencySpanChanged)
+    def waterfallTimeDescription(self):
+        return f"{self._row_us:.1f} µs/row · capture gaps omitted" if self._row_us else ""
 
     @PyQt6.QtCore.pyqtProperty(int, constant=True)
     def renderStyle(self):
