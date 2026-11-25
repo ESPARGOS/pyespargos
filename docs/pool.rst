@@ -62,6 +62,11 @@ lists on different boards, pass explicit :class:`Antenna(host, antid) <espargos.
 :meth:`configure() <espargos.pool.AntennaSelection.configure>` changes the supplied fields on selected antennas. See :doc:`modes` for
 the available roles, board-wide settings and an example of mixing roles.
 
+Gain-only IQ receiver updates preserve calibration. A failed mode change can
+invalidate calibration for the entire selection, including boards that the
+pool had yet to update. Recalibrate the affected selection before using its
+phase corrections again.
+
 Receive and transmit
 ---------------------
 
