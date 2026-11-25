@@ -110,7 +110,7 @@ Rectangle {
             Text { visible: parent.point.offscreen; anchors.centerIn: parent; text: "➤"; rotation: parent.point.rotation; color: "#ffd970"; font.pixelSize: 22 }
             Rectangle {
                 x: directionMarker.point.x > 0.7 ? -width - 12 : 12
-                y: -height - 10
+                y: directionMarker.point.y * spatialSpectrumShader.height < height + 10 ? 10 : -height - 10
                 width: directionLabel.implicitWidth + 8
                 height: directionLabel.implicitHeight + 6
                 color: "#c0182229"
