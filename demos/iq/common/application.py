@@ -167,7 +167,7 @@ class IQController(PyQt6.QtCore.QObject):
                 if self._closing or config is None:
                     self._config_worker = None
                     return
-            self.apply_config_json(json.dumps(config))
+            self._apply_config(config)
 
     def close(self):
         """Finish owned I/O workers before the application closes the pool."""
@@ -198,11 +198,18 @@ class IQController(PyQt6.QtCore.QObject):
             return
         try:
             config = json.loads(config_json)
+        except (ValueError, TypeError) as error:
+            self.configFailed.emit(str(error))
+            return
+        self._apply_config(config)
+
+    def _apply_config(self, config):
+        try:
             # The IQ API accepts one patch for tuning, gain, path and trigger.
             # Apply coupled changes together so the sensors never briefly run
             # a new trigger on the previous path or sample rate.
             with self._reference_io_lock:
-                if self._reference_busy or self._closing:
+                if self._closing:
                     return
                 self.receiver.apply_config(config)
             self._check_calibration_config(config)
@@ -259,9 +266,16 @@ class IQController(PyQt6.QtCore.QObject):
         if not self._begin_reference():
             return
 
+        # Finish edits accepted before the button press. Waiting on the GUI
+        # thread would freeze video during a slow receiver write.
+        with self._config_state_lock:
+            pending_edits = self._config_worker
+
         def run():
             succeeded = False
             try:
+                if pending_edits is not None:
+                    pending_edits.join()
                 with self._reference_io_lock:
                     if not self._closing:
                         # A reboot returns the sensors to WiFi. Pool.calibrate()

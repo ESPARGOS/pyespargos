@@ -138,3 +138,42 @@ def test_invalidated_sensor_marks_sync_needed_without_another_capture():
     controller._check_calibration_config({"filter_bw_mhz": 10})
     assert controller.syncNeeded
     controller.close()
+
+
+def test_calibration_waits_for_preceding_receiver_edits():
+    app = QCoreApplication.instance() or QCoreApplication([])
+    entered, release, calibrated = threading.Event(), threading.Event(), threading.Event()
+    calls = []
+
+    def apply(config):
+        calls.append(config)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(2)
+
+    def calibrate():
+        calls.append("calibrate")
+        calibrated.set()
+
+    receiver = SimpleNamespace(
+        add_callback=lambda _: None,
+        add_stream_callback=lambda _: None,
+        add_accumulation_callback=lambda _: None,
+        apply_config=apply,
+        calibration=None,
+        calibration_center_frequency=None,
+        calibration_sample_rate=None,
+    )
+    controller = IQController(SimpleNamespace(iq=receiver, boards=[], calibrate=calibrate))
+    try:
+        controller.queue_config_json('{"rx_gain": 28}')
+        assert entered.wait(1)
+        controller.queue_config_json('{"rf_freq_hz": 2457000000}')
+        controller.sync_async()
+        controller.queue_config_json('{"rx_gain": 99}')  # Controls are locked during calibration.
+        release.set()
+        assert calibrated.wait(1)
+        assert calls == [{"rx_gain": 28}, {"rf_freq_hz": 2457000000}, "calibrate"]
+    finally:
+        release.set()
+        controller.close()
