@@ -40,7 +40,8 @@ Rectangle {
         }
 
 		mesh: GridMesh {
-			resolution: Qt.size(180, 90)
+			// Polarization is sampled at vertices. Direction colors use interpolated UVs.
+			resolution: spatialSpectrumShader.polarizationVisible ? Qt.size(180, 90) : Qt.size(64, 32)
 		}
 
 		vertexShader: "spatialspectrum_vert.qsb"

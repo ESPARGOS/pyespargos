@@ -2,9 +2,8 @@
 layout(location = 0) in vec4 qt_Vertex;
 layout(location = 1) in vec2 qt_MultiTexCoord0;
 layout(location = 0) out vec2 qt_TexCoord0;
-layout(location = 1) out vec4 beamspaceColor;
+layout(location = 1) out vec2 beamspaceCoord;
 layout(location = 2) out vec4 beamspacePolarization;
-layout(binding = 1) uniform sampler2D spatialSpectrumCanvasSource;
 layout(binding = 2) uniform sampler2D polarizationCanvasSource;
 
 layout(std140, binding = 0) uniform buf {
@@ -53,15 +52,16 @@ void main() {
 	vec3 direction = cameraPixelToDirection(coord);
 	direction = rotateElevation(direction, radians(elevationCorrection));
 	direction = rotateAzimuth(direction, radians(azimuthCorrection));
-	vec2 textureCoords = rawBeamspace == 1 ? coord : (directionToFFTBeamspace(direction) + 0.5);
+	beamspaceCoord = rawBeamspace == 1 ? coord : (directionToFFTBeamspace(direction) + 0.5);
 
-	beamspaceColor = texture(spatialSpectrumCanvasSource, textureCoords);
-	// Left tile stores complex H; right tile stores complex V. Clamp to
-	// texel centers within each tile so filtering cannot mix H and V.
-	vec2 polCoords = clamp(textureCoords, 0.5 * polarizationTexelSize, 1.0 - 0.5 * polarizationTexelSize);
-	vec2 h = texture(polarizationCanvasSource, vec2(polCoords.x * 0.5, polCoords.y)).rg;
-	vec2 v = texture(polarizationCanvasSource, vec2(0.5 + polCoords.x * 0.5, polCoords.y)).rg;
-	beamspacePolarization = vec4(h, v);
+	beamspacePolarization = vec4(0.5);
+	if (polarizationVisible == 1) {
+		// Clamp to texel centers so filtering cannot mix adjacent H and V tiles.
+		vec2 polCoords = clamp(beamspaceCoord, 0.5 * polarizationTexelSize, 1.0 - 0.5 * polarizationTexelSize);
+		vec2 h = texture(polarizationCanvasSource, vec2(polCoords.x * 0.5, polCoords.y)).rg;
+		vec2 v = texture(polarizationCanvasSource, vec2(0.5 + polCoords.x * 0.5, polCoords.y)).rg;
+		beamspacePolarization = vec4(h, v);
+	}
 
     gl_Position = qt_Matrix * qt_Vertex;
     qt_TexCoord0 = qt_MultiTexCoord0;

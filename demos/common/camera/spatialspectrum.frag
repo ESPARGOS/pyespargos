@@ -1,9 +1,10 @@
 #version 450
 
 layout(location = 0) in vec2 qt_TexCoord0;
-layout(location = 1) in vec4 beamspaceColor;
+layout(location = 1) in vec2 beamspaceCoord;
 layout(location = 2) in vec4 beamspacePolarization;
 layout(location = 0) out vec4 fragmentColor;
+layout(binding=1) uniform sampler2D spatialSpectrumCanvasSource;
 layout(binding=3) uniform sampler2D cameraImage;
 
 layout(std140, binding = 0) uniform buf {
@@ -58,14 +59,16 @@ vec2 FFTBeamspaceToCameraPixel(vec2 beamspace) {
 }
 
 void main() {
+	// Sample at each displayed pixel. A narrow peak can fall entirely between
+	// mesh vertices when a wide-angle camera projects it into a small area.
+	vec4 beamspaceColor = texture(spatialSpectrumCanvasSource, beamspaceCoord);
 	vec2 sourceCoord = vec2(flipCamera == 1 ? 1 - qt_TexCoord0.x : qt_TexCoord0.x, qt_TexCoord0.y);
-	vec2 sourceCoordBeamspace = FFTBeamspaceToCameraPixel(sourceCoord - 0.5);
+	if (rawBeamspace == 1)
+		sourceCoord = FFTBeamspaceToCameraPixel(sourceCoord - 0.5);
 
-	vec4 s = texture(cameraImage, rawBeamspace == 1 ? sourceCoordBeamspace : sourceCoord);
-
-	if (rawBeamspace == 1 && (sourceCoordBeamspace.x < 0 || sourceCoordBeamspace.x > 1 || sourceCoordBeamspace.y < 0 || sourceCoordBeamspace.y > 1)) {
+	vec4 s = texture(cameraImage, sourceCoord);
+	if (rawBeamspace == 1 && (sourceCoord.x < 0 || sourceCoord.x > 1 || sourceCoord.y < 0 || sourceCoord.y > 1))
 		s = vec4(0.0);
-	}
 
 	if (renderStyle == 1) {
         float heat = beamspaceColor.g;
