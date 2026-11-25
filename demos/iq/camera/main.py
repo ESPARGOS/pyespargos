@@ -421,6 +421,9 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
         self.clearImage()
 
     def _start_iq_camera(self):
+        # Qt can deliver the queued initialization signal during shutdown.
+        if self._stop.is_set():
+            return
         self.iqcontrol = self.create_iq_controller()
         self.iqcontrol.calibrationChanged.connect(self._on_calibration_changed)
         self.iqcontrol.configApplied.connect(self._capture_config_applied)
@@ -434,9 +437,8 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
         self._manager.start()
 
     def onAboutToQuit(self):
-        if getattr(self, "_shutdown_started", False):
+        if self._stop.is_set():
             return
-        self._shutdown_started = True
         # Capture management must not reconfigure the array while it returns to WiFi mode
         self._stop.set()
         if self._manager.is_alive():
@@ -445,12 +447,7 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
             self._processor.join()
         self._dsp_executor.shutdown(wait=True, cancel_futures=True)
         self.camera_view.stop()
-        if self.iqcontrol is not None:
-            self.iqcontrol.close()
-            with self.iqcontrol._reference_io_lock:
-                super().onAboutToQuit()
-        else:
-            super().onAboutToQuit()
+        super().onAboutToQuit()
 
     def exec(self):
         try:

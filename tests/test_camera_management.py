@@ -161,3 +161,9 @@ def test_rejected_startup_settings_release_hardware_before_pool_closes(monkeypat
     with pytest.raises(ValueError, match="holdoff"):
         app._create_receiver(owner)
     owner.configure.assert_called_once_with(mode="wifi")
+
+
+def test_queued_initialization_after_shutdown_cannot_reopen_the_pool():
+    stopped = threading.Event()
+    stopped.set()
+    EspargosIQCamera._start_iq_camera(SimpleNamespace(_stop=stopped))
