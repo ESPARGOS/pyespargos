@@ -59,7 +59,7 @@ sudo pacman -S python python-pip
 #### 2. Clone the repository
 
 ```bash
-git clone https://github.com/ESPARGOS/pyespargos.git
+git clone --recurse-submodules https://github.com/ESPARGOS/pyespargos.git
 ```
 
 #### 3. Create and activate a virtual environment
@@ -127,7 +127,7 @@ python --version
 #### 2. Clone the repository
 
 ```cmd
-git clone https://github.com/ESPARGOS/pyespargos.git
+git clone --recurse-submodules https://github.com/ESPARGOS/pyespargos.git
 ```
 
 #### 3. Create and activate a virtual environment
@@ -194,7 +194,7 @@ python3 --version
 #### 2. Clone the repository
 
 ```bash
-git clone https://github.com/ESPARGOS/pyespargos.git
+git clone --recurse-submodules https://github.com/ESPARGOS/pyespargos.git
 ```
 
 #### 3. Create and activate a virtual environment
