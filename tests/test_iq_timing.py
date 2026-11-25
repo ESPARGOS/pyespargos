@@ -6,7 +6,7 @@ from espargos.iq_timing import TXRXDelayCalibration
 
 
 def calibration():
-    return Calibration(tuple(CalibrationGroup((AntennaCorrection(CalibrationState(Antenna("board", i), role, 2380e6, 80e6, 1, 1), 0, 0),)) for i, role in enumerate(("rx", "tx"))))
+    return Calibration(tuple(CalibrationGroup((AntennaCorrection(CalibrationState(Antenna("board", i), role, 2380e6, 80e6, 1, 1, sample_origin_ns=0), 0, 0),)) for i, role in enumerate(("rx", "tx"))))
 
 
 def response(delay):
@@ -33,7 +33,7 @@ def test_timing_requires_coherent_rx_and_tx_groups():
 
 
 def test_internal_probe_delay_fit():
-    from espargos.iq_timing_capture import _delay
+    from espargos._iq_calibration.delay import _delay
 
     for samples in (256, 1024):
         frequencies = np.fft.fftfreq(samples)
@@ -52,7 +52,7 @@ def test_per_transmitter_delay_correction():
 
 
 def test_internal_probe_rejects_silence():
-    from espargos.iq_timing_capture import _delay
+    from espargos._iq_calibration.delay import _delay
 
     with pytest.raises(ValueError, match="No clear"):
         _delay(np.zeros(256), 80e6)
@@ -96,7 +96,7 @@ def test_capture_cleanup_attempts_all_subscriptions():
 @pytest.mark.parametrize("path,delays,match", [("invalid", None, "Choose reference"), ("antenna_r", None, "requires reference_delays")])
 def test_invalid_timing_route_does_not_touch_hardware(path, delays, match):
     from unittest.mock import Mock
-    from espargos.iq_timing_capture import measure
+    from espargos._iq_calibration.delay import measure
 
     owner = Mock()
     with pytest.raises(ValueError, match=match):
@@ -106,12 +106,12 @@ def test_invalid_timing_route_does_not_touch_hardware(path, delays, match):
 
 def test_timing_without_both_roles_does_not_change_capture_settings():
     from unittest.mock import Mock, patch
-    from espargos.iq_timing_capture import measure
+    from espargos._iq_calibration.delay import measure
 
     board = Mock(host="board")
     board.iq.get_config.return_value = {"modes": ["iq_rx"] * 8}
     owner = Mock(boards=[board])
-    with patch("espargos.iq_timing_capture._rpc", return_value={}):
+    with patch("espargos._iq_calibration.delay._rpc", return_value={}):
         with pytest.raises(ValueError, match="needs running IQ receivers and transmitters"):
             measure(owner, [Antenna("board", 0)], "reference", None, 5)
     owner.refresh_calibration.assert_not_called()
@@ -120,13 +120,13 @@ def test_timing_without_both_roles_does_not_change_capture_settings():
 
 def test_invalid_timing_path_delay_does_not_change_capture_settings():
     from unittest.mock import Mock, patch
-    from espargos.iq_timing_capture import measure
+    from espargos._iq_calibration.delay import measure
 
     board = Mock(host="board")
-    board.iq.get_config.return_value = {"modes": ["iq_tx", "iq_rx"] + ["wifi"] * 6}
+    board.iq.get_config.return_value = {"adc_decimation": 1, "modes": ["iq_tx", "iq_rx"] + ["wifi"] * 6}
     owner = Mock(boards=[board])
     tx, rx = Antenna("board", 0), Antenna("board", 1)
-    with patch("espargos.iq_timing_capture._rpc", return_value={"sensors": [{"samples": 256}] * 8}):
+    with patch("espargos._iq_calibration.delay._rpc", return_value={"sensors": [{"samples": 256}] * 8}):
         with pytest.raises(ValueError, match="finite and nonnegative"):
             measure(owner, [tx, rx], "antenna_r", {(tx, rx): -1e-9}, 5)
     owner.refresh_calibration.assert_not_called()
@@ -136,10 +136,10 @@ def test_invalid_timing_path_delay_does_not_change_capture_settings():
 @pytest.mark.parametrize("restore_failure", [False, True])
 def test_timing_failure_restores_every_board_and_keeps_tx_muted(restore_failure):
     from unittest.mock import Mock, patch
-    from espargos.iq_timing_capture import measure
+    from espargos._iq_calibration.delay import measure
 
     boards = [Mock(host=host) for host in ("board", "other")]
-    config = {"modes": ["iq_rx", "iq_tx"] + ["wifi"] * 6, "rf_switch": 2, "receivers": [], "trigger": {"mode": "off"}}
+    config = {"adc_decimation": 1, "modes": ["iq_rx", "iq_tx"] + ["wifi"] * 6, "rf_switch": 2, "receivers": [], "trigger": {"mode": "off"}}
     boards[0].iq.get_config.return_value = config
     boards[1].iq.get_config.return_value = dict(config, modes=["wifi"] * 8)
     if restore_failure:
@@ -156,14 +156,14 @@ def test_timing_failure_restores_every_board_and_keeps_tx_muted(restore_failure)
         if payload == {"muted": True, "steering": {"phase_deg": [0] * 8, "delay_samples": [0] * 8}}:
             raise RuntimeError("prepare failed")
 
-    with patch("espargos.iq_timing_capture._rpc", side_effect=rpc), patch("espargos.iq_timing_capture._Captures") as captures, patch("espargos.iq_timing_capture.compute_reference_path_delays", return_value=np.zeros((2, 2, 4))):
+    with patch("espargos._iq_calibration.delay._rpc", side_effect=rpc), patch("espargos._iq_calibration.delay._Captures") as captures, patch("espargos._iq_calibration.delay.compute_reference_path_delays", return_value=np.zeros((2, 2, 4))):
         for board in boards:
             board.revision.antenna_id_to_row_col.side_effect = lambda a: divmod(a, 4)
         with pytest.raises(ExceptionGroup if restore_failure else RuntimeError):
             measure(owner, [Antenna("board", 0), Antenna("board", 1)], "reference", None, 5)
         captures.return_value.close.assert_called_once()
     for board in boards:
-        board.iq.set_config.assert_called_once_with({k: config[k] for k in ("rf_switch", "receivers", "trigger")})
+        board.iq.set_config.assert_called_once_with({k: config[k] for k in ("rf_switch", "receivers", "trigger", "adc_decimation")})
         assert (board.host, "set_iq_tx", {"muted": True}) in calls
     assert not any(payload and payload.get("muted") is False for _, _, payload in calls)
 

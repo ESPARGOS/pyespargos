@@ -76,5 +76,8 @@ class TxRxDelayCalibration:
     def response(self, transmitter, frequencies_hz):
         """Remove hardware delay at absolute RF frequencies, without shifting carrier phase."""
         center = self.calibration.groups[0].corrections[0].state.frequency_hz
-        offsets = np.asarray(frequencies_hz) - center
-        return np.exp(2j * np.pi * offsets * self.delays_s[transmitter])
+        return self.correction(transmitter, np.asarray(frequencies_hz) - center)
+
+    def correction(self, transmitter, baseband_frequencies_hz):
+        """Remove hardware delay at frequency offsets relative to the carrier."""
+        return np.exp(2j * np.pi * np.asarray(baseband_frequencies_hz) * self.delays_s[transmitter])
