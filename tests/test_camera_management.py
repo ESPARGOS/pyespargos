@@ -168,6 +168,19 @@ def test_rejected_startup_settings_release_hardware_before_pool_closes(monkeypat
     owner.configure.assert_called_once_with(mode="wifi")
 
 
+def test_partial_array_role_change_is_unwound_before_pool_closes():
+    from unittest.mock import Mock, call
+
+    pool = Mock(boards=[object(), object()])
+    pool.configure.side_effect = [OSError("second board timed out"), None]
+    camera = EspargosIQCamera.__new__(EspargosIQCamera)
+    camera.appconfig = SimpleNamespace(get=lambda _: EspargosIQCamera.DEFAULT_CONFIG["capture"])
+    with pytest.raises(OSError, match="second board"):
+        camera._create_receiver(pool)
+    assert pool.configure.call_args_list == [call(mode="iq_rx"), call(mode="wifi")]
+    pool.iq.apply_config.assert_not_called()
+
+
 def test_queued_initialization_after_shutdown_cannot_reopen_the_pool():
     stopped = threading.Event()
     stopped.set()

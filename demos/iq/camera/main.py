@@ -180,8 +180,8 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
         capture["trigger"] = {"mode": mode, **{key: trigger.get(key, value) for key, value in defaults[mode].items() if key != "mode"}}
         if len(owner.boards) > 1 and capture["trigger"]["mode"] == "signal":
             raise ValueError("Signal trigger requires one board; choose capture.trigger.mode=interval or accumulate for a combined array")
-        receiver = super()._create_receiver(owner)
         try:
+            receiver = super()._create_receiver(owner)
             receiver.apply_config(capture)
         except Exception as error:
             # initialize_pool closes the connection when receiver setup fails.
