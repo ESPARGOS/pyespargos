@@ -16,7 +16,7 @@ def test_threshold_update_cannot_restore_a_stale_trigger_mode():
         autoThreshold=True,
         _noise=None,
         _capture_time=0,
-        iqcontrol=SimpleNamespace(referenceBusy=False, _reference_io_lock=threading.Lock()),
+        iqcontrol=SimpleNamespace(referenceBusy=False, _reference_io_lock=threading.Lock(), apply_capture_patch=applied.append),
         receiver=SimpleNamespace(get_config=lambda: {"trigger": current}, apply_config=applied.append),
     )
     EspargosIQCamera._adjust_trigger_threshold(app, {"trigger": old})
@@ -33,7 +33,7 @@ def test_threshold_update_preserves_a_new_manual_threshold():
         autoThreshold=True,
         _noise=None,
         _capture_time=0,
-        iqcontrol=SimpleNamespace(referenceBusy=False, _reference_io_lock=threading.Lock()),
+        iqcontrol=SimpleNamespace(referenceBusy=False, _reference_io_lock=threading.Lock(), apply_capture_patch=applied.append),
         receiver=SimpleNamespace(get_config=lambda: {"trigger": {"mode": "signal", "threshold": 128}}, apply_config=applied.append),
     )
     EspargosIQCamera._adjust_trigger_threshold(app, {"trigger": {"mode": "signal", "threshold": 64}})
@@ -102,7 +102,7 @@ def test_auto_threshold_respects_firmware_limits(power, age, quiet, expected):
         autoThreshold=True,
         _noise=SimpleNamespace(power=np.array([power])) if power is not None else None,
         _capture_time=time.monotonic() - age,
-        iqcontrol=SimpleNamespace(referenceBusy=False, _reference_io_lock=threading.Lock()),
+        iqcontrol=SimpleNamespace(referenceBusy=False, _reference_io_lock=threading.Lock(), apply_capture_patch=updates.append),
         receiver=SimpleNamespace(get_config=lambda: {"trigger": trigger}, apply_config=updates.append),
     )
     EspargosIQCamera._adjust_trigger_threshold(app, {"trigger": trigger})
@@ -120,9 +120,14 @@ def test_reconnect_restores_requested_settings_only_after_role_loss(reboot):
     disconnected.iq.get_config.return_value = {"modes": ["wifi" if reboot else "iq_rx"] * 8}
     camera.pool.boards = [healthy, disconnected]
     camera.receiver = Mock()
-    camera.iqcontrol = Mock(_reference_io_lock=threading.Lock(), syncNeeded=False)
-    camera._capture_config = {"rf_freq_hz": 2457000000, "trigger": {"mode": "interval"}}
-    camera._capture_config_applied({"rx_gain": 28})
+    from demos.iq.common.application import IQController
+
+    camera.pool.iq = camera.receiver
+    camera.iqcontrol = IQController(camera.pool, capture_config={"rf_freq_hz": 2457000000, "trigger": {"mode": "interval"}})
+    camera.iqcontrol._check_calibration_config = Mock()
+    camera.iqcontrol.apply_config_json('{"rx_gain": 28}')
+    camera.receiver.apply_config.reset_mock()
+    camera.iqcontrol._set_sync_needed(False)
     camera._latest_signal_position = (3, 45, 56)
     camera._reconnect_capture()
     camera.pool.reconnect.assert_called_once()
@@ -131,21 +136,21 @@ def test_reconnect_restores_requested_settings_only_after_role_loss(reboot):
     if reboot:
         camera.pool.configure.assert_called_once_with(mode="iq_rx")
         camera.receiver.apply_config.assert_called_once_with({"rf_freq_hz": 2457000000, "rx_gain": 28, "trigger": {"mode": "interval"}})
-        camera.iqcontrol._set_sync_needed.assert_called_once_with(True)
+        assert camera.iqcontrol.syncNeeded
     else:
         camera.pool.configure.assert_not_called()
         camera.receiver.apply_config.assert_not_called()
-        camera.iqcontrol._set_sync_needed.assert_not_called()
+        assert not camera.iqcontrol.syncNeeded
 
 
 def test_feed_change_discards_old_image_and_gain_edit_preserves_it():
     from unittest.mock import Mock
 
-    camera = SimpleNamespace(_capture_config={"rf_switch": 2, "rf_freq_hz": 2457000000}, clearImage=Mock(), iqcontrol=SimpleNamespace(syncNeeded=False))
+    camera = SimpleNamespace(_display_feed=2, clearImage=Mock(), iqcontrol=SimpleNamespace(syncNeeded=False))
     for patch in ({"rx_gain": 31}, {"rf_switch": 2}, {"rf_switch": 3}):
         EspargosIQCamera._capture_config_applied(camera, patch)
     camera.clearImage.assert_called_once()
-    assert camera._capture_config == {"rf_switch": 3, "rf_freq_hz": 2457000000, "rx_gain": 31}
+    assert camera._display_feed == 3
 
 
 def test_rejected_startup_settings_release_hardware_before_pool_closes(monkeypatch):
@@ -211,3 +216,32 @@ def test_signal_previews_use_one_grid_and_never_rewind_a_complete_capture():
     assert camera._pending.get_nowait()[1] is newer
     camera._on_capture(complete)
     assert camera._pending.empty()
+
+
+@pytest.mark.parametrize(
+    "mode,period,role,expected",
+    [
+        ("signal", 4096, "iq_rx", None),
+        ("interval", 3000000, "iq_rx", None),
+        ("interval", 4096, "iq_rx", "Waiting for synchronized interval captures"),
+        ("interval", 4096, "wifi", "Receiver left IQ mode"),
+    ],
+)
+def test_silent_scheduled_capture_and_role_loss(mode, period, role, expected):
+    import time
+    from unittest.mock import Mock
+
+    config = {"modes": ["iq_rx"] * 8, "trigger": {"mode": mode, "interval_chunks": period}, "adc_decimation": 1}
+    second = Mock()
+    second.iq.get_config.return_value = {"modes": [role] * 8}
+    state = SimpleNamespace(pool=SimpleNamespace(boards=[Mock(), second]), _capture_time=time.monotonic() - 10, iqcontrol=Mock(syncNeeded=False))
+    status = EspargosIQCamera._receiver_status(state, config)
+    if expected:
+        assert status.startswith(expected)
+    else:
+        assert status is None
+        second.iq.get_config.assert_not_called()
+    if role != "iq_rx":
+        state.iqcontrol._set_sync_needed.assert_called_once_with(True)
+    else:
+        state.iqcontrol._set_sync_needed.assert_not_called()

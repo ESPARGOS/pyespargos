@@ -51,10 +51,13 @@ class IQController(PyQt6.QtCore.QObject):
         pool: Pool,
         logger=None,
         parent=None,
+        *,
+        capture_config=None,
     ):
         super().__init__(parent)
         self.pool = pool
         self.receiver = pool.iq
+        self._desired_capture = None if capture_config is None else dict(capture_config)
         self.logger = logger if logger is not None else logging.getLogger("pyespargos.iq_application")
         # GUI toggle: apply the fine calibration to displayed data
         self.apply_calibration = False
@@ -211,7 +214,7 @@ class IQController(PyQt6.QtCore.QObject):
             with self._reference_io_lock:
                 if self._closing:
                     return
-                self.receiver.apply_config(config)
+                self.apply_capture_patch(config)
             self._check_calibration_config(config)
             self._correction_cache.clear()
             self.configApplied.emit(config)
@@ -261,6 +264,22 @@ class IQController(PyQt6.QtCore.QObject):
 
     # ---- combined synchronization and calibration ----
 
+    def apply_capture_patch(self, config):
+        """Apply and remember a receiver edit while the caller holds the I/O lock."""
+        self.receiver.apply_config(config)
+        if self._desired_capture is not None:
+            self._desired_capture.update(config)
+
+    def ensure_capture_mode(self):
+        """Called under the reference I/O lock before calibration or after reconnect."""
+        if all(mode == "iq_rx" for board in self.pool.boards for mode in board.iq.get_config()["modes"]):
+            return
+        if self._desired_capture is None:
+            raise RuntimeError("Receiver left IQ mode. Restart the IQ demo to restore its capture settings.")
+        self.pool.configure(mode="iq_rx")
+        self.receiver.apply_config(self._desired_capture)
+        self._set_sync_needed(True)
+
     @PyQt6.QtCore.pyqtSlot()
     def sync_async(self):
         if not self._begin_reference():
@@ -278,10 +297,7 @@ class IQController(PyQt6.QtCore.QObject):
                     pending_edits.join()
                 with self._reference_io_lock:
                     if not self._closing:
-                        # A reboot returns the sensors to WiFi. Pool.calibrate()
-                        # selects its calibration from those live roles.
-                        if any(mode != "iq_rx" for board in self.pool.boards for mode in board.iq.get_config()["modes"]):
-                            raise RuntimeError("Waiting for IQ capture to reconnect. Try calibration again when the receiver is ready.")
+                        self.ensure_capture_mode()
                         self.pool.calibrate()
                         succeeded = True
             except Exception as e:
@@ -416,9 +432,9 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
         self.pool.start_processing()
         return True
 
-    def create_iq_controller(self) -> IQController:
+    def create_iq_controller(self, *, capture_config=None) -> IQController:
         """Create the QML adapter for this application's pool."""
-        controller = IQController(self.pool, logger=self.logger, parent=self)
+        controller = IQController(self.pool, logger=self.logger, parent=self, capture_config=capture_config)
         if not hasattr(self, "_iq_controllers"):
             self._iq_controllers = []
         self._iq_controllers.append(controller)

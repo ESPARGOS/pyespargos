@@ -34,6 +34,7 @@ from demos.common.camera.view import CameraView
 from demos.common.application import CombinedArrayMixin
 from espargos import CHUNK_SAMPLES
 from espargos.iq_packet import IQ_SYNC_INFO_GRID_SYNCED
+from espargos.iq_rx_stream import receive_sample_rate
 from demos.iq.common.application import ESPARGOSIQApplication
 from demos.iq.camera.processing import DirectionHistory, peak_directions
 from demos.iq.camera.worker import process_capture, initialize_processor
@@ -190,7 +191,8 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
             except Exception as cleanup:
                 error.add_note(f"Could not restore WiFi mode: {cleanup}")
             raise
-        self._capture_config = capture
+        self._initial_capture = capture
+        self._display_feed = capture["rf_switch"]
         return receiver
 
     # ---- capture events (pool processing thread) ----
@@ -373,8 +375,9 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
     # ---- capture management (worker thread) ----
 
     def _capture_config_applied(self, patch):
-        changed_feed = "rf_switch" in patch and patch["rf_switch"] != self._capture_config.get("rf_switch")
-        self._capture_config = {**self._capture_config, **patch}
+        feed = patch.get("rf_switch", self._display_feed)
+        changed_feed = feed != self._display_feed
+        self._display_feed = feed
         if changed_feed or self.iqcontrol.syncNeeded:
             self.clearImage()
 
@@ -384,10 +387,21 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
             self.pool.reconnect()
             self.receiver.clear_chunks()
             self._latest_signal_position = None
-            if any(any(mode != "iq_rx" for mode in board.iq.get_config()["modes"]) for board in self.pool.boards):
-                self.pool.configure(mode="iq_rx")
-                self.receiver.apply_config(self._capture_config)
-                self.iqcontrol._set_sync_needed(True)
+            self.iqcontrol.ensure_capture_mode()
+
+    def _receiver_status(self, config):
+        """Distinguish an idle RF scene from missing scheduled array captures."""
+        wrong_mode = any(mode != "iq_rx" for mode in config["modes"])
+        trigger = config["trigger"]
+        if not wrong_mode and trigger["mode"] == "interval" and not self.iqcontrol.syncNeeded:
+            interval = trigger["interval_chunks"] * CHUNK_SAMPLES / receive_sample_rate(config)
+            if time.monotonic() - self._capture_time > max(2 * STATE_POLL_INTERVAL_S, 3 * interval):
+                wrong_mode = any(mode != "iq_rx" for board in self.pool.boards[1:] for mode in board.iq.get_config()["modes"])
+                if not wrong_mode:
+                    return "Waiting for synchronized interval captures"
+        if wrong_mode:
+            self.iqcontrol._set_sync_needed(True)
+            return "Receiver left IQ mode · open RX to resume"
 
     def _manage_capture(self):
         """Monitor receiver state without blocking capture or the GUI."""
@@ -403,9 +417,9 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
                     reconnect = False
                 config = self.receiver.get_config()
                 self.iqcontrol._check_calibration_config(config)
-                if self.appconfig.get("receiver", "auto_threshold"):
+                self._status = self._receiver_status(config)
+                if self._status is None and not self.iqcontrol.syncNeeded and self.autoThreshold:
                     self._adjust_trigger_threshold(config)
-                self._status = None
             except Exception as error:
                 self._status = str(error)
                 self.logger.warning("Capture management: %s", error)
@@ -442,7 +456,7 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
                 current = self.receiver.get_config().get("trigger", {})
                 if current != trigger:
                     return
-                self.receiver.apply_config({"trigger": {**current, "threshold": threshold}})
+                self.iqcontrol.apply_capture_patch({"trigger": {**current, "threshold": threshold}})
 
     def _on_calibration_changed(self):
         self._status = None
@@ -452,7 +466,7 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
         # Qt can deliver the queued initialization signal during shutdown.
         if self._stop.is_set():
             return
-        self.iqcontrol = self.create_iq_controller()
+        self.iqcontrol = self.create_iq_controller(capture_config=self._initial_capture)
         self.iqcontrol.calibrationChanged.connect(self._on_calibration_changed)
         self.iqcontrol.configApplied.connect(self._capture_config_applied)
         self.engine.rootContext().setContextProperty("iqcontrol", self.iqcontrol)

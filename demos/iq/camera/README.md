@@ -17,8 +17,10 @@ the demo starts at 2472 MHz.
 and calibrates the array. After a change that invalidates calibration, open
 RX and press **Sync + Calibration**. Changes to manual gain preserve calibration.
 Expand **Show advanced settings** for the sample rate, capture path and filter.
-If a controller reboots, the camera restores the capture settings. Press
-**Sync + Calibration** to resume direction estimates. Exiting the demo returns the sensors to WiFi mode.
+If a controller reboots, the camera restores its capture settings. If another
+client switches a board out of IQ mode, **Sync + Calibration** restores the
+last requested settings across the array. Press it to resume direction
+estimates in either case. Exiting the demo returns the sensors to WiFi mode.
 
 **App** controls the detection threshold above the noise floor, beamforming
 method, direction labels, optional waterfall and the shared camera settings.
