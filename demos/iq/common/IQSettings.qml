@@ -27,7 +27,7 @@ import QtQuick.Layouts
  */
 GridLayout {
 	id: iqsettings
-	enabled: controller && !controller.referenceBusy && !_loading
+	enabled: controller && !controller.referenceBusy && hasSnapshot
 	columns: 2
 	columnSpacing: 16
 	rowSpacing: 10
@@ -35,7 +35,9 @@ GridLayout {
 	// IQController backend (context property provided by the application)
 	property var controller: null
 
-	property bool _loading: true
+	property bool hasSnapshot: false
+	property bool _loading: false
+	property int editingTriggerField: -1
 	property string settingsError: ""
 	property var thresholdControl: null
 	property var triggerDefaults: ({})
@@ -121,7 +123,7 @@ GridLayout {
 			const cfg = JSON.parse(snapshot)
 			var rx = Array.isArray(cfg.receivers) && cfg.receivers.length > 0
 				? cfg.receivers[0] : {}
-			if (rx.rf_freq_hz)
+			if (rx.rf_freq_hz && !freqField.edited)
 				freqField.text = String(rx.rf_freq_hz / 1e6)
 			capturePath.currentIndex = cfg.capture_path === "bluetooth" ? 1 : 0
 			btRate.currentIndex = Math.max(0, bluetoothRates.indexOf(cfg.bluetooth_sample_rate_hz))
@@ -132,28 +134,31 @@ GridLayout {
 			}
 			if (cfg.filter_bw_mhz !== undefined) {
 				lpfSwitch.checked = cfg.filter_bw_mhz > 0
-				if (cfg.filter_bw_mhz > 0)
+				if (cfg.filter_bw_mhz > 0 && !lpfBwSlider.pressed)
 					lpfBwSlider.value = Math.min(Math.max(cfg.filter_bw_mhz, lpfBwSlider.from), lpfBwSlider.to)
 			}
 			if (cfg.rf_switch !== undefined)
 				rfSwitchCombo.value = cfg.rf_switch
 			if (rx.gain_mode !== undefined)
 				agcSwitch.checked = rx.gain_mode === "auto"
-			if (rx.rx_gain !== undefined)
+			if (rx.rx_gain !== undefined && !rxGainSlider.pressed)
 				rxGainSlider.value = Math.min(Math.max(rx.rx_gain, rxGainSlider.from), rxGainSlider.to)
 			if (cfg.trigger !== undefined) {
-				triggerCombo.currentIndex = triggerModeIndex(cfg.trigger.mode)
+				const nextMode = triggerModeIndex(cfg.trigger.mode)
+				if (nextMode !== triggerCombo.currentIndex) editingTriggerField = -1
+				triggerCombo.currentIndex = nextMode
 				if (cfg.trigger.mode === "downsample") streamRate.currentIndex = Math.max(0, streamRates.indexOf(cfg.trigger.sample_rate_hz))
 				var defs = triggerModes[triggerCombo.currentIndex].fields
 				var vals = []
 				for (var i = 0; i < defs.length; ++i) {
 					var w = cfg.trigger[defs[i].k]
 					if (Array.isArray(w)) w = w.join(",")
-					vals.push("" + (w !== undefined ? w : defs[i].v))
+					vals.push(i === editingTriggerField ? triggerValues[i] : String(w ?? defs[i].v))
 				}
 				triggerValues = vals
 			}
 			gainPhaseSwitch.checked = controller.gain_phase_compensation
+			hasSnapshot = true
 		} catch (e) {
 			console.warn("IQSettings: could not load config: " + e)
 		}
@@ -282,14 +287,15 @@ GridLayout {
 					text: iqsettings.triggerValues[index] !== undefined
 						? iqsettings.triggerValues[index] : modelData.v
 					implicitWidth: 74
-					property bool edited: false
 					onTextEdited: {
 						iqsettings.triggerValues[index] = text
-						edited = true
+						iqsettings.editingTriggerField = index
 					}
 					onEditingFinished: {
-						if (edited) iqsettings.pushConfig({trigger: iqsettings.triggerConfig()})
-						edited = false
+						if (iqsettings.editingTriggerField === index) {
+							iqsettings.editingTriggerField = -1
+							iqsettings.pushConfig({trigger: iqsettings.triggerConfig()})
+						}
 					}
 				}
 			}
