@@ -32,28 +32,32 @@ threshold in RX controls when the hardware records a signal capture.
 * **Signal** is the default on one board. All eight sensors record the same
   56-chunk capture when a selected sensor crosses the amplitude threshold.
   The camera can already show a direction from synchronized chunks while
-  the complete capture is arriving. The receiver adapts the trigger threshold to the observed noise. Uncheck
-  **Automatic trigger threshold** in RX to set it manually.
+  the complete capture is arriving. The receiver adapts the trigger threshold
+  to the observed noise. Uncheck **Automatic trigger threshold** in RX to
+  set it manually.
 * **Interval** is the default on a combined array. It samples all boards on a
   shared grid. Single-board signal triggers cannot form a synchronized event
-  across independent controllers. The default interval of 4096 chunks at 80 MS/s gives one
-  snapshot every 13.1 ms. A shorter interval samples more often and uses
+  across independent controllers. The default interval of 4096 chunks at
+  80 MS/s gives one snapshot every 13.1 ms. A shorter interval samples more often and uses
   more bandwidth. Short packets can fall between snapshots.
 * **Accumulate** combines observations coherently at the configured period.
   This is useful for periodic signals.
 
 Use `-o app.capture.trigger.mode=interval` to start a single board in interval
 mode. One antenna feed stays selected until you change it in RX. Switching
-feeds can change which direct or reflected arrival is strongest.
+feeds can change which direct or reflected arrival is strongest. Switching
+between Signal and Interval at the same receiver settings preserves calibration.
 
 ## Reading the overlay
 
 Each capture is split into emissions using an adaptive frequency-dependent
 noise floor. The camera estimates a direction for each emission using MUSIC
-or Bartlett, then combines recent spatial estimates. Color stays steady across
-short packet gaps and fades after activity stops. The camera and radio update
-independently. During overload the camera processes the most recent waiting
-capture. A marker width describes the drawing, rather than angular accuracy.
+or Bartlett, then combines recent spatial estimates. A new arrival updates
+the overlay immediately after processing. With the default persistence, the
+last detection stays bright for 0.5 s and fades over the next 0.2 s. This
+keeps short packet gaps from looking like transmitter movement. Video updates
+independently. During overload the camera processes the latest waiting capture.
+Marker width controls the size of the drawing.
 
 The optional waterfall shows the FFT rows from processed captures. At
 80 MS/s each row represents 3.2 µs. Time between captures is omitted.
