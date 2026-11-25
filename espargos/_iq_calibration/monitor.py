@@ -18,6 +18,7 @@ from .pilots import pilots
 from .monitor_fit import measure
 from ..sensor_calibration import compute_reference_path_delays
 from .reference import _map
+from . import tx_settings
 
 
 def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=None, timeout=10.0, scope=None):
@@ -34,8 +35,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
 
     scope = scope or CalibrationScope(pool)
     boards = pool.boards
-    saved_rx = _map(lambda b: b.iq.get_config(), boards)
-    saved_tx = _map(lambda b: _rpc(b, "get_iq_tx"), boards)
+    saved_rx, saved_tx = tx_settings.snapshot(boards)
     targets = [[a for a in scope.ids[bi] if c["modes"][a] == "iq_tx"] for bi, c in enumerate(saved_rx)]
     selected = [(bi, a) for bi, ants in enumerate(targets) for a in ants]
     if not selected:
@@ -91,14 +91,10 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
 
         def prepare(bi):
             b = boards[bi]
-            _rpc(b, "set_iq_monitor", {"enabled": False})
             # The pilots span ±3/8 of the replay rate.
             # A narrower TX filter bends their phase enough to hide the origin.
             modes = scope.modes(bi, saved_rx[bi]["modes"])
-            settings = {"muted": True, "modes": modes}
-            if targets[bi]:
-                settings["transmitters"] = [{"antid": a, "rf_gain": {"a": 0, "b": 0}, "bandwidth_mhz": 60} for a in targets[bi]]
-            _rpc(b, "set_iq_tx", settings)
+            tx_settings.prepare_board(b, modes, targets[bi], bandwidth_mhz=60)
             wait_modes(bi, modes)
 
         _map(prepare, scope.active)
@@ -227,16 +223,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                 status.wait(b, lambda s: all(not x["enabled"] or abs(x["applied_amplitude"]) < 1e-8 for x in s["sensors"]), timeout)
                 if bi in prepared:
                     _waveform(b, {"type": "restore", "samples": length, "antennas": targets[bi]}, timeout, wait=status.wait)
-                _rpc(
-                    b,
-                    "set_iq_tx",
-                    {
-                        "muted": True,
-                        "calibration": corrections[bi] if success else saved_tx[bi]["calibration"],
-                        "steering": saved_tx[bi]["steering"],
-                        "transmitters": [{k: x[k] for k in ("antid", "frequency_hz", "rf_gain", "bandwidth_mhz", "output", "amplitude")} for x in saved_tx[bi]["sensors"]],
-                    },
-                )
+                tx_settings.restore_tx(b, saved_tx[bi], calibration=corrections[bi] if success else saved_tx[bi]["calibration"])
                 b.iq.set_config({**{k: saved_rx[bi][k] for k in ("modes", "rf_switch", "adc_decimation", "trigger")}, "receivers": [saved_rx[bi]["receivers"][a] for a in scope.ids[bi]]})
                 if success and targets[bi]:
                     restored = _rpc(b, "get_iq_tx")
@@ -250,11 +237,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             errors.append(str(error))
         for b, c in monitors.items():
             try:
-                _rpc(
-                    b,
-                    "set_iq_monitor",
-                    {k: c[k] for k in ("enabled", "gain_mode", "frequency_hz", "sample_rate_hz", "gain", "bandwidth_mhz", "samples", "interval_us", "offset_us")},
-                )
+                tx_settings.restore_monitor(b, c)
             except Exception as error:
                 errors.append(f"{b.host}: {error}")
         status.close()

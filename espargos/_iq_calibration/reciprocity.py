@@ -16,6 +16,7 @@ The boards must share their sample clock and REF source.
 
 import copy
 from .reference import _map
+from . import tx_settings
 from .reciprocity_fit import DisconnectedLinks, additional_reference, fit_links, validate_links
 from ..iq_tx_control import TXStatus, _rpc, _wait, _waveform
 
@@ -24,11 +25,6 @@ import numpy as np
 
 
 from .capture import _Captures, _grid_origin
-
-
-def _transmitter_settings(state):
-    keys = ("antid", "frequency_hz", "rf_gain", "bandwidth_mhz", "output", "amplitude")
-    return [{key: sensor[key] for key in keys} for sensor in state["sensors"]]
 
 
 def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=None, timeout=10.0, pilot_output="reference", scope=None):
@@ -55,8 +51,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
 
     scope = scope or CalibrationScope(pool)
     boards = pool.boards
-    saved_rx = _map(lambda b: b.iq.get_config(), boards)
-    saved_tx = _map(lambda b: _rpc(b, "get_iq_tx"), boards)
+    saved_rx, saved_tx = tx_settings.snapshot(boards)
     targets = [(bi, a) for bi, a in scope.pairs if saved_rx[bi]["modes"][a] == "iq_tx"]
     if len(targets) < 2:
         raise ValueError("Reciprocity calibration requires at least two selected IQ transmitters")
@@ -100,19 +95,9 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
 
         def prepare(bi):
             b = boards[bi]
-            _rpc(b, "set_iq_monitor", {"enabled": False})
-            settings = {
-                "muted": True,
-                "modes": rx_modes[bi],
-                "calibration": initial_corrections[bi],
-                "steering": steering[bi],
-            }
-            transmitters = [{"antid": a, "rf_gain": {"a": 0, "b": 0}, "bandwidth_mhz": 40} for j, a in targets if j == bi]
-            transmitters += [{"antid": a, "amplitude": 0} for a, mode in enumerate(saved_rx[bi]["modes"]) if mode == "iq_tx" and a not in scope.ids[bi]]
-            # The firmware rejects empty transmitter lists on RX-only boards.
-            if transmitters:
-                settings["transmitters"] = transmitters
-            _rpc(b, "set_iq_tx", settings)
+            selected = [a for j, a in targets if j == bi]
+            silence = [a for a, mode in enumerate(saved_rx[bi]["modes"]) if mode == "iq_tx" and a not in scope.ids[bi]]
+            tx_settings.prepare_board(b, rx_modes[bi], selected, bandwidth_mhz=40, silence=silence, calibration=initial_corrections[bi], steering=steering[bi])
 
         _map(prepare, scope.active)
         if rx_gain is None:
@@ -280,15 +265,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             ants = [a for j, a in pilots if j == bi]
             if ants:
                 _waveform(b, {"type": "restore", "samples": length, "antennas": ants}, timeout, wait=capture.wait)
-            _rpc(
-                b,
-                "set_iq_tx",
-                {
-                    "muted": True,
-                    "transmitters": _transmitter_settings(saved_tx[bi]),
-                    "steering": saved_tx[bi]["steering"],
-                },
-            )
+            tx_settings.restore_tx(b, saved_tx[bi])
             s = saved_rx[bi]
             # Restore receiver preferences and roles atomically. Retuning a
             # still-receiving TX sensor to its saved RX frequency would lose
@@ -388,15 +365,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                     if ants:
                         _wait(b, lambda state: all(state["sensors"][a]["applied_mode"] == "iq_rx" for a in ants), timeout)
                         _waveform(b, {"type": "restore", "samples": length, "antennas": ants}, timeout)
-                    _rpc(
-                        b,
-                        "set_iq_tx",
-                        {
-                            "muted": True,
-                            "transmitters": _transmitter_settings(saved_tx[bi]),
-                            "steering": saved_tx[bi]["steering"],
-                        },
-                    )
+                    tx_settings.restore_tx(b, saved_tx[bi])
                     b.iq.set_config({**{k: saved_rx[bi][k] for k in ("rf_switch", "adc_decimation", "trigger")}, "receivers": [saved_rx[bi]["receivers"][a] for a in scope.ids[bi]]})
                 except Exception as error:
                     errors.append(f"{b.host}: {error}")
@@ -407,24 +376,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
         for bi in scope.active:
             b, monitor = boards[bi], monitors[bi]
             try:
-                _rpc(
-                    b,
-                    "set_iq_monitor",
-                    {
-                        k: monitor[k]
-                        for k in (
-                            "enabled",
-                            "gain_mode",
-                            "frequency_hz",
-                            "sample_rate_hz",
-                            "gain",
-                            "bandwidth_mhz",
-                            "samples",
-                            "interval_us",
-                            "offset_us",
-                        )
-                    },
-                )
+                tx_settings.restore_monitor(b, monitor)
             except Exception as error:
                 errors.append(f"{b.host}: {error}")
         capture.close()

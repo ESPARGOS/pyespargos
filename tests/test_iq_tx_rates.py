@@ -148,17 +148,17 @@ def test_streamed_playback_clock_and_steering_credit():
     status.close()
 
 
-def test_half_rate_reciprocity_is_rejected_before_hardware_changes(monkeypatch):
+def test_half_rate_reciprocity_is_rejected_before_hardware_changes():
     from types import SimpleNamespace
     from espargos._iq_calibration import reciprocity
     calls = []
     board = SimpleNamespace(iq=SimpleNamespace(get_config=lambda: {'modes':['iq_tx']*8}))
     pool = SimpleNamespace(_calibrating=False, boards=[board])
     scope = SimpleNamespace(pairs=[(0,0), (0,1)])
-    def rpc(board, path):
+    def get_json(path):
         calls.append(path)
         return {'sensors':[{'sample_rate_hz':40_000_000}]*8}
-    monkeypatch.setattr(reciprocity, '_rpc', rpc)
+    board.control = SimpleNamespace(get_json=get_json)
     with pytest.raises(ValueError, match="tx_method='monitor'"):
         reciprocity.calibrate(pool, scope=scope)
     assert calls == ['get_iq_tx']
