@@ -2,6 +2,7 @@
 
 """Parse IQ-sampling chunk messages streamed by sensors in IQ mode."""
 
+import struct
 import zlib
 
 import numpy as np
@@ -57,7 +58,6 @@ class IQChunkPacket:
         self.type_header = int.from_bytes(pktbuf[0:4], byteorder="little")
         if self.type_header != IQ_CHUNK_TYPE_HEADER:
             raise ValueError("Unexpected IQ chunk type header")
-        hdr = np.frombuffer(pktbuf[4:72], dtype="<u4")
         (
             self.sequence,
             self.source_chunk_index,
@@ -76,20 +76,20 @@ class IQChunkPacket:
             fire_lo,
             fire_hi,
             self.sync_info,
-        ) = (int(x) for x in hdr)
+        ) = struct.unpack_from("<17I", pktbuf, 4)
         # Signal mode reuses the old wake-pointer diagnostic word for the
         # event's explicit total length without changing the IQC2 wire size.
         self.capture_chunk_count = self.producer_wake_write_ptr if self.flags & IQ_CHUNK_FLAG_SIGNAL_CAPTURE else 0
         self.center_freq_mhz = self.center_freq_hz / 1e6
         self.fire_time_ns = (fire_hi << 32) | fire_lo
-        self.samples = np.frombuffer(pktbuf[72 : 72 + 4 * IQ_CHUNK_SAMPLE_WORDS], dtype="<u4").copy()
+        self.samples = np.frombuffer(pktbuf, dtype="<u4", count=IQ_CHUNK_SAMPLE_WORDS, offset=72).copy()
         self.crc32 = int.from_bytes(pktbuf[72 + 4 * IQ_CHUNK_SAMPLE_WORDS : 76 + 4 * IQ_CHUNK_SAMPLE_WORDS], byteorder="little")
         # The SPI uplink between sensor and controller has no line-level CRC;
         # rare bit errors DO occur (measured: lone corrupted samples looking
         # like high-amplitude one-sample spikes). The chunk CRC is computed on
         # the sensor at emission, so verify it here and drop bad chunks, same
         # as the serialized-CSI path does.
-        if zlib.crc32(bytes(pktbuf[: 72 + 4 * IQ_CHUNK_SAMPLE_WORDS])) != self.crc32:
+        if zlib.crc32(memoryview(pktbuf)[: 72 + 4 * IQ_CHUNK_SAMPLE_WORDS]) != self.crc32:
             raise ValueError("IQ chunk CRC mismatch (uplink corruption)")
 
     @property
@@ -113,16 +113,13 @@ class IQChunkPacket:
         """Complex baseband samples. Each 32-bit dump word packs I in bits 0-9 and
         Q in bits 10-19 (both 10-bit signed two's complement); bits 20-31 carry
         rx_gain / AGC state."""
-        w = self.samples.astype(np.uint32)
-        i = (w & 0x3FF).astype(np.int32)
-        q = ((w >> 10) & 0x3FF).astype(np.int32)
-        i = np.where(i & 0x200, i - 0x400, i)
-        q = np.where(q & 0x200, q - 0x400, q)
-        # This dump tap's Q polarity is opposite to the conventional complex
-        # baseband orientation used by CSI: an RF tone above the LO otherwise
-        # appears at a negative baseband frequency. Conjugate at the interface
-        # boundary so CSI and IQ share one physical phase convention.
-        return (i - 1j * q).astype(np.complex64)
+        words = np.asarray(self.samples, dtype=np.uint32)
+        samples = np.empty(words.shape, dtype=np.complex64)
+        # Move the ten-bit sign bit to bit 31, then shift back with sign
+        # extension. Negate Q to match CSI's baseband orientation.
+        samples.real = (words << 22).view(np.int32) >> 22
+        samples.imag = -((words << 12).view(np.int32) >> 22)
+        return samples
 
     def sample_rx_gain(self):
         """Effective gain-table index stored alongside every ADC sample.

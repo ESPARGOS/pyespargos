@@ -27,3 +27,15 @@ class IQPacketOrientationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_all_signed_adc_codes_ignore_gain_and_status_bits():
+    codes = np.arange(1024, dtype=np.uint32)
+    packet = object.__new__(IQChunkPacket)
+    packet.samples = (0xFFF00000 | codes | ((1023 - codes) << 10)).astype("<u4")
+    decoded = packet.decode_iq()
+    signed = np.arange(-512, 512, dtype=np.float32)
+    expected_i = np.roll(signed, 512)
+    assert decoded.dtype == np.complex64
+    np.testing.assert_array_equal(decoded.real, expected_i)
+    np.testing.assert_array_equal(decoded.imag, -expected_i[::-1])

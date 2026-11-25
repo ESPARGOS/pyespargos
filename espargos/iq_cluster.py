@@ -91,7 +91,7 @@ class IQCluster(SensorCluster):
         if self._board_generations.setdefault(board_index, generation) != generation:
             return False
         iq = payload.decode_iq()
-        adc_peak = max(np.max(np.abs(iq.real)), np.max(np.abs(iq.imag)))
+        adc_peak = max(np.abs(iq.real).max(), np.abs(iq.imag).max())
         rx_gain = payload.sample_rx_gain()
         # A rare dump chunk can consist entirely of samples stamped with the
         # DCO servo's out-of-table shadow slot.  There is then no trustworthy
