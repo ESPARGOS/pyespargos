@@ -216,6 +216,10 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None, keep_blue
                 raise RuntimeError(f"Failed to restore reference session settings: {errors}") from errors[0]
 
 
+class _ReferenceOnsetMismatch(RuntimeError):
+    """At least one receiver captured a different waveform at the trigger."""
+
+
 def acquire_grid(pool, center, timeout=3.0, scope=None):
     """Acquire the wideband onset, then restore the operating receive filters.
 
@@ -236,7 +240,14 @@ def acquire_grid(pool, center, timeout=3.0, scope=None):
             if 0 < bandwidth < 40:
                 changed.append((board, bandwidth))
                 board.iq.set_config({"filter_bw_mhz": 40})
-        return _acquire_grid(pool, center, timeout, scope)
+        try:
+            return _acquire_grid(pool, center, timeout, scope)
+        except _ReferenceOnsetMismatch as error:
+            # An antenna signal leaking through the RF switch can arm one
+            # receiver before the wired REF gate opens. Retry at a higher
+            # trigger level, keeping the same timing and validation criteria.
+            pool._logger.info("Retrying with a higher REF onset threshold: %s", error)
+            return _acquire_grid(pool, center, timeout, scope, threshold=2 * REFERENCE_THRESHOLD)
     finally:
         errors = []
         for board, bandwidth in changed:
@@ -248,7 +259,7 @@ def acquire_grid(pool, center, timeout=3.0, scope=None):
             raise RuntimeError(f"Failed to restore analog filters after synchronization: {errors}")
 
 
-def _acquire_grid(pool, center, timeout=3.0, scope=None):
+def _acquire_grid(pool, center, timeout=3.0, scope=None, *, threshold=REFERENCE_THRESHOLD):
     """Capture one common RF onset without prior synchronization or Wi-Fi."""
     from .scope import CalibrationScope
 
@@ -294,7 +305,7 @@ def _acquire_grid(pool, center, timeout=3.0, scope=None):
             subscriptions.append((board, board.subscribe_sensor_messages(IQ_CHUNK_TYPE_HEADER, lambda m, bi=bi: receive(bi, m))))
         pool.master_board.iq.set_reference("iq", center, REFERENCE_BACKOFF)
         pool.master_board.control.command("gate_iq_reference", {"open": False})
-        scope.apply_rx({"adc_decimation": 1, "trigger": {"mode": "reference", "threshold": REFERENCE_THRESHOLD}})
+        scope.apply_rx({"adc_decimation": 1, "trigger": {"mode": "reference", "threshold": threshold}})
         configs = dict(zip(scope.active, _map(lambda i: pool.boards[i].iq.get_config(), scope.active)))
         generations = {i: cfg["config_generation"] for i, cfg in configs.items()}
         wait(lambda: all(ready.get((bi, a)) == generations[bi] for bi, a in scope.pairs), "quiet REF readiness")
@@ -314,7 +325,7 @@ def _acquire_grid(pool, center, timeout=3.0, scope=None):
                 try:
                     lag, score = relative_lag(samples, reference, packets[0].producer_wake_write_ptr - ref_edge)
                 except RuntimeError as error:
-                    raise RuntimeError(f"{pool.boards[bi].host} antenna {a} at {center / 1e6:g} MHz: {error}") from error
+                    raise _ReferenceOnsetMismatch(f"{pool.boards[bi].host} antenna {a} at {center / 1e6:g} MHz: {error}") from error
                 values[a] = packets[0].fire_time_ns + round(lag * 1e9 / 80e6)
                 scores.append(score)
             anchors.append(values)

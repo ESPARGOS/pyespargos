@@ -40,3 +40,15 @@ def test_filter_restoration_failure_cannot_publish_sync_success():
     with patch.object(reference, "_acquire_grid", return_value="synchronized"):
         with pytest.raises(RuntimeError, match="restore analog filters"):
             reference.acquire_grid(SimpleNamespace(boards=[SimpleNamespace(iq=iq)]), 2472e6, scope=SimpleNamespace(active=[0]))
+
+
+def test_mismatched_onset_retries_at_a_higher_trigger_level():
+    iq = Mock()
+    iq.get_config.return_value = {"filter_bw_mhz": 20}
+    pool = SimpleNamespace(boards=[SimpleNamespace(iq=iq)], _logger=Mock())
+    scope = SimpleNamespace(active=[0])
+    with patch.object(reference, "_acquire_grid", side_effect=[reference._ReferenceOnsetMismatch("early trigger"), [7]]) as acquire:
+        assert reference.acquire_grid(pool, 2432e6, scope=scope) == [7]
+    assert acquire.call_count == 2
+    assert acquire.call_args.kwargs["threshold"] > reference.REFERENCE_THRESHOLD
+    assert [c.args[0] for c in iq.set_config.call_args_list] == [{"filter_bw_mhz": 40}, {"filter_bw_mhz": 20}]
