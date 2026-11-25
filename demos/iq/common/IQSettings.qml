@@ -169,7 +169,10 @@ GridLayout {
 	Connections {
 		target: iqsettings.controller
 		function onConfigFailed(message) { iqsettings.settingsError = message }
-		function onConfigApplied(patch) { iqsettings.settingsError = "" }
+		function onConfigApplied(patch) {
+			// A read requested before this edit can still have shown the old value.
+			iqsettings.loadFromController()
+		}
 		function onConfigSnapshot(snapshot) { iqsettings.showConfig(snapshot) }
 		function onReferenceBusyChanged() {
 			if (!iqsettings.controller.referenceBusy) iqsettings.loadFromController()
