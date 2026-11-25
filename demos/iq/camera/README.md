@@ -33,9 +33,9 @@ threshold in RX controls when the hardware records a signal capture.
   **Automatic trigger threshold** in RX to set it manually.
 * **Interval** is the default on a combined array. It samples all boards on a
   shared grid. Single-board signal triggers cannot form a synchronized event
-  across independent controllers. A shorter interval samples more often and
-  uses more bandwidth. For example, 4096 chunks at 80 MS/s gives one snapshot
-  every 13.1 ms.
+  across independent controllers. The default interval of 4096 chunks at 80 MS/s gives one
+  snapshot every 13.1 ms. A shorter interval samples more often and uses
+  more bandwidth. Short packets can fall between snapshots.
 * **Accumulate** combines observations coherently at the configured period.
   This is useful for periodic signals.
 

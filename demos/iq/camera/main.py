@@ -156,24 +156,20 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
         self._span_mhz = (0.0, 0.0)
         self._strongest = None  # (weight, power, low MHz, high MHz, purity) within the current GUI tick
 
-    @classmethod
-    def _trigger_defaults(cls, boards):
-        return {
-            "interval": {"interval_chunks": 4096 if boards > 1 else 1024, "burst_chunks": 1, "offset_chunks": 0},
-            "accumulate": {"interval_chunks": 4096, "vector_chunks": 4, "offset_chunks": 0},
-            "signal": cls.DEFAULT_CONFIG["capture"]["trigger"],
-        }
-
     @PyQt6.QtCore.pyqtProperty("QVariantMap", constant=True)
     def triggerDefaults(self):
-        return self._trigger_defaults(len(self.pool.boards))
+        return {
+            "interval": {"interval_chunks": 4096, "burst_chunks": 1, "offset_chunks": 0},
+            "accumulate": {"interval_chunks": 4096, "vector_chunks": 4, "offset_chunks": 0},
+            "signal": self.DEFAULT_CONFIG["capture"]["trigger"],
+        }
 
     def _create_receiver(self, owner):
         capture = dict(self.appconfig.get("capture"))
         trigger = capture["trigger"]
         # ConfigManager merges dictionaries, so changing just the mode on the
         # command line otherwise leaves the default Signal-only fields behind.
-        defaults = self._trigger_defaults(len(owner.boards))
+        defaults = self.triggerDefaults
         mode = trigger["mode"]
         if mode == "auto":
             mode = "signal" if len(owner.boards) == 1 else "interval"

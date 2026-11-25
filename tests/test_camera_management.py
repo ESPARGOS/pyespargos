@@ -87,7 +87,7 @@ def test_camera_chooses_supported_trigger_and_sends_only_its_fields(monkeypatch,
     assert trigger["mode"] == expected
     assert ("capture_chunks" in trigger) == (expected == "signal")
     assert ("interval_chunks" in trigger) == (expected != "signal")
-    if boards == 4 and expected == "interval":
+    if expected == "interval":
         assert trigger["interval_chunks"] == 4096
 
 
