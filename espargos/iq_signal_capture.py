@@ -135,25 +135,27 @@ class IQSignalAssembler:
     @staticmethod
     def _identity(cluster):
         completed = np.asarray(cluster.completion, dtype=bool)
-        if not np.any(completed):
+        complete = completed.all()
+        if not completed.size or (not complete and not completed.any()):
             return None
-        flags = np.asarray(cluster.flags, dtype=np.uint32)[completed]
-        if np.any((flags & IQ_CHUNK_FLAG_SIGNAL_CAPTURE) == 0):
+
+        def present(field):
+            values = np.asarray(field, dtype=np.uint32)
+            return values if complete else values[completed]
+
+        if not np.all(present(cluster.flags) & IQ_CHUNK_FLAG_SIGNAL_CAPTURE):
             return None
-        generations = np.unique(np.asarray(cluster.config_generation, dtype=np.uint32)[completed])
-        capture_ids = np.unique(np.asarray(cluster.capture_id, dtype=np.uint32)[completed])
-        offsets = np.unique(np.asarray(cluster.capture_chunk_offset, dtype=np.uint32)[completed])
-        if generations.size != 1 or capture_ids.size != 1 or offsets.size != 1:
-            return None
-        capture_id = int(capture_ids[0])
-        offset = int(offsets[0])
-        chunk_counts = np.unique(np.asarray(cluster.capture_chunk_count, dtype=np.uint32)[completed])
-        if chunk_counts.size != 1:
-            return None
-        chunk_count = int(chunk_counts[0])
+        identity = []
+        for field in (cluster.config_generation, cluster.capture_id, cluster.capture_chunk_offset, cluster.capture_chunk_count):
+            values = present(field)
+            first = int(values.flat[0])
+            if not (values == first).all():
+                return None
+            identity.append(first)
+        generation, capture_id, offset, chunk_count = identity
         if capture_id == _INVALID_CAPTURE_ID or not IQ_SIGNAL_BANK_CHUNKS <= chunk_count <= IQ_SIGNAL_MAX_CAPTURE_CHUNKS or not 0 <= offset < chunk_count:
             return None
-        return int(generations[0]), capture_id, offset, chunk_count
+        return generation, capture_id, offset, chunk_count
 
     @staticmethod
     def _copy_position(target, source, position):
@@ -282,92 +284,62 @@ class IQSignalAssembler:
             return None
 
         run = [event.chunks[offset] for offset in range(event.chunk_count)]
-        sensor_shape = np.asarray(run[0].completion).shape
-        sample_rate = None
-        center_freq = None
-        sync_info = None
-        generations = None
-        fire_times = None
-        source_start = None
+        first = run[0]
+        sensor_shape = first.completion.shape
+        offsets = np.arange(event.chunk_count, dtype=np.uint32).reshape((-1,) + (1,) * len(sensor_shape))
+        sample_rate = int(first.sample_rate_hz.flat[0])
+        center_freq = int(first.center_freq_hz.flat[0])
+        sync_info = int(first.sync_info.flat[0])
+        fire_times = first.fire_time_ns.copy()
+        source_start = first.source_chunk_index & _SOURCE_INDEX_MASK
 
-        for offset, cluster in enumerate(run):
-            fields = (
-                np.asarray(cluster.sample_rate_hz),
-                np.asarray(cluster.center_freq_hz),
-                np.asarray(cluster.sync_info),
-                np.asarray(cluster.config_generation),
-                np.asarray(cluster.capture_id),
-                np.asarray(cluster.capture_chunk_offset),
-                np.asarray(cluster.capture_chunk_count),
-            )
-            expected_scalars = (
-                sample_rate,
-                center_freq,
-                sync_info,
-                event.generation,
-                event.capture_id,
-                offset,
-                event.chunk_count,
-            )
-            scalar_values = []
-            for field_value, expected in zip(fields, expected_scalars):
-                unique = np.unique(field_value)
-                if unique.size != 1 or (expected is not None and int(unique[0]) != expected):
-                    self._drop_event(
-                        key,
-                        f"metadata mismatch in Signal event {event.capture_id}, offset {offset}",
-                    )
-                    return None
-                scalar_values.append(int(unique[0]))
-            if offset == 0:
-                sample_rate, center_freq, sync_info = scalar_values[:3]
-                generations = np.asarray(cluster.config_generation, dtype=np.uint32).copy()
-                fire_times = np.asarray(cluster.fire_time_ns, dtype=np.uint64).copy()
-                source_start = np.asarray(cluster.source_chunk_index, dtype=np.uint32) & _SOURCE_INDEX_MASK
-                if np.unique(source_start).size != 1:
-                    self._drop_event(
-                        key,
-                        f"array source epoch mismatch in Signal event {event.capture_id}",
-                    )
-                    return None
-            elif not np.array_equal(cluster.config_generation, generations) or not np.array_equal(cluster.fire_time_ns, fire_times):
-                self._drop_event(
-                    key,
-                    f"per-sensor metadata changed inside Signal event {event.capture_id}",
-                )
-                return None
+        if not np.all(source_start == source_start.flat[0]):
+            self._drop_event(key, f"array source epoch mismatch in Signal event {event.capture_id}")
+            return None
+        if not (sync_info & IQ_SYNC_INFO_GRID_SYNCED):
+            self._drop_event(key, f"Signal event {event.capture_id} is not grid-synchronised")
+            return None
 
-            if not (sync_info & IQ_SYNC_INFO_GRID_SYNCED):
-                self._drop_event(key, f"Signal event {event.capture_id} is not grid-synchronised")
-                return None
+        # Check each field across the whole event before copying its samples.
+        # The common generation and capture ID do not establish that the grid
+        # stayed continuous or that each sensor kept its original fire epoch.
+        def field(name):
+            return np.stack([getattr(chunk, name) for chunk in run])
 
-            expected_flags = IQ_CHUNK_FLAG_SIGNAL_CAPTURE
-            if offset == 0:
-                expected_flags |= IQ_CHUNK_FLAG_SIGNAL_FIRST
-            if offset == event.chunk_count - 1:
-                expected_flags |= IQ_CHUNK_FLAG_SIGNAL_LAST
-            actual_flags = np.asarray(cluster.flags, dtype=np.uint32) & _SIGNAL_FLAG_MASK
-            if np.any(actual_flags != expected_flags):
-                self._drop_event(
-                    key,
-                    f"bad boundary markers in Signal event {event.capture_id}, offset {offset}",
-                )
-                return None
+        def mismatch(actual, expected, reason):
+            wrong = actual != expected
+            if wrong.any():
+                offset = int(np.nonzero(wrong)[0][0])
+                self._drop_event(key, f"{reason} in Signal event {event.capture_id}, offset {offset}")
+                return True
+            return False
 
-            expected_source = (source_start + offset) & _SOURCE_INDEX_MASK
-            actual_source = np.asarray(cluster.source_chunk_index, dtype=np.uint32) & _SOURCE_INDEX_MASK
-            if not np.array_equal(actual_source, expected_source):
-                self._drop_event(
-                    key,
-                    f"non-contiguous sensor source indices in Signal event {event.capture_id}, offset {offset}",
-                )
+        for name, expected in (
+            ("sample_rate_hz", sample_rate),
+            ("center_freq_hz", center_freq),
+            ("sync_info", sync_info),
+            ("config_generation", event.generation),
+            ("capture_id", event.capture_id),
+            ("capture_chunk_offset", offsets),
+            ("capture_chunk_count", event.chunk_count),
+        ):
+            if mismatch(field(name), expected, "metadata mismatch"):
                 return None
+        if mismatch(field("fire_time_ns"), fire_times, "per-sensor metadata changed"):
+            return None
+        flags = np.full_like(offsets, IQ_CHUNK_FLAG_SIGNAL_CAPTURE)
+        flags[0] |= IQ_CHUNK_FLAG_SIGNAL_FIRST
+        flags[-1] |= IQ_CHUNK_FLAG_SIGNAL_LAST
+        if mismatch(field("flags") & _SIGNAL_FLAG_MASK, flags, "bad boundary markers"):
+            return None
+        if mismatch(field("source_chunk_index") & _SOURCE_INDEX_MASK, (source_start + offsets) & _SOURCE_INDEX_MASK, "non-contiguous sensor source indices"):
+            return None
 
         capture = IQSignalCapture(
             capture_id=event.capture_id,
             sample_rate_hz=sample_rate,
             center_freq_hz=center_freq,
-            config_generation=generations,
+            config_generation=first.config_generation.copy(),
             fire_time_ns=fire_times,
             sync_info=sync_info,
             source_chunk_start=source_start.copy().reshape(sensor_shape),
