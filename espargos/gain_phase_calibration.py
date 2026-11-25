@@ -33,7 +33,7 @@ def apply(values, rx_gain):
     gains = np.asarray(rx_gain)
     # Packet gain metadata is already integral. Avoid building float masks and
     # recomputing phasors for each 256-sample sensor packet.
-    if gains.ndim <= values.ndim and np.issubdtype(gains.dtype, np.integer) and np.all(gains >= 0) and np.all(gains < len(_PHASE)):
+    if gains.ndim <= values.ndim and gains.dtype.kind in "ui" and gains.max(initial=0) < len(_PHASE) and (gains.dtype.kind == "u" or gains.min(initial=0) >= 0):
         shape = gains.shape + (1,) * (values.ndim - gains.ndim)
         return values * _CORRECTION[gains].reshape(shape)
     gains = np.asarray(gains, dtype=np.float64)
