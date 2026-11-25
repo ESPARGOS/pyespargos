@@ -906,15 +906,21 @@ class IQReceiver(ClusterAssembler):
         phases = self._calibration.phase_offsets
         if fire.shape != phases.shape:
             return False
-        present = getattr(source, "completion", None)
-        if present is None:  # A published Signal capture includes every sensor.
-            present = np.ones(fire.shape, dtype=bool)
-        if not np.any(present) or not np.all(np.isfinite(phases[present])):
-            return False
         epochs = np.frombuffer(self._calibration_epoch, np.uint64).reshape(fire.shape)
-        centers = np.broadcast_to(source.center_freq_hz, fire.shape)
-        rates = np.broadcast_to(source.sample_rate_hz, fire.shape)
-        return bool(np.array_equal(epochs[present], fire[present]) and np.all(centers[present] == self._calibration_center_frequency) and np.all(rates[present] == self._calibration_sample_rate))
+        centers = np.asarray(source.center_freq_hz)
+        rates = np.asarray(source.sample_rate_hz)
+        present = getattr(source, "completion", None)
+        # Complete captures already use the full array. Only materialize the
+        # masked sensor vectors when an incomplete cluster actually needs them.
+        if present is not None and not present.all():
+            if not present.any():
+                return False
+            phases = phases[present]
+            epochs = epochs[present]
+            centers = np.broadcast_to(centers, fire.shape)[present]
+            rates = np.broadcast_to(rates, fire.shape)[present]
+            fire = fire[present]
+        return bool(fire.size and np.isfinite(phases).all() and np.array_equal(epochs, fire) and (centers == self._calibration_center_frequency).all() and (rates == self._calibration_sample_rate).all())
 
     def cal_correction(self, fft_size=CHUNK_SAMPLES):
         """Per-bin correction vectors synthesized from the stored calibration
@@ -975,11 +981,11 @@ class IQReceiver(ClusterAssembler):
         ref = bi * 8 + row * 4 + col
         streaming = configs[bi].get("trigger", {}).get("mode") == "downsample"
         bluetooth = configs[bi].get("capture_path") == "bluetooth" or streaming
+
         def capture_profile(config):
             downsample = config.get("trigger", {}).get("mode") == "downsample"
             bt = config.get("capture_path") == "bluetooth" or downsample
-            return (bt, downsample, config.get("bluetooth_filter_khz") if bt else None,
-                    config.get("bluetooth_filter_mode", "centered") if bt else None)
+            return (bt, downsample, config.get("bluetooth_filter_khz") if bt else None, config.get("bluetooth_filter_mode", "centered") if bt else None)
 
         if any(capture_profile(configs[idx]) != capture_profile(configs[bi]) for idx in scope.active):
             raise IQCalibrationError("Select the same capture path, filter and sampling mode on participating boards")
