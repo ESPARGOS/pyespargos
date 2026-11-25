@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 """Calibrated BLE packet phase in the configured antenna layout."""
-from collections import deque
+
 from pathlib import Path
 import sys
-import time
 import numpy as np
 from PyQt6 import QtCore
 
@@ -14,12 +13,13 @@ from demos.common.phase_arrays import phase_arrays
 
 
 class BLEPhaseApplication(CombinedArrayMixin, BLEMeasurementApplication):
+    DEFAULT_CONFIG = {**BLEMeasurementApplication.DEFAULT_CONFIG, "backlog": {"size": 32, "max_age": 1.0}}
     QML_FILE = Path(__file__).with_name("Main.qml")
     updatePhases = QtCore.pyqtSignal(list)
     layoutChanged = QtCore.pyqtSignal()
 
     def __init__(self, argv):
-        self._history = deque(maxlen=32)
+        self._drawn = None
         super().__init__(argv)
 
     def _open_pool(self):
@@ -35,17 +35,14 @@ class BLEPhaseApplication(CombinedArrayMixin, BLEMeasurementApplication):
     def process_cluster(self, cluster):
         iq = self.controller.receiver.packet_iq(cluster, calibrated=self.appconfig.get("calibrated"))
         covariance, counts = iq.covariance()
+        if not np.any(np.triu(counts, k=1)):
+            return None
         order = self.indexing_matrix.ravel()
         return covariance[np.ix_(order, order)], counts[np.ix_(order, order)], cluster.rf_switch_state.ravel()[order]
 
     def _clear(self, *_):
         super()._clear()
-        self._history.clear()
-
-    def _received(self, response, received):
-        super()._received(response, received)
-        if self._response is response:
-            self._history.append((received, response))
+        self._drawn = None
 
     @QtCore.pyqtProperty(int, notify=layoutChanged)
     def numberOfRows(self):
@@ -58,14 +55,16 @@ class BLEPhaseApplication(CombinedArrayMixin, BLEMeasurementApplication):
     @QtCore.pyqtSlot()
     def updateRequest(self):
         split = self.controller.receiverConfig["polarization"] == 4
-        while self._history and time.monotonic() - self._history[0][0] >= 1:
-            self._history.popleft()
-        if not self._history:
+        self._trim_history()
+        records = self._history
+        key = (split, tuple(stamp for stamp, _ in records))
+        if key == self._drawn:
+            return
+        self._drawn = key
+        if not records:
             self.updatePhases.emit([{}] * (2 if split else 1))
             return
-        # Random packets observe only part of each feed. Accumulate pairwise
-        # measurements without mixing packet-wide phase gauges or feed domains.
-        records = [record for _, record in self._history] if split else [self._history[-1][1]]
+        records = [record for _, record in records]
         covariance, counts, feeds = map(np.asarray, zip(*records))
         self.updatePhases.emit(phase_arrays(covariance, counts, feeds, split))
 

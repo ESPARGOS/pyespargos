@@ -27,6 +27,7 @@ Common.ESPARGOSApplication {
             id: settings
             title: "Settings"
             endpoint: appconfig
+            Common.BacklogWindowSettings { configManager: settings.configManager }
             Label { text: "Calibration" }
             Switch {
                 property string configKey: "calibrated"

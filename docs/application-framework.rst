@@ -38,6 +38,18 @@ Choose a starting point
      - ``ESPARGOSTxApplication`` in ``iq/transmit-beamforming/application.py``
      - ``iq/transmit-beamforming``
 
+Packet backlog controls
+-----------------------
+
+BLE, WiFi and WiFi IQ packet demos place **Packet backlog** at the top of
+the App drawer. Use **Packets** to set the window size. Demos with an age
+cutoff or a packet admission threshold also show **Max age** or **Min. antennas**.
+WiFi storage and format filters appear below these controls.
+
+Use ``common/BacklogWindowSettings.qml`` to bind these controls to a demo's
+existing settings. CSI demos use ``wifi/common/CSIBacklogSettings.qml``,
+which binds the packet count and storage filters to the CSI backlog.
+
 A pool for the whole application
 --------------------------------
 

@@ -207,7 +207,7 @@ To inspect the channel on each antenna, run::
 
 The frequency view uses the latest packet to select Barker or L-LTF and plots
 the magnitude and phase from backlog entries of that type. By default a packet
-can appear even if only one antenna has usable training. Increase **Min. Antennas**
+can appear even if only one antenna has usable training. Increase **App → Packet backlog → Min. antennas**
 when you need the same packet on several antennas.
 Use the settings drawer to switch to the impulse response, MUSIC or MVDR delay
 profile. **Channel constellation** plots the complex channel coefficients on

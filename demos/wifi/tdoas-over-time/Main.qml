@@ -26,6 +26,10 @@ Common.ESPARGOSApplication {
 			title: "Settings"
 			endpoint: appconfig
 
+			WiFi.CSIBacklogSettings {
+				configManager: appDrawer.configManager
+			}
+
 			Label { Layout.columnSpan: 2; text: "TDoA Settings"; color: "#9fb3c8" }
 
 			Label { text: "Algorithm"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -81,19 +85,6 @@ Common.ESPARGOSApplication {
 
 			Item {
 				id: genericAppSettingsAnchor
-				Layout.columnSpan: 2
-				width: 0
-				height: 0
-				visible: false
-			}
-
-			WiFi.CSIBacklogSettings {
-				id: backlogSettings
-				insertBefore: backlogSettingsAnchor
-			}
-
-			Item {
-				id: backlogSettingsAnchor
 				Layout.columnSpan: 2
 				width: 0
 				height: 0

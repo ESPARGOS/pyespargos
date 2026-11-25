@@ -29,6 +29,11 @@ Common.ESPARGOSApplication {
             id: settings
             title: "Settings"
             endpoint: appconfig
+            Common.BacklogWindowSettings {
+                configManager: settings.configManager
+                antennaKey: "min_antennas"
+                minimumAntennas: 2
+            }
             Label { text: "Calibration" }
             Switch {
                 property string configKey: "calibrated"
@@ -87,7 +92,6 @@ Common.ESPARGOSApplication {
                     for (let i = 0; i < 8; ++i) {
                         let series = createSeries(ChartView.SeriesTypeLine, "RX " + (i + 1), frequency, value)
                         series.color = window.colors[i]
-                        series.useOpenGL = Qt.platform.os === "linux"
                         curves.push(series)
                     }
                     plots[index] = chart

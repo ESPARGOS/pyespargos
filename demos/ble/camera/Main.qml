@@ -30,9 +30,14 @@ Common.ESPARGOSApplication {
             endpoint: appconfig
             implicitWidth: 360
             objectName: "bleAppDrawer"
+            Common.BacklogWindowSettings {
+                configManager: drawer.configManager
+                sizeKey: "beamformer.backlog_size"
+                ageKey: "beamformer.backlog_age"
+                minimumPackets: 2
+            }
             Common.BeamformingSettings {
                 configManager: drawer.configManager
-                backlogTitle: "BLE backlog"
                 polarizationSupported: true
                 busy: bleController.busy || backend.initializing
                 onPolarizationRequested: mode => {

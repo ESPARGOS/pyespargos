@@ -80,55 +80,71 @@ class CameraModels(unittest.TestCase):
         # Apply stale-data opacity after automatic exposure, so normalization
         # cannot brighten an old measurement back up to full intensity.
         from demos.ble.common.beamforming import spectrum_intensity
-        overlay.publish_spatial_intensity(spectrum_intensity(power)*.5)
+
+        overlay.publish_spatial_intensity(spectrum_intensity(power) * 0.5)
         image, _ = overlay._images.requestImage("spatial", None)
         self.assertLess(image.pixelColor(0, 0).green(), initial / 2)
         self.assertEqual((image.width(), image.height()), (16, 8))
 
     def test_fresh_spectrum_is_steady_and_stale_spectrum_fades_after_contrast(self):
         import numpy as np
+
         now = time.monotonic()
-        overlay = SimpleNamespace(resolutionAzimuth=16,resolutionElevation=8,polarizationVisible=False,
-            publish_markers=Mock(),publish_spatial_intensity=Mock())
-        state = SimpleNamespace(controller=SimpleNamespace(busy=False),
-            advertisers=SimpleNamespace(selected={"public:a"},refresh=Mock()),
-            _last_list_update=now,appconfig=SimpleNamespace(get=lambda *args:1.),overlay=overlay,
-            _spectra={"public:a":(now,np.full((16,8),2.))},_directions={},_polarizations={})
-        for age, expected in ((0,1),(.08,1),(.19,1),(.6,.5),(1,0)):
-            with patch("demos.ble.camera.main.time.monotonic",return_value=now+age):
+        overlay = SimpleNamespace(resolutionAzimuth=16, resolutionElevation=8, polarizationVisible=False, publish_markers=Mock(), publish_spatial_intensity=Mock())
+        state = SimpleNamespace(
+            controller=SimpleNamespace(busy=False),
+            advertisers=SimpleNamespace(selected={"public:a"}, refresh=Mock()),
+            _last_list_update=now,
+            appconfig=SimpleNamespace(get=lambda *args: 1.0),
+            overlay=overlay,
+            _spectra={"public:a": (now, np.full((16, 8), 2.0))},
+            _directions={},
+            _polarizations={},
+        )
+        for age, expected in ((0, 1), (0.08, 1), (0.19, 1), (0.6, 0.5), (1, 0)):
+            with patch("demos.ble.camera.main.time.monotonic", return_value=now + age):
                 BLECamera.updateSpatialSpectrum(state)
-            np.testing.assert_allclose(overlay.publish_spatial_intensity.call_args.args[0],expected,atol=1e-8)
+            np.testing.assert_allclose(overlay.publish_spatial_intensity.call_args.args[0], expected, atol=1e-8)
         # Freshness does not hold an old direction when a new measurement arrives.
-        moved = np.zeros((16,8))
-        moved[12,6] = 1
-        state._spectra = {"public:a":(now+1,moved)}
-        with patch("demos.ble.camera.main.time.monotonic",return_value=now+1):
+        moved = np.zeros((16, 8))
+        moved[12, 6] = 1
+        state._spectra = {"public:a": (now + 1, moved)}
+        with patch("demos.ble.camera.main.time.monotonic", return_value=now + 1):
             BLECamera.updateSpatialSpectrum(state)
-        np.testing.assert_array_equal(overlay.publish_spatial_intensity.call_args.args[0],moved)
+        np.testing.assert_array_equal(overlay.publish_spatial_intensity.call_args.args[0], moved)
 
     def test_polarization_survives_short_coverage_gap_but_expires(self):
         import numpy as np
+
         now = time.monotonic()
-        config = SimpleNamespace(get=lambda section,key: .25 if section == "beamformer" else 1.)
-        overlay = SimpleNamespace(resolutionAzimuth=16,resolutionElevation=8,polarizationVisible=True,
-            publish_markers=Mock(),publish_spatial_intensity=Mock(),publish_polarization=Mock())
-        state = SimpleNamespace(controller=SimpleNamespace(busy=False),advertisers=SimpleNamespace(selected={"public:a"}),
-            _measurement_after=now-1,_last_list_update=now,appconfig=config,overlay=overlay,
-            _spectra={},_directions={},_polarizations={},_polarization_field=None)
-        jones = np.broadcast_to(np.array([1,1j])/np.sqrt(2),(16,8,2))
-        power = np.ones((16,8))
-        BLECamera._spectrum(state,"public:a",(power,[[0,0]],jones),now)
-        BLECamera._spectrum(state,"public:a",(power,[[0,0]],None),now+.05)
-        self.assertEqual(state._polarizations["public:a"][0],now)
-        with patch("demos.ble.camera.main.time.monotonic",return_value=now+.1):
+        config = SimpleNamespace(get=lambda section, key: 0.25 if section == "beamformer" else 1.0)
+        overlay = SimpleNamespace(resolutionAzimuth=16, resolutionElevation=8, polarizationVisible=True, publish_markers=Mock(), publish_spatial_intensity=Mock(), publish_polarization=Mock())
+        state = SimpleNamespace(
+            controller=SimpleNamespace(busy=False),
+            advertisers=SimpleNamespace(selected={"public:a"}),
+            _measurement_after=now - 1,
+            _last_list_update=now,
+            appconfig=config,
+            overlay=overlay,
+            _spectra={},
+            _directions={},
+            _polarizations={},
+            _polarization_field=None,
+        )
+        jones = np.broadcast_to(np.array([1, 1j]) / np.sqrt(2), (16, 8, 2))
+        power = np.ones((16, 8))
+        BLECamera._spectrum(state, "public:a", (power, [[0, 0]], jones), now)
+        BLECamera._spectrum(state, "public:a", (power, [[0, 0]], None), now + 0.05)
+        self.assertEqual(state._polarizations["public:a"][0], now)
+        with patch("demos.ble.camera.main.time.monotonic", return_value=now + 0.1):
             BLECamera.updateSpatialSpectrum(state)
-        vertical,horizontal = overlay.publish_polarization.call_args.args
-        np.testing.assert_allclose(abs(vertical),1/np.sqrt(2))
-        with patch("demos.ble.camera.main.time.monotonic",return_value=now+.3):
+        vertical, horizontal = overlay.publish_polarization.call_args.args
+        np.testing.assert_allclose(abs(vertical), 1 / np.sqrt(2))
+        with patch("demos.ble.camera.main.time.monotonic", return_value=now + 0.3):
             BLECamera.updateSpatialSpectrum(state)
-        vertical,horizontal = overlay.publish_polarization.call_args.args
-        np.testing.assert_array_equal(vertical,0)
-        np.testing.assert_array_equal(horizontal,0)
+        vertical, horizontal = overlay.publish_polarization.call_args.args
+        np.testing.assert_array_equal(vertical, 0)
+        np.testing.assert_array_equal(horizontal, 0)
 
     def test_late_receiver_action_after_shutdown(self):
         executor = ThreadPoolExecutor(max_workers=1)
@@ -140,21 +156,121 @@ class CameraModels(unittest.TestCase):
 
     def test_resolution_change_discards_old_spectra(self):
         import numpy as np
+
         now = time.monotonic()
-        overlay = SimpleNamespace(resolutionAzimuth=96, resolutionElevation=64,
-            polarizationVisible=False, publish_markers=Mock(), publish_spatial_intensity=Mock())
-        state = SimpleNamespace(_last_list_update=now, appconfig=SimpleNamespace(get=lambda *args: 60),
-            advertisers=SimpleNamespace(selected={'source'}), overlay=overlay,
-            controller=SimpleNamespace(busy=False), _spectra={'source': (now, np.ones((128, 96)))},
-            _directions={'source': [[0, 0]]}, _polarizations={'source': None}, _measurement_after=now-1)
+        overlay = SimpleNamespace(resolutionAzimuth=96, resolutionElevation=64, polarizationVisible=False, publish_markers=Mock(), publish_spatial_intensity=Mock())
+        state = SimpleNamespace(
+            _last_list_update=now,
+            appconfig=SimpleNamespace(get=lambda *args: 60),
+            advertisers=SimpleNamespace(selected={"source"}),
+            overlay=overlay,
+            controller=SimpleNamespace(busy=False),
+            _spectra={"source": (now, np.ones((128, 96)))},
+            _directions={"source": [[0, 0]]},
+            _polarizations={"source": None},
+            _measurement_after=now - 1,
+        )
         BLECamera.updateSpatialSpectrum(state)
         self.assertFalse(state._spectra)
         image = overlay.publish_spatial_intensity.call_args.args[0]
         self.assertEqual(image.shape, (96, 64))
         self.assertFalse(image.any())
-        BLECamera._spectrum(state, 'source', (np.ones((128, 96)), [], None), now)
+        BLECamera._spectrum(state, "source", (np.ones((128, 96)), [], None), now)
         self.assertFalse(state._spectra)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(QtWidgets is None, "Install the optional PyQt6 demo dependencies")
+def test_instantaneous_csi_rejects_reference_only_and_expires_curves():
+    from importlib import import_module
+    import numpy as np
+    import pytest
+
+    QtCharts = pytest.importorskip("PyQt6.QtCharts")
+    from espargos.ble_iq import BLEChannelResponse
+
+    demo = import_module("demos.ble.instantaneous-csi.main").BLEChannelApplication
+    qt = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    h = np.ones((1, 2, 4, 3), complex)
+    quality = np.zeros(h.shape)
+    quality[0, 0, 0] = 1
+    response = BLEChannelResponse(np.array([-1e5, 0, 1e5]), h, quality, np.ones(h.shape[:-1]))
+    app = SimpleNamespace(controller=SimpleNamespace(receiver=Mock()), appconfig=ConfigManager(demo.DEFAULT_CONFIG), _valid_bins=demo._valid_bins, _after=0, _received_at=time.monotonic())
+    app.controller.receiver.channel_response.return_value = response
+    cluster = SimpleNamespace(rf_switch_state=np.full((1, 2, 4), 2))
+    assert demo.process_cluster(app, cluster) is None
+    app.appconfig.set({"min_antennas": 3})
+    quality[0, 1, 1] = 1
+    quality[0, 0, 2, 0] = 1
+    assert demo.process_cluster(app, cluster) is None
+    quality[0, 0, 2, 1] = 1
+    assert demo.process_cluster(app, cluster) is not None
+    quality[0, 0, 2] = 0
+    app.appconfig.set({"min_antennas": 2})
+    from collections import deque
+    from demos.ble.common.application import BLEMeasurementApplication
+
+    app._history = deque()
+    app._trim_history = lambda: BLEMeasurementApplication._trim_history(app)
+    result = demo.process_cluster(app, cluster)
+    reference, routes, frequencies, ratios = result
+    second = ratios.copy()
+    second[5] *= 3j
+    now = time.monotonic()
+    app._history.extend([(now - 0.1, result), (now, (reference, routes, frequencies, second))])
+    power, phase = ([QtCharts.QLineSeries() for _ in range(8)] for _ in range(2))
+    axis = QtCharts.QValueAxis()
+    demo.updateCurves(app, power, phase, axis)
+    assert [s.count() for s in phase] == [3, 0, 0, 0, 0, 3, 0, 0]
+    assert power[5].at(0).y() == pytest.approx(10 * np.log10(5))
+    assert phase[5].at(0).y() == pytest.approx(np.pi / 4)
+    # Measurements on the opposite feed must not pull the displayed ratio.
+    other_routes = routes.copy()
+    other_routes[5] = 3
+    app._history.appendleft((now - 0.2, (reference, other_routes, frequencies, second * 10)))
+    demo.updateCurves(app, power, phase, axis)
+    assert power[5].at(0).y() == pytest.approx(10 * np.log10(5))
+    app.appconfig.set({"backlog": {"size": 1}})
+    demo.updateCurves(app, power, phase, axis)
+    assert phase[5].at(0).y() == pytest.approx(np.pi / 2)
+    app._history[0] = (now - 2, app._history[0][1])
+    demo.updateCurves(app, power, phase, axis)
+    assert all(s.count() == 0 for s in power + phase)
+
+
+@unittest.skipIf(QtWidgets is None, "Install the optional PyQt6 demo dependencies")
+def test_ble_chart_reference_survives_alignment_changes_and_temporary_loss():
+    from importlib import import_module
+    import numpy as np
+    import pytest
+
+    pytest.importorskip("PyQt6.QtCharts")
+    from espargos.ble_iq import BLEChannelResponse
+
+    module = import_module("demos.ble.instantaneous-csi.main")
+    demo = module.BLEChannelApplication
+    receiver = Mock()
+    app = SimpleNamespace(controller=SimpleNamespace(receiver=receiver), appconfig=ConfigManager(demo.DEFAULT_CONFIG), _valid_bins=demo._valid_bins, _after=0)
+    field = np.array([1, 2j, -0.5, 0.3j, 0.2, -0.1, 0.8j, 0.5])[:, None] * np.ones((8, 3))
+
+    def packet(stamp, anchor, missing=()):
+        values = (field / field[anchor]).copy()
+        for sensor in missing:
+            values[sensor] = np.nan
+        response = values.reshape(1, 2, 4, 3)
+        receiver.channel_response.return_value = BLEChannelResponse(np.arange(3), response, np.ones(response.shape), np.ones((1, 2, 4)))
+        with patch.object(module.time, "monotonic", return_value=stamp):
+            result = demo.process_cluster(app, SimpleNamespace(rf_switch_state=np.full(8, 2)))
+            return None if result is None else result[-1]
+
+    first = packet(1.0, 0)
+    changed = packet(1.1, 1)
+    np.testing.assert_allclose(changed, first)
+    assert packet(1.2, 1, missing=(0,)) is None
+    switched = packet(1.4, 1, missing=(0,))
+    np.testing.assert_allclose(switched.reshape(8, 3)[1:], (field / field[1])[1:])
+    recovered = packet(1.45, 0)
+    np.testing.assert_allclose(recovered.reshape(8, 3), field / field[1])

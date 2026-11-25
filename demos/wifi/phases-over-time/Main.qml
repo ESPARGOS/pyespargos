@@ -26,6 +26,12 @@ Common.ESPARGOSApplication {
 			title: "Settings"
 			endpoint: appconfig
 
+			WiFi.CSIBacklogSettings {
+				configManager: appDrawer.configManager
+				antennaKey: "required_antennas"
+				maximumAntennas: backend.sensorCount
+			}
+
 			Label { Layout.columnSpan: 2; text: "Display Settings"; color: "#9fb3c8" }
 
 			Label { text: "Max Age (s)"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -69,21 +75,6 @@ Common.ESPARGOSApplication {
 				value: 0
 			}
 
-			Label { text: "Required Antennas"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			SpinBox {
-				id: requiredAntennasSpinBox
-				property string configKey: "required_antennas"
-				property string configProp: "value"
-				property var encode: function(v) { return v }
-				property var decode: function(v) { return Number(v) }
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onValueChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 160
-				from: 1
-				to: backend.sensorCount
-				value: backend.sensorCount
-			}
-
 			Label { text: "Curve Colors"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 			ComboBox {
 				id: colorModeCombo
@@ -110,19 +101,6 @@ Common.ESPARGOSApplication {
 
 			Item {
 				id: genericAppSettingsAnchor
-				Layout.columnSpan: 2
-				width: 0
-				height: 0
-				visible: false
-			}
-
-			WiFi.CSIBacklogSettings {
-				id: backlogSettings
-				insertBefore: backlogSettingsAnchor
-			}
-
-			Item {
-				id: backlogSettingsAnchor
 				Layout.columnSpan: 2
 				width: 0
 				height: 0

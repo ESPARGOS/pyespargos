@@ -24,6 +24,12 @@ Common.ESPARGOSApplication {
 			title: "Settings"
 			endpoint: appconfig
 
+			WiFi.CSIBacklogSettings {
+				configManager: appDrawer.configManager
+				antennaKey: "min_antennas"
+				maximumAntennas: backend.sensorCount
+			}
+
 			Label { Layout.columnSpan: 2; text: "CFO Settings"; color: "#9fb3c8" }
 
 			Label { text: "Max Age (s)"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -41,21 +47,6 @@ Common.ESPARGOSApplication {
 				value: 10
 			}
 
-			Label { text: "Min. Antennas"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			SpinBox {
-				id: minAntennasSpinBox
-				property string configKey: "min_antennas"
-				property string configProp: "value"
-				property var encode: function(v) { return v }
-				property var decode: function(v) { return Number(v) }
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onValueChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 210
-				from: 1
-				to: backend.sensorCount
-				value: backend.sensorCount
-			}
-
 			WiFi.CSIAppSettings {
 				id: genericAppSettings
 				insertBefore: genericAppSettingsAnchor
@@ -63,19 +54,6 @@ Common.ESPARGOSApplication {
 
 			Item {
 				id: genericAppSettingsAnchor
-				Layout.columnSpan: 2
-				width: 0
-				height: 0
-				visible: false
-			}
-
-			WiFi.CSIBacklogSettings {
-				id: backlogSettings
-				insertBefore: backlogSettingsAnchor
-			}
-
-			Item {
-				id: backlogSettingsAnchor
 				Layout.columnSpan: 2
 				width: 0
 				height: 0

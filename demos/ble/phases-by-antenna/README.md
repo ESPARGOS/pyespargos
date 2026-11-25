@@ -11,10 +11,12 @@ BLE phase measurements currently support one board. Bare positional hosts are
 not accepted.
 
 Select an advertiser in the top-right overlay. The grid follows the physical
-antenna layout and shows phase in radians relative to the first valid antenna.
+antenna layout and shows phase in radians relative to the first antenna in the
+largest connected group. At least two sensors must agree on a packet. The **App → Packet backlog** controls select how many usable packets to combine
+and their maximum age (default 32 packets, 1 second).
 Each value uses the usable captured packet waveform, with the same timing, IF
 and reference correction as the BLE camera and instantaneous CSI demos.
-Missing or stale measurements turn gray after one second.
+Missing or stale measurements turn gray after the configured maximum age.
 
 The RX drawer contains receiver settings and reference calibration. The App
 drawer can disable calibration for diagnostics. Standard `-o` configuration

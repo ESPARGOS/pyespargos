@@ -27,6 +27,12 @@ Common.ESPARGOSApplication {
 			title: "Settings"
 			endpoint: appconfig
 
+			WiFi.CSIBacklogSettings {
+				configManager: appDrawer.configManager
+				showFormatControls: window.selectablePreamble
+				antennaKey: "required_antennas"
+				maximumAntennas: backend.sensorCount
+			}
 
 			Label { Layout.columnSpan: 2; text: "Display Settings"; color: "#9fb3c8" }
 
@@ -97,21 +103,6 @@ Common.ESPARGOSApplication {
 				checked: true
 			}
 
-			Label { text: "Min. Antennas"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			SpinBox {
-				id: requiredAntennasSpinBox
-				property string configKey: "required_antennas"
-				property string configProp: "value"
-				property var encode: function(v) { return v }
-				property var decode: function(v) { return Number(v) }
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onValueChanged: appDrawer.configManager.onControlChanged(this)
-				implicitWidth: 210
-				from: 1
-				to: backend.sensorCount
-				value: backend.sensorCount
-			}
-
 			Loader {
                 active: window.selectablePreamble
                 visible: false
@@ -123,20 +114,6 @@ Common.ESPARGOSApplication {
 				Layout.columnSpan: 2
 				width: 0
 				height: 0
-				visible: false
-			}
-
-			WiFi.CSIBacklogSettings {
-				id: backlogSettings
-                showFormatControls: window.selectablePreamble
-				insertBefore: backlogSettingsAnchor
-			}
-
-			Item {
-				id: backlogSettingsAnchor;
-				Layout.columnSpan: 2;
-				width: 0;
-				height: 0;
 				visible: false
 			}
 

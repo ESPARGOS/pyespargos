@@ -23,6 +23,10 @@ Common.ESPARGOSApplication {
             title: "Settings"
             endpoint: appconfig
 
+            WiFi.CSIBacklogSettings {
+                configManager: appDrawer.configManager
+            }
+
             // --- Pattern Settings ---
             Label { Layout.columnSpan: 2; text: "Pattern Settings"; color: "#9fb3c8" }
 
@@ -151,16 +155,6 @@ Common.ESPARGOSApplication {
                 width: 0; height: 0; visible: false
             }
 
-            WiFi.CSIBacklogSettings {
-                id: backlogSettings
-                insertBefore: backlogSettingsAnchor
-            }
-
-            Item {
-                id: backlogSettingsAnchor
-                Layout.columnSpan: 2
-                width: 0; height: 0; visible: false
-            }
 
             Rectangle {
                 id: endSpacer

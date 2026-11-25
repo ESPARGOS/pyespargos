@@ -8,7 +8,6 @@ GridLayout {
     property bool polarizationSupported: false
     property bool busy: false
     signal polarizationRequested(string mode)
-    property string backlogTitle: "Measurement backlog"
     columns: 2
     columnSpacing: 16
     rowSpacing: 8
@@ -57,27 +56,5 @@ GridLayout {
     PolarizationDisplaySettings {
         configManager: root.configManager
         visible: root.polarizationSupported && polarization.currentIndex === 2
-    }
-    Label { text: root.backlogTitle; color: "#9fb3c8"; Layout.columnSpan: 2 }
-    Label { text: "Packets" }
-    GainSlider {
-        Layout.preferredWidth: 180
-        from: 2; to: 64; stepSize: 1
-        property string configKey: "beamformer.backlog_size"
-        property string configProp: "value"
-        Component.onCompleted: root.configManager.register(this)
-        onEdited: root.configManager.onControlChanged(this)
-    }
-    Label { text: "Max age" }
-    GainSlider {
-        Layout.preferredWidth: 180
-        from: 50; to: 1000; stepSize: 25
-        valueText: Math.round(value) + " ms"
-        property string configKey: "beamformer.backlog_age"
-        property string configProp: "value"
-        property var encode: function(v) { return v / 1000 }
-        property var decode: function(v) { return v * 1000 }
-        Component.onCompleted: root.configManager.register(this)
-        onEdited: root.configManager.onControlChanged(this)
     }
 }

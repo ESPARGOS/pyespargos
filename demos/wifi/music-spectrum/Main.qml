@@ -22,6 +22,10 @@ Common.ESPARGOSApplication {
 			title: "Settings"
 			endpoint: appconfig
 
+			WiFi.CSIBacklogSettings {
+				configManager: appDrawer.configManager
+			}
+
 			Label { text: "Signal components"; color: "#ffffff" }
 			SpinBox {
 				id: sourceCount
@@ -50,19 +54,6 @@ Common.ESPARGOSApplication {
 
 			Item {
 				id: genericAppSettingsAnchor
-				Layout.columnSpan: 2
-				width: 0
-				height: 0
-				visible: false
-			}
-
-			WiFi.CSIBacklogSettings {
-				id: backlogSettings
-				insertBefore: backlogSettingsAnchor
-			}
-
-			Item {
-				id: backlogSettingsAnchor
 				Layout.columnSpan: 2
 				width: 0
 				height: 0

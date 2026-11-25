@@ -1,212 +1,36 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
-import QtQuick.Controls.Material
 import "../../common" as Common
 
+Common.BacklogWindowSettings {
+    id: root
+    property bool showFormatControls: true
+    sizeKey: "size"
+    ageKey: ""
+    maximumPackets: 128
+    packetConfigManager: backlogSettings
 
-Item  {
-	id: csiBacklogSettings
-	property Item insertBefore: null
-	property bool showFormatControls: true
-	onInsertBeforeChanged: {
-		if (!insertBefore) return
+    Common.ConfigManager {
+        id: backlogSettings
+        endpoint: backlogconfig
+        Component.onCompleted: fetchAndApply()
+    }
 
-		let items = [
-			backlogHeader,
-			sizeLabel,
-			sizeRow,
-			lltfEnableLabel,
-			lltfEnableSwitch,
-			ht20EnableLabel,
-			ht20EnableSwitch,
-			ht40EnableLabel,
-			ht40EnableSwitch,
-			he20EnableLabel,
-			he20EnableSwitch,
-			exclude11bLabel,
-			exclude11bSwitch
-		]
+    component BacklogSwitch: Switch {
+        required property string configKey
+        property string configProp: "checked"
+        Component.onCompleted: if (root.showFormatControls || configKey === "filters.exclude_11b") backlogSettings.register(this)
+        onToggled: backlogSettings.onControlChanged(this)
+    }
 
-		let targetLayout = insertBefore.parent
-
-		// Find index of insertBefore in its parent layout
-		let insert_index = -1
-		let childList = []
-		for (let i = 0; i < targetLayout.children.length; i++) {
-			childList.push(targetLayout.children[i])
-			if (targetLayout.children[i] === insertBefore) {
-				insert_index = i
-			}
-		}
-
-		if (insert_index < 0) return
-
-		// Collect items that should come after our inserted items
-		let itemsAfter = childList.slice(insert_index)
-
-		// Reparent items after anchor to null temporarily
-		for (let i = 0; i < itemsAfter.length; i++) {
-			itemsAfter[i].parent = null
-		}
-
-		// Add our items to the layout (they go at the end now)
-		for (let i = 0; i < items.length; i++) {
-			items[i].parent = targetLayout
-		}
-
-		// Re-add the items that should come after
-		for (let i = 0; i < itemsAfter.length; i++) {
-			itemsAfter[i].parent = targetLayout
-		}
-	}
-
-	Common.ConfigManager {
-		id: backlogConfigManager
-		endpoint: backlogconfig
-	}
-
-	Component.onCompleted: backlogConfigManager.fetchAndApply()
-
-	Label {
-		id: backlogHeader
-		Layout.columnSpan: 2
-		text: "CSI Backlog"
-		color: "#9fb3c8"
-	}
-
-	Label {
-		id: sizeLabel
-		text: "Size"
-		color: "#ffffff"
-		horizontalAlignment: Text.AlignRight
-		Layout.alignment: Qt.AlignRight
-		Layout.fillWidth: true
-	}
-
-	RowLayout {
-		id: sizeRow
-		spacing: 14
-		Slider {
-			id: backlogSizeSlider
-			property string configKey: "size"
-			property string configProp: "value"
-			property var encode: function(v) { return Math.round(v) }
-			property var decode: function(v) { return Math.max(1, Math.min(1024, parseInt(v||64))) }
-			Component.onCompleted: backlogConfigManager.register(this)
-			onValueChanged: backlogConfigManager.onControlChanged(this)
-			from: 1; to: 128; value: 16; stepSize: 1
-			implicitWidth: 120
-			function isUserActive() { return pressed }
-		}
-		Label { text: backlogSizeSlider.value; color: "#ffffff" }
-	}
-
-	Label {
-		id: lltfEnableLabel
-		visible: csiBacklogSettings.showFormatControls
-		text: "Store L-LTF"
-		color: "#ffffff"
-		horizontalAlignment: Text.AlignRight
-		Layout.alignment: Qt.AlignRight
-		Layout.fillWidth: true
-	}
-
-	Switch {
-		id: lltfEnableSwitch
-		visible: csiBacklogSettings.showFormatControls
-		property string configKey: "fields.lltf"
-		property string configProp: "checked"
-
-		Component.onCompleted: if (csiBacklogSettings.showFormatControls) backlogConfigManager.register(this)
-		onCheckedChanged: backlogConfigManager.onControlChanged(this)
-
-		checked: true
-	}
-
-	Label {
-		id: ht20EnableLabel
-		visible: csiBacklogSettings.showFormatControls
-		text: "Store HT20"
-		color: "#ffffff"
-		horizontalAlignment: Text.AlignRight
-		Layout.alignment: Qt.AlignRight
-		Layout.fillWidth: true
-	}
-
-	Switch {
-		id: ht20EnableSwitch
-		visible: csiBacklogSettings.showFormatControls
-		property string configKey: "fields.ht20"
-		property string configProp: "checked"
-
-		Component.onCompleted: if (csiBacklogSettings.showFormatControls) backlogConfigManager.register(this)
-		onCheckedChanged: backlogConfigManager.onControlChanged(this)
-
-		checked: false
-	}
-
-	Label {
-		id: ht40EnableLabel
-		visible: csiBacklogSettings.showFormatControls
-		text: "Store HT40"
-		color: "#ffffff"
-		horizontalAlignment: Text.AlignRight
-		Layout.alignment: Qt.AlignRight
-		Layout.fillWidth: true
-	}
-
-	Switch {
-		id: ht40EnableSwitch
-		visible: csiBacklogSettings.showFormatControls
-		property string configKey: "fields.ht40"
-		property string configProp: "checked"
-
-		Component.onCompleted: if (csiBacklogSettings.showFormatControls) backlogConfigManager.register(this)
-		onCheckedChanged: backlogConfigManager.onControlChanged(this)
-
-		checked: false
-	}
-
-	Label {
-		id: he20EnableLabel
-		visible: csiBacklogSettings.showFormatControls
-		text: "Store HE20"
-		color: "#ffffff"
-		horizontalAlignment: Text.AlignRight
-		Layout.alignment: Qt.AlignRight
-		Layout.fillWidth: true
-	}
-
-	Switch {
-		id: he20EnableSwitch
-		visible: csiBacklogSettings.showFormatControls
-		property string configKey: "fields.he20"
-		property string configProp: "checked"
-
-		Component.onCompleted: if (csiBacklogSettings.showFormatControls) backlogConfigManager.register(this)
-		onCheckedChanged: backlogConfigManager.onControlChanged(this)
-
-		checked: false
-	}
-
-	Label {
-		id: exclude11bLabel
-		text: "Exclude 11b"
-		color: "#ffffff"
-		horizontalAlignment: Text.AlignRight
-		Layout.alignment: Qt.AlignRight
-		Layout.fillWidth: true
-	}
-
-	Switch {
-		id: exclude11bSwitch
-		property string configKey: "filters.exclude_11b"
-		property string configProp: "checked"
-
-		Component.onCompleted: backlogConfigManager.register(this)
-		onCheckedChanged: backlogConfigManager.onControlChanged(this)
-
-		checked: true
-	}
+    Label { text: "Store L-LTF"; visible: root.showFormatControls }
+    BacklogSwitch { configKey: "fields.lltf"; visible: root.showFormatControls }
+    Label { text: "Store HT20"; visible: root.showFormatControls }
+    BacklogSwitch { configKey: "fields.ht20"; visible: root.showFormatControls }
+    Label { text: "Store HT40"; visible: root.showFormatControls }
+    BacklogSwitch { configKey: "fields.ht40"; visible: root.showFormatControls }
+    Label { text: "Store HE20"; visible: root.showFormatControls }
+    BacklogSwitch { configKey: "fields.he20"; visible: root.showFormatControls }
+    Label { text: "Exclude 11b" }
+    BacklogSwitch { configKey: "filters.exclude_11b" }
 }

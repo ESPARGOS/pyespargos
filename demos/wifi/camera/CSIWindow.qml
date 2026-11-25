@@ -25,6 +25,15 @@ Common.ESPARGOSApplication {
 			title: "App Settings"
 			endpoint: appconfig
 
+			WiFi.CSIBacklogSettings {
+				configManager: appDrawer.configManager
+				showFormatControls: window.selectablePreamble
+				ageKey: "beamformer.max_age"
+				minimumAgeMs: 0
+				maximumAgeMs: 2000
+				ageStepMs: 50
+			}
+
 			CheckBox {
 				id: advancedSettings
 				Layout.columnSpan: 2
@@ -184,24 +193,6 @@ Common.ESPARGOSApplication {
 				ToolTip.text: "In samples. Color hue indicates relative delay up to this maximum. Current value: " + value.toFixed(2)
 			}
 
-			Label { text: "Timeout"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-			Slider {
-				id: maxAge
-				property string configKey: "beamformer.max_age"
-				property string configProp: "value"
-				property var encode: function(v) { return v }
-				property var decode: function(v) { return Number(v) }
-				from: 0.0
-				to: 2.0
-				stepSize: 0.05
-				implicitWidth: 210
-				Component.onCompleted: appDrawer.configManager.register(this)
-				onValueChanged: appDrawer.configManager.onControlChanged(this)
-				value: 0.0
-				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
-				ToolTip.text: value === 0.0 ? "Disabled (use all data)" : "Use only CSI newer than " + value.toFixed(1) + " s"
-			}
-
 			Label { Layout.columnSpan: 2; text: "Visualization"; color: "#9fb3c8" }
 
 			Label { text: "Overlay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
@@ -272,19 +263,6 @@ Common.ESPARGOSApplication {
 				Layout.columnSpan: 2
 				width: 0
 				height: 0
-				visible: false
-			}
-
-			WiFi.CSIBacklogSettings {
-                showFormatControls: window.selectablePreamble
-                insertBefore: backlogSettingsAnchor
-			}
-
-			Item {
-				id: backlogSettingsAnchor;
-				Layout.columnSpan: 2;
-				width: 0;
-				height: 0;
 				visible: false
 			}
 
