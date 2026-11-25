@@ -27,7 +27,7 @@ class Console:
             if byte == 10:
                 prefix = b"ESPARGOS-UART-MODE:"
                 if self.line.startswith(prefix):
-                    self.active_baud = int(self.line[len(prefix):])
+                    self.active_baud = int(self.line[len(prefix) :])
                 self.line.clear()
 
 
@@ -36,11 +36,8 @@ class UARTActivationTests(unittest.TestCase):
         for partial in (b"", b"\x13probe-at-wrong-baud"):
             for baud in (2_000_000, 3_000_000):
                 with self.subTest(partial=partial, baud=baud):
-                    client = UARTClient.__new__(UARTClient)
+                    client = UARTClient(f"uart:test@{baud}")
                     client._serial = Console(partial)
-                    client.boot_baudrate = 115200
-                    client.baudrate = baud
-                    client.activation_retry_interval = .05
 
                     def hello():
                         self.assertEqual(client._serial.active_baud, baud)
