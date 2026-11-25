@@ -95,7 +95,10 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             # The pilots span ±3/8 of the replay rate.
             # A narrower TX filter bends their phase enough to hide the origin.
             modes = scope.modes(bi, saved_rx[bi]["modes"])
-            _rpc(b, "set_iq_tx", {"muted": True, "modes": modes, "transmitters": [{"antid": a, "rf_gain": {"a": 0, "b": 0}, "bandwidth_mhz": 60} for a in targets[bi]]})
+            settings = {"muted": True, "modes": modes}
+            if targets[bi]:
+                settings["transmitters"] = [{"antid": a, "rf_gain": {"a": 0, "b": 0}, "bandwidth_mhz": 60} for a in targets[bi]]
+            _rpc(b, "set_iq_tx", settings)
             wait_modes(bi, modes)
 
         _map(prepare, scope.active)
