@@ -26,3 +26,8 @@ demos/wifi/camera/img/*
 # addon checkouts (only the README is tracked)
 addons/*
 !addons/README.md
+
+# Local experiment output and workstation settings
+/.cache/
+/measurements/
+/.claude/settings.local.json
