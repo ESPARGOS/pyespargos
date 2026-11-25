@@ -225,8 +225,10 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
             capture = int(source.capture_id.flat[0]) if preview else source.capture_id
             offset = int(source.capture_chunk_offset.flat[0]) if preview else source.chunk_count
             previous = self._latest_signal_position
-            if previous is not None and generation == previous[0]:
-                advance = (capture - previous[1]) & 0xFFFFFFFF
+            if previous is not None:
+                # Both firmware counters wrap. Compare the capture ID only
+                # within its generation; a new configuration restarts IDs.
+                advance = (generation - previous[0] if generation != previous[0] else capture - previous[1]) & 0xFFFFFFFF
                 if advance >= 0x80000000 or (advance == 0 and offset <= previous[2]):
                     # Repaired chunks and full events can arrive after a newer one.
                     self.dropped_captures += 1
@@ -459,6 +461,7 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
                 self.iqcontrol.apply_capture_patch({"trigger": {**current, "threshold": threshold}})
 
     def _on_calibration_changed(self):
+        self._latest_signal_position = None
         self._status = None
         self.clearImage()
 

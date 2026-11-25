@@ -59,13 +59,13 @@ def test_late_repaired_capture_cannot_rewind_live_camera():
         data = np.zeros((1, 2, 4))
         return IQSignalCapture(identity, 80000000, 2472000000, np.full((1, 2, 4), generation), data, 0, data, data, data, data)
 
-    for generation, identity in [(7, 10), (7, 9), (7, 10), (8, 1), (9, 0xFFFFFFFE), (9, 0)]:
+    for generation, identity in [(0xFFFFFFFE, 10), (0xFFFFFFFE, 9), (0xFFFFFFFE, 10), (1, 1), (0xFFFFFFFE, 11), (2, 0xFFFFFFFE), (2, 0)]:
         EspargosIQCamera._on_capture(app, capture(generation, identity))
     queued = []
     while not app._pending.empty():
         queued.append(app._pending.get()[1].capture_id)
     assert queued == [10, 1, 0xFFFFFFFE, 0]
-    assert app.dropped_captures == 2
+    assert app.dropped_captures == 3
 
 
 @pytest.mark.parametrize("boards, mode, expected", [(1, "auto", "signal"), (4, "auto", "interval"), (1, "interval", "interval"), (4, "accumulate", "accumulate")])
