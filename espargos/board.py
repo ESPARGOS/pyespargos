@@ -649,6 +649,7 @@ class Board(object):
         pending = self._deferred_stream_change is not None
         self._deferred_stream_change = dispatcher, action, args
         if not pending:
+
             def finish():
                 with self._stream_lifecycle_lock:
                     # A concurrent stop may already have drained this session.
@@ -775,7 +776,7 @@ class Board(object):
         :raises EspargosUnexpectedResponseError: If the server at the given host
             is not an ESPARGOS controller or the request was invalid
         """
-        self.control.command("reboot")
+        self.control.command("reboot", {})
 
     def subscribe_sensor_messages(
         self,

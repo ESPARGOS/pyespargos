@@ -2,7 +2,7 @@ import http.client
 import threading
 import unittest
 from unittest.mock import Mock, patch
-from espargos.board import Board, EspargosHTTPStatusError
+from espargos.board import Board, BoardControl, EspargosHTTPStatusError
 
 
 class HTTPTests(unittest.TestCase):
@@ -19,6 +19,14 @@ class HTTPTests(unittest.TestCase):
         c.getresponse.return_value.status = 200
         c.getresponse.return_value.read.return_value = b"ok"
         return c
+
+    def test_reboot_posts_to_controller(self):
+        b = self.board()
+        b.control = BoardControl(b)
+        c = self.connection()
+        with patch("espargos.board.http.client.HTTPConnection", return_value=c):
+            b.reboot()
+        c.request.assert_called_once_with("POST", "/reboot", "{}")
 
     def test_reuses_connection(self):
         b = self.board()
