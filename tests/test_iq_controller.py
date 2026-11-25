@@ -28,7 +28,7 @@ class ReferenceControllerTests(unittest.TestCase):
             synced.set()
 
         receiver = SimpleNamespace(set_reference_tone=tone, add_callback=lambda cb: None, add_accumulation_callback=lambda cb: None, add_stream_callback=lambda cb: None)
-        controller = IQController(SimpleNamespace(iq=receiver, calibrate=sync))
+        controller = IQController(SimpleNamespace(iq=receiver, boards=[], calibrate=sync))
         try:
             controller.reference_apply("cw", 2437, 7.5)
             self.assertTrue(entered.wait(2))
@@ -57,7 +57,7 @@ class ReferenceControllerTests(unittest.TestCase):
             add_callback=callbacks.append,
             add_accumulation_callback=callbacks.append,
             add_stream_callback=callbacks.append,
-            calibration=object(),
+            calibration=SimpleNamespace(phase_offsets=[0.0]),
             calibration_center_frequency=2437e6,
             calibration_sample_rate=80e6,
             calibration_applies_to=lambda capture: capture == "valid",

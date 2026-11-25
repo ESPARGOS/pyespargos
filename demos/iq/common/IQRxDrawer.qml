@@ -21,6 +21,10 @@ Drawer {
 	id: root
 
 	property int headerHeight: 0
+    property var thresholdControl: null
+    property var triggerDefaults: ({})
+    property bool allowSignal: true
+    property bool compact: false
     property bool allowStreaming: false
 	// IQController backend (context property provided by the application)
 	property var controller: null
@@ -37,6 +41,8 @@ Drawer {
 	edge: Qt.LeftEdge
 	dragMargin: 50
 	modal: false
+
+    onOpened: iqSettings.loadFromController()
 
 	background: Rectangle {
 		radius: 0
@@ -69,6 +75,10 @@ Drawer {
 
 			IQSettings {
 				id: iqSettings
+                compact: root.compact
+                thresholdControl: root.thresholdControl
+                triggerDefaults: root.triggerDefaults
+                allowSignal: root.allowSignal
                 allowStreaming: root.allowStreaming
 				controller: root.controller
 				onControllerChanged: loadFromController()
@@ -76,6 +86,7 @@ Drawer {
 			}
 
 			Rectangle {
+                visible: !root.compact
 				Layout.fillWidth: true
 				Layout.topMargin: 12
 				Layout.bottomMargin: 4
@@ -83,9 +94,10 @@ Drawer {
 				color: "#3a454c"
 			}
 
-			ReftxToneSettings {
-				id: reftxToneSettings
-				controller: root.controller
+			Loader {
+                active: !root.compact
+                visible: active
+                sourceComponent: Component { ReftxToneSettings { controller: root.controller } }
 				Layout.fillWidth: true
 				Layout.bottomMargin: 16
 			}

@@ -19,7 +19,6 @@ from demos.common.application import ESPARGOSApplication
 
 from espargos import Pool, iq_tone
 from espargos.iq_cluster import CHUNK_SAMPLES
-from espargos.iq_packet import DECIM_TO_FS
 from espargos.iq_rx_stream import receive_sample_rate
 from espargos.iq_receiver import IQReceiver, iq_receiver_config
 
@@ -38,6 +37,9 @@ class IQController(PyQt6.QtCore.QObject):
     # Tone state changed OUTSIDE the GUI tone controls (sync/calibration
     # disable the tone); GUI reloads its switch/fields from the controller.
     configChanged = PyQt6.QtCore.pyqtSignal(object)
+    configApplied = PyQt6.QtCore.pyqtSignal(dict)
+    configSnapshot = PyQt6.QtCore.pyqtSignal(str)
+    configFailed = PyQt6.QtCore.pyqtSignal(str)
     toneChanged = PyQt6.QtCore.pyqtSignal()
     calibrationChanged = PyQt6.QtCore.pyqtSignal()
     gainPhaseCompensationChanged = PyQt6.QtCore.pyqtSignal()
@@ -65,18 +67,28 @@ class IQController(PyQt6.QtCore.QObject):
         self._tone_busy = False
         self._reference_busy = False
         self._sync_needed = True
+        self._calibration_error = ""
         self._config_state_lock = threading.Lock()
         self._config_pending = None
         self._config_worker = None
+        self._reading_config = False
         self._io_workers = []
         self._closing = False
         self.receiver.add_stream_callback(self._observe_capture)
         self.receiver.add_callback(self._observe_capture)
         self.receiver.add_accumulation_callback(self._observe_capture)
 
+    @PyQt6.QtCore.pyqtProperty(int, constant=True)
+    def boardCount(self):
+        return len(self.pool.boards)
+
     @PyQt6.QtCore.pyqtProperty(bool, notify=referenceBusyChanged)
     def referenceBusy(self):
         return self._reference_busy
+
+    @PyQt6.QtCore.pyqtProperty(str, notify=calibrationChanged)
+    def calibrationError(self):
+        return self._calibration_error
 
     @PyQt6.QtCore.pyqtProperty(bool, notify=syncNeededChanged)
     def syncNeeded(self):
@@ -96,8 +108,13 @@ class IQController(PyQt6.QtCore.QObject):
         rate = self.receiver.calibration_sample_rate
         frequencies = [r.get("rf_freq_hz", center) for r in config.get("receivers", [])]
         frequencies.append(config.get("rf_freq_hz", center))
-        capture_rate = receive_sample_rate(config) if "adc_decimation" in config or config.get("trigger", {}).get("mode") == "downsample" else rate
-        if self.receiver.calibration is None or any(f != center for f in frequencies) or capture_rate != rate:
+        capture_rate = rate
+        if config.get("trigger", {}).get("mode") == "downsample" or "adc_decimation" in config:
+            capture_rate = receive_sample_rate(config)
+        elif "bluetooth_sample_rate_hz" in config:
+            capture_rate = config["bluetooth_sample_rate_hz"]
+        calibration = self.receiver.calibration
+        if calibration is None or not np.all(np.isfinite(calibration.phase_offsets)) or any(f != center for f in frequencies) or capture_rate != rate:
             self._set_sync_needed(True)
 
     def _begin_reference(self):
@@ -112,6 +129,8 @@ class IQController(PyQt6.QtCore.QObject):
 
     def _end_reference(self, succeeded):
         self._correction_cache = {}
+        if succeeded:
+            self._calibration_error = ""
         self._set_sync_needed(not succeeded)
         self._reference_busy = False
         self.calibrationChanged.emit()
@@ -179,42 +198,47 @@ class IQController(PyQt6.QtCore.QObject):
             return
         try:
             config = json.loads(config_json)
-            capture = dict(config)
-            radio = {}
-            for source, target in (("rf_freq_hz", "frequency_hz"), ("rx_gain", "rx_gain"), ("gain_mode", "gain_mode")):
-                if source in capture:
-                    radio[target] = capture.pop(source)
-            if isinstance(radio.get("gain_mode"), int):
-                radio["gain_mode"] = ("auto", "manual", "expert")[radio["gain_mode"]]
-            if "adc_decimation" in capture:
-                radio["sample_rate_hz"] = DECIM_TO_FS[capture.pop("adc_decimation")]
-            if "rf_switch" in capture:
-                radio["output"] = ("isolated", "reference", "antenna_r", "antenna_l")[capture.pop("rf_switch")]
-            # Serialize user edits with reference operations and automatic
-            # capture management (feed selection / trigger thresholds).
+            # The IQ API accepts one patch for tuning, gain, path and trigger.
+            # Apply coupled changes together so the sensors never briefly run
+            # a new trigger on the previous path or sample rate.
             with self._reference_io_lock:
                 if self._reference_busy or self._closing:
                     return
-                if radio:
-                    self.pool.configure(**radio)
-                if capture:
-                    self.receiver.apply_config(capture)
+                self.receiver.apply_config(config)
             self._check_calibration_config(config)
             self._correction_cache.clear()
+            self.configApplied.emit(config)
             self.configChanged.emit(config)
         except Exception as e:
             self.logger.error(f"set_iq_control failed: {e}")
+            self.configFailed.emit(str(e))
+            self.request_config()
 
-    @PyQt6.QtCore.pyqtSlot(result=str)
-    def get_config_json(self):
-        try:
-            config = self.receiver.get_config()
-            self._check_calibration_config(config)
-            self.configChanged.emit(config)
-            return json.dumps(config)
-        except Exception as e:
-            self.logger.error(f"get_iq_control failed: {e}")
-            return "{}"
+    @PyQt6.QtCore.pyqtSlot()
+    def request_config(self):
+        """Refresh the RX drawer without blocking Qt on a board request."""
+        with self._config_state_lock:
+            if self._closing or self._reading_config:
+                return
+            self._reading_config = True
+
+        def read():
+            try:
+                with self._reference_io_lock:
+                    if self._closing or self._reference_busy:
+                        return
+                    config = self.receiver.get_config()
+                self._check_calibration_config(config)
+                self.configChanged.emit(config)
+                self.configSnapshot.emit(json.dumps(config))
+            except Exception as error:
+                self.logger.warning("Could not read receiver settings: %s", error)
+                self.configFailed.emit(str(error))
+            finally:
+                with self._config_state_lock:
+                    self._reading_config = False
+
+        self._start_io_worker(read)
 
     @PyQt6.QtCore.pyqtProperty(bool, notify=gainPhaseCompensationChanged)
     def gain_phase_compensation(self):
@@ -240,9 +264,14 @@ class IQController(PyQt6.QtCore.QObject):
             try:
                 with self._reference_io_lock:
                     if not self._closing:
+                        # A reboot returns the sensors to WiFi. Pool.calibrate()
+                        # selects its calibration from those live roles.
+                        if any(mode != "iq_rx" for board in self.pool.boards for mode in board.iq.get_config()["modes"]):
+                            raise RuntimeError("Waiting for IQ capture to reconnect. Try calibration again when the receiver is ready.")
                         self.pool.calibrate()
                         succeeded = True
             except Exception as e:
+                self._calibration_error = str(e)
                 self.logger.error(f"sync/calibration failed: {e}")
             finally:
                 self._end_reference(succeeded)
@@ -384,7 +413,7 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
     def onAboutToQuit(self):
         for controller in getattr(self, "_iq_controllers", []):
             controller.close()
-        if hasattr(self, "pool"):
+        if getattr(self, "receiver", None) is not None:
             # No callback may outlive the Qt objects it updates. The common
             # application teardown stops the transport, but IQ applications
             # also own a separate cluster-processing worker.
