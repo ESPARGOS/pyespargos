@@ -52,7 +52,7 @@ class CaptureProcessor:
                 # weights fit quality, not confidence in line of sight.
                 weight = emission.power * purity**2
                 if mode in ("flashes", "azimuth") and not render_roots:
-                    spectrum = flash_image(spectrum, visualization["flash_width_deg"], azimuth_only=mode == "azimuth")
+                    spectrum = flash_image(spectrum, visualization["flash_width_deg"], azimuth_only=mode == "azimuth", array_rows=shape[0])
                 if image is None:
                     image = np.asarray(weight * spectrum, dtype=np.float32)
                 else:

@@ -348,7 +348,7 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
             self.overlay.publish_spatial_spectrum(image, peak, opacity)
             visible = peak * 10.0 ** (-self.appconfig.get("visualization", "dynamic_range_db") / 10.0)
             markers = opacity > 0.1 and self.appconfig.get("visualization", "markers") and self.appconfig.get("visualization", "display_mode") != "azimuth"
-            self.overlay.publish_markers(peak_directions(image, visible) if markers else [])
+            self.overlay.publish_markers(peak_directions(image, visible, array_rows=self.n_rows) if markers else [])
         if waterfall_dirty:
             self.overlay.publish_waterfall(*span, row_us)
         if strongest is not None:

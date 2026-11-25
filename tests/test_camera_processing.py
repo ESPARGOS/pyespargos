@@ -38,13 +38,20 @@ class CameraProcessingTests(unittest.TestCase):
 
     def test_sync_restores_narrow_filter_on_failure(self):
         calls = []
-        board = SimpleNamespace(
-            iq=SimpleNamespace(get_config=lambda: {"filter_bw_mhz": 20}, set_config=lambda config: calls.append(config))
-        )
+        board = SimpleNamespace(iq=SimpleNamespace(get_config=lambda: {"filter_bw_mhz": 20}, set_config=lambda config: calls.append(config)))
         with patch.object(reference, "_acquire_grid", side_effect=TimeoutError("no reference")):
             with self.assertRaises(TimeoutError):
                 reference.acquire_grid(SimpleNamespace(boards=[board]), 2472e6, scope=SimpleNamespace(active=[0]))
         self.assertEqual(calls, [{"filter_bw_mhz": 40}, {"filter_bw_mhz": 20}])
+
+    def test_tall_camera_labels_vertically_resolved_arrivals(self):
+        from demos.iq.camera.processing import peak_directions, flash_image
+
+        spectrum = np.zeros((128, 64))
+        spectrum[69, 10], spectrum[70, 40] = 1, 0.75
+        self.assertEqual(len(peak_directions(spectrum, 0.1, array_rows=2)), 1)
+        self.assertEqual(len(peak_directions(spectrum, 0.1, array_rows=4)), 2)
+        self.assertGreater(flash_image(spectrum, array_rows=4)[70, 40], 0.7)
 
 
 if __name__ == "__main__":

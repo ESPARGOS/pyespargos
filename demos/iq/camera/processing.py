@@ -214,12 +214,12 @@ def locate(covariance, steering, method="MUSIC", *, snapshots=1024, dynamic_rang
     return spectrum / max(float(np.max(spectrum)), 1e-30), purity
 
 
-def peak_directions(spectrum: np.ndarray, minimum: float, limit: int = 4, separation: float = 0.3) -> list[tuple[float, float]]:
+def peak_directions(spectrum: np.ndarray, minimum: float, limit: int = 4, separation: float = 0.3, *, array_rows: int = 2) -> list[tuple[float, float]]:
     """Direction cosines ``(u, v)`` of the strongest maxima of a :func:`direction_grid` spectrum.
 
-    Maxima are refined between pixels, must reach ``minimum`` and lie at
-    least ``separation`` apart in ``u``: a rectangular array with few rows
-    resolves elevation too poorly to tell two emitters above each other apart.
+    Refine local maxima between pixels. Suppress nearby azimuths on two-row
+    boards. A taller aperture can distinguish arrivals at the same azimuth
+    when separated vertically by at least one nominal beamwidth.
     """
 
     def refine(values, index):
@@ -240,24 +240,25 @@ def peak_directions(spectrum: np.ndarray, minimum: float, limit: int = 4, separa
         maxima &= spectrum >= padded[i : i + nx, j : j + ny]
     remaining = np.where(maxima, spectrum, 0)
     columns = max(1, int(round(separation * remaining.shape[0] / 2.0)))
+    vertical = ny if array_rows <= 2 else int(np.ceil(ny / array_rows))
     directions = []
     while len(directions) < limit:
         i, j = np.unravel_index(np.argmax(remaining), remaining.shape)
         if not remaining[i, j] >= minimum or remaining[i, j] <= 0:
             break
         directions.append((refine(spectrum[:, j], i), refine(spectrum[i, :], j)))
-        remaining[max(0, i - columns) : i + columns + 1] = 0.0
+        remaining[max(0, i - columns) : i + columns + 1, max(0, j - vertical) : j + vertical + 1] = 0.0
     return directions
 
 
-def flash_image(spectrum, width_degrees=4.0, azimuth_only=False):
+def flash_image(spectrum, width_degrees=4.0, azimuth_only=False, *, array_rows=2):
     """Compact visual markers at the estimated directions, not an uncertainty map.
 
     A low-purity spectrum can have a broad pedestal across the whole view.
     The default display marks the estimated peak; the spectrum remains available
     as a separate diagnostic display. Marker width is a presentation setting.
     """
-    peaks = peak_directions(spectrum, 0.1, limit=4)
+    peaks = peak_directions(spectrum, 0.1, limit=4, array_rows=2 if azimuth_only else array_rows)
     result = np.zeros_like(spectrum)
     x = (2 * np.arange(spectrum.shape[0]) + 1) / spectrum.shape[0] - 1
     y = (2 * np.arange(spectrum.shape[1]) + 1) / spectrum.shape[1] - 1
