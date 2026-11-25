@@ -1,6 +1,7 @@
 """Beamforming and camera presentation shared by CSI receivers."""
 
 import logging
+import signal
 import sys
 
 from demos.common.camera.video import CameraUnavailableError
@@ -85,8 +86,7 @@ class CSICamera(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCS
 
     @PyQt6.QtCore.pyqtSlot()
     def updateSpatialSpectrum(self):
-        result = self.get_backlog_csi("host_timestamp", "mac", "rf_switch_state", *self.level_fields,
-                                      allow_incomplete=True, remove_global_sto=False, return_format=True)
+        result = self.get_backlog_csi("host_timestamp", "mac", "rf_switch_state", *self.level_fields, allow_incomplete=True, remove_global_sto=False, return_format=True)
         if result is None:
             return
         csi_format, csi, timestamps, macs, receiver_state, *levels = result
@@ -347,4 +347,5 @@ def run_camera(application, argv):
     except CameraUnavailableError as error:
         logging.getLogger(application.__name__).error("%s", error)
         return 1
+    signal.signal(signal.SIGINT, lambda *_: PyQt6.QtCore.QMetaObject.invokeMethod(app, "quit", PyQt6.QtCore.Qt.ConnectionType.QueuedConnection))
     return app.exec()
