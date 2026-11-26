@@ -43,17 +43,17 @@ Most Linux distributions ship with Python pre-installed. Verify by running:
 python3 --version
 ```
 
-If Python is not installed or the version is too old, install it using your package manager:
+Install Python and the build tools for the native packet decoder using your package manager:
 
 ```bash
 # Debian / Ubuntu / Raspberry Pi OS (Raspbian)
-sudo apt update && sudo apt install python3 python3-venv python3-pip
+sudo apt update && sudo apt install python3 python3-venv python3-pip python3-dev build-essential
 
 # Fedora
-sudo dnf install python3 python3-pip
+sudo dnf install python3 python3-pip python3-devel gcc
 
 # Arch Linux
-sudo pacman -S python python-pip
+sudo pacman -S python python-pip base-devel
 ```
 
 #### 2. Clone the repository
@@ -83,7 +83,7 @@ pip install -e .
 If you want to run the demo applications:
 
 ```bash
-pip install pyqt6 pyqt6-charts matplotlib
+pip install -e ".[demos]"
 ```
 
 The [3D radiation pattern demo](demos/wifi/radiation-pattern-3d/README.md) also uses Qt Quick 3D and its Assimp asset importer to load the antenna model. The demo README lists the packages for system Qt installations.
@@ -124,7 +124,7 @@ If you don't have Python installed yet:
 python --version
 ```
 
-> **Tip:** You can also install Python from the Microsoft Store by searching for "Python".
+The native packet decoder requires Microsoft C++ Build Tools. In the Visual Studio Installer, select **Desktop development with C++**.
 
 #### 2. Clone the repository
 
@@ -155,7 +155,7 @@ pip install -e .
 If you want to run the demo applications:
 
 ```cmd
-pip install pyqt6 pyqt6-charts matplotlib
+pip install -e ".[demos]"
 ```
 
 The [3D radiation pattern demo](demos/wifi/radiation-pattern-3d/README.md) also uses Qt Quick 3D and its Assimp asset importer to load the antenna model. The demo README lists the packages for system Qt installations.
@@ -180,6 +180,9 @@ The recommended way to install Python on macOS is via [Homebrew](https://brew.sh
 ```bash
 # Install Homebrew (if not already installed)
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install the command-line compiler tools for the native packet decoder
+xcode-select --install
 
 # Install Python
 brew install python
@@ -222,7 +225,7 @@ pip install -e .
 If you want to run the demo applications:
 
 ```bash
-pip install pyqt6 pyqt6-charts matplotlib
+pip install -e ".[demos]"
 ```
 
 The [3D radiation pattern demo](demos/wifi/radiation-pattern-3d/README.md) also uses Qt Quick 3D and its Assimp asset importer to load the antenna model. The demo README lists the packages for system Qt installations.

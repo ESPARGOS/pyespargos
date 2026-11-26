@@ -30,6 +30,7 @@ setup(
     ],
     python_requires=">=3.11",
     install_requires=["websockets>=12.0", "numpy>=1.26.0", "pyserial>=3.5", "aiohttp>=3.9.0", "PyYAML"],
+    extras_require={"demos": ["PyQt6", "PyQt6-Charts", "matplotlib", "scipy"]},
     include_package_data=True,
     license_files=["LICENSE", DECODERS + "/COPYING", DECODERS + "/COPYING.LESSER"],
 )
