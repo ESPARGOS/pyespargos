@@ -32,6 +32,8 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libva-drm2 libpulse0
           wheels=(dist/*.whl)
           python -m pip install "${wheels[0]}[demos]" pytest
       - name: Run tests
