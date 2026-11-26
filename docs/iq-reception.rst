@@ -130,6 +130,9 @@ on each sensor before transfer. Its main application is :doc:`iq-radar`, where
 coherent repetitions improve the visibility of weak reflections while reducing
 data traffic. See :ref:`iq-accumulate` below for its requirements and settings.
 
+**Batched accumulate** captures a sequence of closely spaced accumulated profiles
+on a common grid. See :ref:`iq-batched-accumulate` for the schedule and callback.
+
 **Signal** waits for a signal to cross a threshold, then captures the same
 event across all eight antennas. This is useful for short bursts such as WiFi
 traffic. Use :meth:`add_signal_capture_callback() <espargos.iq_receiver.IQReceiver.add_signal_capture_callback>` to receive complete captures.
@@ -209,6 +212,33 @@ Longer averaging reduces uncorrelated noise, but also reduces the output rate
 and can suppress signals whose phase changes during the window, including
 reflections from moving targets. Choose the interval for the motion you need
 to observe. Use Interval mode when you need individual, unaveraged captures.
+
+.. _iq-batched-accumulate:
+
+Batched accumulation
+--------------------
+
+Use short profiles to observe changes between repetitions, with a gap between
+batches for readout. For example::
+
+   receiver.apply_config({"trigger": {
+       "mode": "batched_accumulate",
+       "profile_length_chunks": 4,
+       "profile_period_chunks": 24,
+       "profiles_per_batch": 256,
+       "batch_period_chunks": 24000,
+   }})
+   receiver.add_accumulation_callback(handle_average)
+
+This captures 256 profiles spaced 24 source chunks apart in each batch. Each
+callback delivers one profile of 1024 averaged complex samples per antenna.
+Set the batch period to zero for automatic scheduling. With an explicit period,
+divide the profile's ``source_chunk_start`` by the batch period using integer
+division to identify its batch on the current chunk grid. Check source indices
+for missing profiles before processing a batch. The fraction of input chunks
+represented for each antenna is available as ``profile.input_coverage``. It is
+the sum of its section counts divided by the profile period, counting missing
+sections as zero. This excludes inter-batch gaps.
 
 Signal Analyzer Demo
 --------------------

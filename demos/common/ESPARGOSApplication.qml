@@ -193,10 +193,11 @@ ApplicationWindow {
 				implicitWidth: 60
 				implicitHeight: 60
 				padding: 6
-				running: parent.visible
+				running: visible
 				Layout.alignment: Qt.AlignHCenter
 				contentItem: Shape {
 					preferredRendererType: Shape.CurveRenderer
+					rotation: (spinClock.elapsedTime * 180) % 360
 					ShapePath {
 						fillColor: "transparent"
 						strokeColor: spinner.Material.accent
@@ -211,11 +212,8 @@ ApplicationWindow {
 							sweepAngle: 260
 						}
 					}
-					RotationAnimator on rotation {
-						from: 0
-						to: 360
-						duration: 1000
-						loops: Animation.Infinite
+					FrameAnimation {
+						id: spinClock
 						running: spinner.running
 					}
 				}

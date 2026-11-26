@@ -21,17 +21,26 @@ class BLEChannelApplication(ESPARGOSBluetoothApplication):
 
     def _process_args(self):
         super()._process_args()
+        hosts = self.get_initial_config("pool", "hosts")
+        if not hosts or any(host.lower().endswith((".yaml", ".yml")) and not host.startswith("uart:") for host in hosts):
+            raise SystemExit("BLE instantaneous CSI needs a comma-separated list of board hosts (or pool.hosts in a settings file).")
+        self._plot_references = {}
         minimum = self.get_initial_config("app", "min_antennas")
         if type(minimum) is not int or not 2 <= minimum <= 8:
             raise ValueError("app.min_antennas must be an integer from 2 to 8")
+
+    @QtCore.pyqtProperty(int, constant=True)
+    def boardCount(self):
+        return len(self.get_initial_config("pool", "hosts"))
 
     def process_cluster(self, cluster):
         started = time.monotonic()
         response = self.controller.receiver.channel_response(cluster, calibrated=self.appconfig.get("calibrated"), correct_timing=self.appconfig.get("correct_timing"), nfft=int(self.appconfig.get("nfft")))
 
-        valid = self._valid_bins(response)[0].reshape(8, -1)
-        h = response.response[0].reshape(valid.shape)
-        previous, last_seen = getattr(self, "_plot_reference", (None, -np.inf))
+        board = cluster.board_index
+        valid = self._valid_bins(response)[board].reshape(8, -1)
+        h = response.response[board].reshape(valid.shape)
+        previous, last_seen = self._plot_references.get(board, (None, -np.inf))
         if last_seen < self._after:
             previous = None
         # The packet alignment reference can change every packet. Express the
@@ -45,8 +54,8 @@ class BLEChannelApplication(ESPARGOSBluetoothApplication):
             if np.count_nonzero(shared.sum(axis=1) >= 2) >= minimum:
                 ratios = np.full_like(h, np.nan)
                 np.divide(h, h[index], out=ratios, where=shared)
-                self._plot_reference = index, started
-                return index, cluster.rf_switch_state.ravel(), response.offsets_hz, ratios
+                self._plot_references[board] = index, started
+                return board, index, cluster.rf_switch_state[board].ravel(), response.offsets_hz, ratios
             if index == previous and started - last_seen < 0.25:
                 break
         return None
@@ -67,23 +76,28 @@ class BLEChannelApplication(ESPARGOSBluetoothApplication):
             for series in amplitude + phase:
                 series.clear()
             return
-        _, (reference, feeds, frequencies, latest) = self._history[-1]
-        power_sum = np.zeros(latest.shape)
-        phase_sum = np.zeros(latest.shape, complex)
-        count = np.zeros(latest.shape, int)
-        feeds = feeds.copy()
-        for _, (anchor, routes, _, ratios) in reversed(self._history):
-            # A channel ratio depends on both the sensor feed and the reference feed.
+        frequencies = self._history[-1][1][3]
+        shape = (8 * self.boardCount, len(frequencies))
+        power_sum = np.zeros(shape)
+        phase_sum = np.zeros(shape, complex)
+        count = np.zeros(shape, int)
+        references = {}
+        for _, (board, anchor, routes, offsets, ratios) in reversed(self._history):
+            if not np.array_equal(offsets, frequencies):
+                continue
+            if board not in references:
+                references[board] = anchor, routes.copy()
+            reference, feeds = references[board]
             if anchor != reference or routes[anchor] != feeds[reference]:
                 continue
-            # A missing sensor in the latest packet can use its last observed feed.
             missing = feeds == 255
             feeds[missing] = routes[missing]
             valid = np.isfinite(ratios) & (routes == feeds)[:, None]
             magnitudes = np.abs(ratios)
-            power_sum += np.where(valid, magnitudes**2, 0)
-            phase_sum += np.divide(ratios, magnitudes, out=np.zeros_like(ratios), where=valid)
-            count += valid
+            rows = slice(8 * board, 8 * (board + 1))
+            power_sum[rows] += np.where(valid, magnitudes**2, 0)
+            phase_sum[rows] += np.divide(ratios, magnitudes, out=np.zeros_like(ratios), where=valid)
+            count[rows] += valid
         values = (10 * np.log10(np.maximum(power_sum / np.maximum(count, 1), 1e-30)), np.angle(phase_sum))
         valid = count > 0
         power = values[0][valid]

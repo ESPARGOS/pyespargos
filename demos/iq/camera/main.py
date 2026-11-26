@@ -163,6 +163,7 @@ class EspargosIQCamera(CombinedArrayMixin, IQCaptureApplication):
         return {
             "interval": {"interval_chunks": 4096, "burst_chunks": 1, "offset_chunks": 0},
             "accumulate": {"interval_chunks": 4096, "vector_chunks": 4, "offset_chunks": 0},
+            "batched_accumulate": {"profile_length_chunks": 1, "profile_period_chunks": 24, "profiles_per_batch": 256, "batch_period_chunks": 0},
             "signal": self.DEFAULT_CONFIG["capture"]["trigger"],
         }
 

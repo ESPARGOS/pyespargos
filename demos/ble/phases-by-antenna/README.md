@@ -7,12 +7,11 @@ python demos/ble/phases-by-antenna/main.py -s 192.168.0.234
 ```
 
 Use `-c layout.yml` for a configured antenna layout, including board rotation.
-BLE phase measurements currently support one board. Bare positional hosts are
-not accepted.
+Each board measures packets independently and has its own phase reference.
 
 Select an advertiser in the top-right overlay. The grid follows the physical
 antenna layout and shows phase in radians relative to the first antenna in the
-largest connected group. At least two sensors must agree on a packet. The **App → Packet backlog** controls select how many usable packets to combine
+largest connected group on each board. At least two sensors must agree on a packet. The **App → Packet backlog** controls select how many usable packets to combine
 and their maximum age (default 32 packets, 1 second).
 Each value uses the usable captured packet waveform, with the same timing, IF
 and reference correction as the BLE camera and instantaneous CSI demos.

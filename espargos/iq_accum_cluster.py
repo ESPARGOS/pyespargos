@@ -28,6 +28,7 @@ class IQAccumCluster(SensorCluster):
 
     def __init__(self, first_packet, board_revisions, gain_phase_compensation=False):
         super().__init__(board_revisions)
+        self.is_batched = bool(first_packet.flags & iq_packet.IQ_ACCUM_FLAG_BATCHED)
         self.window_index = int(first_packet.window_index)
         self.source_chunk_start = int(first_packet.source_chunk_start)
         self.source_chunk_end = int(first_packet.source_chunk_end)
@@ -165,6 +166,12 @@ class IQAccumCluster(SensorCluster):
     @property
     def section_completion(self):
         return self._section_completion
+
+    @property
+    def input_coverage(self):
+        """Fraction of the source window accumulated per antenna, counting missing sections as zero."""
+        window_chunks = (self.source_chunk_end - self.source_chunk_start) & 0xFFFFFFFF
+        return np.maximum(self._counts, 0).sum(axis=-1) / window_chunks
 
     @property
     def coverage_consistent(self):

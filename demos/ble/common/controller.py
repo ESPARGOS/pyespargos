@@ -5,6 +5,9 @@ selection, beamforming or rendering dependencies are required.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+
+from espargos.controller_reference import prepare_packet_reference
 import logging
 from PyQt6 import QtCore
 from espargos.board_ble import BLECapability
@@ -27,7 +30,7 @@ class BLEController(QtCore.QObject):
         self.pool = self.receiver = None
         self._last_calibrated = False
         self._saved_buffer_policy = None
-        self._saved = None
+        self._saved = {}
         self._started_processing = False
         self._closed = False
         self._ready = self._busy = self._calibrating = False
@@ -76,7 +79,7 @@ class BLEController(QtCore.QObject):
         connected = self.receiver is not None and not self._ready
         self._ready = self.receiver is not None
         self._busy = self._calibrating = False
-        self._last_calibrated = self._ready and self.receiver.is_calibrated(self.board_index)
+        self._last_calibrated = self._ready and all(self.receiver.is_calibrated(i) for i in self._saved)
         if self._config["polarization"] in (0, 1):
             status = "RF input is isolated" if self._config["polarization"] == 0 else "RF input uses the reference network"
         else:
@@ -102,9 +105,11 @@ class BLEController(QtCore.QObject):
 
             self.pool = pool_factory()
             self.pool.open()
-            board = self.pool.boards[self.board_index]
-            self._saved = (board.control.get_json("get_controller_mode"), board.iq.get_config()["modes"], board.ble.get_config())
-            ESPARGOSBluetoothApplication.request_mode(self.pool, boards=[board])
+            indices = range(len(self.pool.boards)) if self.board_index is None else [self.board_index]
+            for i in indices:
+                board = self.pool.boards[i]
+                self._saved[i] = (board.control.get_json("get_controller_mode"), board.iq.get_config()["modes"], board.ble.get_config())
+            ESPARGOSBluetoothApplication.request_mode(self.pool, boards=[self.pool.boards[i] for i in indices])
             self.receiver = self.pool.ble
             if self.buffering is not None:
                 self._saved_buffer_policy = self.receiver.buffer_policy
@@ -114,7 +119,7 @@ class BLEController(QtCore.QObject):
                 self.pool.start_processing()
                 self._started_processing = True
             if calibrate:
-                self.receiver.calibrate(board_index=self.board_index, reference_address=self._config.get("reference_address"))
+                self._calibrate()
             return dict(self._config)
 
         self._submit(connect, "Connecting and calibrating" if calibrate else "Connecting", calibrating=calibrate)
@@ -122,7 +127,7 @@ class BLEController(QtCore.QObject):
     def _refresh_calibration(self):
         if self._busy or not self._ready:
             return
-        calibrated = self.receiver.is_calibrated(self.board_index)
+        calibrated = all(self.receiver.is_calibrated(i) for i in self._saved)
         if calibrated != self._last_calibrated:
             self._last_calibrated = calibrated
             if self._status in ("Receiving", "Reference calibration is needed"):
@@ -159,7 +164,22 @@ class BLEController(QtCore.QObject):
             self._submit(self._calibrate, "Calibrating from reference packets", calibrating=True)
 
     def _calibrate(self):
-        self.receiver.calibrate(board_index=self.board_index, reference_address=self._config.get("reference_address"))
+        address = self._config.get("reference_address")
+        external = [i for i in self._saved if self._saved[i][2].get("reference_source") == 2]
+        masters = [i for i in self._saved if self._saved[i][2].get("reference_source") == 1]
+        # A master in the aperture supplies the external-reference boards.
+        # Restore its antenna route before measuring its own calibration.
+        with ExitStack() as restore:
+            if external and len(masters) == 1 and self.pool.reference_controller is None and address in (None, self._saved[masters[0]][2].get("reference_address")):
+                if self._config["phy"] != "LE1M":
+                    raise ValueError("Use an external LE2M reference advertiser for LE2M calibration")
+                master = self.pool.boards[masters[0]]
+                address = prepare_packet_reference(restore, master, "ble", self._config["channel"])
+            for i in external:
+                self.receiver.calibrate(board_index=i, reference_address=address)
+        for i in self._saved:
+            if i not in external:
+                self.receiver.calibrate(board_index=i, reference_address=self._config.get("reference_address"))
 
     def report_error(self, message):
         if not self._closed and message != self._status:
@@ -207,17 +227,17 @@ class BLEController(QtCore.QObject):
                 self.pool.stop_processing()
             except Exception as error:
                 errors.append(error)
-        if self._saved is not None:
-            controller, modes, config = self._saved
-            self._saved = None
-            board = self.pool.boards[self.board_index]
+        for i, (controller, modes, config) in self._saved.items():
+            board = self.pool.boards[i]
             for restore in (lambda: board.ble.set_config({k: config[k] for k in board.ble.CONFIG_KEYS if k in config}), lambda: board.iq.set_config({"modes": modes}), lambda: board.control.post_json("set_controller_mode", controller)):
                 try:
                     restore()
                 except Exception as error:
                     errors.append(error)
             if self.receiver is not None:
-                self.receiver.invalidate_calibration(self.board_index)
+                self.receiver.invalidate_calibration(i)
+        if self._saved:
+            self._saved.clear()
             try:
                 self.pool._refresh_receivers()
             except Exception as error:

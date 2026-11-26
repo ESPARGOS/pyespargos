@@ -89,9 +89,9 @@ Common.ESPARGOSApplication {
                     tickInterval: chart.index === 0 ? 5 : 2
                 }
                 Component.onCompleted: {
-                    for (let i = 0; i < 8; ++i) {
+                    for (let i = 0; i < 8 * backend.boardCount; ++i) {
                         let series = createSeries(ChartView.SeriesTypeLine, "RX " + (i + 1), frequency, value)
-                        series.color = window.colors[i]
+                        series.color = window.colors[i % 8]
                         curves.push(series)
                     }
                     plots[index] = chart

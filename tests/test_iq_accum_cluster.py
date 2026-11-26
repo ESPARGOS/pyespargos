@@ -213,3 +213,13 @@ def test_bluetooth_accumulation_keeps_measured_phase():
     cluster = IQAccumCluster(packet, [_Revision()], gain_phase_compensation=True)
     cluster.add_message(0, _message(0, packet))
     np.testing.assert_array_equal(cluster.iq_sections[0, 0, 0, 1], packet.decode_iq())
+
+
+def test_batched_profile_reports_input_coverage_even_with_missing_sections():
+    packet = _packet(0, count=12)
+    packet.flags = 1 << 9
+    cluster = IQAccumCluster(packet, [_Revision()])
+    cluster.add_message(0, _message(0, packet))
+    assert cluster.is_batched
+    assert cluster.input_coverage[0, 0, 0] == 12 / 128
+    assert cluster.input_coverage[0, 0, 1] == 0

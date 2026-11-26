@@ -561,6 +561,7 @@ class IQReceiver(ClusterAssembler):
                 int(payload.sync_info) & 0xFFFF,
                 int(payload.source_chunk_start),
                 int(payload.source_chunk_end),
+                payload.is_batched,
                 int(payload.vector_chunks),
                 int(payload.sample_rate_hz),
                 int(payload.center_freq_hz),

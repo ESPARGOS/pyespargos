@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import cached_property
 import struct
 import numpy as np
 
@@ -14,11 +15,7 @@ ADVERTISING_ACCESS_ADDRESS = 0x8E89BED6
 def channel_frequency(channel):
     if not 0 <= channel <= 39:
         raise ValueError("BLE channel must be in 0..39")
-    return (
-        2402
-        if channel == 37
-        else 2426 if channel == 38 else 2480 if channel == 39 else 2404 + 2 * channel if channel < 11 else 2406 + 2 * channel
-    ) * 1_000_000
+    return (2402 if channel == 37 else 2426 if channel == 38 else 2480 if channel == 39 else 2404 + 2 * channel if channel < 11 else 2406 + 2 * channel) * 1_000_000
 
 
 class BLEPacket:
@@ -52,7 +49,7 @@ class BLEPacket:
             raise ValueError("BLE payload size mismatch")
         self.sample_rate, self.if_hz, self.access_address, self.packet_crc, self.packet_flags = struct.unpack_from("<Ii3I", data, 72)
         self.phy, length, actual_rf_switch, reserved = struct.unpack_from("<4B", data, 92)
-        if reserved or self.packet_crc > 0xffffff:
+        if reserved or self.packet_crc > 0xFFFFFF:
             raise ValueError("Invalid BLE packet metadata")
         if self.rf_switch_mode == 4:
             if actual_rf_switch not in (2, 3):
@@ -70,7 +67,6 @@ class BLEPacket:
         self.capture_phy = self.phy
         self.coding = 0
         self.prefix = bytes(data[96 : 96 + length])
-        raw = unpack_words(data, 128, packed)
         if self.raw_capture:
             self.packet_flags &= ~32  # Host provenance is local to this decoder.
             if not (self.packet_flags & 64 and self.qualified):
@@ -78,12 +74,19 @@ class BLEPacket:
                 self.access_address = self.packet_crc = 0
                 self.prefix = b""
                 self.packet_flags &= ~(1 | 2)
+                raw = unpack_words(data, 128, packed)
                 self._decode_on_host(raw)
-        self.samples = complex_samples(raw)
+                self.samples = complex_samples(raw)
+
+    @cached_property
+    def samples(self):
+        """Native complex IQ. Metadata-only subscribers need no ADC conversion."""
+        return complex_samples(unpack_words(self._data, 128, bool(self.flags & 4)))
 
     def _decode_on_host(self, raw):
         # Original wire bytes remain unchanged, including local CRC provenance.
         from .ble_decoder import decode
+
         if self.if_hz != 2_000_000:
             return
         channel = 37 if self.channel < 37 and self.rf_switch == 1 and self.phy == 0 else self.channel

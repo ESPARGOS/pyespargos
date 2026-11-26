@@ -32,12 +32,7 @@ class BLECalibration:
             return False
         for a in range(8):
             p = cluster.get_packet(self.board_index, a)
-            if p is not None and (
-                p.generation != self.generation
-                or p.settings != self.settings
-                or getattr(p, "capture_phy", p.phy) != self.phy
-                or (p.clock_epoch, p.receiver_epoch) != self.epochs[a]
-            ):
+            if p is not None and (p.generation != self.generation or p.settings != self.settings or getattr(p, "capture_phy", p.phy) != self.phy or (p.clock_epoch, p.receiver_epoch) != self.epochs[a]):
                 return False
         return True
 
@@ -99,8 +94,7 @@ def calibrate(receiver, board_index, samples, timeout, reference_address):
             valid = phase.valid[board_index]
             if not valid[0, 0]:
                 return
-            context = {a: (p.clock_epoch, p.receiver_epoch) for a in range(8)
-                       if (p := cluster.get_packet(board_index, a)) is not None}
+            context = {a: (p.clock_epoch, p.receiver_epoch) for a in range(8) if (p := cluster.get_packet(board_index, a)) is not None}
             with lock:
                 if ready.is_set():
                     return
@@ -119,33 +113,35 @@ def calibrate(receiver, board_index, samples, timeout, reference_address):
                 if np.all(counts >= samples):
                     ready.set()
 
+        # Expert words can select a different analog signal path.
+        # Measure it with those same words on the reference input.
+        gain_mode = "expert" if config["gain_mode"] == "expert" else "manual"
+        probe = {"rf_switch": 1, "gain_mode": gain_mode}
+        if gain_mode == "manual" and config["reference_source"] in (1, 2):
+            # A cabled master drives the splitter well above typical antenna levels.
+            probe["rx_gain"] = 24
         handle = receiver.add_callback(collect, include_partial=True)
         try:
             with receiver._state_lock:
                 receiver._invalidate_board(board_index)
-                # Expert words can select a different analog signal path.
-                # Measure it with those same words on the reference input.
-                gain_mode = "expert" if config["gain_mode"] == "expert" else "manual"
-                state = board.ble.set_config({"rf_switch": 1, "gain_mode": gain_mode})
+                state = board.ble.set_config(probe)
                 generation = state["generation"]
                 receiver._generations[board_index] = generation
                 receiver._epochs = {k: v for k, v in receiver._epochs.items() if k[0] != board_index}
             if not ready.wait(timeout):
                 with lock:
                     observed = counts.tolist()
-                raise BLECalibrationError(f"Insufficient BLE reference measurements across the array "
-                                          f"(usable packets by row: {observed}, need {samples} per antenna). "
-                                          "Check reference generation and routing")
+                raise BLECalibrationError(f"Insufficient BLE reference measurements on {board.host} " f"(usable packets by row: {observed}, need {samples} per antenna). " "Check reference generation and routing")
             with lock:
                 mean = phase_sum / counts
                 if np.min(abs(mean)) < 0.85:
-                    raise BLECalibrationError("BLE reference phase is unstable. Check the reference path and receiver gain")
+                    raise BLECalibrationError(f"BLE reference phase is unstable on {board.host}. Check the reference path and receiver gain")
                 timing, phases = fit_reference_response(responses, board_index)
         finally:
             receiver.remove_callback(handle)
             with receiver._state_lock:
                 receiver._invalidate_board(board_index)
-                restored = board.ble.set_config({"rf_switch": config["rf_switch"], "gain_mode": config["gain_mode"]})
+                restored = board.ble.set_config({key: config[key] for key in probe})
                 receiver._generations[board_index] = restored["generation"]
                 receiver._epochs = {k: v for k, v in receiver._epochs.items() if k[0] != board_index}
         if (restored["channel"], restored["phy"]) != (state["channel"], state["phy"]):
@@ -187,22 +183,21 @@ def fit_reference_response(responses, board_index):
                 raise ValueError("Reference frequency grids must agree")
             # Remove the packet gauge even if its reference antenna changed.
             anchor = response.response[board_index, 0, 0]
-            h = np.divide(response.response[position], anchor, out=np.full(anchor.shape, np.nan+1j*np.nan),
-                          where=np.isfinite(anchor) & (abs(anchor) > 0))
+            h = np.divide(response.response[position], anchor, out=np.full(anchor.shape, np.nan + 1j * np.nan), where=np.isfinite(anchor) & (abs(anchor) > 0))
             weight = response.coherence[position] * response.coherence[board_index, 0, 0]
-            valid = np.isfinite(h) & (abs(h) > 0) & (weight > .8)
+            valid = np.isfinite(h) & (abs(h) > 0) & (weight > 0.8)
             usable_packets += bool(np.any(valid))
             values.append(np.divide(h, abs(h), out=np.zeros_like(h), where=valid))
             weights.append(np.where(valid, weight, 0))
         weight = np.sum(weights, axis=0)
-        mean = np.sum(np.asarray(values)*weights, axis=0)
-        valid = (weight > usable_packets*.5) & (abs(mean) > weight*.8)
+        mean = np.sum(np.asarray(values) * weights, axis=0)
+        valid = (weight > usable_packets * 0.5) & (abs(mean) > weight * 0.8)
         if np.count_nonzero(valid) < 4:
             raise ValueError("Insufficient coherent BLE reference bandwidth")
         f, w = offsets[valid], weight[valid]
         phase = np.unwrap(np.angle(mean[valid]))
         center = np.average(f, weights=w)
-        slope = np.sum(w*(f-center)*(phase-np.average(phase, weights=w))) / np.sum(w*(f-center)**2)
-        timing[position] = -slope / (2*np.pi)
-        phases[position] = np.angle(np.sum(mean[valid]*np.exp(-1j*slope*f)))
+        slope = np.sum(w * (f - center) * (phase - np.average(phase, weights=w))) / np.sum(w * (f - center) ** 2)
+        timing[position] = -slope / (2 * np.pi)
+        phases[position] = np.angle(np.sum(mean[valid] * np.exp(-1j * slope * f)))
     return timing, phases

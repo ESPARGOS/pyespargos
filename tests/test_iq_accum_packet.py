@@ -7,10 +7,10 @@ import pytest
 from espargos.iq_packet import IQAccumPacket
 
 
-def make_packet(count=4, flags=0):
+def make_packet(count=4, flags=0, dtype="<i4"):
     i_sum = np.arange(256, dtype=np.int32) * count
     q_sum = -np.arange(256, dtype=np.int32) * count
-    interleaved = np.column_stack((i_sum, q_sum)).astype("<i4").tobytes()
+    interleaved = np.column_stack((i_sum, q_sum)).astype(dtype).tobytes()
     words = [
         7,  # sequence
         9,  # window index
@@ -18,7 +18,7 @@ def make_packet(count=4, flags=0):
         8192,
         2,  # vector chunks
         1,  # vector section
-        2048,
+        64 if dtype == "<i2" else 2048,
         count,
         0x12345678,
         1,
@@ -56,3 +56,17 @@ def test_accumulation_packet_rejects_corrupt_crc():
     data[100] ^= 1
     with pytest.raises(ValueError, match="CRC"):
         IQAccumPacket(data)
+
+
+@pytest.mark.parametrize("dtype, flags", [("<i2", 0x300), ("<i4", 0x200)])
+def test_batched_profiles(dtype, flags):
+    data = make_packet(flags=flags, dtype=dtype)
+    packet = IQAccumPacket(data)
+    assert packet.is_batched
+    np.testing.assert_array_equal(packet.decode_iq(), np.arange(256) * (1 + 1j))
+    with pytest.raises(ValueError, match="too short"):
+        IQAccumPacket(data[:-1])
+    corrupt = bytearray(data)
+    corrupt[-5] ^= 1
+    with pytest.raises(ValueError, match="CRC"):
+        IQAccumPacket(corrupt)

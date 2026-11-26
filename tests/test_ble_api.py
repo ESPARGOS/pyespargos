@@ -28,8 +28,9 @@ from test_ble_camera import record
 
 def reference_response(phase):
     from espargos.ble_iq import BLEChannelResponse
-    offsets = np.linspace(-.5e6, .5e6, 33)
-    response = np.broadcast_to(phase.vector[...,None], (*phase.vector.shape, len(offsets)))
+
+    offsets = np.linspace(-0.5e6, 0.5e6, 33)
+    response = np.broadcast_to(phase.vector[..., None], (*phase.vector.shape, len(offsets)))
     return BLEChannelResponse(offsets, response, np.ones(response.shape), np.ones(phase.vector.shape))
 
 
@@ -111,16 +112,14 @@ class ClusterTests(unittest.TestCase):
         cluster = BLECluster("event", 0, message().payload, [BoardRevisionDensiflorus()])
         for a in range(8):
             cluster.add_message(0, message(a))
-        with patch("espargos.ble_iq.waveform", return_value=Waveform(np.ones(600,complex), 100, 500, 4, 0)), patch(
-            "espargos.ble_iq.align_waveforms", return_value=WaveformAlignment(0, 0.4, 0.99)
-        ):
+        with patch("espargos.ble_iq.waveform", return_value=Waveform(np.ones(600, complex), 100, 500, 4, 0)), patch("espargos.ble_iq.align_waveforms", return_value=WaveformAlignment(0, 0.4, 0.99)):
             phase = estimate_phase(cluster)
         self.assertEqual(phase.vector.shape, cluster.shape)
         self.assertTrue(phase.valid.all())
         self.assertTrue(cluster.is_complete)
         cluster.packet.phy = 3
         for a in range(8):
-            cluster.get_packet(0,a).phy = 3
+            cluster.get_packet(0, a).phy = 3
         with self.assertRaisesRegex(ValueError, "LE1M, LE2M and LE Coded"):
             estimate_phase(cluster)
         self.assertTrue(cluster.is_complete)  # Raw captures remain usable.
@@ -196,7 +195,7 @@ class ReceiverTests(unittest.TestCase):
         for antenna in range(8):
             data = bytearray(record())
             data[80:84] = (0x12345678).to_bytes(4, "little")
-            data[84:88] = (0xabcdef).to_bytes(4, "little")
+            data[84:88] = (0xABCDEF).to_bytes(4, "little")
             data[88:92] = (1).to_bytes(4, "little")
             packet = BLEPacket(data)
             self.assertTrue(packet.qualified)
@@ -307,6 +306,7 @@ class GainMetadataTests(unittest.TestCase):
 
     def test_phase_and_amplitude_remove_independent_sensor_gains(self):
         from espargos.gain_phase_calibration import GAIN_PHASE_SHIFT_BY_GAIN_RAD
+
         gains = [0, 15, 35, 43, 49, 55, 65, 75]
         settings = 37 | 2 << 8 | 40 << 16 | 1 << 24
         first = message(settings=settings, measured_gain=gains[0])
@@ -316,17 +316,17 @@ class GainMetadataTests(unittest.TestCase):
         for antenna, gain in enumerate(gains):
             cluster.add_message(0, message(antenna, settings=settings, measured_gain=gain))
             position = cluster.get_sensor_position(0, antenna)
-            expected[position] = np.exp(1j * antenna * .13)
+            expected[position] = np.exp(1j * antenna * 0.13)
             amplitudes[position] = 1 + antenna / 10
 
         def wave(packet, phy=None, payload_length=None, coding=None):
             antenna = gains.index(packet.rx_gain)
-            phase = antenna * .13 + GAIN_PHASE_SHIFT_BY_GAIN_RAD[packet.rx_gain]
-            samples = np.full(128, (1 + antenna / 10) * 10**(packet.rx_gain/20) * np.exp(-1j*phase))
+            phase = antenna * 0.13 + GAIN_PHASE_SHIFT_BY_GAIN_RAD[packet.rx_gain]
+            samples = np.full(128, (1 + antenna / 10) * 10 ** (packet.rx_gain / 20) * np.exp(-1j * phase))
             return Waveform(samples, 10, 100, 4, 0)
 
         def relative(a, b, recovery=False):
-            return np.angle(np.vdot(a.samples, b.samples)), 1.
+            return np.angle(np.vdot(a.samples, b.samples)), 1.0
 
         with patch("espargos.ble_iq.waveform", side_effect=wave), patch("espargos.ble_iq.align_waveforms", return_value=WaveformAlignment(0, 0, 1)):
             phase = estimate_phase(cluster)
@@ -376,11 +376,7 @@ class CalibrationTests(unittest.TestCase):
                     time.sleep(0.001)
                 for seq in range(1, 4):
                     for a in range(8):
-                        board.emit(a, sequence=seq * 2 - 1,
-                            time_us=100_000 + seq * 6000 - 3000,
-                            settings=37 | 1 << 8 | 40 << 16,
-                            generation=board.config["generation"],
-                            prefix=b"\x00\x06" + bytes.fromhex("ffeeddccbbaa"))
+                        board.emit(a, sequence=seq * 2 - 1, time_us=100_000 + seq * 6000 - 3000, settings=37 | 1 << 8 | 40 << 16, generation=board.config["generation"], prefix=b"\x00\x06" + bytes.fromhex("ffeeddccbbaa"))
                     for a in range(8):
                         board.emit(
                             a,
@@ -410,8 +406,8 @@ class CalibrationTests(unittest.TestCase):
             arrival_phase = np.arange(8).reshape(receiver.shape) * -0.23
             measured = BLEPhase(np.exp(1j * (receiver_phase + arrival_phase)), np.ones(receiver.shape), np.ones(receiver.shape, bool))
             from espargos.ble_iq import BLEPacketIQ
-            iq = BLEPacketIQ(np.repeat(measured.vector[...,None],128,axis=-1),4e6,frequency,2e6,
-                             np.zeros(receiver.shape),np.ones(receiver.shape),0,(0,0,0))
+
+            iq = BLEPacketIQ(np.repeat(measured.vector[..., None], 128, axis=-1), 4e6, frequency, 2e6, np.zeros(receiver.shape), np.ones(receiver.shape), 0, (0, 0, 0))
             with patch("espargos.ble_iq.align_packet_iq", return_value=iq):
                 corrected = receiver.phase(cluster)
                 self.assertEqual(corrected.vector.shape, receiver.shape)
@@ -421,11 +417,9 @@ class CalibrationTests(unittest.TestCase):
                     receiver.apply_config({"rf_switch": route, "rx_gain": gain})
                     self.assertTrue(receiver.is_calibrated())
                     settings = 37 | route << 8 | gain << 16
-                    changed = BLECluster("changed", 0, message(settings=settings,
-                        generation=board.config["generation"], actual_rf=2).payload, receiver.board_revisions)
+                    changed = BLECluster("changed", 0, message(settings=settings, generation=board.config["generation"], actual_rf=2).payload, receiver.board_revisions)
                     for a in range(8):
-                        changed.add_message(0, message(a, settings=settings,
-                            generation=board.config["generation"], actual_rf=2))
+                        changed.add_message(0, message(a, settings=settings, generation=board.config["generation"], actual_rf=2))
                     changed_phase = receiver.phase(changed).vector
                     np.testing.assert_allclose(changed_phase / changed_phase.flat[0], np.exp(1j * arrival_phase), atol=1e-6)
                 cluster = changed
@@ -435,17 +429,12 @@ class CalibrationTests(unittest.TestCase):
 
     def test_capture_changes_preserve_calibration_but_tuning_does_not(self):
         from espargos.ble_calibration import BLECalibration
-        for change, preserved in (({"decimation": 8}, True),
-                                  ({"channel": 38}, False),
-                                  ({"phy": "LE2M"}, False),
-                                  ({"expert_gain_words": [1, 2, 3]}, False),
-                                  ({"gain_mode": "expert"}, False)):
+
+        for change, preserved in (({"decimation": 8}, True), ({"channel": 38}, False), ({"phy": "LE2M"}, False), ({"expert_gain_words": [1, 2, 3]}, False), ({"gain_mode": "expert"}, False)):
             with self.subTest(change=change), Pool([FakeBoard()]) as pool:
                 receiver = pool.ble
                 board = pool.boards[0]
-                calibration = BLECalibration(None, 0, 3,
-                    board.ble.packet_settings(board.config), 0,
-                    {a: (1, 2) for a in range(8)})
+                calibration = BLECalibration(None, 0, 3, board.ble.packet_settings(board.config), 0, {a: (1, 2) for a in range(8)})
                 receiver._calibrations[0] = calibration
                 receiver.apply_config(change)
                 self.assertEqual(receiver.is_calibrated(), preserved)
@@ -455,16 +444,14 @@ class CalibrationTests(unittest.TestCase):
 
     def test_preserved_calibration_checks_first_packet_epoch(self):
         from espargos.ble_calibration import BLECalibration
+
         board = FakeBoard()
         with Pool([board]) as pool:
             receiver = pool.ble
-            receiver._calibrations[0] = BLECalibration(None, 0, 3,
-                board.ble.packet_settings(board.config), 0,
-                {a: (1, 2) for a in range(8)})
+            receiver._calibrations[0] = BLECalibration(None, 0, 3, board.ble.packet_settings(board.config), 0, {a: (1, 2) for a in range(8)})
             receiver.apply_config({"rx_gain": 55})
             self.assertTrue(receiver.is_calibrated())
-            board.emit(0, generation=board.config["generation"],
-                       settings=board.ble.packet_settings(board.config), receiver_epoch=3)
+            board.emit(0, generation=board.config["generation"], settings=board.ble.packet_settings(board.config), receiver_epoch=3)
             pool.run(0)
             self.assertFalse(receiver.is_calibrated())
 
@@ -472,8 +459,7 @@ class CalibrationTests(unittest.TestCase):
         config = FakeBoard().config
         for mode, value in (("manual", 0), ("auto", 1), ("expert", 2)):
             config["gain_mode"] = mode
-            self.assertEqual(BLECapability.packet_settings(config),
-                             37 | 2 << 8 | 40 << 16 | value << 24)
+            self.assertEqual(BLECapability.packet_settings(config), 37 | 2 << 8 | 40 << 16 | value << 24)
 
     def test_external_reference_requires_explicit_identity(self):
         board = FakeBoard()
@@ -503,6 +489,17 @@ class CalibrationTests(unittest.TestCase):
                 self.assertEqual(board.config["rf_switch"], 2)
                 self.assertFalse(receiver.is_calibrated())
 
+    def test_cabled_reference_uses_probe_gain_and_restores_antenna_gain(self):
+        board = FakeBoard()
+        board.config.update(reference_source=2, rx_gain=53, gain_mode="auto")
+        with Pool([board]) as pool:
+            receiver = pool.ble
+            pool.start_processing()
+            with self.assertRaisesRegex(BLECalibrationError, board.host):
+                receiver.calibrate(reference_address=board.config["reference_address"], timeout=0.01)
+            self.assertEqual(board.writes[0][1], {"rf_switch": 1, "gain_mode": "manual", "rx_gain": 24})
+            self.assertEqual((board.config["rx_gain"], board.config["gain_mode"], board.config["rf_switch"]), (53, "auto", 2))
+
     def test_auto_gain_calibration_restores_mode_and_can_be_reused(self):
         board = FakeBoard()
         board.config["gain_mode"] = "auto"
@@ -513,25 +510,21 @@ class CalibrationTests(unittest.TestCase):
             def reference():
                 deadline = time.monotonic() + 1
                 while board.config["rf_switch"] != 1 and time.monotonic() < deadline:
-                    time.sleep(.001)
+                    time.sleep(0.001)
                 for sequence in range(1, 5):
                     for antenna in range(8):
                         if antenna == (2 if sequence % 2 else 3):
                             continue
-                        board.emit(antenna, sequence=sequence, time_us=sequence * 5000,
-                            generation=board.config["generation"],
-                            settings=board.ble.packet_settings(board.config))
+                        board.emit(antenna, sequence=sequence, time_us=sequence * 5000, generation=board.config["generation"], settings=board.ble.packet_settings(board.config))
 
             def align(cluster):
                 valid = cluster.completion.copy()
-                vector = np.where(valid, 1.0 + 0j, np.nan + 1j*np.nan)
+                vector = np.where(valid, 1.0 + 0j, np.nan + 1j * np.nan)
                 phase = BLEPhase(vector, np.ones(receiver.shape), valid)
                 return SimpleNamespace(phase=lambda: phase)
 
             producer = threading.Thread(target=reference)
-            with patch("espargos.ble_calibration.align_packet_iq", side_effect=align), patch(
-                "espargos.ble_calibration.channel_response", side_effect=lambda iq: reference_response(iq.phase())
-            ):
+            with patch("espargos.ble_calibration.align_packet_iq", side_effect=align), patch("espargos.ble_calibration.channel_response", side_effect=lambda iq: reference_response(iq.phase())):
                 producer.start()
                 result = receiver.calibrate(samples=2, timeout=2)
                 producer.join()
@@ -581,6 +574,7 @@ if __name__ == "__main__":
 class HostDecodingTests(unittest.TestCase):
     def test_sensor_qualified_iq_preserves_identity_and_crc_provenance(self):
         import struct
+
         for crc in (False, True):
             data = bytearray(record())
             expected = BLEPacket(data)
@@ -594,6 +588,7 @@ class HostDecodingTests(unittest.TestCase):
 
     def test_raw_metadata_and_subscription(self):
         import struct
+
         board = FakeBoard()
         received = []
         board.ble.subscribe_packets(received.append)

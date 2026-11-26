@@ -250,13 +250,13 @@ espargos.iq_stream
 -------------------
 
 .. autoclass:: espargos.iq_stream.IQStream
-   :members: write, write_packet, start, finish, wait, status, transport_status, close
+   :members: write, write_packet, start, finish, wait, status, close
 
 espargos.stream_sources
 -----------------------
 
 .. automodule:: espargos.stream_sources
-   :members: SingleCarrier, GFSK, SSBEncoder, psk31_symbols, ble_le1m_packet, ble_le2m_packet
+   :members: Stream, SingleCarrier, GFSK, SSBEncoder, psk31_symbols, ble_le1m_packet, ble_le2m_packet
 
 espargos.iq_packet
 ------------------

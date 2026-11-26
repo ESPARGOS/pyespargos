@@ -1,12 +1,13 @@
 IQ Transmit Streaming
 =====================
 
-In :doc:`iq-transmission`, you load a waveform into each sensor's memory.
-The sensors then repeat it on their own. This works well for a known signal
-such as a test tone, even if its waveform needs a high sample rate. Use IQ
-streaming when the data keeps changing, as with live audio. Your computer
-sends new data to the controller, and the controller passes it to the sensors
-before it is due to play.
+:doc:`iq-transmission` lets you choose or upload waveforms that the sensors
+play from cyclic buffers. You can steer each waveform independently, even at
+high sample rates.
+
+Use IQ transmit streaming for changing content, such as live audio or a
+digital data stream. The host sends samples, symbols or packets to the
+controller, which forwards them to the sensors ahead of playback.
 
 .. figure:: _static/iq-buffer-vs-stream.svg
    :target: _static/iq-buffer-vs-stream.svg
@@ -15,13 +16,13 @@ before it is due to play.
 
    Stored playback can use wider-band waveforms because the sensors read
    samples from memory at up to 80 MSa/s. With Raw IQ streaming, the
-   computer can send up to 50 kSa/s of fresh samples. The two digital modes
+   computer can stream up to 50 kSa/s of fresh samples. The two digital modes
    send symbols or bits and build the waveform on the sensors.
 
-You can stream one beam at a time. At lower input rates you can also play
-stored waveforms on the same antennas.
-
-See :doc:`iq-beam-steering` to schedule rapid changes of direction while a stream plays.
+One beam per transmit scene can use a live Stream source. Other beams can
+play stored waveforms at the same time, subject to the mixing limits below.
+Both live and stored beams support scheduled direction changes.
+See :doc:`iq-beam-steering`.
 
 Input formats
 -------------
@@ -81,14 +82,29 @@ For single-sideband audio, use ``SSBEncoder`` to convert your audio to
 complex samples at the Raw IQ input rate. Send the ``flush()`` output at
 the end so the last part of the audio can play.
 
+Stream a file from the command line
+-----------------------------------
+
+In the controller web interface, open **IQ Transmission**, select 16 MSa/s
+playback, choose **Stream** as the beam source and calibrate the transmitters.
+On **TX Streaming**, select **Raw IQ** and **8 kSa/s** for the test file above.
+Run the client on the host computer::
+
+   python -m espargos.tx_stream 192.168.1.2 --file samples.cs8
+
+The client uses the prepared beam and saved modulation settings. It reads
+standard input if you omit ``--file``. UDP is the default transport. For a
+multi-board beam, pass the controller addresses as separate arguments.
+
 Stream a file from Python
 -------------------------
 
 Create a beam with a Stream source, then calibrate the transmitters.
 Opening the beam gives you a writer for its samples.
 This example sends the 8 kSa/s file above through the cabled reference
-output. For an over-the-air test, select an antenna output and check the
-:doc:`transmit authorization requirements <iq-transmission>`.
+output. The controller requires transmit authorization to start playback.
+For an over-the-air test, select an antenna output as described in
+:doc:`iq-transmission`.
 
 .. code-block:: python
 
@@ -124,7 +140,8 @@ preparing waveforms and monitor calibration.
 
 In Raw IQ mode, pass CS8 bytes, a two-column NumPy ``int8`` array or
 normalized complex samples to ``write()``. Prefill at least 1,024 raw
-samples, four Single Carrier indices or a GFSK packet before ``start()``.
+samples or four Single Carrier indices before ``start()``. For GFSK, the
+prefilled packet bits and gaps must cover at least four symbol ticks.
 For a finite stream, mark the end with ``finish()`` and call ``wait()`` to
 let the remaining data play. See :class:`espargos.iq_stream.IQStream` for
 the stream methods.
@@ -151,7 +168,9 @@ points, each with magnitude at most one. For a pulse spanning ``span``
 symbols, give ``span * samples_per_symbol + 1`` coefficients, including
 both endpoints. A pulse can span 1 to 8 symbols at a table resolution of
 16, 32, 64 or 128 samples per symbol. That resolution describes the shape
-of the pulse. ``symbol_rate_hz`` sets how often a new pulse starts.
+of the pulse. Each coefficient must have magnitude at most one, and
+overlapping pulse magnitudes must sum to at most 1.899 at each table phase.
+``symbol_rate_hz`` sets how often a new pulse starts.
 
 A short pulse and a small constellation allow the highest rates, up to
 1.6 Mbaud. Each BPSK symbol costs one bit before transport framing, while a
@@ -249,6 +268,11 @@ and decides when to send each packet.
 Custom GFSK settings
 ~~~~~~~~~~~~~~~~~~~~
 
+The command-line client reads the length-prefixed packet records described
+above. In Python, pass just the on-air bytes to ``write_packet()``. Bits
+are sent least significant first within each byte. Use ``bit_count`` when
+the last byte is only partly used.
+
 A packet can contain up to 1,020 bytes. Its bits and the following pause
 must fit within 65,536 symbol intervals. At 2 Mbaud, the packet length
 and gap determine how much data the host must deliver. For example, eight
@@ -261,7 +285,8 @@ rate and frequency deviation. The modulation index is twice the deviation
 from the center frequency divided by the symbol rate. Gaussian BT controls
 the smoothing. A lower BT makes the transitions more gradual. The
 ``GFSK`` constructor accepts BT from 0.2 to 1 and a filter span of two or
-four symbols. Rates must divide 16 MSa/s exactly and lie between 125 kbaud
+four symbols. The modulation index ranges from 1/16 to 1 in steps of 1/16.
+Rates must divide 16 MSa/s exactly and lie between 125 kbaud
 and 2 Mbaud. The constructor raises ``ValueError`` if the sensors cannot generate
 the selected combination of rate, modulation index and span.
 

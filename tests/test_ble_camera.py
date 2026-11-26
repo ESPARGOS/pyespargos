@@ -56,15 +56,11 @@ def record(
     packet_flags = (3 if crc else 0) | (8 if gain_reported else 0)
     if measured_gain is not None:
         packet_flags |= 12 | measured_gain << 8
-    meta = struct.pack(
-        "<Ii3I4B32s", 8_000_000, 2_000_000, 0x8E89BED6, 0, packet_flags, 0, len(prefix), actual_rf, 0, prefix
-    )
+    meta = struct.pack("<Ii3I4B32s", 8_000_000, 2_000_000, 0x8E89BED6, 0, packet_flags, 0, len(prefix), actual_rf, 0, prefix)
     raw = (np.rint(samples.real).astype(np.int32) & 1023) | ((np.rint(samples.imag).astype(np.int32) & 1023) << 10)
     if packed:
         a, b = raw[::2].astype(np.uint32), raw[1::2].astype(np.uint32)
-        wire = (
-            np.stack([a & 255, a >> 8 & 255, (a >> 16) | ((b & 15) << 4), b >> 4 & 255, b >> 12 & 255], axis=1).astype(np.uint8).tobytes()
-        )
+        wire = np.stack([a & 255, a >> 8 & 255, (a >> 16) | ((b & 15) << 4), b >> 4 & 255, b >> 12 & 255], axis=1).astype(np.uint8).tobytes()
     else:
         wire = raw.astype("<u4").tobytes()
     return header + meta + wire
@@ -73,7 +69,9 @@ def record(
 class PacketTests(unittest.TestCase):
     def test_packed_and_unpacked(self):
         a, b = BLEPacket(record()), BLEPacket(record(packed=True))
+        self.assertNotIn("samples", vars(b))
         np.testing.assert_array_equal(a.samples, b.samples)
+        self.assertIs(b.samples, b.samples)
         self.assertEqual(a.samples[0], -512 - 512j)
         self.assertEqual(a.advertiser, "00:01:02:03:04:05")
         self.assertEqual(a.name, "Test")
@@ -115,9 +113,7 @@ class PhaseTests(unittest.TestCase):
         phase = np.cumsum(np.convolve(rng.normal(size=1100), np.ones(9) / 9, mode="same") * 0.4)
         z = np.exp(1j * phase)
         delay, rotation = 2.3, 0.7
-        shifted = np.interp(np.arange(len(z)) - delay, np.arange(len(z)), z.real) + 1j * np.interp(
-            np.arange(len(z)) - delay, np.arange(len(z)), z.imag
-        )
+        shifted = np.interp(np.arange(len(z)) - delay, np.arange(len(z)), z.real) + 1j * np.interp(np.arange(len(z)) - delay, np.arange(len(z)), z.imag)
         ref = Waveform(z, 300, 700, 4, 0)
         other = Waveform(shifted * np.exp(1j * rotation), 302, 702, 4, 0)
         fit = relative(ref, other, recovery=True)

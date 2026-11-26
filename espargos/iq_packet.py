@@ -34,6 +34,8 @@ IQ_SYNC_INFO_SEQ_MASK = 0x0000FFFF
 IQ_SYNC_INFO_GRID_SYNCED = 1 << 16
 IQ_SYNC_INFO_BOOT_SYNCED = 1 << 17
 IQ_SYNC_INFO_FIRE_TIME_VALID = 1 << 18
+IQ_ACCUM_FLAG_INT16 = 1 << 8
+IQ_ACCUM_FLAG_BATCHED = 1 << 9
 IQ_CHUNK_FLAG_SIGNAL_CAPTURE = 1 << 8
 IQ_CHUNK_FLAG_SIGNAL_FIRST = 1 << 9
 IQ_CHUNK_FLAG_SIGNAL_LAST = 1 << 10
@@ -144,7 +146,7 @@ class IQChunkPacket:
 class IQAccumPacket:
     """One 256-sample section of an accumulated IQ vector (magic ``IQA1``).
 
-    The wire payload keeps exact signed int32 I/Q sums. :meth:`decode_iq`
+    The wire payload keeps exact signed 16-bit or 32-bit I/Q sums. :meth:`decode_iq`
     returns their count-normalized complex average by default, while
     :attr:`i_sum` and :attr:`q_sum` expose the lossless integer components.
     """
@@ -154,7 +156,7 @@ class IQAccumPacket:
     WIRE_BYTES = HEADER_BYTES + PAYLOAD_BYTES + 4
 
     def __init__(self, pktbuf):
-        if len(pktbuf) < self.WIRE_BYTES:
+        if len(pktbuf) < self.HEADER_BYTES:
             raise ValueError("IQ accumulation packet too short")
         self.type_header = int.from_bytes(pktbuf[0:4], byteorder="little")
         if self.type_header != IQ_ACCUM_TYPE_HEADER:
@@ -196,20 +198,21 @@ class IQAccumPacket:
             raise ValueError("Actual accumulation count exceeds nominal count")
         self.center_freq_mhz = self.center_freq_hz / 1e6
         self.fire_time_ns = (fire_hi << 32) | fire_lo
-        sums = (
-            np.frombuffer(
-                pktbuf[self.HEADER_BYTES : self.HEADER_BYTES + self.PAYLOAD_BYTES],
-                dtype="<i4",
-            )
-            .reshape(IQ_CHUNK_SAMPLE_WORDS, 2)
-            .copy()
-        )
+        dtype = np.dtype("<i2" if self.flags & IQ_ACCUM_FLAG_INT16 else "<i4")
+        components = 2 * IQ_CHUNK_SAMPLE_WORDS
+        crc_offset = self.HEADER_BYTES + components * dtype.itemsize
+        if len(pktbuf) < crc_offset + 4:
+            raise ValueError("IQ accumulation packet too short")
+        sums = np.frombuffer(pktbuf, dtype=dtype, offset=self.HEADER_BYTES, count=components).reshape(-1, 2).copy()
         self.i_sum = sums[:, 0]
         self.q_sum = sums[:, 1]
-        crc_offset = self.HEADER_BYTES + self.PAYLOAD_BYTES
         self.crc32 = int.from_bytes(pktbuf[crc_offset : crc_offset + 4], byteorder="little")
         if zlib.crc32(bytes(pktbuf[:crc_offset])) != self.crc32:
             raise ValueError("IQ accumulation CRC mismatch (uplink corruption)")
+
+    @property
+    def is_batched(self) -> bool:
+        return bool(self.flags & IQ_ACCUM_FLAG_BATCHED)
 
     @property
     def is_partial(self) -> bool:

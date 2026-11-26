@@ -74,6 +74,31 @@ class ControllerTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(len(board.writes), writes)
 
+    def test_aperture_calibrates_followers_before_master_and_restores_each_board(self):
+        master, follower = FakeBoard("master"), FakeBoard("follower")
+        master.config["reference_source"] = 1
+        follower.config.update(reference_source=2, rx_gain=27)
+        for board in (master, follower):
+            board.iq.set_config = lambda config, b=board: setattr(b, "modes", config["modes"])
+        with Pool([master, follower]) as pool:
+            controller = BLEController(board_index=None)
+            self.addCleanup(controller.close)
+            probes = []
+
+            def probe(*, board_index, reference_address):
+                probes.append((board_index, reference_address, master.config["rf_switch"]))
+
+            with patch("espargos.configuration._wait"), patch.object(pool.ble, "calibrate", side_effect=probe):
+                controller.start(lambda: pool)
+                self.wait_idle(controller)
+            self.assertEqual(probes, [(1, master.config["reference_address"], 1), (0, None, 2)])
+            controller.configureReceiver({"channel": 38})
+            self.wait_idle(controller)
+            self.assertEqual([b.config["channel"] for b in (master, follower)], [38, 38])
+            controller.close()
+            self.assertEqual([b.config["channel"] for b in (master, follower)], [37, 37])
+            self.assertEqual(follower.config["rx_gain"], 27)
+
     def test_attached_controller_preserves_existing_processing(self):
         board, pool, controller = self.setup_controller(processing=True)
         with patch("espargos.configuration._wait"):

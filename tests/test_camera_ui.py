@@ -97,8 +97,7 @@ class CameraModels(unittest.TestCase):
             _last_list_update=now,
             appconfig=SimpleNamespace(get=lambda *args: 1.0),
             overlay=overlay,
-            _spectra={"public:a": (now, np.full((16, 8), 2.0))},
-            _directions={},
+            _spectra={("public:a", 0): (now, np.full((16, 8), 2.0), [])},
             _polarizations={},
         )
         for age, expected in ((0, 1), (0.08, 1), (0.19, 1), (0.6, 0.5), (1, 0)):
@@ -108,10 +107,37 @@ class CameraModels(unittest.TestCase):
         # Freshness does not hold an old direction when a new measurement arrives.
         moved = np.zeros((16, 8))
         moved[12, 6] = 1
-        state._spectra = {"public:a": (now + 1, moved)}
+        state._spectra = {("public:a", 0): (now + 1, moved, [])}
         with patch("demos.ble.camera.main.time.monotonic", return_value=now + 1):
             BLECamera.updateSpatialSpectrum(state)
         np.testing.assert_array_equal(overlay.publish_spatial_intensity.call_args.args[0], moved)
+
+    def test_combined_camera_exposes_and_marks_the_common_direction_once(self):
+        import numpy as np
+        from demos.ble.common.beamforming import combine_board_spectra
+
+        records = []
+        for board in range(4):
+            power = np.zeros((16, 8))
+            power[8, 5] = 0.8
+            power[4 + 2 * board, 3] = 1
+            records.append((10, power, []))
+        image, paths = combine_board_spectra(records, 10, 1)
+        np.testing.assert_allclose(paths, [[1 / 16, 3 / 8]])
+        self.assertEqual(image.max(), 1)
+        self.assertEqual(np.count_nonzero(image == 1), 1)
+
+    def test_centered_peak_and_unresolved_single_baseline(self):
+        import numpy as np
+        from demos.ble.common.beamforming import combine_board_spectra
+
+        power = np.zeros((16, 8))
+        power[7:9, 3:5] = 1
+        _, paths = combine_board_spectra([(10, power, [])], 10, 1)
+        np.testing.assert_allclose(paths, [[0, 0]])
+        power[7:9, :] = 1
+        _, paths = combine_board_spectra([(10, power, [])], 10, 1)
+        self.assertEqual(paths, [])
 
     def test_polarization_survives_short_coverage_gap_but_expires(self):
         import numpy as np
@@ -127,15 +153,14 @@ class CameraModels(unittest.TestCase):
             appconfig=config,
             overlay=overlay,
             _spectra={},
-            _directions={},
             _polarizations={},
             _polarization_field=None,
         )
         jones = np.broadcast_to(np.array([1, 1j]) / np.sqrt(2), (16, 8, 2))
         power = np.ones((16, 8))
-        BLECamera._spectrum(state, "public:a", (power, [[0, 0]], jones), now)
-        BLECamera._spectrum(state, "public:a", (power, [[0, 0]], None), now + 0.05)
-        self.assertEqual(state._polarizations["public:a"][0], now)
+        BLECamera._spectrum(state, ("public:a", 0), (power, [[0, 0]], jones), now)
+        BLECamera._spectrum(state, ("public:a", 0), (power, [[0, 0]], None), now + 0.05)
+        self.assertEqual(state._polarizations[("public:a", 0)][0], now)
         with patch("demos.ble.camera.main.time.monotonic", return_value=now + 0.1):
             BLECamera.updateSpatialSpectrum(state)
         vertical, horizontal = overlay.publish_polarization.call_args.args
@@ -145,6 +170,14 @@ class CameraModels(unittest.TestCase):
         vertical, horizontal = overlay.publish_polarization.call_args.args
         np.testing.assert_array_equal(vertical, 0)
         np.testing.assert_array_equal(horizontal, 0)
+
+    def test_calibration_error_only_removes_the_affected_board(self):
+        keys = [("public:a", board) for board in (0, 1)]
+        state = SimpleNamespace(_spectra=dict.fromkeys(keys), _polarizations=dict.fromkeys(keys), pool=SimpleNamespace(hosts=["left", "right"]), controller=Mock())
+        BLECamera._receiver_error(state, 1, "calibration expired")
+        self.assertEqual(list(state._spectra), keys[:1])
+        self.assertEqual(list(state._polarizations), keys[:1])
+        state.controller.report_error.assert_called_once_with("right: calibration expired")
 
     def test_late_receiver_action_after_shutdown(self):
         executor = ThreadPoolExecutor(max_workers=1)
@@ -165,9 +198,8 @@ class CameraModels(unittest.TestCase):
             advertisers=SimpleNamespace(selected={"source"}),
             overlay=overlay,
             controller=SimpleNamespace(busy=False),
-            _spectra={"source": (now, np.ones((128, 96)))},
-            _directions={"source": [[0, 0]]},
-            _polarizations={"source": None},
+            _spectra={("source", 0): (now, np.ones((128, 96)), [])},
+            _polarizations={("source", 0): None},
             _measurement_after=now - 1,
         )
         BLECamera.updateSpatialSpectrum(state)
@@ -175,7 +207,7 @@ class CameraModels(unittest.TestCase):
         image = overlay.publish_spatial_intensity.call_args.args[0]
         self.assertEqual(image.shape, (96, 64))
         self.assertFalse(image.any())
-        BLECamera._spectrum(state, "source", (np.ones((128, 96)), [], None), now)
+        BLECamera._spectrum(state, ("source", 0), (np.ones((128, 96)), [], None), now)
         self.assertFalse(state._spectra)
 
 
@@ -198,9 +230,9 @@ def test_instantaneous_csi_rejects_reference_only_and_expires_curves():
     quality = np.zeros(h.shape)
     quality[0, 0, 0] = 1
     response = BLEChannelResponse(np.array([-1e5, 0, 1e5]), h, quality, np.ones(h.shape[:-1]))
-    app = SimpleNamespace(controller=SimpleNamespace(receiver=Mock()), appconfig=ConfigManager(demo.DEFAULT_CONFIG), _valid_bins=demo._valid_bins, _after=0, _received_at=time.monotonic())
+    app = SimpleNamespace(controller=SimpleNamespace(receiver=Mock()), appconfig=ConfigManager(demo.DEFAULT_CONFIG), _valid_bins=demo._valid_bins, boardCount=2, _plot_references={}, _after=0, _received_at=time.monotonic())
     app.controller.receiver.channel_response.return_value = response
-    cluster = SimpleNamespace(rf_switch_state=np.full((1, 2, 4), 2))
+    cluster = SimpleNamespace(board_index=0, rf_switch_state=np.full((1, 2, 4), 2))
     assert demo.process_cluster(app, cluster) is None
     app.appconfig.set({"min_antennas": 3})
     quality[0, 1, 1] = 1
@@ -215,23 +247,29 @@ def test_instantaneous_csi_rejects_reference_only_and_expires_curves():
     app._history = deque()
     app._trim_history = lambda: demo._trim_history(app)
     result = demo.process_cluster(app, cluster)
-    reference, routes, frequencies, ratios = result
+    board, reference, routes, frequencies, ratios = result
     second = ratios.copy()
     second[5] *= 3j
     now = time.monotonic()
-    app._history.extend([(now - 0.1, result), (now, (reference, routes, frequencies, second))])
-    power, phase = ([QtCharts.QLineSeries() for _ in range(8)] for _ in range(2))
+    app._history.extend([(now - 0.1, result), (now, (board, reference, routes, frequencies, second))])
+    power, phase = ([QtCharts.QLineSeries() for _ in range(8 * app.boardCount)] for _ in range(2))
     axis = QtCharts.QValueAxis()
     demo.updateCurves(app, power, phase, axis)
-    assert [s.count() for s in phase] == [3, 0, 0, 0, 0, 3, 0, 0]
+    assert [s.count() for s in phase] == [3, 0, 0, 0, 0, 3, 0, 0] + [0] * 8
     assert power[5].at(0).y() == pytest.approx(10 * np.log10(5))
     assert phase[5].at(0).y() == pytest.approx(np.pi / 4)
     # Measurements on the opposite feed must not pull the displayed ratio.
     other_routes = routes.copy()
     other_routes[5] = 3
-    app._history.appendleft((now - 0.2, (reference, other_routes, frequencies, second * 10)))
+    app._history.appendleft((now - 0.2, (board, reference, other_routes, frequencies, second * 10)))
     demo.updateCurves(app, power, phase, axis)
     assert power[5].at(0).y() == pytest.approx(10 * np.log10(5))
+    # An independent reference on board two contributes its own eight curves.
+    app._history.append((now + 0.001, (1, reference, routes, frequencies, ratios)))
+    demo.updateCurves(app, power, phase, axis)
+    assert power[13].at(0).y() == pytest.approx(0)
+    assert power[5].at(0).y() == pytest.approx(10 * np.log10(5))
+    app._history.pop()
     app.appconfig.set({"backlog": {"size": 1}})
     demo.updateCurves(app, power, phase, axis)
     assert phase[5].at(0).y() == pytest.approx(np.pi / 2)
@@ -252,7 +290,7 @@ def test_ble_chart_reference_survives_alignment_changes_and_temporary_loss():
     module = import_module("demos.ble.instantaneous-csi.main")
     demo = module.BLEChannelApplication
     receiver = Mock()
-    app = SimpleNamespace(controller=SimpleNamespace(receiver=receiver), appconfig=ConfigManager(demo.DEFAULT_CONFIG), _valid_bins=demo._valid_bins, _after=0)
+    app = SimpleNamespace(controller=SimpleNamespace(receiver=receiver), appconfig=ConfigManager(demo.DEFAULT_CONFIG), _valid_bins=demo._valid_bins, boardCount=1, _plot_references={}, _after=0)
     field = np.array([1, 2j, -0.5, 0.3j, 0.2, -0.1, 0.8j, 0.5])[:, None] * np.ones((8, 3))
 
     def packet(stamp, anchor, missing=()):
@@ -262,7 +300,7 @@ def test_ble_chart_reference_survives_alignment_changes_and_temporary_loss():
         response = values.reshape(1, 2, 4, 3)
         receiver.channel_response.return_value = BLEChannelResponse(np.arange(3), response, np.ones(response.shape), np.ones((1, 2, 4)))
         with patch.object(module.time, "monotonic", return_value=stamp):
-            result = demo.process_cluster(app, SimpleNamespace(rf_switch_state=np.full(8, 2)))
+            result = demo.process_cluster(app, SimpleNamespace(board_index=0, rf_switch_state=np.full((1, 2, 4), 2)))
             return None if result is None else result[-1]
 
     first = packet(1.0, 0)

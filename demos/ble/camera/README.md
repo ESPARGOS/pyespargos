@@ -32,15 +32,17 @@ Settings apply immediately. Channel, PHY and expert gain changes
 invalidate calibration. Feed, ordinary gain, sample rate and capture length
 changes preserve it. After startup, the RX drawer shows **Trigger Calibration**
 in red whenever a fresh reference is needed. Press it to recalibrate.
-First polarization and automatic gain are the defaults. The manual gain slider
-also sets the fixed gain used briefly for reference calibration.
+The camera starts on the first polarization. A single board uses automatic gain.
+A combined array uses fixed gain 45 so more antennas contribute usable phase
+measurements from each packet. Both settings can be changed in RX.
 
 RF input offers Iso, both antenna polarizations, Random and Ref. Random chooses
 an antenna input independently for every sensor capture. The firmware reports
 the effective input, and the camera combines the two polarizations' spatial
 powers separately to avoid mixing their unknown signal phases.
 
-Beamspace mode shows the shared azimuth and elevation coordinate diagram,
+A direction just outside the configured camera field of view is labeled at the
+corresponding edge. Beamspace mode shows the shared azimuth and elevation coordinate diagram,
 with angle labels and the visible hemisphere boundary.
 
 ## Reference calibration
@@ -53,8 +55,7 @@ settings. If calibration fails, advertiser discovery continues and the
 Trigger Calibration button in RX retries it. No direction overlay is displayed without a
 successful calibration.
 
-The demo requires API 5 controller firmware and BLQ5 sensor captures. It
-currently supports one eight-sensor array. Direction estimation supports LE 1M
+The demo requires API 5 controller firmware and BLQ5 sensor captures. Pass `-c config/special-8x4-horizontal-kit.yml` for the combined aperture. Bartlett weights antenna pairs by their shared sample counts. It combines board spectra for each advertiser using a freshness-weighted geometric mean. This favors peaks seen across boards and gives each advertiser one direction marker. BLE packet phase is referenced within each board. Direction estimation supports LE 1M
 and LE 2M with either automatic or fixed gain. LE Coded is unsupported.
 LE 2M calibration needs
 an external reference because the controller generates LE 1M only. Set its

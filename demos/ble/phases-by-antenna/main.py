@@ -31,8 +31,8 @@ class BLEPhaseApplication(CombinedArrayMixin, ESPARGOSBluetoothApplication):
         covariance, counts = iq.covariance()
         if not np.any(np.triu(counts, k=1)):
             return None
-        order = self.indexing_matrix.ravel()
-        return covariance[np.ix_(order, order)], counts[np.ix_(order, order)], cluster.rf_switch_state.ravel()[order]
+        board = cluster.board_index
+        return board, covariance, counts, cluster.rf_switch_state[board].ravel()
 
     def _clear(self, *_):
         super()._clear()
@@ -59,8 +59,18 @@ class BLEPhaseApplication(CombinedArrayMixin, ESPARGOSBluetoothApplication):
             self.updatePhases.emit([{}] * (2 if split else 1))
             return
         records = [record for _, record in records]
-        covariance, counts, feeds = map(np.asarray, zip(*records))
-        self.updatePhases.emit(phase_arrays(covariance, counts, feeds, split))
+        n = self.indexing_matrix.size
+        panels = [dict(colors=[[0.20, 0.26, 0.30, 1.0]] * n, labels=["—"] * n) for _ in range(2 if split else 1)]
+        for board in {record[0] for record in records}:
+            covariance, counts, feeds = map(np.asarray, zip(*(record[1:] for record in records if record[0] == board)))
+            cells = np.flatnonzero(self.indexing_matrix.ravel() // 8 == board)
+            order = self.indexing_matrix.ravel()[cells] % 8
+            local_panels = phase_arrays(covariance[:, order][:, :, order], counts[:, order][:, :, order], feeds[:, order], split)
+            for panel, local in zip(panels, local_panels):
+                for i, cell in enumerate(cells):
+                    panel["colors"][cell] = local["colors"][i]
+                    panel["labels"][cell] = local["labels"][i]
+        self.updatePhases.emit(panels)
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ class ESPARGOSBluetoothApplication(ESPARGOSApplication):
         self.advertisers = Advertisers(self, (address.lower() for address in selected))
         self.advertisers.selectionChanged.connect(self._selection_changed)
         self.packetArrived.connect(self._observe)
-        self.controller = BLEController(config, buffering=BufferPolicy(capacity=256, max_age=0.5, batch_size=64), logger=self.logger, parent=self)
+        self.controller = BLEController(config, board_index=None, buffering=BufferPolicy(capacity=256, max_age=0.5, batch_size=64), logger=self.logger, parent=self)
         self.controller.connected.connect(self._connected)
         self.controller.operationStarted.connect(self._clear)
         self.controller.configChanged.connect(self._receiver_config_changed)
@@ -105,7 +105,7 @@ class ESPARGOSBluetoothApplication(ESPARGOSApplication):
         identity = packet.address_type + ":" + (packet.advertiser or "")
         if self.controller.busy or cluster.is_calibration or not packet.is_advertisement or self._selected not in (identity, packet.advertiser) or np.count_nonzero(np.isfinite(cluster.rx_gain)) < self.appconfig.get("min_antennas"):
             return
-        self._worker.submit(identity, (cluster, time.monotonic() - cluster.age))
+        self._worker.submit((identity, cluster.board_index), (cluster, time.monotonic() - cluster.age))
 
     def _process(self, item):
         cluster, received = item
@@ -153,8 +153,6 @@ class ESPARGOSBluetoothApplication(ESPARGOSApplication):
         self._prepare_pool_init({})
         if not hasattr(self, "pool"):
             self.pool = self._make_pool()
-        if len(self.pool.hosts) != 1:
-            raise ValueError("BLE demos currently support one eight-sensor board")
         return self.pool
 
     def _startup_pending(self):

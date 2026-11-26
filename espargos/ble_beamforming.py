@@ -50,22 +50,22 @@ def _fit_path_polarizations(field, directions, frequency):
     if not len(directions):
         return None
     rows, columns = np.indices(field.shape[:2])
-    scale = 2*np.pi*constants.ANTENNA_SEPARATION*frequency/constants.SPEED_OF_LIGHT
-    manifold = np.exp(1j*scale*(columns.ravel()[:,None]*directions[:,0]
-                                + rows.ravel()[:,None]*directions[:,1]))
+    scale = 2 * np.pi * constants.ANTENNA_SEPARATION * frequency / constants.SPEED_OF_LIGHT
+    manifold = np.exp(1j * scale * (columns.ravel()[:, None] * directions[:, 0] + rows.ravel()[:, None] * directions[:, 1]))
     if np.linalg.cond(manifold) > 1e3:
         return None
-    fields = np.linalg.lstsq(manifold,field.reshape(-1,2),rcond=None)[0]
-    return fields / np.maximum(np.linalg.norm(fields,axis=-1,keepdims=True),1e-30)
+    fields = np.linalg.lstsq(manifold, field.reshape(-1, 2), rcond=None)[0]
+    return fields / np.maximum(np.linalg.norm(fields, axis=-1, keepdims=True), 1e-30)
 
 
-def _music_peaks(power, count):
-    padded = np.pad(power,1,constant_values=-np.inf)
-    peaks = power >= .1*power.max()
+def spectrum_peaks(power, count):
+    """Strongest distinct local maxima, excluding flat unresolved ridges."""
+    padded = np.pad(power, 1, constant_values=-np.inf)
+    peaks = power >= 0.1 * power.max()
     for row in range(3):
         for column in range(3):
-            if (row,column) != (1,1):
-                peaks &= power > padded[row:row+power.shape[0],column:column+power.shape[1]]
+            if (row, column) != (1, 1):
+                peaks &= power > padded[row : row + power.shape[0], column : column + power.shape[1]]
     indices = np.argwhere(peaks)
     if len(indices):
         indices = indices[np.argsort(power[tuple(indices.T)])[::-1]][:count]
@@ -111,9 +111,7 @@ class BLEBeamformer:
         field = vector if amplitude is None else vector * amplitude
         scale = np.sqrt(np.mean(abs(field[np.isfinite(field)]) ** 2)) if np.any(np.isfinite(field)) else 0
         field = field / max(float(scale), 1e-30)
-        backlog.append(field, inputs, timestamp=received,
-                       covariance=None if covariance is None else np.asarray(covariance) / max(float(scale)**2, 1e-60),
-                       sample_counts=sample_counts)
+        backlog.append(field, inputs, timestamp=received, covariance=None if covariance is None else np.asarray(covariance) / max(float(scale) ** 2, 1e-60), sample_counts=sample_counts)
         polarized = polarized and amplitude is not None and orientations is not None
         jones = None
         covariance = None
@@ -132,7 +130,7 @@ class BLEBeamformer:
             jones = beams / np.maximum(np.linalg.norm(beams, axis=-1, keepdims=True), 1e-30)
             if kind == "Bartlett":
                 self._polarized_sources.add(identity)
-                power = np.sum(abs(beams)**2, axis=-1)
+                power = np.sum(abs(beams) ** 2, axis=-1)
                 # One phase reference for the entire image preserves relative
                 # oscillation phase between beams, as in the WiFi camera.
                 peak = beams[np.unravel_index(power.argmax(), power.shape)]
@@ -142,7 +140,7 @@ class BLEBeamformer:
             jones *= np.exp(-1j * np.angle(gauge))
             covariance = backlog.polarized_covariance(feeds, inverse)
         if not polarized and kind == "Bartlett":
-            covariance = backlog.covariance(require_complete=False)
+            covariance = backlog.covariance(require_complete=False, weight_by_coverage=True)
         elif not polarized:
             covariance = backlog.covariance()
         if covariance is None:
@@ -162,24 +160,21 @@ class BLEBeamformer:
             # and calibration residue must not consume extra signal dimensions.
             count = estimate_signal_count(np.linalg.eigvalsh(covariance), dynamic_range_db=10) if config.multipath else 1
             power = music_spectrum(covariance, grid, source_count=count)
-            peaks = _music_peaks(power, count)
-            directions = np.empty((0,2))
+            peaks = spectrum_peaks(power, count)
+            directions = np.empty((0, 2))
             path_jones = None
             if len(peaks) and min(vector.shape) >= 2:
                 # Read physical direction cosines from the supplied steering
                 # vectors, supporting either endpoint or pixel-center grids.
-                scale = 2*np.pi*constants.ANTENNA_SEPARATION*frequency/constants.SPEED_OF_LIGHT
-                directions = np.array([[np.angle(steering[0,1,a,e]/steering[0,0,a,e])/scale,
-                                        np.angle(steering[1,0,a,e]/steering[0,0,a,e])/scale] for a,e in peaks])
-                physical = np.sum(directions**2,axis=1) <= 1+1e-7
+                scale = 2 * np.pi * constants.ANTENNA_SEPARATION * frequency / constants.SPEED_OF_LIGHT
+                directions = np.array([[np.angle(steering[0, 1, a, e] / steering[0, 0, a, e]) / scale, np.angle(steering[1, 0, a, e] / steering[0, 0, a, e]) / scale] for a, e in peaks])
+                physical = np.sum(directions**2, axis=1) <= 1 + 1e-7
                 directions, peaks = directions[physical], peaks[physical]
                 if polarized:
-                    path_jones = _fit_path_polarizations(field,directions,frequency)
+                    path_jones = _fit_path_polarizations(field, directions, frequency)
             else:
-                peaks = np.empty((0,2),int)
-            return BLEBeamformingResult(spectrum=power / max(float(power.max()), 1e-30),
-                directions=directions, strengths=power[tuple(peaks.T)] if len(peaks) else np.empty(0),
-                jones=jones, path_jones=path_jones)
+                peaks = np.empty((0, 2), int)
+            return BLEBeamformingResult(spectrum=power / max(float(power.max()), 1e-30), directions=directions, strengths=power[tuple(peaks.T)] if len(peaks) else np.empty(0), jones=jones, path_jones=path_jones)
         if kind != "Root-MUSIC":
             raise ValueError(f"Unknown BLE beamformer: {kind}")
         directions, powers, _ = root_music_2d(covariance, rows, columns, frequency_hz=frequency, snapshots=backlog.snapshot_count, source_count=None if config.multipath else 1, dynamic_range_db=10)
@@ -187,5 +182,4 @@ class BLEBeamformer:
         # root a bright marker. A path is not necessarily the direct transmitter.
         keep = (powers > 0) & (powers >= np.max(powers, initial=0) * 0.1)
         directions, powers = directions[keep], powers[keep]
-        return BLEBeamformingResult(directions=directions, strengths=powers, jones=jones,
-            path_jones=_fit_path_polarizations(field,directions,frequency) if polarized else None)
+        return BLEBeamformingResult(directions=directions, strengths=powers, jones=jones, path_jones=_fit_path_polarizations(field, directions, frequency) if polarized else None)

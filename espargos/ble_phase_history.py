@@ -85,12 +85,14 @@ class BLEPhaseHistory:
     def snapshot_count(self):
         return len(self._snapshot())
 
-    def covariance(self, *, require_complete=True):
+    def covariance(self, *, require_complete=True, weight_by_coverage=False):
         """Return the spatial covariance, or None until all pairs are observed.
 
         Missing pairs are never filled with invented phase. For randomized feeds,
         pairwise averaging can have small negative eigenvalues. Projecting onto
         the positive-semidefinite cone gives subspace methods a valid covariance.
+        With ``weight_by_coverage``, average all pair sums with one common
+        denominator to retain their sample support for Bartlett beamforming.
         """
         observations = self._snapshot()
         if not observations:
@@ -108,6 +110,11 @@ class BLEPhaseHistory:
             return None
         if require_complete and np.any(counts == 0):
             return None
+        if weight_by_coverage:
+            # Bartlett can sum the measured beam powers directly. A baseline
+            # seen once should not carry as much weight as one seen throughout
+            # the window. Normalize to the best-covered antenna.
+            return total / counts.max()
         covariance = np.divide(total, counts, out=np.zeros_like(total), where=counts > 0)
         values, vectors = np.linalg.eigh(covariance)
         return (vectors * np.maximum(values, 0)) @ vectors.conj().T
@@ -166,7 +173,7 @@ class BLEPhaseHistory:
         # Refit scales after normalization before testing model consistency.
         scales = (data @ field.conj()) / np.maximum(mask @ (abs(field) ** 2), 1e-30)
         error = np.sum(abs((data - scales[:, None] * field) * mask) ** 2)
-        if error > .15 * np.sum(abs(data) ** 2):
+        if error > 0.15 * np.sum(abs(data) ** 2):
             return None
         field *= np.exp(-1j * np.angle(field[np.argmax(abs(field))]))
         if partial:
@@ -185,16 +192,16 @@ class BLEPhaseHistory:
         feeds = np.asarray(feeds)
         field = np.einsum("npq,nq->np", inverse.reshape(-1, 2, 2), feeds)
         n = len(feeds)
-        total, counts = np.zeros((n,n), complex), np.zeros((n,n))
+        total, counts = np.zeros((n, n), complex), np.zeros((n, n))
         for _, vector, inputs, covariance, sample_counts in self._snapshot():
-            selected = feeds[np.arange(n), np.clip(inputs-2, 0, 1).astype(int)]
-            valid = np.isin(inputs, (2,3)) & np.isfinite(vector) & (abs(selected) > np.max(abs(feeds)) * .02)
-            transform = np.divide(field, selected[:,None], out=np.zeros_like(field), where=valid[:,None])
-            weights = sample_counts * np.outer(valid,valid)
+            selected = feeds[np.arange(n), np.clip(inputs - 2, 0, 1).astype(int)]
+            valid = np.isin(inputs, (2, 3)) & np.isfinite(vector) & (abs(selected) > np.max(abs(feeds)) * 0.02)
+            transform = np.divide(field, selected[:, None], out=np.zeros_like(field), where=valid[:, None])
+            weights = sample_counts * np.outer(valid, valid)
             total += covariance * (transform @ transform.conj().T) * weights
             counts += weights
         if np.any(counts == 0):
             return None
         covariance = total / counts
         values, vectors = np.linalg.eigh(covariance)
-        return (vectors * np.maximum(values,0)) @ vectors.conj().T
+        return (vectors * np.maximum(values, 0)) @ vectors.conj().T

@@ -62,6 +62,12 @@ GridLayout {
 			{k: "interval_chunks", l: "Interval chunks", v: "32768"},
 			{k: "offset_chunks", l: "Offset chunks", v: "0"}
 		]},
+		{ name: "Batched accumulate", mode: "batched_accumulate", fields: [
+			{k: "profile_length_chunks", l: "Profile length (chunks)", v: "1"},
+			{k: "profile_period_chunks", l: "Profile period (chunks)", v: "24"},
+			{k: "profiles_per_batch", l: "Profiles per batch", v: "256"},
+			{k: "batch_period_chunks", l: "Batch period (chunks, 0 = auto)", v: "0"}
+		]},
 		{ name: "Signal", mode: "signal", fields: [
 			{k: "threshold", l: "Threshold", v: "64"},
 			{k: "antennas", l: "Trigger antennas", v: "0,1,2,3,4,5,6,7"},
