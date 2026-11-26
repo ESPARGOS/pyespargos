@@ -44,6 +44,8 @@ class Advertisers(QtCore.QAbstractListModel):
             item = dict(record, packets=0, age=0.0, selected=record["address"] in self.initial_selection, event=None)
             self.rows.append(item)
             self.endInsertRows()
+            if item["selected"]:
+                self.selectionChanged.emit()
         # Every sensor reports the same event. Count the event once.
         event = (record["clock"], record["time"])
         if item["event"] is None or event[0] != item["event"][0] or abs(event[1] - item["event"][1]) > 2000:

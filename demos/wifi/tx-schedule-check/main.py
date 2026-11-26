@@ -62,7 +62,7 @@ class EspargosDemoRadarScheduleCheck(ESPARGOSWiFiApplication):
     def _finalize_pool_init(self, backlog_cb_predicate, calibrate):
         super()._finalize_pool_init(backlog_cb_predicate, calibrate)
         self.receiver.set_tx_config({"active_by_antid": [False] * espargos.constants.ANTENNAS_PER_BOARD})
-        self.pool.calibrate(duration=2, per_board=False)
+        self._measure_reference(duration=2, per_board=False)
         self._residuals_us = np.full(np.prod(self.receiver.shape), np.nan, dtype=np.float64)
         self._residual_std_us = np.full_like(self._residuals_us, np.nan, dtype=np.float64)
         self._reset_tx_rx_timestamp_table()

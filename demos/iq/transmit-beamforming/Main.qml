@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Controls.Material
 import QtQuick.Layouts
 import "../../common" as Common
 
@@ -26,29 +25,7 @@ Common.ESPARGOSApplication {
             IQTxMonitorSettings { controller: txcontrol; Layout.columnSpan: 2; Layout.fillWidth: true }
         }
     }
-    Popup {
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        width: Math.min(440, parent.width - 48)
-        padding: 28
-        Material.theme: Material.Dark
-        Overlay.modal: Rectangle { color: "#99000000" }
-        background: Rectangle { color: "#222a2f"; border.color: "#405159"; radius: 6 }
-        modal: true
-        closePolicy: Popup.NoAutoClose
-        visible: txcontrol.state.calibrating && !txcontrol.state.closing
-        contentItem: ColumnLayout {
-            spacing: 16
-            BusyIndicator { running: true; Layout.alignment: Qt.AlignHCenter }
-            Label { text: "Calibrating the array"; font.pixelSize: 22; Layout.alignment: Qt.AlignHCenter }
-            Label {
-                text: txcontrol.state.message
-                Layout.fillWidth: true
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
-            }
-        }
-    }
+    calibrationMessage: txcontrol.state.calibrating && !txcontrol.state.closing ? txcontrol.state.message : ""
     ScrollView {
         id: viewport
         clip: true

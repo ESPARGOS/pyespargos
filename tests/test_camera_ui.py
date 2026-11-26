@@ -211,10 +211,9 @@ def test_instantaneous_csi_rejects_reference_only_and_expires_curves():
     quality[0, 0, 2] = 0
     app.appconfig.set({"min_antennas": 2})
     from collections import deque
-    from demos.ble.common.measurement import BLEMeasurementApplication
 
     app._history = deque()
-    app._trim_history = lambda: BLEMeasurementApplication._trim_history(app)
+    app._trim_history = lambda: demo._trim_history(app)
     result = demo.process_cluster(app, cluster)
     reference, routes, frequencies, ratios = result
     second = ratios.copy()

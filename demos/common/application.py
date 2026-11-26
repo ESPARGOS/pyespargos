@@ -56,6 +56,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         },
     }
 
+    startupErrorChanged = PyQt6.QtCore.pyqtSignal()
+    progressChanged = PyQt6.QtCore.pyqtSignal()
     initComplete = PyQt6.QtCore.pyqtSignal()
     appConfigChanged = PyQt6.QtCore.pyqtSignal(dict)  # Emitted when app config changes, with the changed keys
 
@@ -114,6 +116,8 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
         # Basic app initialization
         self.ready = False
+        self._startup_error = ""
+        self.initComplete.connect(self.progressChanged)
         self.engine = PyQt6.QtQml.QQmlApplicationEngine()
         # Named after the concrete application class, so log lines identify
         # which demo they come from
@@ -379,10 +383,15 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
 
         def config_applied():
             def _init_worker():
-                complete = self._calibrate_pool(calibrate=calibrate, additional_calibrate_args=additional_calibrate_args)
-
-                # Let mixins finalize pool initialization
-                self._finalize_pool_init(backlog_cb_predicate, calibrate and complete)
+                try:
+                    complete = self._calibrate_pool(calibrate=calibrate, additional_calibrate_args=additional_calibrate_args)
+                    self._finalize_pool_init(backlog_cb_predicate, calibrate and complete)
+                except Exception as error:
+                    self.logger.exception("Array initialization failed")
+                    self._startup_error = str(error) or type(error).__name__
+                    self.progressChanged.emit()
+                    self.startupErrorChanged.emit()
+                    return
 
                 self.ready = True
                 self.initComplete.emit()
@@ -455,6 +464,24 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         if not self._qml_ok:
             return -1
         return super().exec()
+
+    @PyQt6.QtCore.pyqtProperty(str, notify=startupErrorChanged)
+    def startupError(self):
+        return self._startup_error
+
+    @PyQt6.QtCore.pyqtProperty(bool, notify=progressChanged)
+    def startupPending(self):
+        return self._startup_pending()
+
+    def _startup_pending(self):
+        return not self.ready and not self._startup_error
+
+    @PyQt6.QtCore.pyqtProperty(str, notify=progressChanged)
+    def calibrationMessage(self):
+        return self._calibration_message()
+
+    def _calibration_message(self):
+        return ""
 
     @PyQt6.QtCore.pyqtProperty(bool, constant=False, notify=initComplete)
     def initializing(self):

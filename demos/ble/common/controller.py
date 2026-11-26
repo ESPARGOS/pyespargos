@@ -7,7 +7,6 @@ selection, beamforming or rendering dependencies are required.
 from concurrent.futures import ThreadPoolExecutor
 import logging
 from PyQt6 import QtCore
-from demos.ble.common.application import ESPARGOSBluetoothApplication
 from espargos.board_ble import BLECapability
 
 
@@ -96,7 +95,11 @@ class BLEController(QtCore.QObject):
         if self.pool is not None or self._busy or self._closed:
             return
 
+        calibrate = calibrate and self.calibrationSupported
+
         def connect():
+            from demos.ble.common.application import ESPARGOSBluetoothApplication
+
             self.pool = pool_factory()
             self.pool.open()
             board = self.pool.boards[self.board_index]
@@ -110,7 +113,7 @@ class BLEController(QtCore.QObject):
             if not self.pool.processing:
                 self.pool.start_processing()
                 self._started_processing = True
-            if calibrate and self.calibrationSupported:
+            if calibrate:
                 self.receiver.calibrate(board_index=self.board_index, reference_address=self._config.get("reference_address"))
             return dict(self._config)
 

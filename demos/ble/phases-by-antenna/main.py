@@ -7,13 +7,13 @@ import numpy as np
 from PyQt6 import QtCore
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from demos.ble.common.measurement import BLEMeasurementApplication
+from demos.ble.common.application import ESPARGOSBluetoothApplication
 from demos.common.application import CombinedArrayMixin
 from demos.common.phase_arrays import phase_arrays
 
 
-class BLEPhaseApplication(CombinedArrayMixin, BLEMeasurementApplication):
-    DEFAULT_CONFIG = {**BLEMeasurementApplication.DEFAULT_CONFIG, "backlog": {"size": 32, "max_age": 1.0}}
+class BLEPhaseApplication(CombinedArrayMixin, ESPARGOSBluetoothApplication):
+    DEFAULT_CONFIG = {**ESPARGOSBluetoothApplication.DEFAULT_CONFIG, "backlog": {"size": 32, "max_age": 1.0}}
     QML_FILE = Path(__file__).with_name("Main.qml")
     updatePhases = QtCore.pyqtSignal(list)
     layoutChanged = QtCore.pyqtSignal()

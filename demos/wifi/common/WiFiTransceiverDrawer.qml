@@ -8,33 +8,9 @@ Drawer {
 	id: root
 
 	property int headerHeight: 0
-	property bool calibrationInProgress: false
-	property real calibrationStart: 0.0
-	property real calibrationProgress: 0.0
 	readonly property int rfSwitchMode: rfSwitchInput.value
 	readonly property bool tooltipsEnabled: ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true
 	readonly property string gainTooltipText: "RX gain is configured in 1 dB units. FFT gain is configured in 0.25 dB units."
-
-	function updateCalibrationProgress() {
-		if (!calibrationInProgress) {
-			calibrationProgress = 0.0
-			return
-		}
-		var elapsed = Math.max(0, (Date.now() / 1000) - calibrationStart)
-		calibrationProgress = Math.min(1.0, elapsed / Math.max(0.001, poolConfigManager.getCachedValue("calibration.duration", 1.0)))
-		if (calibrationProgress >= 1.0) {
-			calibrationInProgress = false
-		}
-	}
-
-	Timer {
-		id: calibrationTimer
-		interval: 20
-		repeat: true
-		running: root.calibrationInProgress
-		onTriggered: root.updateCalibrationProgress()
-		onRunningChanged: root.updateCalibrationProgress()
-	}
 
 	// Match app-wide Material settings
 	Material.theme: Material.Dark
@@ -122,22 +98,9 @@ Drawer {
 			Common.CalibrationButton {
 				id: calibButton
 				onClicked: {
-					if (root.calibrationInProgress) return
 					poolConfigManager.action("calibrate")
 					needCalibration = false
-					root.calibrationStart = Date.now() / 1000
-					root.calibrationInProgress = true
-					root.calibrationProgress = 0.0
 				}
-			}
-
-			ProgressBar {
-				Layout.columnSpan: 2
-				Layout.fillWidth: true
-				from: 0
-				to: 1
-				value: root.calibrationProgress
-				visible: root.calibrationInProgress
 			}
 
 			Label { text: "Per Board"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }

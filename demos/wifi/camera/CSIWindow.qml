@@ -25,15 +25,6 @@ Common.ESPARGOSApplication {
 			title: "App Settings"
 			endpoint: appconfig
 
-			WiFi.CSIBacklogSettings {
-				configManager: appDrawer.configManager
-				showFormatControls: window.selectablePreamble
-				ageKey: "beamformer.max_age"
-				minimumAgeMs: 0
-				maximumAgeMs: 2000
-				ageStepMs: 50
-			}
-
 			CheckBox {
 				id: advancedSettings
 				Layout.columnSpan: 2
@@ -264,6 +255,15 @@ Common.ESPARGOSApplication {
 				width: 0
 				height: 0
 				visible: false
+			}
+
+			WiFi.CSIBacklogSettings {
+				configManager: appDrawer.configManager
+				showFormatControls: window.selectablePreamble
+				ageKey: "beamformer.max_age"
+				minimumAgeMs: 0
+				maximumAgeMs: 2000
+				ageStepMs: 50
 			}
 
 			// Spacer

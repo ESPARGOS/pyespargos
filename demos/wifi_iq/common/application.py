@@ -116,6 +116,7 @@ class ESPARGOSWiFiIQApplication(CSIApplication):
         receiver = owner.wifi_iq
         receiver.configure_buffering(BufferPolicy(capacity=256, max_age=0.4, batch_size=32))
         self.controls = WiFiIQControls(owner, self)
+        self.controls.changed.connect(self.progressChanged)
         if self._uses_backlog():
 
             def attach():
@@ -128,6 +129,9 @@ class ESPARGOSWiFiIQApplication(CSIApplication):
     def _setup_qml_context(self, context):
         super()._setup_qml_context(context)
         context.setContextProperty("wifiIQControls", self.controls)
+
+    def _calibration_message(self):
+        return self.controls.status if self.controls.busy else ""
 
     def _calibrate_pool(self, calibrate, additional_calibrate_args):
         settings = self.get_initial_config("wifi_iq")

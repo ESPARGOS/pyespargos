@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
+import QtQuick.Shapes
 
 ApplicationWindow {
 	id: root
@@ -170,36 +171,81 @@ ApplicationWindow {
 		z: 10
 	}
 
-	Rectangle {
-		anchors.centerIn: parent
-		width: Math.min(parent.width * 0.8, 220)
-		height: 220
-		color: "#80000000"
+	property string calibrationMessage: backend.calibrationMessage
+	Popup {
+		objectName: "arrayProgressPopup"
 		z: 100
-
-		visible: backend.initializing
-
-		BusyIndicator {
-			anchors.centerIn: parent
-			running: backend.initializing
-			visible: backend.initializing
-			width: 80
-			height: 80
+		parent: Overlay.overlay
+		focus: true
+		anchors.centerIn: parent
+		width: Math.min(440, parent.width - 48)
+		padding: 28
+		Material.theme: Material.Dark
+		Overlay.modal: Rectangle { color: "#99000000" }
+		background: Rectangle { color: "#222a2f"; border.color: "#405159"; radius: 6 }
+		modal: true
+		closePolicy: Popup.NoAutoClose
+		visible: root.calibrationMessage.length > 0 || backend.startupPending
+		contentItem: ColumnLayout {
+			spacing: 16
+			BusyIndicator {
+				id: spinner
+				implicitWidth: 60
+				implicitHeight: 60
+				padding: 6
+				running: parent.visible
+				Layout.alignment: Qt.AlignHCenter
+				contentItem: Shape {
+					preferredRendererType: Shape.CurveRenderer
+					ShapePath {
+						fillColor: "transparent"
+						strokeColor: spinner.Material.accent
+						strokeWidth: 4
+						capStyle: ShapePath.RoundCap
+						PathAngleArc {
+							centerX: 24
+							centerY: 24
+							radiusX: 22
+							radiusY: 22
+							startAngle: -90
+							sweepAngle: 260
+						}
+					}
+					RotationAnimator on rotation {
+						from: 0
+						to: 360
+						duration: 1000
+						loops: Animation.Infinite
+						running: spinner.running
+					}
+				}
+			}
+			Label {
+				text: root.calibrationMessage.length ? "Calibrating the array" : "Initializing the array"
+				font.pixelSize: 22
+				Layout.alignment: Qt.AlignHCenter
+			}
+			Label {
+				text: root.calibrationMessage || "Preparing the receivers…"
+				textFormat: Text.PlainText
+				Layout.fillWidth: true
+				horizontalAlignment: Text.AlignHCenter
+				wrapMode: Text.Wrap
+			}
 		}
+	}
 
-		Label {
-			anchors.horizontalCenter: parent.horizontalCenter
-			anchors.top: parent.verticalCenter
-			anchors.topMargin: 60
-			text: "Initializing..."
-			font.pixelSize: 18
-			color: "#ffffff"
-			visible: backend.initializing
+	Connections {
+		target: backend
+		function onStartupErrorChanged() { root.showError("Initialization failed", backend.startupError) }
+		Component.onCompleted: {
+			if (backend.startupError) root.showError("Initialization failed", backend.startupError)
 		}
 	}
 
 	Dialog {
 		id: errorDialog
+		z: 110
 		modal: true
 		focus: true
 		closePolicy: Popup.CloseOnEscape

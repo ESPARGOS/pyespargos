@@ -8,12 +8,12 @@ import numpy as np
 from PyQt6 import QtCore, QtCharts
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from demos.ble.common.measurement import BLEMeasurementApplication
+from demos.ble.common.application import ESPARGOSBluetoothApplication
 
 
-class BLEChannelApplication(BLEMeasurementApplication):
+class BLEChannelApplication(ESPARGOSBluetoothApplication):
     DEFAULT_CONFIG = {
-        **BLEMeasurementApplication.DEFAULT_CONFIG,
+        **ESPARGOSBluetoothApplication.DEFAULT_CONFIG,
         "correct_timing": True,
         "nfft": 128,
     }

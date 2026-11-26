@@ -45,5 +45,5 @@ ColumnLayout {
         onClicked: root.controller.calibrate()
     }
     Label { text: root.state.message; Layout.fillWidth: true; wrapMode: Text.Wrap }
-    ProgressBar { Layout.fillWidth: true; indeterminate: true; visible: root.state.exclusive }
+    ProgressBar { Layout.fillWidth: true; indeterminate: true; visible: root.state.exclusive && !root.state.calibrating }
 }

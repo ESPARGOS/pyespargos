@@ -73,12 +73,6 @@ Common.AppDrawer {
         needCalibration: root.needsCalibration && root.calibrationSupported
         onClicked: root.calibrationRequested()
     }
-    ProgressBar {
-        Layout.columnSpan: 2
-        Layout.fillWidth: true
-        visible: root.calibrating
-        indeterminate: true
-    }
     Label {
         Layout.columnSpan: 2
         Layout.maximumWidth: 340

@@ -115,10 +115,10 @@ as ``appconfig`` and ``genericconfig``. Pass additional objects in
 assigns a different receiver drawer in its own ``Main.qml``.
 
 * **BLE.** ``BLEController`` handles tuning, reference acquisition and restoring
-  receiver settings. ``BLEMeasurementApplication`` provides advertiser
+  receiver settings. ``ESPARGOSBluetoothApplication`` provides advertiser
   selection and a ``process_cluster()`` hook. Slow display processing runs on a
   worker that keeps the newest pending measurement per advertiser. The BLE
-  camera also uses this controller and adds its own beamforming and video.
+  camera uses the same discovery and worker lifecycle for multi-advertiser beamforming.
 * **Raw IQ.** ``IQCaptureApplication`` selects receive roles and starts the receiver's processing worker.
   Use ``create_iq_controller()`` for a drawer that controls capture and
   synchronization. The signal analyzer uses the same time and spectrum displays

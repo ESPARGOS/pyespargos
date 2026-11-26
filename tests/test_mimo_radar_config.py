@@ -36,6 +36,31 @@ def drain():
         app.processEvents()
         time.sleep(.01)
 try:
+    popup = root.findChild(QtCore.QObject, 'arrayProgressPopup')
+    drain()
+    assert popup.property('visible') and popup.property('modal')
+    startup_height = popup.property('height')
+    for status in ("Configuring two transmitters and 30 receivers…",
+                   "Calibrating RX and TX through Reference (reciprocity)…"):
+        app._state(status, False, True)
+        drain()
+        assert popup.property('visible') and popup.property('height') == startup_height
+    app._state("Receiving", True, False)
+    drain()
+    assert not popup.property('visible')
+    drawer = root.property('appDrawer')
+    QtCore.QMetaObject.invokeMethod(drawer, 'open')
+    drain()
+    app.command("calibrate", 0)
+    drain()
+    assert app.commands.get_nowait() == ("calibrate", 0)
+    assert drawer.property('visible') and popup.property('visible')
+    assert popup.property('z') > drawer.property('z')
+    assert root.property('calibrationMessage') == "Preparing radar calibration…"
+    app._state("Receiving", True, False)
+    drain()
+    assert not popup.property('visible')
+    QtCore.QMetaObject.invokeMethod(drawer, 'close')
     assert app._settings['frequency'] == 2412
     assert app._settings['integration_time'] == .2
     assert root.property('linearScale') is False

@@ -5,22 +5,18 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import signal
 import sys
 import time
 import numpy as np
 from PyQt6 import QtCore
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from demos.common.latest_worker import LatestWorker
 from demos.common.application import CombinedArrayMixin
 from demos.ble.common.application import ESPARGOSBluetoothApplication
 from demos.common.camera.view import CameraView
 from demos.common.camera.video import CameraUnavailableError
 from demos.common.camera.overlay import CameraOverlayModel
-from demos.ble.common.advertisers import Advertisers, advertiser_record
 from demos.ble.common.controller import BLEController
-from espargos import BufferPolicy
 from espargos.ble_beamforming import BLEBeamformer
 from demos.ble.common.beamforming import processing_config, render_spectrum, render_polarization, measurement_opacity, spectrum_intensity
 from espargos.array_processing import steering_vectors_2d
@@ -43,10 +39,10 @@ class BLEOverlay(CameraOverlayModel):
 
 
 class BLECamera(CombinedArrayMixin, ESPARGOSBluetoothApplication):
-    packetArrived = QtCore.pyqtSignal(dict)
+    QML_FILE = Path(__file__).with_name("Main.qml")
     spectrumArrived = QtCore.pyqtSignal(str, object, float)
     stateChanged = QtCore.pyqtSignal()
-    errorOccurred = QtCore.pyqtSignal(str)
+    beamformingError = QtCore.pyqtSignal(str)
     DEFAULT_CONFIG = {
         "camera": CameraView.DEFAULT_CONFIG,
         "receiver": dict(BLEController.DEFAULT_CONFIG, advertisers=[]),
@@ -77,43 +73,32 @@ class BLECamera(CombinedArrayMixin, ESPARGOSBluetoothApplication):
         super()._add_argparse_arguments(parser)
         parser.add_argument("--no-camera", action="store_true", help="Show the radio overlay without a video camera")
 
+    def _process_args(self):
+        super()._process_args()
+        settings = self.initial_config["app"]
+        if settings["beamformer"]["polarization_mode"] != "ignore":
+            settings["receiver"]["polarization"] = 4
+
     def __init__(self, argv):
         CameraView.configure_rendering()
         parser = argparse.ArgumentParser(description="ESPARGOS BLE camera", add_help=False)
         super().__init__(argv, argparse_parent=parser)
+
+    def _initialize_display(self):
         if self.args.no_camera:
             self.appconfig.set({"camera": {"enable": False}})
-        self._closing = False
         self._spectra = {}
         self._directions = {}
         self._polarizations = {}
         self._polarization_field = None
         self._beamformer = BLEBeamformer()
-        self._last_list_update = 0.0
         self._measurement_after = time.monotonic()
-        self.receiver = None
         self._phase_error_reported = False
-        signal.signal(signal.SIGINT, lambda *_: QtCore.QMetaObject.invokeMethod(self, "quit", QtCore.Qt.ConnectionType.QueuedConnection))
-        self._interrupt_timer = QtCore.QTimer(self)
-        self._interrupt_timer.timeout.connect(lambda: None)
-        self._interrupt_timer.start(200)
-        config = self.appconfig.get("receiver")
-        if self.appconfig.get("beamformer", "polarization_mode") != "ignore":
-            config = dict(config, polarization=4)
-            self.appconfig.set({"receiver": config})
-        self.controller = BLEController({k: v for k, v in config.items() if k != "advertisers"}, buffering=BufferPolicy(capacity=256, max_age=0.5, batch_size=64), logger=self.logger, parent=self)
-        self.controller.operationStarted.connect(self._operation_started)
         self.controller.stateChanged.connect(self.stateChanged)
-        self.controller.configChanged.connect(self._receiver_config_changed)
-        self.controller.connected.connect(self._connected)
-        self.advertisers = Advertisers(self, (mac.lower() for mac in self.appconfig.get("receiver", "advertisers")))
         self._selected = frozenset()
-        self.advertisers.selectionChanged.connect(self._selection_changed)
         self._beamformer_epoch = self._measurement_after
-        self._phase_worker = LatestWorker(self._process_measurement)
-        self.packetArrived.connect(self._observe_advertiser)
         self.spectrumArrived.connect(self._spectrum)
-        self.errorOccurred.connect(self._receiver_error)
+        self.beamformingError.connect(self._receiver_error)
         self.camera_view = CameraView(self.appconfig, parent=self, update_signal=self.appConfigChanged)
         self.video_camera = self.camera_view.initialize()
         self.overlay = BLEOverlay(self.appconfig, parent=self, update_signal=self.appConfigChanged)
@@ -121,27 +106,18 @@ class BLECamera(CombinedArrayMixin, ESPARGOSBluetoothApplication):
         self._processing_signature = None
         self.appConfigChanged.connect(self._processing_config_changed)
         self.appconfig.updateUIState.connect(self._processing_config_changed)
-        self.initialize_qml(
-            Path(__file__).with_name("Main.qml"),
-            {
-                "CameraView": self.camera_view,
-                "WebCam": self.video_camera,
-                "overlayModel": self.overlay,
-                "advertisers": self.advertisers,
-                "bleController": self.controller,
-            },
-        )
+        return {"CameraView": self.camera_view, "WebCam": self.video_camera, "overlayModel": self.overlay}
 
-    def _operation_started(self):
+    def _clear(self):
         self._measurement_after = time.monotonic()
-        self._phase_worker.clear()
+        self._worker.clear()
         self._spectra.clear()
         self._polarizations.clear()
         self._polarization_field = None
         self._phase_error_reported = False
 
     def _receiver_config_changed(self, config):
-        self.appconfig.set({"receiver": config})
+        super()._receiver_config_changed(config)
         self._processing_config_changed()
 
     def _processing_config_changed(self):
@@ -150,42 +126,26 @@ class BLECamera(CombinedArrayMixin, ESPARGOSBluetoothApplication):
         if signature == self._processing_signature:
             return
         self._processing_signature = signature
-        self._operation_started()
+        self._clear()
         self._steering = steering_vectors_2d(2, 4, signature[2], signature[3], frequency_hz=channel_frequency(config["channel"]), pixel_centers=True)
 
     def _connected(self):
-        self.receiver = self.controller.receiver
         self._receiver_config_changed(self.controller.receiverConfig)
-        self.receiver.add_callback(lambda cluster: self._packet(cluster.packet), lambda cluster: True)
-        # Deliver partial arrays promptly enough for the live covariance window.
-        self.receiver.settle_timeout = 0.05
-        self.receiver.add_callback(self._measured, include_partial=True)
-        self.ready = True
-        self.initComplete.emit()
-
-    def _packet(self, packet):
-        if packet.rf_switch == 1 or not packet.is_advertisement:
-            return
-        self.packetArrived.emit(advertiser_record(packet))
-
-    @QtCore.pyqtSlot(dict)
-    def _observe_advertiser(self, record):
-        self.advertisers.observe(record)
-        self._selection_changed()
+        super()._connected()
 
     def _selection_changed(self):
         self._selected = frozenset(self.advertisers.selected)
 
-    def _measured(self, cluster):
+    def _measure(self, cluster):
         packet = cluster.packet
         identity = packet.address_type + ":" + (packet.advertiser or "")
         if self.controller.busy or cluster.is_calibration or identity not in self._selected or not self.controller.calibrationSupported:
             return
         if not packet.is_advertisement or np.count_nonzero(np.isfinite(cluster.rx_gain)) < 2:
             return
-        self._phase_worker.submit(identity, (cluster, time.monotonic()), keep=int(self.appconfig.get("beamformer", "backlog_size")))
+        self._worker.submit(identity, (cluster, time.monotonic()), keep=int(self.appconfig.get("beamformer", "backlog_size")))
 
-    def _process_measurement(self, item):
+    def _process(self, item):
         cluster, received = item
         if self._beamformer_epoch != self._measurement_after:
             self._beamformer.clear()
@@ -202,7 +162,7 @@ class BLECamera(CombinedArrayMixin, ESPARGOSBluetoothApplication):
             if self.controller.busy or received < self._measurement_after:
                 return
             if not self._phase_error_reported:
-                self.errorOccurred.emit(str(error))
+                self.beamformingError.emit(str(error))
                 self._phase_error_reported = True
             return
         self._phase_error_reported = False
@@ -257,9 +217,6 @@ class BLECamera(CombinedArrayMixin, ESPARGOSBluetoothApplication):
     @QtCore.pyqtSlot()
     def updateSpatialSpectrum(self):
         now = time.monotonic()
-        if now - self._last_list_update >= 0.5:
-            self.advertisers.refresh()
-            self._last_list_update = now
         maximum_age = float(self.appconfig.get("visualization", "max_age"))
         selected = self.advertisers.selected
         shape = (self.overlay.resolutionAzimuth, self.overlay.resolutionElevation)
@@ -316,13 +273,10 @@ class BLECamera(CombinedArrayMixin, ESPARGOSBluetoothApplication):
     def onAboutToQuit(self):
         if getattr(self, "_closing", True):
             return
-        self._closing = True
         try:
-            self.controller.close()
-        finally:
-            self._phase_worker.close()
-            self.camera_view.stop()
             super().onAboutToQuit()
+        finally:
+            self.camera_view.stop()
 
 
 def main():

@@ -447,11 +447,17 @@ class IQCaptureApplication(ESPARGOSIQApplication):
 
         ESPARGOSWiFiApplication.request_mode(pool)
 
+    def _calibration_message(self):
+        if any(c.referenceBusy for c in getattr(self, "_iq_controllers", ())):
+            return "Synchronizing receivers and measuring the reference…"
+        return ""
+
     def create_iq_controller(self, *, capture_config=None) -> IQController:
         """Create the QML adapter for this application's pool."""
         controller = IQController(self.pool, logger=self.logger, parent=self, capture_config=capture_config)
         if not hasattr(self, "_iq_controllers"):
             self._iq_controllers = []
+        controller.referenceBusyChanged.connect(self.progressChanged)
         self._iq_controllers.append(controller)
         return controller
 

@@ -81,12 +81,6 @@ Drawer {
                 needCalibration: !wifiIQControls.calibrated
                 onClicked: wifiIQControls.calibrate()
             }
-            ProgressBar {
-                Layout.columnSpan: 2
-                Layout.fillWidth: true
-                visible: wifiIQControls.busy && wifiIQControls.status.length > 0
-                indeterminate: visible
-            }
             Label {
                 Layout.columnSpan: 2
                 Layout.fillWidth: true

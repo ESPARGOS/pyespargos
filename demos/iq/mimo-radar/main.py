@@ -189,6 +189,7 @@ class MIMORadar(ESPARGOSIQApplication):
         self._requested_settings = dict(config)
         self._apply_radar_settings(config)
 
+        self._setup_status = ""
         self._status = "Connecting…"
         self._running = False
         self._busy = True
@@ -214,9 +215,13 @@ class MIMORadar(ESPARGOSIQApplication):
         self.refresh_timer.timeout.connect(self._plot)
         self.refresh_timer.start(33)
 
+    def _calibration_message(self):
+        return self._setup_status
+
     @QtCore.pyqtSlot(str, bool, bool)
     def _state(self, status, running, busy):
         self._status, self._running, self._busy = status, running, busy
+        self._setup_status = status if busy else ""
         self.ready = not busy
         self.initComplete.emit()
         self.stateChanged.emit()
@@ -305,17 +310,19 @@ class MIMORadar(ESPARGOSIQApplication):
             return
         if name not in ("run", "calibrate"):
             return
-        if not self.worker.is_alive():
-            if name != "calibrate":
-                self._error("Calibrate RX + TX to restart the radar.")
-                return
+        restart = not self.worker.is_alive()
+        if name == "calibrate":
+            self._state("Preparing radar calibration…", False, True)
+        elif restart:
+            self._error("Calibrate RX + TX to restart the radar.")
+            return
+        else:
             self._busy = True
             self.stateChanged.emit()
+        if restart:
             self.worker = threading.Thread(target=self._work, name="mimo-radar")
             self.worker.start()
             return
-        self._busy = True
-        self.stateChanged.emit()
         self.commands.put((name, value))
 
     def _open_radar(self):

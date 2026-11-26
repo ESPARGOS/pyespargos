@@ -54,7 +54,7 @@ ColumnLayout {
                     }
                 }
             }
-            BusyIndicator { running: root.state.busy; implicitWidth: 28; implicitHeight: 28 }
+            BusyIndicator { running: root.state.busy && !root.state.calibrating; implicitWidth: 28; implicitHeight: 28 }
         }
     }
     GridLayout {

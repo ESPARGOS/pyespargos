@@ -107,7 +107,7 @@ class ESPARGOSWiFiApplication(CSIApplication):
                     "per_board",
                 )
             )
-            self.pool.calibrate(duration=2, per_board=per_board)
+            self._measure_reference(duration=2, per_board=per_board)
         except espargos.CalibrationError as exc:
             error_message = str(exc)
             self.logger.error(error_message)
@@ -116,12 +116,29 @@ class ESPARGOSWiFiApplication(CSIApplication):
 
         return complete
 
+    def _measure_reference(self, **settings):
+        self._measuring_reference = True
+        self.progressChanged.emit()
+        try:
+            self.pool.calibrate(**settings)
+        finally:
+            self._measuring_reference = False
+            self.progressChanged.emit()
+
+    def _calibration_message(self):
+        drawer = getattr(self, "pooldrawer", None)
+        if getattr(self, "_measuring_reference", False) or (drawer and drawer.calibration_running):
+            return "Measuring WiFi reference packets…"
+        return ""
+
     def _on_pool_calibration_started(self):
+        self.progressChanged.emit()
         if hasattr(self, "backlog"):
             self.backlog.apply_calibration = False
             self.backlog.clear()
 
     def _on_pool_calibration_finished(self, success: bool, _error_message: str):
+        self.progressChanged.emit()
         if hasattr(self, "backlog"):
             self.backlog.apply_calibration = bool(success and self.receiver.calibration is not None)
             self.backlog.clear()
