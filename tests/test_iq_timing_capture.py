@@ -31,7 +31,7 @@ class TimingCaptureTests(TestCase):
         z = np.fft.ifft(spectrum * np.exp(-2j * np.pi * np.fft.fftfreq(period, 1 / 80e6) * 75e-9))
         packet = SimpleNamespace(decode_iq=lambda: z)
         capture = Mock()
-        capture.collect.side_effect = lambda ids, samples, count, *args: {1: [[packet] for _ in range(count)]}
+        capture.collect.side_effect = lambda ids, samples, count, *args, **kwargs: {1: [[packet] for _ in range(count)]}
         with patch("espargos._iq_calibration.delay._rpc", return_value=self.states), patch("espargos._iq_calibration.delay._Captures", return_value=capture), patch("espargos._iq_calibration.delay._grid_origin", return_value=1025), patch(
             "espargos._iq_calibration.delay._waveform"
         ) as waveform:
@@ -63,3 +63,41 @@ class TimingCaptureTests(TestCase):
         self.board.iq.set_config.assert_not_called()
         self.owner.refresh_calibration.assert_not_called()
         self.assertTrue(all(len(c.args) == 2 for c in rpc.call_args_list))
+
+    def test_group_probes_only_three_transmitters_and_covers_all_five(self):
+        from dataclasses import replace
+
+        self.config["modes"] = ["iq_tx"] * 5 + ["iq_rx"] * 3
+        tx, rx = [Antenna("array", a) for a in range(5)], [Antenna("array", a) for a in range(5, 8)]
+        groups = []
+        for group, antennas in zip(self.owner.refresh_calibration.return_value.groups, (tx, rx)):
+            template = group.corrections[0]
+            groups.append(CalibrationGroup(tuple(replace(template, state=replace(template.state, antenna=a)) for a in antennas)))
+        self.owner.refresh_calibration.return_value = Calibration(tuple(groups))
+        _, spectrum, _ = pilots(1024, peak=128, mask=255)[0]
+        frequencies = np.fft.fftfreq(1024, 1 / 80e6)
+        # One link clips, one is missing and one measures 120 ns including flight time.
+        packet = SimpleNamespace(decode_iq=lambda: np.fft.ifft(spectrum * np.exp(-2j * np.pi * frequencies * 120e-9)))
+        clipped = SimpleNamespace(decode_iq=lambda: np.full(1024, 511))
+        capture = Mock()
+        capture.collect.side_effect = lambda ids, size, count, *args, **kw: {5: [[packet]] * count, 6: [[clipped]] * count}
+        paths = {(t, r): 20e-9 for t in tx[:4] for r in rx}
+        with patch("espargos._iq_calibration.delay._rpc", return_value=self.states), patch("espargos._iq_calibration.delay._Captures", return_value=capture), patch("espargos._iq_calibration.delay._grid_origin", return_value=1000), patch(
+            "espargos._iq_calibration.delay._waveform"
+        ) as waveform:
+            result = measure(self.owner, tx + rx, "antenna_r", paths, 1, method="group")
+        self.assertEqual(set(result.delays_s), set(tx))
+        np.testing.assert_allclose(list(result.delays_s.values()), 100e-9, atol=0.1e-9)
+        turns = [c.args[1]["antennas"][0] for c in waveform.call_args_list if c.args[1]["type"] == "calibration"]
+        self.assertEqual(len(turns), 3)
+        self.assertEqual(len(set(turns)), 3)
+        self.assertNotIn(tx[-1].antid, turns)
+
+        # Four candidate transmitters, three votes required. After two empty
+        # turns even perfect observations from the last two cannot establish agreement.
+        capture.collect.side_effect = lambda *args, **kwargs: {}
+        with patch("espargos._iq_calibration.delay._rpc", return_value=self.states) as rpc, patch("espargos._iq_calibration.delay._Captures", return_value=capture), patch("espargos._iq_calibration.delay._waveform") as waveform:
+            with self.assertRaisesRegex(ValueError, "0 usable, 2 probed"):
+                measure(self.owner, tx + rx, "antenna_r", paths, 1, method="group")
+        self.assertEqual([call.args[1]["type"] for call in waveform.call_args_list], ["calibration", "calibration", "restore", "restore"])
+        self.assertTrue([call.args[2]["muted"] for call in rpc.call_args_list if len(call.args) > 2 and "muted" in call.args[2]][-1])

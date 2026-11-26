@@ -474,13 +474,20 @@ path, subtracts the known flight times, and looks for agreement first among
 receivers and then among distinct transmitters. Each TX gets one vote. A
 strong reflection on a single link therefore cannot dominate by signal power.
 
-The measurement stops once enough transmitters agree. A missing capture,
-clipped link or isolated outlier can be skipped. If the available measurements
-do not support a common delay, calibration fails. The accepted delay applies to
+The measurement stops when three distinct transmitters (or all TXs for a
+group smaller than three) agree to within a quarter of an 80 MSa/s sample,
+about 3.1 ns. They must form a strict majority of the usable TX estimates.
+The same agreement window is used across usable receivers in each turn.
+Only paths listed in ``reference_delays_s`` are probed in group mode, so
+a sparse table of measured line-of-sight distances is sufficient.
+Missing captures, clipped links and isolated outliers can be skipped. If the
+remaining transmitters cannot supply enough matching observations, the
+measurement stops early with an error. The accepted delay applies to
 every selected transmitter, including those that were never probed. Over the
 air, choose paths where the direct signal is detectable. A reflection common
 to most measured paths can still bias the result. The measured delay is
-ambiguous modulo the repeating probe period.
+ambiguous modulo the repeating probe period. Group mode uses a common
+period that fits every candidate TX replay buffer.
 
 We can also remove the hardware delay directly from a channel spectrum::
 

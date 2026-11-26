@@ -64,7 +64,9 @@ class AntennaSelection:
             raise ValueError("Selection contains no antennas")
         return AntennaSelection(owner, selected)
 
-    def configure(self, *, mode=None, capture_path=None, bluetooth_filter_mode=None, frequency_hz=None, sample_rate_hz=None, rx_gain=None, gain_mode=None, rf_gain=None, bandwidth_mhz=None, output=None, channel=None, secondary_channel=None, boot_sync=None):
+    def configure(
+        self, *, mode=None, capture_path=None, bluetooth_filter_mode=None, frequency_hz=None, sample_rate_hz=None, rx_gain=None, gain_mode=None, rf_gain=None, bandwidth_mhz=None, output=None, channel=None, secondary_channel=None, boot_sync=None
+    ):
         """Update only selected antennas; mode changes do not calibrate or start TX.
 
         RX sample rate and RX output routing require all eight antennas on a
@@ -78,12 +80,25 @@ class AntennaSelection:
         WiFi gain controls remain available through board.wifi_rx.
         """
         from .configuration import configure
-        return configure(self, mode=mode, capture_path=capture_path, bluetooth_filter_mode=bluetooth_filter_mode, frequency_hz=frequency_hz, sample_rate_hz=sample_rate_hz,
-                         rx_gain=rx_gain, gain_mode=gain_mode, rf_gain=rf_gain,
-                         bandwidth_mhz=bandwidth_mhz, output=output, channel=channel,
-                         secondary_channel=secondary_channel, boot_sync=boot_sync)
 
-    def calibrate_tx_rx_delay(self, *, path="reference", reference_delays_s=None, timeout=5.0):
+        return configure(
+            self,
+            mode=mode,
+            capture_path=capture_path,
+            bluetooth_filter_mode=bluetooth_filter_mode,
+            frequency_hz=frequency_hz,
+            sample_rate_hz=sample_rate_hz,
+            rx_gain=rx_gain,
+            gain_mode=gain_mode,
+            rf_gain=rf_gain,
+            bandwidth_mhz=bandwidth_mhz,
+            output=output,
+            channel=channel,
+            secondary_channel=secondary_channel,
+            boot_sync=boot_sync,
+        )
+
+    def calibrate_tx_rx_delay(self, *, path="reference", reference_delays_s=None, timeout=5.0, method="per_tx"):
         """Measure each IQ transmitter's delay relative to calibrated receivers.
 
         Temporarily receive calibration probes at 80 MSa/s, then restore the RX
@@ -92,6 +107,10 @@ class AntennaSelection:
         Reference-path delays come from board traces and configured cable lengths.
         For antenna paths, supply {(tx_antenna, rx_antenna): delay_seconds}.
         At least one calibrated IQ receiver and transmitter must be running.
+        The default "per_tx" measures each transmitter. Use "group" to infer
+        one common delay for internally delay-aligned TX and RX groups.
+        Group probing stops when independent transmitters agree and can use
+        a sparse mapping of known propagation paths.
         """
         from ._iq_calibration.delay import measure
 
@@ -100,7 +119,7 @@ class AntennaSelection:
         owner = self._pool
         with owner._lock:
             owner.open()
-            return measure(owner, self.antennas, path, reference_delays_s, timeout)
+            return measure(owner, self.antennas, path, reference_delays_s, timeout, method=method)
 
     def start_transmission(self, *, amplitude=1.0):
         """Unmute selected IQ transmitters, scaling their prepared waveforms.
@@ -127,17 +146,15 @@ class AntennaSelection:
                 if not _rpc(board, "get_transmit_authorization")["authorized"]:
                     raise PermissionError(f"{board.host}: transmission is not authorized")
                 changes = [{"antid": a, "amplitude": amplitude if a in ids else 0} for a in range(8) if a in ids or state["muted"]]
-                expected = {v["antid"]: v["amplitude"] for v in changes
-                            if state["sensors"][v["antid"]]["applied_mode"] == "iq_tx"}
+                expected = {v["antid"]: v["amplitude"] for v in changes if state["sensors"][v["antid"]]["applied_mode"] == "iq_tx"}
                 plans.append((board, changes, expected))
             try:
                 for board, changes, expected in plans:
                     owner._iq_tx_boards.add(board)
                     _rpc(board, "set_iq_tx", {"transmitters": changes, "muted": False})
+
                     def applied(state):
-                        return all(state["sensors"][a].get("applied_mode") == "iq_tx"
-                                   and abs(state["sensors"][a]["applied_amplitude"] - level) < 1e-6
-                                   for a, level in expected.items())
+                        return all(state["sensors"][a].get("applied_mode") == "iq_tx" and abs(state["sensors"][a]["applied_amplitude"] - level) < 1e-6 for a, level in expected.items())
 
                     _wait(board, applied, 10)
             except Exception:
@@ -290,9 +307,7 @@ class Pool(AntennaSelection):
     def _initialize(self, geometry, reference_controller):
         self._geometry = geometry
         self.hosts, self.names = list(geometry.hosts), list(geometry.names)
-        if reference_controller is not None and (
-            not isinstance(reference_controller, str) or not reference_controller.strip() or reference_controller in self.hosts
-        ):
+        if reference_controller is not None and (not isinstance(reference_controller, str) or not reference_controller.strip() or reference_controller in self.hosts):
             raise ValueError("reference_controller must be an address distinct from the measurement boards")
         self.reference_controller_host = reference_controller
         self.reference_controller = None
@@ -424,6 +439,7 @@ class Pool(AntennaSelection):
     def register_configuration(mode, planner):
         """Register a read-only planner returning a prepared ConfigurationUpdate."""
         from .configuration import register_configuration
+
         register_configuration(mode, planner)
 
     @classmethod

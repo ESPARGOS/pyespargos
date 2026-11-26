@@ -57,7 +57,7 @@ class _Captures(TXStatus):
             while len(pending) > 4:
                 del pending[next(iter(pending))]
 
-    def collect(self, ids, samples, count, timeout, generations=None, not_before=None):
+    def collect(self, ids, samples, count, timeout, generations=None, not_before=None, *, allow_missing=False):
         if not ids:
             return {}
         deadline = time.monotonic() + timeout
@@ -72,10 +72,12 @@ class _Captures(TXStatus):
                 while any(len(v) < count for v in self.frames.values()):
                     left = deadline - time.monotonic()
                     if left <= 0:
+                        if allow_missing:
+                            break
                         missing = [i for i, v in self.frames.items() if len(v) < count]
                         raise RuntimeError(f"Missing calibration captures from sensors {missing}")
                     self.changed.wait(left)
-                return {i: list(v) for i, v in self.frames.items()}
+                return {i: list(v) for i, v in self.frames.items() if len(v) == count}
             finally:
                 self.ids = set()
 

@@ -179,3 +179,28 @@ def test_common_pilot_matches_one_sensor_comb_and_has_independent_arrays():
             np.testing.assert_array_equal(actual, expected)
     for i in range(3):
         assert not np.shares_memory(common[0][i], common[1][i])
+
+
+def test_delay_cluster_wraps_at_the_probe_period():
+    from espargos._iq_calibration.delay import _delay_cluster
+
+    period = 3200e-9
+    cluster = _delay_cluster([period - 1e-9, 0, 1e-9, 40e-9], period)
+    assert len(cluster) == 3
+    assert np.median(cluster) % period == pytest.approx(0, abs=1e-15)
+
+
+def test_group_probe_rejects_loud_reflection_and_unstable_links():
+    from espargos._iq_calibration.delay import _group_probe_delay
+
+    freq = np.fft.fftfreq(256, 1 / 80e6)
+
+    def frames(ns):
+        return np.tile(np.exp(-2j * np.pi * freq * ns * 1e-9), (16, 1))
+
+    noisy = frames(100)
+    noisy[8:] = frames(150)[8:]
+    paths = [frames(100), frames(101), 10 * frames(190), noisy, np.zeros_like(noisy)]
+    delay = _group_probe_delay(paths, 256, 256 / 80e6)
+    assert delay == pytest.approx(100.5e-9, abs=0.1e-9)
+    assert _group_probe_delay([frames(100), frames(150)], 256, 256 / 80e6) is None
