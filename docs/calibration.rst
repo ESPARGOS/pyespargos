@@ -441,8 +441,46 @@ For an antenna path, supply its propagation delay explicitly::
                            for rx in rx_antennas},
    )
 
-Supply the known propagation delay for each TX/RX pair, such as distance
-divided by propagation speed. Ensure the direct path dominates reflections.
+Timing between already calibrated groups
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Suppose 32 transmitters already share a calibrated replay time origin and 32
+receivers share a calibrated capture time origin. The remaining quantity for
+range zero is the delay between these origins. A pilot measures that delay
+plus its propagation time. On an antenna path, use the **one-way** distance
+between the TX and RX antennas, even when the eventual application is radar.
+
+For example, given TX and RX selections from the same pool and known antenna
+positions in metres in a common coordinate system::
+
+   import math
+
+   link = pool.select(antennas=[*tx_group.antennas, *rx_group.antennas])
+   flight_times = {
+       (tx, rx): math.dist(position_m[tx], position_m[rx]) / 299_792_458
+       for tx in tx_group.antennas for rx in rx_group.antennas
+   }
+   timing = link.calibrate_tx_rx_delay(
+       path="antenna_r", reference_delays_s=flight_times, method="group",
+   )
+
+The default method (``"per_tx"``) probes each TX in turn with all selected
+receivers listening and returns an individual correction for each TX. Use it
+to check for residual timing differences between transmitters.
+With ``method="group"``, the within-group timing corrections must already be
+accurate enough for the intended measurement. The routine tries transmitters
+in random order without replacement. It checks two batches of captures for each
+path, subtracts the known flight times, and looks for agreement first among
+receivers and then among distinct transmitters. Each TX gets one vote. A
+strong reflection on a single link therefore cannot dominate by signal power.
+
+The measurement stops once enough transmitters agree. A missing capture,
+clipped link or isolated outlier can be skipped. If the available measurements
+do not support a common delay, calibration fails. The accepted delay applies to
+every selected transmitter, including those that were never probed. Over the
+air, choose paths where the direct signal is detectable. A reflection common
+to most measured paths can still bias the result. The measured delay is
+ambiguous modulo the repeating probe period.
 
 We can also remove the hardware delay directly from a channel spectrum::
 
