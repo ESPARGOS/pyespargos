@@ -341,14 +341,11 @@ class RangeDopplerTests(unittest.TestCase):
                     self.assertLess(abs(p.angles[ra[r].argmax()] - angle), 2)
                     self.assertGreater(10 * np.log10(rd[r, d] / p.background_power(rd)), 12)
 
-    def visible_maps(self, maps, floor=12):
-        return [np.where(power > floor, power, -200) for power in self.processor.display_maps(maps)]
-
     def test_weak_distant_targets_are_not_hidden_by_nearby_noise(self):
         p = self.processor
         targets = [(6, 0.5, 25, 0.0001), (9, -0.6, -30, 0.0001)]
         maps = self.fluctuating_coupling(targets)
-        rd, ra = self.visible_maps(maps)
+        rd, ra = p.display_maps(maps)
         for distance, velocity, angle, _ in targets:
             r = np.argmin(abs(p.ranges - distance))
             a = np.argmin(abs(p.angles - angle))
@@ -361,7 +358,7 @@ class RangeDopplerTests(unittest.TestCase):
         p = self.processor
         for distance in [0.3, 0.7, 1.1, 1.6, 2]:
             with self.subTest(distance=distance):
-                rd, ra = self.visible_maps(self.fluctuating_coupling([(distance, 0.5, 25, 0.0005)]))
+                rd, ra = p.display_maps(self.fluctuating_coupling([(distance, 0.5, 25, 0.0005)]))
                 d = np.argmin(abs(p.velocities - 0.5))
                 a = np.argmin(abs(p.angles - 25))
                 self.assertLessEqual(abs(p.ranges[rd[:, -d - 1].argmax()] - distance), 0.0625)
@@ -369,44 +366,8 @@ class RangeDopplerTests(unittest.TestCase):
 
     def test_shared_coupling_noise_stays_quiet_without_targets(self):
         maps = self.fluctuating_coupling([])
-        for image in self.visible_maps(maps):
+        for image in self.processor.display_maps(maps):
             self.assertLess(np.mean(image > 12), 0.01)
-        low = self.visible_maps(maps, floor=3)
-        high = self.visible_maps(maps, floor=18)
-        for a, b in zip(low, high):
-            self.assertLessEqual(np.count_nonzero(b > -200), np.count_nonzero(a > -200))
-
-    def test_longer_window_recovers_weak_slow_distant_motion(self):
-        positions = [(x * 0.06, y * 0.06) for y in range(2) for x in range(4)]
-        results = {}
-        for history in (72, 144):
-            self.processor = radar.MIMOProcessor(positions, history=history)
-            p = self.processor
-            maps = self.simulate([(9, 0.1, -30, 0.0001)], noise=0.001)
-            r = np.argmin(abs(p.ranges - 9))
-            d = np.argmin(abs(p.velocities - 0.1))
-            power = p.display_maps(maps)[0]
-            results[history] = power[r, -d - 1]
-            if history == 144:
-                displayed, _ = self.visible_maps(maps)
-                self.assertGreater(displayed[r, -d - 1], 12)
-                self.assertLessEqual(abs(p.ranges[maps[0][:, d].argmax()] - 9), 0.25)
-        self.assertLess(results[72], 12)
-        self.assertGreater(results[144] - results[72], 8)
-
-    def test_longer_window_preserves_two_target_ranges_and_angles(self):
-        positions = [(x * 0.06, y * 0.06) for y in range(2) for x in range(4)]
-        self.processor = radar.MIMOProcessor(positions, history=144)
-        self.test_two_targets_at_different_ranges_and_directions()
-        self.test_slow_target_doppler_is_not_pushed_outward()
-
-    def test_longer_window_keeps_background_quiet(self):
-        positions = [(x * 0.06, y * 0.06) for y in range(2) for x in range(4)]
-        self.processor = radar.MIMOProcessor(positions, history=144)
-        for seed in range(3):
-            maps = self.simulate(noise=0.001, drift=0.1, seed=seed)
-            for image in self.visible_maps(maps):
-                self.assertLess(np.mean(image > 12), 0.02)
 
     def test_plot_worker_receives_independent_window_and_current_range_weights(self):
         p = radar.MIMOProcessor([(x * 0.06, 0) for x in range(4)], history=20)

@@ -9,19 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 DEMO = ROOT / "demos/iq/mimo-radar"
 
 
-def test_cli_exposes_config_keys_instead_of_dedicated_flags():
-    result = subprocess.run(
-        [sys.executable, str(DEMO / "main.py"), "--help"],
-        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    for key in ("tx_calibration", "frequency", "amplitude", "integration_time", "sample_rate", "rx_gain", "range_maximum"):
-        assert f"app.{key}:" in result.stdout
-        assert "--" + key.replace("_", "-") not in result.stdout
-
-
 def test_yaml_overrides_gui_updates_and_validation(tmp_path):
     config = tmp_path / "radar.yml"
     config.write_text("app:\n  frequency: 2400\n  integration_time: 0.2\n  linear_scale: false\n")

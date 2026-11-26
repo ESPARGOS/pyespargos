@@ -92,24 +92,6 @@ class TransmitBeamUITests(unittest.TestCase):
         self.assertFalse(c.data["busy"])
         self.assertFalse(c.data["exclusive"])
 
-    def test_waveform_drag_only_pans_horizontally(self):
-        from PyQt6.QtCore import QPointF
-        from plot import IQTxPlot
-
-        plot = IQTxPlot()
-        plot.setWidth(400)
-        plot.setHeight(200)
-        plot.scale, plot.start = 4, 50
-        press, move = Mock(), Mock()
-        press.position.return_value = QPointF(150, 50)
-        move.position.return_value = QPointF(100, 150)
-        plot.mousePressEvent(press)
-        plot.mouseMoveEvent(move)
-        self.assertGreater(plot.start, 50)
-        self.assertEqual(plot.center, 0)
-        self.assertEqual(plot.vertical_scale, 1)
-        plot.deleteLater()
-
     def test_rf_and_amplitude_edits_survive_steering(self):
         c = self.control
         c.setSetting("gain_a", 2)

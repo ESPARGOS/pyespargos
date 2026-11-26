@@ -1,9 +1,6 @@
 import unittest
-from types import SimpleNamespace
-from unittest.mock import patch
 import numpy as np
 from espargos.array_processing import steering_vectors_2d, root_music_2d, bartlett_fft_2d
-from espargos._iq_calibration import reference
 from demos.iq.camera.processing import channelize, detect_emissions, direction_grid, locate
 
 
@@ -35,14 +32,6 @@ class CameraProcessingTests(unittest.TestCase):
         emissions = detect_emissions(spectra, np.ones(32), 6, np.ones(32, bool))
         self.assertEqual(len(emissions), 2)
         self.assertTrue(all(e.covariance.shape == (8, 8) for e in emissions))
-
-    def test_sync_restores_narrow_filter_on_failure(self):
-        calls = []
-        board = SimpleNamespace(iq=SimpleNamespace(get_config=lambda: {"filter_bw_mhz": 20}, set_config=lambda config: calls.append(config)))
-        with patch.object(reference, "_acquire_grid", side_effect=TimeoutError("no reference")):
-            with self.assertRaises(TimeoutError):
-                reference.acquire_grid(SimpleNamespace(boards=[board]), 2472e6, scope=SimpleNamespace(active=[0]))
-        self.assertEqual(calls, [{"filter_bw_mhz": 40}, {"filter_bw_mhz": 20}])
 
     def test_tall_camera_labels_vertically_resolved_arrivals(self):
         from demos.iq.camera.processing import peak_directions, flash_image

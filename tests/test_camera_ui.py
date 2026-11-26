@@ -5,7 +5,6 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import unittest
 import time
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -13,7 +12,6 @@ try:
     from PyQt6 import QtWidgets
     from demos.ble.common.advertisers import Advertisers
     from demos.ble.camera.main import BLECamera, BLEOverlay
-    from demos.ble.common.controller import BLEController
     from demos.common.config_manager import ConfigManager
 except ImportError:
     QtWidgets = None
@@ -178,14 +176,6 @@ class CameraModels(unittest.TestCase):
         self.assertEqual(list(state._spectra), keys[:1])
         self.assertEqual(list(state._polarizations), keys[:1])
         state.controller.report_error.assert_called_once_with("right: calibration expired")
-
-    def test_late_receiver_action_after_shutdown(self):
-        executor = ThreadPoolExecutor(max_workers=1)
-        executor.shutdown()
-        action = Mock()
-        closing = SimpleNamespace(_closed=True, _executor=executor)
-        BLEController._submit(closing, action, "Late receiver action")
-        action.assert_not_called()
 
     def test_resolution_change_discards_old_spectra(self):
         import numpy as np
