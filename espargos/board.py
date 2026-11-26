@@ -492,11 +492,15 @@ class Board(object):
         udp_remote_addr = (peer[0], STREAM_CONTROLLER_SRC_PORT, *peer[2:])
         try:
             udp_sock = socket.socket(udp_family, socket.SOCK_DGRAM)
+        except OSError as e:
+            return f"Could not create UDP socket: {e}"
+        try:
             udp_sock.bind(("::" if udp_family == socket.AF_INET6 else "", 0))
             udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)
             local_port = udp_sock.getsockname()[1]
         except OSError as e:
-            return f"Could not create UDP socket: {e}"
+            udp_sock.close()
+            return f"Could not configure UDP socket: {e}"
 
         # Send an empty packet to the controller's source port to punch a hole
         # in the Windows firewall so that incoming UDP packets are allowed through
@@ -520,15 +524,15 @@ class Board(object):
                     raise socket.timeout()
                 udp_sock.settimeout(remaining)
                 data, addr = udp_sock.recvfrom(65535)
-                if data == STREAM_MAGIC and addr[0] == udp_remote_addr[0]:
+                if data == STREAM_MAGIC and addr == udp_remote_addr:
                     break
         except socket.timeout:
+            self._disable_udp_stream(local_port)
             udp_sock.close()
-            self._disable_udp_stream()
             return "Timeout waiting for UDP magic packet"
         except OSError as e:
+            self._disable_udp_stream(local_port)
             udp_sock.close()
-            self._disable_udp_stream()
             return f"Error receiving UDP magic packet: {e}"
 
         # UDP stream established successfully
@@ -554,6 +558,10 @@ class Board(object):
                 self.control.command(path, {"enable": True, "port": local_port})
             except Exception as exc:
                 errors.append(f"/{path}: {exc}")
+                # Only a missing endpoint warrants trying the legacy alias. A
+                # lost response may already have transferred stream ownership.
+                if not isinstance(exc, EspargosHTTPStatusError) or exc.status not in (404, 405):
+                    break
                 continue
             self._udp_stream_control_path = path
             return None
@@ -573,30 +581,29 @@ class Board(object):
     def _try_start_websocket_path(self, path: str) -> str | None:
         self._logger.info(f"Trying WebSocket sensor stream for {self.name} via /{path}")
 
-        self._stream_ready_event = threading.Event()
-        self._stream_error = None
+        try:
+            websocket = websockets.sync.client.connect(
+                f"ws://{self.host}/{path}",
+                open_timeout=3,
+                close_timeout=0.5,
+            )
+        except Exception as exc:
+            return f"Could not connect to sensor stream WebSocket on {self.host}: {exc}"
+
+        self._stream_websocket = websocket
         self._stream_transport = "websocket"
-        self._stream_thread = threading.Thread(target=self._stream_loop_websocket, args=(path,))
+        self._stream_connected = True
+        self._stream_thread = threading.Thread(target=self._stream_loop_websocket, args=(websocket,))
         self._stream_thread.start()
-
-        if not self._stream_ready_event.wait(timeout=3):
-            self._stream_connected = False
-            self._stream_thread.join()
-            return "Connection was not established within 3 seconds"
-
-        if self._stream_error is not None:
-            self._stream_connected = False
-            self._stream_thread.join()
-            return str(self._stream_error)
 
         self._logger.info(f"Started WebSocket sensor stream for {self.name} via /{path}")
         return None
 
-    def _disable_udp_stream(self):
+    def _disable_udp_stream(self, local_port: int):
         """Tell the server to stop the UDP stream (best-effort)."""
         try:
             path = getattr(self, "_udp_stream_control_path", UDP_STREAM_CONTROL_PATHS[0])
-            self.control.command(path, {"enable": False})
+            self.control.command(path, {"enable": False, "port": local_port})
         except Exception:
             pass
 
@@ -708,9 +715,10 @@ class Board(object):
             if hasattr(self, "_udp_keepalive_stop"):
                 self._udp_keepalive_stop.set()
                 self._udp_keepalive_thread.join()
-            if hasattr(self, "_udp_sock"):
-                self._udp_sock.close()
-            self._disable_udp_stream()
+            # Keep the local port reserved while the controller processes the
+            # stop. A client taking over on another port keeps its stream.
+            self._disable_udp_stream(self._udp_sock.getsockname()[1])
+            self._udp_sock.close()
         elif transport == "uart":
             if hasattr(self, "_uart_stream_callback"):
                 self._uart_client.remove_stream_callback(self._uart_stream_callback)
@@ -727,6 +735,7 @@ class Board(object):
         self._join_stream_thread()
         had_transport = self._teardown_stream_transport()
         self._stop_stream_dispatch()
+        self._sensor_message_reassembler.clear()
         return had_transport
 
     def stop(self):
@@ -926,6 +935,8 @@ class Board(object):
             try:
                 data, addr = self._udp_sock.recvfrom(65535)
                 timeout_total = 0
+                if not data:
+                    continue  # Transport keepalive
                 if not self._enqueue_stream_message(data):
                     break
             except socket.timeout:
@@ -939,32 +950,16 @@ class Board(object):
                 self._logger.warning("UDP timeout, disconnecting")
                 self._stream_connected = False
 
-    def _stream_loop_websocket(self, path: str):
-        try:
-            ws = websockets.sync.client.connect(
-                f"ws://{self.host}/{path}",
-                open_timeout=3,
-                close_timeout=0.5,
-            )
-        except Exception as e:
-            self._stream_error = EspargosStreamConnectionError(f"Could not connect to sensor stream WebSocket on {self.host}: {e}")
-            self._stream_ready_event.set()
-            return
-
-        with ws as websocket:
-            self._stream_websocket = websocket
-            self._stream_connected = True
-            self._stream_ready_event.set()
-
+    def _stream_loop_websocket(self, websocket):
+        with websocket:
             timeout_total = 0
             timeout_once = 0.2
             while self._stream_connected:
                 try:
                     message = websocket.recv(timeout_once)
-                    if message == STREAM_MAGIC:
-                        # WebSocket connections do not need the UDP handshake.
-                        continue
                     timeout_total = 0
+                    if not isinstance(message, bytes) or not message or message == STREAM_MAGIC:
+                        continue
                     if not self._enqueue_stream_message(message):
                         break
                 except TimeoutError:

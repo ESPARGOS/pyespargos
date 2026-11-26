@@ -1,7 +1,7 @@
 import logging
 import threading
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from espargos.board import Board, EspargosHTTPStatusError
 
@@ -10,6 +10,7 @@ class ControllerStreamTests(unittest.TestCase):
     def board(self):
         b = Board.__new__(Board)
         b._sensor_message_subscriptions_lock = threading.Lock()
+        b._sensor_message_reassembler = Mock()
         b._controller_message_subscriptions = {}
         b._sensor_message_subscriptions = {}
         b._logger = logging.getLogger("test")
@@ -21,7 +22,6 @@ class ControllerStreamTests(unittest.TestCase):
 
     def test_controller_frames_share_dispatch_without_sensor_reassembly(self):
         b = self.board()
-        b._sensor_message_reassembler = Mock()
         received = []
         s = b.subscribe_controller_messages(0x314D5149, received.append)
         frame = b"IQM1" + bytes(60)
@@ -58,6 +58,15 @@ class ControllerStreamTests(unittest.TestCase):
         self.assertTrue(drained.wait(2))
         board.stop()
         self.assertIsNone(board._stream_dispatch_thread)
+
+    def test_websocket_keepalives_and_text_do_not_reach_sensor_dispatch(self):
+        b = self.board()
+        b._stream_connected = True
+        b._enqueue_stream_message = Mock(return_value=False)
+        ws = MagicMock()
+        ws.recv.side_effect = [b"", "status", b"sensor data"]
+        b._stream_loop_websocket(ws)
+        b._enqueue_stream_message.assert_called_once_with(b"sensor data")
 
     def test_uplink_reuses_connected_transport_and_bounds_datagrams(self):
         b = self.board()
