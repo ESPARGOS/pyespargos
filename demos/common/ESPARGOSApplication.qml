@@ -224,6 +224,10 @@ ApplicationWindow {
 				Layout.alignment: Qt.AlignHCenter
 			}
 			Label {
+				id: progressDetail
+				FontMetrics { id: detailMetrics; font: progressDetail.font }
+				Layout.preferredHeight: Math.max(implicitHeight, 2 * Math.ceil(detailMetrics.height))
+				verticalAlignment: Text.AlignVCenter
 				text: root.calibrationMessage || "Preparing the receivers…"
 				textFormat: Text.PlainText
 				Layout.fillWidth: true

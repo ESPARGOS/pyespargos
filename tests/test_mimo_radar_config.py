@@ -43,7 +43,8 @@ try:
     drain()
     assert popup.property('visible') and popup.property('modal')
     startup_height = popup.property('height')
-    for status in ("Configuring two transmitters and 30 receivers…",
+    for status in ("First calibration step\nSecond calibration step",
+                   "Configuring two transmitters and 30 receivers…",
                    "Calibrating RX and TX through Reference (reciprocity)…"):
         app._state(status, False, True)
         drain()
