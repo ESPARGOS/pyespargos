@@ -49,6 +49,10 @@ class Exclude11bFilter(CSIBacklogFilter):
 class CSIBacklog(SensorBacklog):
     """Ring buffer containing selected fields from completed CSI clusters.
 
+    Rows follow callback order. The ``host_timestamp`` field records when the
+    first antenna reported each packet, so a late antenna can make consecutive
+    rows appear out of time order.
+
     :param receiver: CSI receiver from which clusters are collected
     :param fields: Fields to store, or ``None`` for all available fields
     :param apply_calibration: Whether to apply the receiver's CSI calibration

@@ -59,7 +59,7 @@ class EspargosDemoStochasticFading(CSIBacklogMixin, CombinedArrayMixin, SingleCS
         self.initialize_pool(calibrate=not self.args.no_calib, backlog_cb_predicate=self._partial_cluster_predicate)
 
         self._samples = np.empty(0, dtype=np.float32)
-        self._last_processed_timestamp = -np.inf
+        self._backlog_cursor = 0
         self._fit_sigma = self.RAYLEIGH_SIGMA
         self._fit_nu = 0.0
         self._normalization_scale = 1.0
@@ -148,26 +148,9 @@ class EspargosDemoStochasticFading(CSIBacklogMixin, CombinedArrayMixin, SingleCS
         self._samples = np.empty(0, dtype=np.float32)
         self._total_samples_seen = 0
         self._display_x_max = self.DEFAULT_X_MAX
-        self._mark_backlog_as_seen()
+        self._backlog_cursor = self.backlog.total_appended if hasattr(self, "backlog") else 0
         self._emit_sample_state_changed()
         self._update_fit_parameters()
-
-    def _mark_backlog_as_seen(self):
-        if not hasattr(self, "backlog") or not self.backlog.has_data:
-            self._last_processed_timestamp = -np.inf
-            return
-
-        try:
-            timestamp_backlog = self.backlog.get("host_timestamp")
-        except ValueError:
-            self._last_processed_timestamp = -np.inf
-            return
-
-        if timestamp_backlog is None or len(timestamp_backlog) == 0:
-            self._last_processed_timestamp = -np.inf
-            return
-
-        self._last_processed_timestamp = float(np.nanmax(timestamp_backlog))
 
     def _trim_samples(self):
         self._samples = self._samples[-max(1, self.maxSamples) :]
@@ -182,34 +165,6 @@ class EspargosDemoStochasticFading(CSIBacklogMixin, CombinedArrayMixin, SingleCS
         if self.args.csi_completion_timeout > 0:
             timeout_condition = np.sum(completion) >= 2 and cluster.age > self.args.csi_completion_timeout
         return bool(np.all(completion) or timeout_condition)
-
-    def _get_partial_backlog_csi(self, *additional_keys: str, remove_global_sto=True, return_format=False):
-        if not hasattr(self, "backlog") or not self.backlog.has_data:
-            return None
-
-        csi_key = self._resolve_backlog_preamble_format(allow_incomplete=True)
-
-        try:
-            results = list(self.backlog.get_multiple([csi_key, *additional_keys]))
-        except ValueError:
-            self.logger.warning(f"Requested CSI key {csi_key} not in backlog")
-            return None
-
-        csi_backlog = results[0]
-
-        if remove_global_sto:
-            espargos.csi_processing.remove_mean_sto(csi_backlog)
-
-        if csi_key == "ht40":
-            espargos.csi_processing.interpolate_ht40ltf_gap(csi_backlog)
-        elif csi_key == "ht20":
-            espargos.csi_processing.interpolate_ht20ltf_gap(csi_backlog)
-        elif csi_key == "he20":
-            espargos.csi_processing.interpolate_he20ltf_gaps(csi_backlog)
-
-        if additional_keys:
-            return (csi_key, *results) if return_format else tuple(results)
-        return (csi_key, csi_backlog) if return_format else csi_backlog
 
     def _normalized_samples(self):
         return self._samples / max(self.normalizationScale, 1e-12)
@@ -276,21 +231,25 @@ class EspargosDemoStochasticFading(CSIBacklogMixin, CombinedArrayMixin, SingleCS
         return pdf
 
     def _append_new_samples(self):
-        if (result := self._get_partial_backlog_csi("rx_gain", "fft_gain", "host_timestamp", return_format=True)) is None:
+        if not hasattr(self, "backlog") or self.backlog.total_appended == self._backlog_cursor:
+            return
+        key = self._resolve_backlog_preamble_format(allow_incomplete=True)
+        try:
+            self._backlog_cursor, (csi_new, rx_gain, fft_gain) = self.backlog.get_since((key, "rx_gain", "fft_gain"), self._backlog_cursor)
+        except ValueError as error:
+            self.logger.warning("Cannot read CSI backlog: %s", error)
+            return
+        if not len(csi_new):
             return
 
-        _csi_key, csi_backlog, rx_gain_backlog, fft_gain_backlog, timestamp_backlog = result
-        timestamp_backlog = np.asarray(timestamp_backlog, dtype=np.float64)
-
-        new_mask = timestamp_backlog > self._last_processed_timestamp
-        if not np.any(new_mask):
-            return
-
-        self._last_processed_timestamp = float(np.max(timestamp_backlog[new_mask]))
-
-        csi_new = np.array(csi_backlog[new_mask], copy=True)
-
-        csi_new = espargos.csi_processing.scale_csi_by_reported_gain(csi_new, rx_gain_backlog[new_mask], fft_gain_backlog[new_mask])
+        espargos.csi_processing.remove_mean_sto(csi_new)
+        if key == "ht40":
+            espargos.csi_processing.interpolate_ht40ltf_gap(csi_new)
+        elif key == "ht20":
+            espargos.csi_processing.interpolate_ht20ltf_gap(csi_new)
+        elif key == "he20":
+            espargos.csi_processing.interpolate_he20ltf_gaps(csi_new)
+        csi_new = espargos.csi_processing.scale_csi_by_reported_gain(csi_new, rx_gain, fft_gain)
 
         if getattr(self, "_use_combined_array", False):
             csi_new = espargos.combined_array.build_combined_array_data(self.indexing_matrix, csi_new)
