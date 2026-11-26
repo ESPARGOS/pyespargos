@@ -109,8 +109,7 @@ class TXSignals:
 
     def _assigned_to(self, antenna, *, loops_only=False):
         """Return signals in the beam slot order used by this sensor."""
-        return tuple(signal for signal in self._items if antenna in signal.antennas
-                     and not (loops_only and isinstance(signal.waveform, Stream)))
+        return tuple(signal for signal in self._items if antenna in signal.antennas and not (loops_only and isinstance(signal.waveform, Stream)))
 
     def _antennas(self, antennas):
         tx = self.transmitter
@@ -236,7 +235,10 @@ class TXSignals:
                         antenna = Antenna(board.host, a)
                         position = None if not isinstance(s.steering, Beamspace) or tx.positions is None else tx.positions[i, a]
                         weights[a] = antenna_weight(
-                            s.steering, antenna, position, tx.states[i]["sensors"][a]["frequency_hz"],
+                            s.steering,
+                            antenna,
+                            position,
+                            tx.states[i]["sensors"][a]["frequency_hz"],
                             s.waveform,
                         )
                     weights *= s.amplitude
@@ -247,9 +249,7 @@ class TXSignals:
                         recipe = {"type": "stream", "samples": self._samples}
                     else:
                         recipe = s.waveform.recipe(self._samples, sample_rate_hz=rate)
-                    record = dict(waveform={**recipe,
-                                            "amplitude": 1.0, "antennas": antennas},
-                                  real=weights.real.tolist(), imag=weights.imag.tolist())
+                    record = dict(waveform={**recipe, "amplitude": 1.0, "antennas": antennas}, real=weights.real.tolist(), imag=weights.imag.tolist())
                     if s.delay_samples:
                         record["delay_samples"] = [s.delay_samples.get(Antenna(board.host, a), 0.0) for a in range(8)]
                     records.append((s.waveform, record))

@@ -7,7 +7,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: psf/black@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install black==26.10.1
+      - run: git ls-files -z -- '*.py' | xargs -0 black --check
       - name: Trigger espargos.github.io github-pages workflow
         if: ${{ success() }}
         uses: peter-evans/repository-dispatch@v4

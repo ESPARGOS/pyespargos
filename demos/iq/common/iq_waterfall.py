@@ -45,10 +45,7 @@ _VIRIDIS_STOPS = np.asarray(
 # to within one level and lets a whole capture share a single indexed lookup.
 _VIRIDIS_PALETTE = np.full((1025, 4), 255, np.uint8)
 for channel in range(3):
-    _VIRIDIS_PALETTE[:, channel] = 255 * np.interp(
-        np.linspace(0, 1, len(_VIRIDIS_PALETTE)),
-        np.linspace(0, 1, len(_VIRIDIS_STOPS)), _VIRIDIS_STOPS[:, channel]
-    )
+    _VIRIDIS_PALETTE[:, channel] = 255 * np.interp(np.linspace(0, 1, len(_VIRIDIS_PALETTE)), np.linspace(0, 1, len(_VIRIDIS_STOPS)), _VIRIDIS_STOPS[:, channel])
 
 
 def max_pool_to_width(values: np.ndarray, width: int) -> np.ndarray:
@@ -69,7 +66,7 @@ def viridis_rgba(values: np.ndarray, vmin: float = DB_MIN, vmax: float = DB_MAX)
     """Map scalar values to uint8 viridis RGBA pixels."""
 
     values = np.asarray(values, dtype=np.float32)
-    normalized = np.fmax(0., np.minimum((values - vmin) / max(vmax - vmin, 1e-12), 1.))
+    normalized = np.fmax(0.0, np.minimum((values - vmin) / max(vmax - vmin, 1e-12), 1.0))
     return _VIRIDIS_PALETTE[np.rint(normalized * (len(_VIRIDIS_PALETTE) - 1)).astype(np.intp)]
 
 

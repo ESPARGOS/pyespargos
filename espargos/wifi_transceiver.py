@@ -153,8 +153,8 @@ class WiFiTransceiver(ClusterAssembler):
 
     def modes_changed(self, board_index, before, after):
         from .calibration import Antenna
-        changed = [Antenna(self.boards[board_index].host, a) for a, (old, new) in enumerate(zip(before, after))
-                   if old != new and "wifi" in (old, new)]
+
+        changed = [Antenna(self.boards[board_index].host, a) for a, (old, new) in enumerate(zip(before, after)) if old != new and "wifi" in (old, new)]
         if changed:
             self.invalidate_calibration(antennas=changed)
 
@@ -360,6 +360,7 @@ class WiFiTransceiver(ClusterAssembler):
         :raises EspargosUnexpectedResponseError: If any board returns an unexpected response.
         """
         from .calibration import Antenna
+
         indices = range(len(self.boards)) if board_index is None else [board_index]
         ids = tuple(range(8) if antennas is None else antennas)
         if any(type(a) is not int or not 0 <= a < 8 for a in ids):

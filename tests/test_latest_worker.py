@@ -1,4 +1,5 @@
 """Live visualization must not build an unbounded history of old measurements."""
+
 import threading
 import unittest
 from demos.common.latest_worker import LatestWorker

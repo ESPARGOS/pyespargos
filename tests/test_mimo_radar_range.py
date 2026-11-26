@@ -1,4 +1,5 @@
 """Range-grid validation, including a moving target beyond the old display."""
+
 import importlib.util
 from pathlib import Path
 import sys
@@ -25,7 +26,7 @@ def test_range_defaults_and_ambiguity_limits():
 
 
 def test_distant_moving_target_reaches_both_maps():
-    positions = np.array([(x * .06, y * .06) for y in range(2) for x in range(4)])
+    positions = np.array([(x * 0.06, y * 0.06) for y in range(2) for x in range(4)])
     p = radar.MIMOProcessor(positions, sample_rate=20e6, range_maximum=900, history=16)
     mask = np.repeat(p.masks, p.receiver_count, axis=0)
     target_range = 600

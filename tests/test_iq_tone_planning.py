@@ -1,4 +1,5 @@
 """Exercise both reference CW tuning paths through the receive API."""
+
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -22,8 +23,7 @@ def receiver():
 @pytest.mark.parametrize("hz", [2310e6, 2350.125e6, 2437e6, 2497e6])
 def test_exact_tone_frequency_sent_in_khz(receiver, hz):
     receiver.set_reference_tone(hz)
-    receiver.master_board.control.post_json.assert_called_once_with(
-        "set_iq_reference", {"mode": "cw", "freq_khz": round(hz / 1000), "backoff_qdb": 30})
+    receiver.master_board.control.post_json.assert_called_once_with("set_iq_reference", {"mode": "cw", "freq_khz": round(hz / 1000), "backoff_qdb": 30})
 
 
 @pytest.mark.parametrize("hz,approximate", [(2600e6, False), (2670e6, True)])
@@ -32,7 +32,5 @@ def test_high_band_uses_nearest_measured_cap(receiver, hz, approximate):
     table = iq_tone.HIGHBAND_CAP_FREQ_EDGE_MHZ if approximate else iq_tone.HIGHBAND_CAP_FREQ_MHZ
     assert reported == approximate
     assert mhz == table[cap]
-    assert abs(mhz - hz/1e6) == min(abs(f - hz/1e6) for f in table.values())
-    receiver.master_board.control.post_json.assert_called_once_with("set_iq_reference", {
-        "mode": "cw", "freq_khz": round(iq_tone.HIGHBAND_TONE_CODE_HZ/1000), "backoff_qdb": 24,
-        "cw_tuning": {"cbw": iq_tone.HIGHBAND_TONE_CBW, "cap": cap}})
+    assert abs(mhz - hz / 1e6) == min(abs(f - hz / 1e6) for f in table.values())
+    receiver.master_board.control.post_json.assert_called_once_with("set_iq_reference", {"mode": "cw", "freq_khz": round(iq_tone.HIGHBAND_TONE_CODE_HZ / 1000), "backoff_qdb": 24, "cw_tuning": {"cbw": iq_tone.HIGHBAND_TONE_CBW, "cap": cap}})

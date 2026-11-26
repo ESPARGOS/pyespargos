@@ -104,7 +104,4 @@ class Advertisers(QtCore.QAbstractListModel):
 
 def advertiser_record(packet):
     """Qt-independent discovery record from a CRC-validated advertisement."""
-    return dict(identity=packet.address_type+":"+packet.advertiser,
-                address=packet.advertiser, addressType=packet.address_type,
-                name=packet.name, clock=packet.clock_epoch,
-                time=packet.time_us)
+    return dict(identity=packet.address_type + ":" + packet.advertiser, address=packet.advertiser, addressType=packet.address_type, name=packet.name, clock=packet.clock_epoch, time=packet.time_us)

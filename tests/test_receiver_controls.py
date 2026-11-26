@@ -21,9 +21,13 @@ class ReceiverControls(unittest.TestCase):
         engine = QtQml.QQmlEngine()
         component = QtQml.QQmlComponent(engine)
         common = (Path(__file__).resolve().parents[1] / "demos/ble/common").as_uri()
-        component.setData(('''
+        component.setData(
+            (
+                '''
 import QtQuick
-import "''' + common + '''" as BLE
+import "'''
+                + common
+                + """" as BLE
 Item {
     property int edits: 0
     property int calibrations: 0
@@ -32,13 +36,15 @@ Item {
         onCalibrationRequested: parent.calibrations++
     }
 }
-''').encode(), QtCore.QUrl())
+"""
+            ).encode(),
+            QtCore.QUrl(),
+        )
         self.assertFalse(component.isError(), [e.toString() for e in component.errors()])
         root = component.create()
         self.assertIsNotNone(root)
         drawer = root.findChild(QtCore.QObject, "bleReceiverDrawer")
-        drawer.setProperty("receiverConfig", dict(channel=38, gain=55, polarization=4,
-            phy="LE2M", gain_mode="manual", decimation=2, capture_samples=2048))
+        drawer.setProperty("receiverConfig", dict(channel=38, gain=55, polarization=4, phy="LE2M", gain_mode="manual", decimation=2, capture_samples=2048))
         self.assertEqual(drawer.property("rfSwitchMode"), 4)
         self.assertEqual(root.property("edits"), 0)
         QtCore.QMetaObject.invokeMethod(root.findChild(QtCore.QObject, "bleCalibrate"), "clicked")
@@ -50,9 +56,13 @@ Item {
         engine = QtQml.QQmlEngine()
         component = QtQml.QQmlComponent(engine)
         common = (Path(__file__).resolve().parents[1] / "demos/common").as_uri()
-        component.setData(('''
+        component.setData(
+            (
+                '''
 import QtQuick
-import "''' + common + '''" as Common
+import "'''
+                + common
+                + """" as Common
 Item {
     property int edits: 0
     Common.RFSwitchControl {
@@ -65,7 +75,10 @@ Item {
         onEdited: parent.edits++
     }
 }
-''').encode(), QtCore.QUrl())
+"""
+            ).encode(),
+            QtCore.QUrl(),
+        )
         self.assertFalse(component.isError(), [e.toString() for e in component.errors()])
         root = component.create()
         self.assertIsNotNone(root)

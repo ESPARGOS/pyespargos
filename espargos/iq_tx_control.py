@@ -86,8 +86,7 @@ class TXStatus:
         report_types = (sensor_status.MAGIC, iq_stream_protocol.TXSTREAM_STATUS)
         try:
             for board in boards:
-                subscription = board.subscribe_sensor_messages(
-                    report_types, lambda message, b=board: self.receive_status(b, message))
+                subscription = board.subscribe_sensor_messages(report_types, lambda message, b=board: self.receive_status(b, message))
                 self.subscriptions.append((board, subscription))
         except Exception:
             self.close()
@@ -124,12 +123,10 @@ class TXStatus:
             previous_stream = self.stream_clock.latest.get(key)
             stream_rebooted = previous_stream is not None and previous_stream.boot_id != report.boot_id
             if (report.stream_session is not None or stream_rebooted) and self.stream_clock.accept(key, report):
-                if (previous_stream is None or previous_stream.boot_id != report.boot_id
-                        or previous_stream.stream_session != report.stream_session):
+                if previous_stream is None or previous_stream.boot_id != report.boot_id or previous_stream.stream_session != report.stream_session:
                     self.streams.pop(key, None)
                     if report.stream_session == 0:
-                        self.streams[key] = (time.monotonic(), dict(
-                            session=0, state="closed", error=0, antid=a, boot_id=report.boot_id, available=True))
+                        self.streams[key] = (time.monotonic(), dict(session=0, state="closed", error=0, antid=a, boot_id=report.boot_id, available=True))
 
             playback = sensor_status.playback_state(report)
             queue = sensor_status.steering_state(report)

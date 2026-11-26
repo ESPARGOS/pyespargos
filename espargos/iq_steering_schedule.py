@@ -12,7 +12,6 @@ from .iq_tx_control import _rpc, estimated_playback_sample
 from .stream_sources import Stream
 from .steering import Beamspace, Weights, antenna_weight
 
-
 _WEIGHT = struct.Struct("<ff")
 _LIVE_BEAM = 4
 _CAPACITY = 256
@@ -35,8 +34,7 @@ class _SensorPlan:
 
 def _playback_state(sensor):
     """These fields change if an antenna restarts or its waveform is replaced."""
-    return (sensor["boot_id"], sensor["epoch"], sensor["sync_seq"],
-            sensor["applied_sample_rate_hz"], sensor["applied_generation"])
+    return (sensor["boot_id"], sensor["epoch"], sensor["sync_seq"], sensor["applied_sample_rate_hz"], sensor["applied_generation"])
 
 
 def _check_available(board, antenna, sensor):
@@ -77,7 +75,7 @@ class SteeringSchedule:
         if transmitter.closed:
             raise RuntimeError("Transmitter is closed")
         self.tx = transmitter
-        self.id = secrets.randbelow(0xffffffff) + 1
+        self.id = secrets.randbelow(0xFFFFFFFF) + 1
         self.closed = False
         self._stream = transmitter._stream
         if self._stream is not None and self._stream.closed:
@@ -89,13 +87,11 @@ class SteeringSchedule:
         read_at = time.monotonic()
         states = self._read()
         self._compile(timelines, states)
-        position = max(estimated_playback_sample(states[b]["sensors"][a])
-                       for b, plans in self._plans.items() for a in plans)
+        position = max(estimated_playback_sample(states[b]["sensors"][a]) for b, plans in self._plans.items() for a in plans)
         if start_sample is not None:
             if not isinstance(start_sample, int) or not 0 <= start_sample < 2**53:
                 raise ValueError("Start sample must be a nonnegative integer below 2**53")
-            if start_sample % 32 and any(plan.stream_session for sensors in self._plans.values()
-                                         for plan in sensors.values()):
+            if start_sample % 32 and any(plan.stream_session for sensors in self._plans.values() for plan in sensors.values()):
                 raise ValueError("Live steering must start at a multiple of 32 samples")
             if start_sample <= position:
                 raise ValueError("Choose a future playback sample")
@@ -194,19 +190,20 @@ class SteeringSchedule:
         for (offset, ordinal, mask), targets in sorted(packets.items()):
             sample = self.start_sample + offset
             if any(ordinal >= credits[a] for a in targets):
+
                 def space(state):
                     for a in targets:
                         sensor = state["sensors"][a]
                         if self._check(board, a, sensor):
                             credits[a] = sensor["steer_received"] + sensor["steer_free"]
                     return all(ordinal < credits[a] for a in targets)
+
                 # Long dwells may leave a full queue for several seconds.
                 timeout = max(5, offset / self._sample_rate_hz + 5)
                 self.tx.capture.wait(board, space, timeout, antennas=targets)
             payload = struct.pack("<QI", sample, self._sync_sequence)
             payload += b"".join(targets[a] for a in sorted(targets))
-            self.tx.uplink.send(board, Command.STEER_AT, sum(1 << a for a in targets),
-                                self.id, ordinal, mask, payload)
+            self.tx.uplink.send(board, Command.STEER_AT, sum(1 << a for a in targets), self.id, ordinal, mask, payload)
 
     def _wait_played(self, _, board, timeout):
         plans = self._plans[board]
@@ -219,11 +216,11 @@ class SteeringSchedule:
                 owned = self._check(board, a, sensor)
                 if owned and sensor["steer_applied"] == len(plan.turns):
                     continue
-                if sensor["sample_position"] > last_samples[a] and (
-                        not owned or sensor["steer_received"] < len(plan.turns)):
+                if sensor["sample_position"] > last_samples[a] and (not owned or sensor["steer_received"] < len(plan.turns)):
                     raise RuntimeError(f"{board.host} antenna {a}: final steering update missing at playback")
                 complete = False
             return complete
+
         return self.tx.capture.wait(board, played, timeout, antennas=plans)
 
     def wait(self, timeout=10):
@@ -258,15 +255,14 @@ class SteeringSchedule:
 
     def close(self):
         """Cancel pending changes and wait until the sensors release the schedule."""
+
         def cancel(_, board):
             antennas = self._plans[board]
             mask = sum(1 << a for a in antennas)
             self.tx.uplink.send(board, Command.STEER_CANCEL, mask, self.id)
             # Only the sensor receipt confirms the cancellation.
-            self.tx.capture.wait(board, lambda state: all(
-                state["sensors"][a].get("steer_cancelled") == self.id or
-                state["sensors"][a].get("boot_id") != antennas[a].playback_state[0]
-                for a in antennas), 2, antennas=antennas)
+            self.tx.capture.wait(board, lambda state: all(state["sensors"][a].get("steer_cancelled") == self.id or state["sensors"][a].get("boot_id") != antennas[a].playback_state[0] for a in antennas), 2, antennas=antennas)
+
         with self.tx.owner._lock:
             if not self.closed:
                 self._parallel(cancel)

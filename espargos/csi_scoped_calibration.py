@@ -171,6 +171,7 @@ def calibrate(pool, *, antennas=None, per_board=True, duration=2, cable_lengths=
         controller = getattr(pool._owner, "reference_controller", None)
         if controller is None:
             from .controller_reference import prepare_local_wifi_references
+
             prepare_local_wifi_references(restore, boards)
         for b in boards:
             config = b.wifi_rx.get_config()

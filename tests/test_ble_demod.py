@@ -1,4 +1,5 @@
 """Exercise the NumPy demodulator with independent GFSK waveforms."""
+
 from pathlib import Path
 import unittest
 
@@ -29,11 +30,11 @@ class DemodulationTest(unittest.TestCase):
                         self.assertEqual(packet.prefix, pdu)
 
     def test_advertising_crc(self):
-        signal, pdu = waveform(0x8e89bed6)
+        signal, pdu = waveform(0x8E89BED6)
         packet = self.decode(signal)
         self.assertEqual(packet.flags, 3)
         self.assertEqual(packet.prefix, pdu)
-        corrupt, _ = waveform(0x8e89bed6, corrupt=True)
+        corrupt, _ = waveform(0x8E89BED6, corrupt=True)
         self.assertIsNone(self.decode(corrupt))
 
     def test_empty_and_maximum_data_packets(self):
@@ -48,14 +49,14 @@ class DemodulationTest(unittest.TestCase):
     def test_carrier_offset_and_noise(self):
         for phy, divider in ((0, 8), (1, 4)):
             for cfo in (-100_000, 0, 100_000):
-                signal, pdu = waveform(0x8e89bed6, phy=phy, divider=divider, cfo=cfo, noise=.04)
+                signal, pdu = waveform(0x8E89BED6, phy=phy, divider=divider, cfo=cfo, noise=0.04)
                 packet = self.decode(signal, divider, phy)
                 self.assertIsNotNone(packet, (phy, cfo))
                 self.assertEqual(packet.prefix, pdu)
 
     def test_receiver_dc_offset(self):
         for phy, divider in ((0, 8), (1, 4)):
-            signal, pdu = waveform(0x8e89bed6, phy=phy, divider=divider)
+            signal, pdu = waveform(0x8E89BED6, phy=phy, divider=divider)
             packet = self.decode(signal + 180 + 70j, divider, phy)
             self.assertIsNotNone(packet)
             self.assertEqual(packet.flags & 3, 3)
@@ -75,9 +76,9 @@ class DemodulationTest(unittest.TestCase):
         for _ in range(30):
             noise = 50 * (rng.normal(size=16384) + 1j * rng.normal(size=16384))
             self.assertIsNone(self.decode(noise))
-        signal, _ = waveform(0x8e89bed6)
+        signal, _ = waveform(0x8E89BED6)
         self.assertIsNone(self.decode(signal[:300]))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

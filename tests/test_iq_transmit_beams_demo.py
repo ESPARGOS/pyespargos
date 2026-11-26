@@ -31,7 +31,7 @@ class TransmitBeamTests(unittest.TestCase):
         expected = np.array([[-(a % 4 - 1.5), -0.5 if a < 4 else 0.5] for a in range(8)]) * 0.06
         np.testing.assert_allclose(pos, expected)
         phase = steering(pos, 0.3, -0.2, 2380e6)
-        delay = expected @ [.3, -.2] / 299792458
+        delay = expected @ [0.3, -0.2] / 299792458
         np.testing.assert_allclose(np.exp(1j * np.deg2rad(phase)), np.exp(-2j * np.pi * 2380e6 * delay))
 
     def test_kit_uses_global_positions_across_rotated_boards(self):

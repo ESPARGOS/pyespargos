@@ -22,13 +22,4 @@ def nearby(cluster, packet, window_us):
 
 def packet_candidates(clusters, board_index, message):
     p = message.payload
-    return [
-        c
-        for c in clusters
-        if same_context(c, board_index, p)
-        and c.packet.identity == p.identity
-        and nearby(c, p, 2000)
-        and c.get_packet(board_index, message.antenna_id) is None
-    ]
-
-
+    return [c for c in clusters if same_context(c, board_index, p) and c.packet.identity == p.identity and nearby(c, p, 2000) and c.get_packet(board_index, message.antenna_id) is None]

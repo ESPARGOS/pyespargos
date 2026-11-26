@@ -18,16 +18,13 @@ def test_reference_readiness_and_capture_generation():
     ids = [1, 5]
     for missing in ("ready", "chunk", None):
         board = Mock(host="test-board")
-        pool = SimpleNamespace(boards=[board], master_board=board, _reference_sequence=7,
-                               clear_chunks=Mock(), _logger=Mock())
+        pool = SimpleNamespace(boards=[board], master_board=board, _reference_sequence=7, clear_chunks=Mock(), _logger=Mock())
         scope = SimpleNamespace(active=[0], pairs=[(0, a) for a in ids], ids=[ids], apply_rx=Mock())
         board.iq.get_config.return_value = {"config_generation": gen}
 
         def emit(antenna, flag, generation, offset=0):
             handler = board.subscribe_sensor_messages.call_args.args[1]
-            packet = SimpleNamespace(flags=flag, config_generation=generation, capture_chunk_offset=offset,
-                                     fire_time_ns=1000 * antenna, producer_wake_write_ptr=1,
-                                     decode_iq=lambda: source[256*offset:256*(offset+1)])
+            packet = SimpleNamespace(flags=flag, config_generation=generation, capture_chunk_offset=offset, fire_time_ns=1000 * antenna, producer_wake_write_ptr=1, decode_iq=lambda: source[256 * offset : 256 * (offset + 1)])
             handler(SimpleNamespace(antenna_id=antenna, payload=packet))
 
         def arm(config):
@@ -49,10 +46,10 @@ def test_reference_readiness_and_capture_generation():
             if missing:
                 detail = "readiness" if missing == "ready" else "onset snapshots"
                 with pytest.raises(RuntimeError, match=detail + ": test-board/5"):
-                    reference._acquire_grid(pool, 2437e6, timeout=.001, scope=scope)
+                    reference._acquire_grid(pool, 2437e6, timeout=0.001, scope=scope)
                 board.iq.set_sync_anchor.assert_not_called()
             else:
-                assert reference._acquire_grid(pool, 2437e6, timeout=.01, scope=scope) == [8]
+                assert reference._acquire_grid(pool, 2437e6, timeout=0.01, scope=scope) == [8]
                 board.iq.set_sync_anchor.assert_called_once_with([0, 1000, 0, 0, 0, 5000, 0, 0], seq=8)
         board.unsubscribe_sensor_messages.assert_called_once()
         assert board.control.command.call_args.args == ("gate_iq_reference", {"open": True})

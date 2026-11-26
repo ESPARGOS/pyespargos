@@ -12,11 +12,11 @@ def transmit(source, pool):
     """Preserve the prepared scene and stream bytes until EOF."""
     tx = pool.tx
     with tx.open_configured_stream() as stream:
-        if stream.mode=="gfsk":
-            return transmit_packets(source,tx,stream)
+        if stream.mode == "gfsk":
+            return transmit_packets(source, tx, stream)
         stride = stream.stride
         minimum = 1024 if stream.mode == "cs8" else 4
-        prefill = max(minimum, min(stream.capacity // 2, int(stream.sample_rate_hz * .1)))
+        prefill = max(minimum, min(stream.capacity // 2, int(stream.sample_rate_hz * 0.1)))
         initial = source.read(prefill * stride)
         if len(initial) < minimum * stride:
             raise ValueError(f"Input needs at least {minimum} complete samples or indices")
@@ -28,7 +28,7 @@ def transmit(source, pool):
         # batches files/pipes efficiently while keeping slow live sources
         # responsive. Retain a split IQ pair across arbitrary pipe reads.
         read = getattr(source, "read1", None)
-        size = stream.chunk * stride if read is not None else max(1, min(stream.chunk, int(stream.sample_rate_hz * .02))) * stride
+        size = stream.chunk * stride if read is not None else max(1, min(stream.chunk, int(stream.sample_rate_hz * 0.02))) * stride
         read = read or source.read
         pending = b""
         while True:

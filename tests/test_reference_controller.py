@@ -44,8 +44,7 @@ def test_packet_master_restored_when_acquisition_fails(mode):
     board = Mock(host="master")
     board.control.get_json.return_value = {"mode": "iq"}
     radio = board.wifi_rx if mode == "wifi" else getattr(board, mode)
-    original = {"calib-mode": 1, "channel-primary": 1, "channel-secondary": 0} if mode == "wifi" else {
-        "channel": 1, "reference_mode": 1, "rf_switch": 2, "reference_address": "02:00:00:00:00:01", "phy": "LE2M"}
+    original = {"calib-mode": 1, "channel-primary": 1, "channel-secondary": 0} if mode == "wifi" else {"channel": 1, "reference_mode": 1, "rf_switch": 2, "reference_address": "02:00:00:00:00:01", "phy": "LE2M"}
     state = original.copy()
     radio.get_config.side_effect = state.copy
     write = radio.set_reference_config if mode == "wifi" else radio.set_config

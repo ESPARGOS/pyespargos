@@ -77,6 +77,7 @@ class IQTransmitter:
         The returned context manager cancels outstanding changes on exit.
         """
         from .iq_steering_schedule import SteeringSchedule
+
         with self.owner._lock:
             if self.signals._editing:
                 raise RuntimeError("Finish editing the waveforms before scheduling steering")
@@ -90,13 +91,21 @@ class IQTransmitter:
             if signal not in self.signals or not isinstance(signal.waveform, Stream):
                 raise ValueError("Select a beam with a Stream source on this transmitter")
             source = signal.waveform
-            return self._open_writer(signal=signal, scene=self._stream_scene,
-                                     mode=source.mode, sample_rate_hz=source.sample_rate_hz,
-                                     modulation=source.modulation, packet_gap_us=source.packet_gap_us,
-                                     amplitude=signal.amplitude, steering=signal.steering, antennas=signal.antennas)
+            return self._open_writer(
+                signal=signal,
+                scene=self._stream_scene,
+                mode=source.mode,
+                sample_rate_hz=source.sample_rate_hz,
+                modulation=source.modulation,
+                packet_gap_us=source.packet_gap_us,
+                amplitude=signal.amplitude,
+                steering=signal.steering,
+                antennas=signal.antennas,
+            )
 
     def _open_writer(self, *, signal=None, **settings):
         from .iq_stream import IQStream
+
         if self.closed or self.signals._editing:
             raise RuntimeError("Finish preparing the transmitter before opening a stream")
         if self._stream is not None and not self._stream.closed:
@@ -139,12 +148,17 @@ class IQTransmitter:
                     antennas.append(antenna)
                     scene[antenna] = (beam["boot_id"][a], beam["crc32"][a])
                     values[antenna] = complex(beam["real"][a], beam["imag"][a])
-            modulation = ({"single_carrier":SingleCarrier,"gfsk":GFSK}[first["mode"]].from_payload(bytes.fromhex(first["table_hex"]))
-                          if first["mode"] != "cs8" else None)
-            stream = self._open_writer(scene=scene, mode=first["mode"], sample_rate_hz=first["sample_rate_hz"],
-                                    modulation=modulation, amplitude=1, antennas=antennas,
-                                    steering=Weights(values),
-                                    **({"packet_gap_us":first.get("ui",{}).get("gfsk_gap",20000)} if first["mode"]=="gfsk" else {}))
+            modulation = {"single_carrier": SingleCarrier, "gfsk": GFSK}[first["mode"]].from_payload(bytes.fromhex(first["table_hex"])) if first["mode"] != "cs8" else None
+            stream = self._open_writer(
+                scene=scene,
+                mode=first["mode"],
+                sample_rate_hz=first["sample_rate_hz"],
+                modulation=modulation,
+                amplitude=1,
+                antennas=antennas,
+                steering=Weights(values),
+                **({"packet_gap_us": first.get("ui", {}).get("gfsk_gap", 20000)} if first["mode"] == "gfsk" else {}),
+            )
             return stream
 
     def authorized(self):
@@ -181,8 +195,7 @@ class IQTransmitter:
                 settings = _rpc(b, "set_iq_tx", {"muted": muted})
                 if self.capture is None:
                     return
-                targets = {a: 0 if muted else sensor["amplitude"]
-                           for a, sensor in enumerate(settings["sensors"]) if muted or sensor.get("enabled")}
+                targets = {a: 0 if muted else sensor["amplitude"] for a, sensor in enumerate(settings["sensors"]) if muted or sensor.get("enabled")}
 
                 def applied(state):
                     for a, amplitude in targets.items():
@@ -217,6 +230,7 @@ class IQTransmitter:
     def modes(self, modes):
         if self._stream is not None and not self._stream.closed:
             raise RuntimeError("Close the stream before changing sensor modes")
+
         def apply(i, b):
             _rpc(b, "set_iq_tx", {"muted": True, "modes": modes[i]})
             self.capture.wait(b, lambda s: all(x["applied_mode"] == modes[i][a] for a, x in enumerate(s["sensors"])), 10)
@@ -268,13 +282,8 @@ class IQTransmitter:
         # Resizing requires the replay engine to release both sample banks.
         # The applied RX role acknowledges this even when no IQ is delivered.
         try:
-            _rpc(board, "set_iq_tx", {"muted": True, "modes": [
-                "iq_rx" if a in antennas else mode for a, mode in enumerate(modes)
-            ]})
-            self.capture.wait(board, lambda s: all(
-                s["sensors"][a]["applied_mode"] == "iq_rx" and not s["sensors"][a]["enabled"]
-                for a in antennas
-            ), 10)
+            _rpc(board, "set_iq_tx", {"muted": True, "modes": ["iq_rx" if a in antennas else mode for a, mode in enumerate(modes)]})
+            self.capture.wait(board, lambda s: all(s["sensors"][a]["applied_mode"] == "iq_rx" and not s["sensors"][a]["enabled"] for a in antennas), 10)
             yield
         finally:
             board.iq.set_config({"modes": modes})
@@ -314,12 +323,11 @@ class IQTransmitter:
                 raise ValueError("Scheduled updates require running TX with unchanged replay length")
             # Resizing restarts these antennas. Invalidate all affected corrections
             # together before the controller workers start changing modes.
-            self.owner.calibrations = self.owner.calibrations.without(
-                Antenna(self.boards[i].host, a) for i, antennas in resize_groups for a in antennas
-            )
+            self.owner.calibrations = self.owner.calibrations.without(Antenna(self.boards[i].host, a) for i, antennas in resize_groups for a in antennas)
 
         def apply_board(i, board):
             scene = {}
+
             def remember(state, antennas):
                 for a in antennas:
                     sensor = state["sensors"][a]

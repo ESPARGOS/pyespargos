@@ -16,6 +16,7 @@ def prepare_local_wifi_references(restore, boards):
 
 def prepare_packet_reference(restore, board, mode, channel, secondary=0):
     """Tune the dedicated controller for this capture and restore it on exit."""
+
     def update(write, state, **settings):
         changed = {key: value for key, value in settings.items() if state[key] != value}
         if changed:

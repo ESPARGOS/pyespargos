@@ -83,11 +83,11 @@ class SignalTests(unittest.TestCase):
         selected = (Antenna("board0", 2),)
         source = Stream(sample_rate_hz=8000)
         direction = Beamspace(azimuth_deg=30)
-        beam = tx.signals.add(waveform=source, steering=direction, antennas=selected, amplitude=.25)
+        beam = tx.signals.add(waveform=source, steering=direction, antennas=selected, amplitude=0.25)
         antennas, records = tx._apply_signals.call_args.args[0][0][0]
         self.assertEqual(antennas, [2])
         self.assertEqual(records[0][1]["waveform"]["type"], "stream")
-        self.assertAlmostEqual(abs(complex(records[0][1]["real"][2], records[0][1]["imag"][2])), .25)
+        self.assertAlmostEqual(abs(complex(records[0][1]["real"][2], records[0][1]["imag"][2])), 0.25)
         with self.assertRaisesRegex(ValueError, "one beam"):
             tx.signals.add(waveform=source)
         self.assertEqual(list(tx.signals), [beam])
@@ -96,7 +96,7 @@ class SignalTests(unittest.TestCase):
             self.assertIs(writer.return_value.signal, beam)
             self.assertEqual(writer.call_args.kwargs["antennas"], selected)
             self.assertEqual(writer.call_args.kwargs["sample_rate_hz"], 8000)
-            self.assertEqual(writer.call_args.kwargs["amplitude"], .25)
+            self.assertEqual(writer.call_args.kwargs["amplitude"], 0.25)
             self.assertIs(writer.call_args.kwargs["steering"], direction)
 
     def test_stream_slot_and_capacity_are_per_sensor(self):

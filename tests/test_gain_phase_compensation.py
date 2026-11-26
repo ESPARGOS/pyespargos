@@ -84,6 +84,7 @@ if __name__ == "__main__":
 
 def test_integer_gain_fast_path_matches_float_metadata_and_broadcasting():
     from espargos.gain_phase_calibration import apply
+
     for gains in [np.arange(77, dtype=np.uint8), np.array(40), np.array([0, 31, 76])]:
         values = np.ones(gains.shape + (5,), dtype=np.complex64)
         np.testing.assert_array_equal(apply(values, gains), apply(values, gains.astype(float)))
@@ -92,6 +93,7 @@ def test_integer_gain_fast_path_matches_float_metadata_and_broadcasting():
 def test_invalid_metadata_behavior_is_preserved():
     import pytest
     from espargos.gain_phase_calibration import apply
+
     for gains in [np.array([-1, 40]), np.array([127, 40], dtype=np.uint8), np.array([1.5, 40])]:
         with pytest.raises(ValueError):
             apply(np.ones(2, dtype=np.complex64), gains)

@@ -197,8 +197,7 @@ class BLEReceiver(ClusterAssembler):
                     calibration = self._calibrations.get(b)
                     self._invalidate_board(b)
                     state = board.ble.set_config(config)
-                    preserved = all(previous.get(k) == state.get(k) for k in board.ble.CONFIG_KEYS
-                                    if k not in ("rf_switch", "rx_gain", "gain_mode", "decimation"))
+                    preserved = all(previous.get(k) == state.get(k) for k in board.ble.CONFIG_KEYS if k not in ("rf_switch", "rx_gain", "gain_mode", "decimation"))
                     if previous.get("gain_mode") != state.get("gain_mode") and "expert" in (previous.get("gain_mode"), state.get("gain_mode")):
                         preserved = False
                     if calibration is not None and preserved:
@@ -223,9 +222,9 @@ class BLEReceiver(ClusterAssembler):
         Use spatial covariance to combine them, not coherent sample averaging.
         """
         from .ble_iq import align_packet_iq
-        if calibrated and (cluster.packet.settings >> 24) & 0xff == 1:
-            if any(not p.gain_reported for a in range(8)
-                   if (p := cluster.get_packet(cluster.board_index, a)) is not None):
+
+        if calibrated and (cluster.packet.settings >> 24) & 0xFF == 1:
+            if any(not p.gain_reported for a in range(8) if (p := cluster.get_packet(cluster.board_index, a)) is not None):
                 raise BLECalibrationError("BLE AGC phase requires packet gain metadata. Update sensor firmware")
         result = align_packet_iq(cluster)
         if not calibrated:
@@ -239,8 +238,8 @@ class BLEReceiver(ClusterAssembler):
     def channel_response(self, cluster, *, calibrated=True, correct_timing=True, nfft=128):
         """Relative channel response across the BLE band, not OFDM subcarriers."""
         from .ble_iq import channel_response
-        return channel_response(self.packet_iq(cluster, calibrated=calibrated), nfft,
-                                correct_timing=correct_timing)
+
+        return channel_response(self.packet_iq(cluster, calibrated=calibrated), nfft, correct_timing=correct_timing)
 
     def calibrate(self, *, board_index=0, samples=8, timeout=8.0, reference_address=None):
         """Measure narrowband phase on REF and restore the previous antenna input.

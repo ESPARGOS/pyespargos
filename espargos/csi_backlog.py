@@ -346,9 +346,7 @@ class CSIBacklog(SensorBacklog):
             if "tx_rf_switch_state" in fields:
                 values["tx_rf_switch_state"] = tx_report.rf_switch_state
 
-        self._deserialize_csi_field(
-            clustered_csi, "dsss", fields, "is_11b", "deserialize_csi_dsss", "apply_dsss", calibration, values
-        )
+        self._deserialize_csi_field(clustered_csi, "dsss", fields, "is_11b", "deserialize_csi_dsss", "apply_dsss", calibration, values)
         if "spatial_csi" in fields:
             measurement = clustered_csi.spatial_csi
             if measurement is not None:

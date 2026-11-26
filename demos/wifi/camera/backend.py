@@ -99,8 +99,7 @@ class CSICamera(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCS
 
     @PyQt6.QtCore.pyqtSlot()
     def updateSpatialSpectrum(self):
-        result = self.get_backlog_csi("host_timestamp", "mac", "rf_switch_state", *self.level_fields,
-                                      allow_incomplete=True, remove_global_sto=False, return_format=True)
+        result = self.get_backlog_csi("host_timestamp", "mac", "rf_switch_state", *self.level_fields, allow_incomplete=True, remove_global_sto=False, return_format=True)
         if result is None:
             self._clear_measurements()
             return
@@ -111,9 +110,7 @@ class CSICamera(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCS
             if not np.any(recent):
                 self._clear_measurements()
                 return
-            csi, timestamps, macs, receiver_state, *levels = (
-                field[recent] for field in (csi, timestamps, macs, receiver_state, *levels)
-            )
+            csi, timestamps, macs, receiver_state, *levels = (field[recent] for field in (csi, timestamps, macs, receiver_state, *levels))
         packets = (csi_format, timestamps.tobytes())
         if packets == self._rendered_packets:
             return
@@ -170,9 +167,7 @@ class CSICamera(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCS
                         self.logger.warning("Receiver-state metadata is required for polarization visualization")
                         return
                     # Separate CSI by feed
-                    csi_combined = espargos.csi_processing.separate_feeds(
-                        csi_combined, receiver_state_combined, allow_partial=beamformer_type == "Bartlett"
-                    )
+                    csi_combined = espargos.csi_processing.separate_feeds(csi_combined, receiver_state_combined, allow_partial=beamformer_type == "Bartlett")
                     if csi_combined is None:
                         self._clear_measurements()
                         return
@@ -193,8 +188,10 @@ class CSICamera(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCS
                 if beamformer_type == "Bartlett":
                     # Preserve the optional H/V dimension through the spatial scan.
                     beam_frequency_space = np.einsum(
-                        "rcae,rcs...->aes...", self.steering_vectors_2d.conj(),
-                        csi_combined[0], optimize=True,
+                        "rcae,rcs...->aes...",
+                        self.steering_vectors_2d.conj(),
+                        csi_combined[0],
+                        optimize=True,
                     )
                 else:
                     # Exploit time-domain sparsity to reduce number of 2D FFTs from antenna space to beamspace

@@ -28,10 +28,8 @@ class BLEBacklog(SensorBacklog):
 
     def __init__(self, receiver, fields=None, callback_predicate=None, include_partial=False, size=100):
         self._receiver = receiver
-        super().__init__(sensor_shape=receiver.shape, field_specs=self.FIELD_SPECS,
-                         fields=fields, size=size, logger=logging.getLogger("pyespargos.ble_backlog"))
-        self._callback_handle = receiver.add_callback(self._on_cluster,
-            callback_predicate=callback_predicate, include_partial=include_partial)
+        super().__init__(sensor_shape=receiver.shape, field_specs=self.FIELD_SPECS, fields=fields, size=size, logger=logging.getLogger("pyespargos.ble_backlog"))
+        self._callback_handle = receiver.add_callback(self._on_cluster, callback_predicate=callback_predicate, include_partial=include_partial)
 
     def _on_cluster(self, cluster):
         if not self._passes_filters(cluster):

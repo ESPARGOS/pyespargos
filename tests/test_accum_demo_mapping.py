@@ -89,17 +89,23 @@ def test_delayed_stream_block_keeps_the_current_spectrum_axis():
     from espargos import IQStreamBlock
 
     module = _load_demo("iq_signal_analyzer_rate_test", "demos/iq/signal-analyzer/main.py")
-    demo = SimpleNamespace(active_board=0, display_mode="spectrum", _display_epoch=None,
-        _display_epoch_time=-1, _stream_epochs=deque(maxlen=8), _pending_lock=threading.Lock(),
-        _sample_window_lock=threading.Lock(), receiver=SimpleNamespace(boards=[SimpleNamespace(revision=_Revision())]))
+    demo = SimpleNamespace(
+        active_board=0,
+        display_mode="spectrum",
+        _display_epoch=None,
+        _display_epoch_time=-1,
+        _stream_epochs=deque(maxlen=8),
+        _pending_lock=threading.Lock(),
+        _sample_window_lock=threading.Lock(),
+        receiver=SimpleNamespace(boards=[SimpleNamespace(revision=_Revision())]),
+    )
     for generation, rate in ((8, 16000), (9, 32000), (8, 16000)):
-        packet = SimpleNamespace(sync_info=7, first_sample=0, sample_rate_hz=rate,
-            center_freq_hz=2437000000, synchronized=True, SAMPLE_COUNT=128,
-            fire_time_ns=1, grid_origin_ns=1, config_generation=generation,
-            decode_iq=lambda: np.zeros(128, dtype=np.complex64))
+        packet = SimpleNamespace(
+            sync_info=7, first_sample=0, sample_rate_hz=rate, center_freq_hz=2437000000, synchronized=True, SAMPLE_COUNT=128, fire_time_ns=1, grid_origin_ns=1, config_generation=generation, decode_iq=lambda: np.zeros(128, dtype=np.complex64)
+        )
         cluster = IQStreamBlock(packet, [_Revision()])
         cluster.add_message(0, SimpleNamespace(antenna_id=0, payload=packet))
-        demo._pending_clusters = [(0., cluster)]
+        demo._pending_clusters = [(0.0, cluster)]
         sets = module.EspargosSignalAnalyzer._drain_sets(demo)
 
     assert not sets

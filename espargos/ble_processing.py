@@ -74,7 +74,7 @@ def _interpolate(z, start, length):
     offsets = _INTERPOLATION_OFFSETS
     weights = np.sinc(offsets - fraction) * _INTERPOLATION_WINDOW
     weights /= weights.sum()
-    return np.correlate(z[first-7:first+length+8], weights, mode="valid")
+    return np.correlate(z[first - 7 : first + length + 8], weights, mode="valid")
 
 
 def align_waveforms(reference, other, recovery=False):
@@ -119,17 +119,17 @@ def align_waveforms(reference, other, recovery=False):
         scores = np.asarray([fit(d)[0] for d in delays])
     best = delays[np.argmax(scores)]
     lo, hi = best - 1.0, best + 1.0
-    ratio = (np.sqrt(5)-1)/2
-    a, b = hi-ratio*(hi-lo), lo+ratio*(hi-lo)
+    ratio = (np.sqrt(5) - 1) / 2
+    a, b = hi - ratio * (hi - lo), lo + ratio * (hi - lo)
     score_a, score_b = fit(a)[0], fit(b)[0]
     for _ in range(20):
         if score_a > score_b:
             hi, b, score_b = b, a, score_a
-            a = hi-ratio*(hi-lo)
+            a = hi - ratio * (hi - lo)
             score_a = fit(a)[0]
         else:
             lo, a, score_a = a, b, score_b
-            b = lo+ratio*(hi-lo)
+            b = lo + ratio * (hi - lo)
             score_b = fit(b)[0]
     delay = (lo + hi) / 2
     coherence, phase = fit(delay)
@@ -186,4 +186,5 @@ def estimate_phase(cluster):
     At least one qualified capture with known gain supplies the waveform anchor.
     """
     from .ble_iq import align_packet_iq
+
     return align_packet_iq(cluster).phase()

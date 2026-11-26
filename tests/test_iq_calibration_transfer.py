@@ -97,7 +97,9 @@ def test_pool_switch_keeps_active_frequency_and_both_directions():
     from test_pool import FakeBoard
     import espargos.configuration as configuration
 
-    with patch.object(api, "Board", side_effect=FakeBoard), patch.object(api, "_rpc", return_value={"sensors": [{"frequency_hz": 2385e6}] * 8}) as rpc, patch.object(api, "_wait"), patch.object(configuration, "_rpc", rpc), patch.object(configuration, "_wait"):
+    with patch.object(api, "Board", side_effect=FakeBoard), patch.object(api, "_rpc", return_value={"sensors": [{"frequency_hz": 2385e6}] * 8}) as rpc, patch.object(api, "_wait"), patch.object(configuration, "_rpc", rpc), patch.object(
+        configuration, "_wait"
+    ):
         pool = Pool("board").open()
         pool.boards[0].iq.config["modes"] = ["iq_rx"] * 8
         pool.boards[0].iq.config["receivers"][0]["rf_freq_hz"] = 2385e6

@@ -78,11 +78,7 @@ class BLECluster(SensorCluster):
         if not isinstance(p, BLEPacket):
             raise TypeError("BLECluster requires BLEPacket payloads")
         anchor = self.packet
-        if (
-            board_index != self.board_index
-            or not p.synchronized
-            or (p.clock_epoch, p.generation, p.settings) != (anchor.clock_epoch, anchor.generation, anchor.settings)
-        ):
+        if board_index != self.board_index or not p.synchronized or (p.clock_epoch, p.generation, p.settings) != (anchor.clock_epoch, anchor.generation, anchor.settings):
             raise ClusterCollisionError("BLE capture belongs to a different board or receiver context")
         if p.qualified:
             if p.identity != anchor.identity:

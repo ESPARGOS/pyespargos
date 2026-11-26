@@ -1,28 +1,31 @@
 """Exercise the supported radar's configuration and QML without hardware."""
+
 import os
 from pathlib import Path
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-DEMO = ROOT / 'demos/iq/mimo-radar'
+DEMO = ROOT / "demos/iq/mimo-radar"
 
 
 def test_cli_exposes_config_keys_instead_of_dedicated_flags():
     result = subprocess.run(
-        [sys.executable, str(DEMO / 'main.py'), '--help'],
-        env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen'},
-        capture_output=True, text=True, check=True,
+        [sys.executable, str(DEMO / "main.py"), "--help"],
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+        capture_output=True,
+        text=True,
+        check=True,
     )
-    for key in ('tx_calibration', 'frequency', 'amplitude', 'integration_time', 'sample_rate', 'rx_gain', 'range_maximum'):
-        assert f'app.{key}:' in result.stdout
-        assert '--' + key.replace('_', '-') not in result.stdout
+    for key in ("tx_calibration", "frequency", "amplitude", "integration_time", "sample_rate", "rx_gain", "range_maximum"):
+        assert f"app.{key}:" in result.stdout
+        assert "--" + key.replace("_", "-") not in result.stdout
 
 
 def test_yaml_overrides_gui_updates_and_validation(tmp_path):
-    config = tmp_path / 'radar.yml'
-    config.write_text('app:\n  frequency: 2400\n  integration_time: 0.2\n  linear_scale: false\n')
-    script = r'''
+    config = tmp_path / "radar.yml"
+    config.write_text("app:\n  frequency: 2400\n  integration_time: 0.2\n  linear_scale: false\n")
+    script = r"""
 import json, sys, time
 from PyQt6 import QtCore
 from main import MIMORadar
@@ -104,20 +107,22 @@ finally:
     app.onAboutToQuit()
     root.deleteLater()
     QtCore.QCoreApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
-'''
+"""
     result = subprocess.run(
-        [sys.executable, '-c', script, '-c', str(config), '-o', 'app.frequency=2412'],
+        [sys.executable, "-c", script, "-c", str(config), "-o", "app.frequency=2412"],
         cwd=DEMO,
-        env={**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'QT_QUICK_BACKEND': ''},
-        capture_output=True, text=True, timeout=30,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": ""},
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert 'ReferenceError' not in result.stderr
-    assert 'TypeError' not in result.stderr
+    assert "ReferenceError" not in result.stderr
+    assert "TypeError" not in result.stderr
 
 
 def test_worker_applies_config_and_preserves_paused_state():
-    script = r'''
+    script = r"""
 import queue, threading
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -155,16 +160,19 @@ assert radar.stopping.is_set() and radar._capturing is False
 radar.provider.clear.assert_called_once()
 radar.workerError.emit.assert_not_called()
 assert radar._close_radar.call_count == 2  # Close once to reconfigure and once at shutdown.
-'''
+"""
     result = subprocess.run(
-        [sys.executable, '-c', script], cwd=DEMO,
-        capture_output=True, text=True, timeout=15,
+        [sys.executable, "-c", script],
+        cwd=DEMO,
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_live_settings_retain_calibration_and_paused_state():
-    script = r'''
+    script = r"""
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -213,9 +221,12 @@ text = main.MIMORadar._headroom_text(radar)
 assert '6.0 dB' in text and '-6.0 dBFS' in text
 radar._peak_dbfs = None
 assert '—' in main.MIMORadar._headroom_text(radar)
-'''
+"""
     result = subprocess.run(
-        [sys.executable, '-c', script], cwd=DEMO,
-        capture_output=True, text=True, timeout=15,
+        [sys.executable, "-c", script],
+        cwd=DEMO,
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr

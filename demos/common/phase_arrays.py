@@ -1,4 +1,5 @@
 """Feed-separated phase estimates and presentation shared by measurement demos."""
+
 import numpy as np
 from matplotlib import colormaps
 
@@ -19,9 +20,8 @@ def phase_arrays(covariances, counts, feeds, split=False):
             selected = feeds == route
             weights = weights * (selected[:, :, None] & selected[:, None, :])
         total = np.sum(weights, axis=0)
-        covariance = np.divide(np.sum(covariances * weights, axis=0), total,
-                               out=np.zeros((n, n), complex), where=total > 0)
-        colors = [[.20, .26, .30, 1.]] * n
+        covariance = np.divide(np.sum(covariances * weights, axis=0), total, out=np.zeros((n, n), complex), where=total > 0)
+        colors = [[0.20, 0.26, 0.30, 1.0]] * n
         labels = ["—"] * n
         usable = (np.diag(total) > 0) & (np.diag(covariance).real > 0)
         # A singleton can only report its phase relative to itself. Display the
@@ -47,7 +47,7 @@ def phase_arrays(covariances, counts, feeds, split=False):
             vector = vectors[:, -1]
             angles = np.angle(vector * np.conj(vector[0]))
             for index, angle in zip(indices, angles):
-                colors[index] = list(colormaps["twilight"]((angle + np.pi) / (2*np.pi)))
+                colors[index] = list(colormaps["twilight"]((angle + np.pi) / (2 * np.pi)))
                 labels[index] = f"{angle:+.2f} rad"
         panels.append(dict(colors=colors, labels=labels))
     return panels

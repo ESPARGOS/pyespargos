@@ -67,16 +67,15 @@ def polarization_ellipse(coherency, previous=None):
     power = np.maximum(values.sum(axis=-1), 0)
     field = vectors[..., :, -1]
     seed = field.reshape(-1, 2)[np.argmax(power)]
-    seed = seed * np.exp(-1j*np.angle(seed[np.argmax(abs(seed))]))
+    seed = seed * np.exp(-1j * np.angle(seed[np.argmax(abs(seed))]))
     overlap = np.einsum("p,...p->...", seed.conj(), field)
     if previous is not None and np.shape(previous) == field.shape:
-        old_overlap = np.sum(np.asarray(previous).conj()*field, axis=-1)
+        old_overlap = np.sum(np.asarray(previous).conj() * field, axis=-1)
         overlap = np.where(abs(old_overlap) > 1e-6, old_overlap, overlap)
     # At a polarization orthogonal to the seed the common phase is undefined.
     # Only those new/unsupported pixels need a local initial phase convention.
-    fallback = np.take_along_axis(field, np.argmax(abs(field), axis=-1)[...,None], axis=-1)[...,0]
+    fallback = np.take_along_axis(field, np.argmax(abs(field), axis=-1)[..., None], axis=-1)[..., 0]
     overlap = np.where(abs(overlap) > 1e-6, overlap, fallback)
-    field = field * np.exp(-1j*np.angle(overlap))[...,None]
-    degree = np.divide(values[..., -1]-values[..., 0], power,
-                       out=np.zeros_like(power), where=power > 0)
-    return field * np.sqrt(np.clip(degree, 0, 1))[...,None]
+    field = field * np.exp(-1j * np.angle(overlap))[..., None]
+    degree = np.divide(values[..., -1] - values[..., 0], power, out=np.zeros_like(power), where=power > 0)
+    return field * np.sqrt(np.clip(degree, 0, 1))[..., None]

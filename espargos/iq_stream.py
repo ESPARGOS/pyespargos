@@ -14,7 +14,6 @@ from .iq_stream_protocol import Command
 from .stream_sources import Stream
 from .steering import Beamspace, Weights
 
-
 _PAYLOAD_BYTES = 1024
 _BEST_EFFORT = 1
 _PACKET_HEADER = struct.Struct("<HH")
@@ -42,8 +41,17 @@ class IQStream:
     CAPACITY = 65536
 
     def __init__(
-        self, transmitter, *, mode="cs8", sample_rate_hz=16000, amplitude=0.1,
-        antennas=None, steering=None, modulation=None, packet_gap_us=20000, scene=None,
+        self,
+        transmitter,
+        *,
+        mode="cs8",
+        sample_rate_hz=16000,
+        amplitude=0.1,
+        antennas=None,
+        steering=None,
+        modulation=None,
+        packet_gap_us=20000,
+        scene=None,
     ):
         self.transmitter = transmitter
         self._lock = threading.RLock()
@@ -109,13 +117,17 @@ class IQStream:
                 target = (board, ids, tuple(state["sensors"][a]["boot_id"] for a in ids))
                 self.targets.append(target)
                 payload = _OPEN.pack(
-                    _FORMATS[self.mode], self.sample_rate_hz if self.mode == "cs8" else 0,
-                    _BEST_EFFORT, len(table), *scene_crc,
+                    _FORMATS[self.mode],
+                    self.sample_rate_hz if self.mode == "cs8" else 0,
+                    _BEST_EFFORT,
+                    len(table),
+                    *scene_crc,
                 )
                 self._send(target, Command.TXSTREAM_OPEN, payload=payload)
             self._wait(
                 lambda s: s.get("session") == self.session and s["state"] == "buffering",
-                5, opening=True,
+                5,
+                opening=True,
             )
             for offset in range(0, len(table), _PAYLOAD_BYTES):
                 chunk = table[offset : offset + _PAYLOAD_BYTES]
@@ -132,13 +144,12 @@ class IQStream:
         digital = self.mode != "cs8"
         bit_rate = self.sample_rate_hz * (self.bits if self.mode == "single_carrier" else 1)
         fast = digital and (self.sample_rate_hz > 1_000_000 or bit_rate > 1_600_000)
-        spacing = .001 if fast else .002
+        spacing = 0.001 if fast else 0.002
         if digital and command in (Command.TXSTREAM_DATA, Command.TXSTREAM_PACKET):
             # Unpacking packed indices and GFSK records also costs sensor CPU.
             symbols = _PACKET_HEADER.unpack_from(payload)[0] if command == Command.TXSTREAM_PACKET else units
             spacing = max(spacing, symbols / max(1_100_000, self.sample_rate_hz * 1.1))
-        self.transmitter.uplink.send(board, command, mask, self.session, offset, units, payload,
-                                     byte_rate=280_000 if fast else 220_000, min_spacing=spacing)
+        self.transmitter.uplink.send(board, command, mask, self.session, offset, units, payload, byte_rate=280_000 if fast else 220_000, min_spacing=spacing)
 
     def _states(self, *, opening=False):
         result = []
@@ -148,9 +159,7 @@ class IQStream:
                 while True:
                     now = time.monotonic()
                     feedback = {a: self._reports.streams.get((board, a)) for a in ids}
-                    if all(item and (item[1]["state"] == "closed" or now - item[0] <
-                                     (1.25 if item[1]["state"] in ("drained", "fault", "starved") else .5))
-                           for item in feedback.values()):
+                    if all(item and (item[1]["state"] == "closed" or now - item[0] < (1.25 if item[1]["state"] in ("drained", "fault", "starved") else 0.5)) for item in feedback.values()):
                         break
                     if now >= deadline:
                         raise TimeoutError("Sensor stream feedback is stale; uploads stopped")
@@ -208,8 +217,7 @@ class IQStream:
                 data = (np.column_stack((a.real, a.imag)) * 127).round().astype(np.int8).tobytes()
             else:
                 raise ValueError("Use complex samples, an (N, 2) int8 array, or interleaved CS8 bytes")
-        invalid_index = (self.mode == "single_carrier" and data and
-                         np.frombuffer(data, dtype=np.uint8).max() >= len(self.modulation.constellation))
+        invalid_index = self.mode == "single_carrier" and data and np.frombuffer(data, dtype=np.uint8).max() >= len(self.modulation.constellation)
         if len(data) % self.stride or invalid_index:
             raise ValueError("Invalid sample/index encoding")
         return data
@@ -258,11 +266,7 @@ class IQStream:
             raise ValueError("Packet writes require GFSK mode")
         data = bytes(packet)
         bits = len(data) * 8 if bit_count is None else bit_count
-        if (
-            not isinstance(bits, int)
-            or not 0 <= bits <= 8 * (_PAYLOAD_BYTES - _PACKET_HEADER.size)
-            or len(data) != (bits + 7) // 8
-        ):
+        if not isinstance(bits, int) or not 0 <= bits <= 8 * (_PAYLOAD_BYTES - _PACKET_HEADER.size) or len(data) != (bits + 7) // 8:
             raise ValueError("Use at most 8160 complete air bits per packet")
         if not math.isfinite(gap_us) or gap_us < 0:
             raise ValueError("Packet gap must be finite and nonnegative")
@@ -285,9 +289,7 @@ class IQStream:
                     if self.offset + units - consumed <= capacity:
                         break
                     if not self.started:
-                        raise ValueError(
-                            "Prefill exceeds FIFO capacity; start before writing more"
-                        )
+                        raise ValueError("Prefill exceeds FIFO capacity; start before writing more")
                     if time.monotonic() >= deadline:
                         raise TimeoutError("Packet write timed out waiting for FIFO credit")
                     time.sleep(0.002)
@@ -314,11 +316,11 @@ class IQStream:
                 data = data[(sent - begin) * self.stride :]
                 begin = sent = self.offset
                 end = begin + len(data) // self.stride
-                deadline = max(deadline, time.monotonic() + .1)
+                deadline = max(deadline, time.monotonic() + 0.1)
                 continue
             consumed = min(s["consumed"] for s in states)
             capacity = min(s["capacity"] for s in states)
-            prefill = min(capacity, max(1024 if self.mode == "cs8" else 4, math.ceil(self.sample_rate_hz * .1)))
+            prefill = min(capacity, max(1024 if self.mode == "cs8" else 4, math.ceil(self.sample_rate_hz * 0.1)))
             limit = min(end, consumed + capacity, sent + 8 * self.chunk)
             if self._auto_start:
                 limit = min(limit, prefill)
@@ -348,9 +350,7 @@ class IQStream:
             payload = data[(offset - begin) * self.stride : (offset - begin + units) * self.stride]
             if self.mode == "single_carrier":
                 indices = np.frombuffer(payload, dtype=np.uint8)
-                bits = indices if self.bits == 1 else (
-                    (indices[:, None] >> np.arange(self.bits, dtype=np.uint8)) & 1
-                ).reshape(-1)
+                bits = indices if self.bits == 1 else ((indices[:, None] >> np.arange(self.bits, dtype=np.uint8)) & 1).reshape(-1)
                 payload = np.packbits(bits, bitorder="little").tobytes()
             for target in self.targets:
                 self._send(target, Command.TXSTREAM_DATA, offset, units, payload)
@@ -410,10 +410,7 @@ class IQStream:
             # Each sensor needs 50 ms after ARM arrives to prepare its banks.
             # Leave the requested delivery time in addition to that interval.
             now = time.monotonic()
-            self.start_sample = max(
-                position + math.ceil((now - read_started + lead_time + _ARM_PREPARE_SECONDS) * self.RATE)
-                for position, read_started in positions
-            )
+            self.start_sample = max(position + math.ceil((now - read_started + lead_time + _ARM_PREPARE_SECONDS) * self.RATE) for position, read_started in positions)
             self.start_phase_q8 = 0
             period = round(4096000000 / self.sample_rate_hz)
             if self._phase_origin is not None:
@@ -429,18 +426,17 @@ class IQStream:
                 raise ValueError("Scheduled start exceeds the sample-clock range")
             try:
                 sequence = next(iter(sequences))
+
                 def arm(target, epochs):
-                    self._send(target, Command.TXSTREAM_ARM, payload=_ARM.pack(
-                        self.start_sample, sequence, *epochs, self.start_phase_q8))
+                    self._send(target, Command.TXSTREAM_ARM, payload=_ARM.pack(self.start_sample, sequence, *epochs, self.start_phase_q8))
+
                 if len(plans) == 1:
                     arm(*plans[0])
                 else:
                     # Independent controllers arm concurrently. Join every
                     # request before aborting, so a late ARM cannot race CLOSE.
                     by_board = {target[0]: (target, epochs) for target, epochs in plans}
-                    self.transmitter._parallel(
-                        lambda _, board: arm(*by_board[board]) if board in by_board else None
-                    )
+                    self.transmitter._parallel(lambda _, board: arm(*by_board[board]) if board in by_board else None)
                 self._wait(lambda s: s["state"] in ("running", "drained", "starved"), lead_time + 1)
             except BaseException as error:
                 self._abort(error)
