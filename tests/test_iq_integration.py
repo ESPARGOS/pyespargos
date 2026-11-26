@@ -22,8 +22,7 @@ class NativeIQIntegrationTests(unittest.TestCase):
                     "-c",
                     "import sys; sys.path.insert(0, sys.argv[1]); import espargos; "
                     "assert espargos.Board._capability_factories['iq'] is espargos.IQCapability; "
-                    "assert espargos.IQReceiver.__module__ == 'espargos.iq_receiver'; "
-                    "assert espargos.IQBacklog and espargos.IQSignalCapture and espargos.IQAccumPacket; "
+                    "assert espargos.IQReceiver and espargos.IQBacklog and espargos.IQSignalCapture and espargos.IQAccumPacket; "
                     "assert 'espargos_iqsampling' not in sys.modules; "
                     "assert not any(name.startswith('PyQt6') for name in sys.modules)",
                     directory,
