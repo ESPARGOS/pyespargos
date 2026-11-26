@@ -47,7 +47,7 @@ a different center frequency.
    :alt: Measured response at all five sample rates.
 
    Shading marks the usable band and dashed lines mark the Nyquist limits.
-   Each antenna's response is relative to its in-band level.
+   For each antenna, 0 dB marks its usual signal level in the shaded band.
 
 Receive a stream
 ----------------
