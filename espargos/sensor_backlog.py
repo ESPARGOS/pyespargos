@@ -102,6 +102,7 @@ class SensorBacklog:
         self._latest: int | None = None
         self._fill_level = 0
 
+        self._total_appended = 0
         selected_fields = set(self._field_specs) if fields is None else set(fields)
         self._initialize_storage(size=size, fields=selected_fields)
 
@@ -122,44 +123,42 @@ class SensorBacklog:
         value_shape = tuple(spec.shape)
         return self._sensor_shape + value_shape if spec.per_sensor else value_shape
 
-    def _allocate_field(self, spec: BacklogField) -> np.ndarray:
+    def _allocate_field(self, size: int, spec: BacklogField) -> np.ndarray:
         return np.full(
-            (self._size,) + self._field_shape(spec),
+            (size,) + self._field_shape(spec),
             fill_value=spec.fill_value,
             dtype=np.dtype(spec.dtype),
         )
 
-    def _read_unlocked(self, key: str) -> np.ndarray:
+    def _copy_recent(self, key: str, count: int) -> np.ndarray:
+        """Copy the last count rows in insertion order with the storage lock held."""
         storage = self._storage[key]
-        if self._fill_level == 0:
-            return storage[:0]
-
-        first = (self._head - self._fill_level) % self._size
-        if first < self._head:
-            return storage[first : self._head]
+        if count <= self._head:
+            return storage[self._head - count : self._head].copy()
+        first = self._size + self._head - count
+        if self._head == 0:
+            return storage[first:].copy()
         return np.concatenate((storage[first:], storage[: self._head]), axis=0)
 
     def _initialize_storage(self, size=None, fields=None) -> None:
         """Reallocate storage while preserving the newest existing datapoints."""
 
         with self._storage_lock:
-            old_fill_level = self._fill_level
-            old_values = {key: np.array(self._read_unlocked(key), copy=True) for key in self._fields}
+            size = self._size if size is None else self._validate_size(size)
+            fields = self._fields if fields is None else self._validate_fields(fields)
+            if size == self._size and fields == self._fields:
+                return
 
-            if size is not None:
-                self._size = self._validate_size(size)
-            if fields is not None:
-                self._fields = self._validate_fields(fields)
+            keep_count = min(self._fill_level, size)
+            storage = {}
+            for key in fields:
+                storage[key] = self._allocate_field(size, self._field_specs[key])
+                if keep_count and key in self._storage:
+                    storage[key][:keep_count] = self._copy_recent(key, keep_count)
 
-            keep_count = min(old_fill_level, self._size)
-            self._storage = {key: self._allocate_field(self._field_specs[key]) for key in self._fields}
-
-            for key, values in old_values.items():
-                if key in self._storage and keep_count:
-                    self._storage[key][:keep_count] = values[-keep_count:]
-
+            self._storage, self._fields, self._size = storage, fields, size
             self._fill_level = keep_count
-            self._head = keep_count % self._size
+            self._head = keep_count % size
             self._latest = keep_count - 1 if keep_count else None
 
     def append_datapoint(self, values: Mapping[str, Any]) -> None:
@@ -182,6 +181,7 @@ class SensorBacklog:
                 if key in self._fields:
                     self._storage[key][destination] = value
 
+            self._total_appended += 1
             self._latest = destination
             self._head = (destination + 1) % self._size
             self._fill_level = min(self._fill_level + 1, self._size)
@@ -249,27 +249,42 @@ class SensorBacklog:
     def get(self, key: str) -> np.ndarray:
         """Return one field for all stored datapoints, oldest first."""
 
-        if key not in self._fields:
-            raise ValueError(f"Requested key {key!r} not in backlog fields")
-        with self._storage_lock:
-            return np.array(self._read_unlocked(key), copy=True)
+        return self.get_multiple((key,))[0]
 
     def get_multiple(self, keys) -> tuple[np.ndarray, ...]:
         """Return several fields from one consistent backlog snapshot."""
 
-        keys = tuple(keys)
-        missing = [key for key in keys if key not in self._fields]
-        if missing:
-            raise ValueError(f"Requested key {missing[0]!r} not in backlog fields")
+        return self.get_since(keys, 0)[1]
+
+    @property
+    def total_appended(self) -> int:
+        """Number of rows appended over this backlog's lifetime, including discarded rows."""
         with self._storage_lock:
-            return tuple(np.array(self._read_unlocked(key), copy=True) for key in keys)
+            return self._total_appended
+
+    def get_since(self, keys, cursor: int) -> tuple[int, tuple[np.ndarray, ...]]:
+        """Copy retained rows appended after a previous read from this backlog.
+
+        Start with cursor zero or use :attr:`total_appended` to start at the
+        next row. Pass the returned cursor on the next call. If the ring
+        wrapped between reads, only the rows still in the backlog are returned.
+        """
+        keys = tuple(keys)
+        with self._storage_lock:
+            if not isinstance(cursor, int) or not 0 <= cursor <= self._total_appended:
+                raise ValueError("Invalid cursor for this backlog")
+            count = min(self._fill_level, self._total_appended - cursor)
+            for key in keys:
+                if key not in self._fields:
+                    raise ValueError(f"Requested key {key!r} not in backlog fields")
+            return self._total_appended, tuple(self._copy_recent(key, count) for key in keys)
 
     def get_latest(self, key: str):
         """Return the latest stored value for a field, or ``None``."""
 
-        if key not in self._fields:
-            raise ValueError(f"Requested key {key!r} not in backlog fields")
         with self._storage_lock:
+            if key not in self._fields:
+                raise ValueError(f"Requested key {key!r} not in backlog fields")
             if self._latest is None:
                 return None
             return np.array(self._storage[key][self._latest], copy=True)
