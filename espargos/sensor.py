@@ -50,7 +50,9 @@ Terminology:
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import ctypes
+import struct
 import time
 from dataclasses import dataclass, replace
 from enum import IntEnum
@@ -101,7 +103,8 @@ class SensorFragmentHeader(ctypes.LittleEndianStructure):
         pass
 
 
-assert ctypes.sizeof(SensorFragmentHeader) == 8
+_FRAGMENT_HEADER = struct.Struct("<IHBB")
+assert ctypes.sizeof(SensorFragmentHeader) == _FRAGMENT_HEADER.size == 8
 
 
 def uid_to_antenna_id(uid: int) -> int:
@@ -148,30 +151,24 @@ class SensorPacket:
 
         fragments = []
         offset = 4
-        header_size = ctypes.sizeof(SensorFragmentHeader)
-        while offset + header_size <= len(raw):
-            header = SensorFragmentHeader(raw[offset : offset + header_size])
-            offset += header_size
-            if header.uid == SENSOR_PACKET_TERMINATOR_UID:
-                packet = cls(tuple(fragments))
-                packet._validate_single_sensor()
-                return packet
+        antenna = None
+        while offset + _FRAGMENT_HEADER.size <= len(raw):
+            uid, size, index, count = _FRAGMENT_HEADER.unpack_from(raw, offset)
+            offset += _FRAGMENT_HEADER.size
+            if uid == SENSOR_PACKET_TERMINATOR_UID:
+                return cls(tuple(fragments))
+            if count == 0 or index >= count:
+                raise ValueError(f"Invalid sensor fragment index {index}/{count}")
 
-            if header.total_fragments == 0 or header.fragment_index >= header.total_fragments:
-                raise ValueError(f"Invalid sensor fragment index {header.fragment_index}/{header.total_fragments}")
-
-            end = offset + header.size
+            end = offset + size
             if end > len(raw):
                 raise ValueError("Sensor fragment exceeds packet boundary")
-
-            fragments.append(
-                SensorFragment(
-                    uid=int(header.uid),
-                    fragment_index=int(header.fragment_index),
-                    total_fragments=int(header.total_fragments),
-                    payload=raw[offset:end],
-                )
-            )
+            owner = uid_to_antenna_id(uid)
+            if antenna is None:
+                antenna = owner
+            elif owner != antenna:
+                raise ValueError("Sensor packet contains fragments from multiple sensors")
+            fragments.append(SensorFragment(uid, index, count, raw[offset:end]))
             offset = end
 
         raise ValueError("Sensor packet terminator missing")
@@ -179,11 +176,6 @@ class SensorPacket:
     @property
     def antenna_id(self) -> int | None:
         return self.fragments[0].antenna_id if self.fragments else None
-
-    def _validate_single_sensor(self):
-        antenna_ids = {fragment.antenna_id for fragment in self.fragments}
-        if len(antenna_ids) > 1:
-            raise ValueError("Sensor packet contains fragments from multiple sensors")
 
 
 _PayloadT = TypeVar("_PayloadT")
@@ -203,15 +195,19 @@ class SensorMessageReassembler:
     def __init__(self, timeout_s: float = 5.0, logger=None):
         self.timeout_s = timeout_s
         self._logger = logger
-        self._entries = {}
+        self._entries = OrderedDict()
 
     def clear(self):
         self._entries.clear()
 
     def _drop_stale(self, now: float):
-        stale_uids = [uid for uid, entry in self._entries.items() if now - entry["timestamp"] > self.timeout_s]
-        for uid in stale_uids:
-            self._entries.pop(uid, None)
+        # Entries are ordered by the last fragment received. After the oldest
+        # live entry, every remaining entry is live as well.
+        while self._entries:
+            oldest = next(iter(self._entries.values()))
+            if now - oldest["timestamp"] <= self.timeout_s:
+                break
+            self._entries.popitem(last=False)
 
     def push(
         self,
@@ -227,38 +223,29 @@ class SensorMessageReassembler:
 
         for fragment in fragments:
             uid = int(fragment.uid)
-            if fragment.total_fragments <= 0 or fragment.fragment_index >= fragment.total_fragments:
+            if not 0 <= fragment.fragment_index < fragment.total_fragments:
                 if self._logger is not None:
-                    self._logger.debug(f"Ignoring invalid sensor fragment index " f"{fragment.fragment_index}/{fragment.total_fragments} for uid {uid}")
+                    self._logger.debug(f"Ignoring invalid sensor fragment index {fragment.fragment_index}/{fragment.total_fragments} for uid {uid}")
                 self._entries.pop(uid, None)
+                continue
+
+            if fragment.total_fragments == 1:
+                self._entries.pop(uid, None)
+                completed_messages.append(SensorMessage(uid, fragment.antenna_id, bytes(fragment.payload)))
                 continue
 
             entry = self._entries.get(uid)
             if entry is None or entry["total_fragments"] != fragment.total_fragments:
-                entry = {
-                    "timestamp": now,
-                    "antenna_id": fragment.antenna_id,
-                    "total_fragments": fragment.total_fragments,
-                    "parts": {},
-                }
+                entry = {"total_fragments": fragment.total_fragments, "parts": {}}
                 self._entries[uid] = entry
-
+            self._entries.move_to_end(uid)
             entry["timestamp"] = now
-            entry["parts"][fragment.fragment_index] = bytes(fragment.payload)
-
-            if len(entry["parts"]) != entry["total_fragments"]:
-                continue
-            if any(index not in entry["parts"] for index in range(entry["total_fragments"])):
-                continue
-
-            completed_messages.append(
-                SensorMessage(
-                    uid=uid,
-                    antenna_id=entry["antenna_id"],
-                    payload=b"".join(entry["parts"][index] for index in range(entry["total_fragments"])),
-                )
-            )
-            self._entries.pop(uid, None)
+            parts = entry["parts"]
+            parts[fragment.fragment_index] = bytes(fragment.payload)
+            if len(parts) == fragment.total_fragments:
+                payload = b"".join(parts[index] for index in range(fragment.total_fragments))
+                completed_messages.append(SensorMessage(uid, fragment.antenna_id, payload))
+                del self._entries[uid]
 
         return completed_messages
 
