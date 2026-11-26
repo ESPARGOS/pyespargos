@@ -1,6 +1,11 @@
 Getting Started
 ===============
 
+.. warning::
+
+   Bluetooth, IQ transmit streaming and continuous IQ receive streaming are experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 ESPARGOS One is a 2.4 GHz array with eight antennas. Each antenna has a
 radio called a sensor. The controller connects the sensors to your
 computer. You can open its IP address in a browser to configure the

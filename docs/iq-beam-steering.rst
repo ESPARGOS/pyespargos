@@ -1,6 +1,11 @@
 Scheduled IQ Beam Steering
 ==========================
 
+.. warning::
+
+   IQ transmit streaming is experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 Suppose a receiver records a tone while the array scans a room. To match
 each part of the recording to a direction, you need to know when the beam
 turned. If a Python loop sets ``beam.steering`` every 10 ms, the timing also

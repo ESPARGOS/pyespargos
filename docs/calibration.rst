@@ -325,10 +325,8 @@ Both 20 MHz and bonded 40 MHz WiFi channels are supported.
 .. figure:: _static/calibration-csi.svg
    :alt: Measured reference CSI phase before and after phase and delay calibration
 
-   We check the calibration with a separate reference capture on one eight-sensor
-   array, channel 6. We plot phase relative to sensor 0 at each frequency and
-   account for the modeled REF distribution delays. After correction, the
-   phase differences should approach zero.
+   Reference CSI phase relative to sensor 0, before and after correction
+   for sensor offsets and modeled reference distribution delays.
 
 IQ: measure and apply a calibration
 -----------------------------------

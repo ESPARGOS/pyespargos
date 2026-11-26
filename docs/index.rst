@@ -1,6 +1,11 @@
 pyespargos Documentation
 ========================
 
+.. warning::
+
+   Bluetooth, IQ transmit streaming and continuous IQ receive streaming are experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 Use `pyespargos <https://github.com/ESPARGOS/pyespargos>`_ to control ESPARGOS
 arrays from Python. The array can measure Wi-Fi channels, receive Bluetooth
 LE packets and capture or transmit radio waveforms.

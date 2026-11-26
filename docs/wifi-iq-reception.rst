@@ -1,6 +1,11 @@
 WiFi IQ Reception
 =================
 
+.. warning::
+
+   WiFi IQ reception is experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 The WiFi modem can report a channel estimate for a packet it decodes.
 Sometimes the measurement you need is missing from that report. WiFi IQ
 records the received waveform at each antenna at 20 MSa/s, so you can work

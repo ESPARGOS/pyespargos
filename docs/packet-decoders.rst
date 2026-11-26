@@ -1,6 +1,11 @@
 Shared packet decoders
 ======================
 
+.. warning::
+
+   Bluetooth packet decoding is experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 A sensor can record the waveform of a Wi-Fi or Bluetooth LE packet. The
 decoder reads that waveform and looks for the packet's timing, header and
 identity. Use it when you have a saved IQ capture, for example to find the

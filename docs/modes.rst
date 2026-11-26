@@ -1,6 +1,11 @@
 Modes
 =====
 
+.. warning::
+
+   Bluetooth, IQ transmit streaming and continuous IQ receive streaming are experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 Each ESPARGOS board has eight sensor radios and a separate radio on the
 controller. Choose a sensor mode based on what you want to measure or
 transmit. Choose a controller mode based on the reference signal you need.

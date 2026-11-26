@@ -1,5 +1,9 @@
 # BLE camera
 
+> [!WARNING]
+> Bluetooth reception is experimental and under development.
+> The associated demos are unstable, and the API will change without notice.
+
 Select Bluetooth LE advertisers and display their arrival directions over a
 live camera image. The video capture, alignment controls and overlay shader
 are shared with the WiFi and IQ camera demos.

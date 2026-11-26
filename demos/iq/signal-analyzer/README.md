@@ -1,5 +1,9 @@
 # IQ Signal Analyzer
 
+> [!WARNING]
+> Continuous IQ receive streaming is experimental and under development.
+> The associated demos are unstable, and the API will change without notice.
+
 View the time trace, spectrum, waterfall and relative antenna phase from one or more ESPARGOS arrays.
 
 ```sh

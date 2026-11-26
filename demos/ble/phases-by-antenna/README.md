@@ -1,5 +1,9 @@
 # BLE phases by antenna
 
+> [!WARNING]
+> Bluetooth reception is experimental and under development.
+> The associated demos are unstable, and the API will change without notice.
+
 Run from the pyespargos directory:
 
 ```sh

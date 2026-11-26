@@ -1,6 +1,11 @@
 Boards and pools
 =====================
 
+.. warning::
+
+   Bluetooth, IQ transmit streaming and continuous IQ receive streaming are experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 :class:`Board <espargos.board.Board>` represents one ESPARGOS array. :class:`Pool <espargos.pool.Pool>` groups one or more boards
 and owns their connections. The boards need not form a regular arrangement.
 Use it as a context manager so that streams are closed and transmissions

@@ -1,6 +1,11 @@
 IQ Transmission
 ===============
 
+.. warning::
+
+   IQ transmit streaming is experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 .. figure:: _static/iq-beams.svg
    :alt: One ESPARGOS array steering a sensing chirp left and a communications waveform right
    :align: center

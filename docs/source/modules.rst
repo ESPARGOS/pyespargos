@@ -1,6 +1,11 @@
 API Reference
 =============
 
+.. warning::
+
+   Bluetooth, IQ transmit streaming and continuous IQ receive streaming are experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 *The API is unstable at this early stage of development.*
 
 espargos.board

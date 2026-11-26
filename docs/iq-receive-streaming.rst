@@ -1,6 +1,11 @@
 IQ Receive Streaming
 ====================
 
+.. warning::
+
+   Continuous IQ receive streaming is experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 For a narrowband signal that may last seconds or minutes, ESPARGOS can
 deliver consecutive complex samples from every receiving antenna. For
 example, you can follow a carrier as it drifts or demodulate a signal that
@@ -14,8 +19,7 @@ output rate. The SDK selects this input configuration when you request one of
 the output rates below.
 
 The IQ receivers on a board share a sample rate. Each sensor can tune to
-a different center frequency. Choose the lowest rate that covers your signal
-and leave the filter's transition band near each Nyquist edge clear.
+a different center frequency.
 
 .. list-table::
    :header-rows: 1
@@ -40,29 +44,10 @@ and leave the filter's transition band near each Nyquist edge clear.
      - 3.20 MB/s
 
 .. figure:: _static/iq-rx-stream-response.svg
-   :alt: Measured response at all five sample rates, with a close-up of the passband.
+   :alt: Measured response at all five sample rates.
 
-   The shaded band shows where to place your signal. The dashed lines mark
-   the Nyquist limits. Each point comes from an RF tone swept past the array
-   at 2441 MHz. Each antenna's response is relative to its in-band level.
-   The last panel compares the median response inside the usable band.
-
-The radio tunes in 1 kHz steps. Allow for the frequency error between
-the transmitter and receiver when choosing the center of a narrow passband.
-At the low end of the 2310–2640 MHz tuning range, reception can
-vary between sensors. On our array all eight received a test carrier at 2316 MHz,
-while six received it at 2310 MHz.
-
-On the same array, moving a test tone by one or two output sample rates,
-or by 1.6, 3.2 or 6.4 MHz in either direction, reduced its folded signal by
-at least 57 dB at all five rates. A strong tone *inside* the passband can
-also have a weak mirror on the opposite side of the center frequency due to
-I/Q imbalance. The largest such mirror we measured was about 34 dB below
-the tone.
-
-A peak at exactly zero frequency can come from the receiver's DC offset.
-To distinguish it from a carrier, retune slightly. A received carrier moves
-by the tuning offset, while the receiver's DC component stays at zero.
+   Shading marks the usable band and dashed lines mark the Nyquist limits.
+   Each antenna's response is relative to its in-band level.
 
 Receive a stream
 ----------------

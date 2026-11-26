@@ -1,6 +1,11 @@
 BLE reception
 =============
 
+.. warning::
+
+   Bluetooth reception is experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 BLE mode captures raw IQ from each sensor's radio. Use it to discover
 nearby advertisers, record Bluetooth LE packet waveforms, or estimate
 where a packet came from.

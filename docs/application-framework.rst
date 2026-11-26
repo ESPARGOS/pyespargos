@@ -1,6 +1,11 @@
 The Common Demo Application Framework
 =====================================
 
+.. warning::
+
+   Bluetooth, IQ transmit streaming and continuous IQ receive streaming are experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 The WiFi and WiFi IQ cameras show the same scene from two different
 measurements. The WiFi camera reads CSI from the modem. The WiFi IQ camera
 estimates CSI from the packet waveform. Each has its own receiver controls,

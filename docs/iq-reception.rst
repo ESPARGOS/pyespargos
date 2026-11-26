@@ -1,6 +1,11 @@
 IQ Reception
 ============
 
+.. warning::
+
+   The Bluetooth capture path and continuous IQ receive streaming are experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 ESPARGOS can capture raw complex (I/Q) samples, synchronized across its
 antennas and boards. This uses an undocumented debug path in the ESP32 modem
 that bypasses WiFi packet processing. Read about our discovery in the `ESP32
@@ -75,19 +80,14 @@ For example, to capture a signal near 2467 MHz on all antennas::
    pool.configure(mode="iq_rx", frequency_hz=2467e6, capture_path="bluetooth",
                   sample_rate_hz=4e6, bandwidth_mhz=2.1)
 
-The Bluetooth filter uses the nearest available setting. With the default centered filter, the bandwidths are approximate full widths around the tuned frequency. A 2.1 MHz filter
-extends about 1.05 MHz to either side. Leave room for the filter to roll off
-before the Nyquist frequency when strong signals occupy adjacent channels.
-Changing the capture rate alone does not narrow the analog filter.
+The Bluetooth filter uses the nearest available bandwidth setting. In the
+default centered mode, the setting is the approximate full width around
+the tuned frequency. Changing the capture rate alone does not narrow the
+analog filter.
 
-Use ``bluetooth_filter_mode="low_if"`` to receive a signal below the local
-oscillator (LO) while attenuating interference at its mirror frequency. For
-example, with the LO at 2437 MHz and ``bandwidth_mhz=3.4``, the measured
-passband extends from about 2433.7 to 2436.6 MHz. A 2435 MHz tone appears at
-−2 MHz in the IQ samples. Changing the filter does not shift the samples to
-baseband. Choose a sample rate that covers the selected passband to avoid
-aliasing. Continuous downsampling still selects frequencies around DC.
-Set ``bluetooth_filter_mode="centered"`` to receive on both sides of the LO.
+Set ``bluetooth_filter_mode="low_if"`` to select the band below the local
+oscillator. It appears at negative frequencies in the IQ samples.
+Continuous downsampling still selects frequencies around DC.
 
 For phase-coherent capture, select the rate and filter first,
 then call ``pool.calibrate()``. The SDK can reuse a live Bluetooth sample grid on a

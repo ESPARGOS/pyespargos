@@ -1,5 +1,9 @@
 # Instantaneous BLE CSI
 
+> [!WARNING]
+> Bluetooth reception is experimental and under development.
+> The associated demos are unstable, and the API will change without notice.
+
 Show power (dB) and phase (rad) in the same two-plot layout as the WiFi
 instantaneous-CSI demo, over the smaller BLE bandwidth. A received antenna waveform provides the reference, so transmitted
 pilot symbols are not needed.

@@ -1,6 +1,11 @@
 IQ Transmit Streaming
 =====================
 
+.. warning::
+
+   IQ transmit streaming is experimental and under development.
+   The associated demos are unstable, and the API will change without notice.
+
 :doc:`iq-transmission` lets you choose or upload waveforms that the sensors
 play from cyclic buffers. You can steer each waveform independently, even at
 high sample rates.
