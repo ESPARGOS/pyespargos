@@ -10,10 +10,10 @@ import numpy as np
 from PyQt6 import QtCore
 from espargos.csi_processing import scale_csi_by_reported_gain
 from demos.wifi.camera.backend import CSICamera, run_camera
-from demos.wifi_iq.common.application import WiFiIQApplication
+from demos.wifi_iq.common.application import ESPARGOSWiFiIQApplication
 
 
-class WiFiIQCamera(CSICamera, WiFiIQApplication):
+class WiFiIQCamera(CSICamera, ESPARGOSWiFiIQApplication):
     qml_file = Path(__file__).with_name("Main.qml").resolve()
     level_fields = ("rx_gain",)
     power_unit = "dBFS"
@@ -28,8 +28,7 @@ class WiFiIQCamera(CSICamera, WiFiIQApplication):
 
     def _on_update_app_state(self, newcfg):
         super()._on_update_app_state(newcfg)
-        if (newcfg.get("beamformer", {}).get("polarization_mode") in ("incorporate", "show")
-                and hasattr(self, "controls") and self.controls.settings and self.controls.settings["rf_switch"] != 4):
+        if newcfg.get("beamformer", {}).get("polarization_mode") in ("incorporate", "show") and hasattr(self, "controls") and self.controls.settings and self.controls.settings["rf_switch"] != 4:
             self.controls.apply({"rf_switch": 4})
 
     def _process_args(self):
@@ -44,7 +43,7 @@ class WiFiIQCamera(CSICamera, WiFiIQApplication):
 
     def received_power(self, csi, levels):
         count = np.isfinite(csi).sum(axis=-1)
-        power = np.nansum(np.abs(self.adc_normalized_channel(csi))**2, axis=-1)
+        power = np.nansum(np.abs(self.adc_normalized_channel(csi)) ** 2, axis=-1)
         if csi.shape[-1] == 35:
             power /= np.maximum(count, 1)
         power[count == 0] = np.nan

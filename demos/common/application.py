@@ -30,7 +30,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
     - Pool lifecycle management (creation, start-up, calibration, teardown)
 
     The concrete sensing modality is supplied by a subclass such as
-    :class:`.ESPARGOSCSIApplication`, which implements the pool factory
+    :class:`.ESPARGOSWiFiApplication`, which implements the pool factory
     (:meth:`_create_receiver`) and may provide a receiver-drawer backend
     (:meth:`_create_pool_drawer`) and a calibration procedure
     (:meth:`_calibrate_pool`).
@@ -308,6 +308,25 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         """
         pass
 
+    @classmethod
+    def request_mode(cls, pool, *, boards=None):
+        """Select this demo's controller profile and, for uniform arrays, sensor roles.
+
+        Mixed-role IQ demos assign their own sensors after selecting the IQ controller.
+        A dedicated reference controller is managed by calibration.
+        """
+        boards = pool.boards if boards is None else boards
+        for board in boards:
+            if board.api_version >= (4, 4):
+                board.control.post_json("set_controller_mode", {"mode": cls.CONTROLLER_MODE})
+        if cls.SENSOR_MODE is None:
+            return
+        # Older WiFi-only boards already run CSI and have no sensor mode endpoint.
+        hosts = [b.host for b in boards if cls.SENSOR_MODE != "wifi" or b.api_version[0] >= 4]
+        if hosts:
+            selection = pool if len(hosts) == len(pool.boards) else pool.select(boards=hosts)
+            selection.configure(mode=cls.SENSOR_MODE)
+
     def _make_pool(self, *, layout=None, hosts=None):
         """Construct the SDK pool without opening hardware connections."""
         reference = self.get_initial_config("pool", "reference_controller")
@@ -382,9 +401,9 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         Return this application's shared pool from the Pool owner.
 
         Must be implemented by a modality subclass such as
-        :class:`.ESPARGOSCSIApplication`.
+        :class:`.ESPARGOSWiFiApplication`.
         """
-        raise NotImplementedError("ESPARGOSApplication does not implement a sensing modality; subclass e.g. ESPARGOSCSIApplication instead")
+        raise NotImplementedError("ESPARGOSApplication does not implement a sensing modality; subclass e.g. ESPARGOSWiFiApplication instead")
 
     def _create_pool_drawer(self):
         """

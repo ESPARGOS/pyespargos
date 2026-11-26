@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[3]))
 
-from demos.wifi.common.application import ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIFormatMixin
+from demos.wifi.common.application import ESPARGOSWiFiApplication, CSIBacklogMixin, SingleCSIFormatMixin
 from demos.common.application import CombinedArrayMixin
 
 from matplotlib import colormaps
@@ -18,7 +18,7 @@ BEAMSPACE_OVERSAMPLING = 16
 DELAY_OVERSAMPLING = 10
 
 
-class AzimuthDelayApp(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
+class AzimuthDelayApp(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSWiFiApplication):
     DEFAULT_CONFIG = {
         "delay_min": -3,
         "delay_max": 5,

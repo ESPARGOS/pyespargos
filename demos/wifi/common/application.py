@@ -63,8 +63,10 @@ class CSIApplication(ESPARGOSApplication):
         context.setContextProperty("csiconfig", self.csiconfig)
 
 
-class ESPARGOSCSIApplication(CSIApplication):
+class ESPARGOSWiFiApplication(CSIApplication):
     """Native WiFi CSI acquisition, receiver controls and calibration."""
+
+    CONTROLLER_MODE = SENSOR_MODE = "wifi"
 
     # Formats are ordered by priority: the first format wins if sample counts tie.
     CSI_FORMATS = ("ht40", "ht20", "he20", "lltf")
@@ -75,11 +77,9 @@ class ESPARGOSCSIApplication(CSIApplication):
 
     def _create_receiver(self, owner: espargos.Pool) -> espargos.WiFiTransceiver:
         # A previous IQ demo may have left sensors outside WiFi mode.
+        self.request_mode(owner)
         for board in owner.boards:
-            if board.api_version >= (4, 4):
-                board.control.post_json("set_controller_mode", {"mode": "wifi"})
             if board.api_version[0] >= 4:
-                owner.select(boards=board.host).configure(mode="wifi")
                 # These demos use one channel per board. Clear overrides left
                 # by an application using independently tuned antennas.
                 board.wifi_rx.set_channel_overrides({"override_active": False})
@@ -276,6 +276,4 @@ class SingleCSIFormatMixin:
             raise ValueError(f"Unsupported CSI format {selected!r}")
         self.initial_config["csi"]["preamble_format"] = selected
         if self._uses_backlog():
-            self.initial_config["backlog"]["fields"].update(
-                {name: selected == "auto" or name == selected for name in self.CSI_FORMATS}
-            )
+            self.initial_config["backlog"]["fields"].update({name: selected == "auto" or name == selected for name in self.CSI_FORMATS})

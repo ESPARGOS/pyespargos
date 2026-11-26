@@ -12,11 +12,11 @@ sys.path.append(str(pathlib.Path(__file__).absolute().parents[3]))
 
 import espargos
 import espargos.csi_packet
-from demos.wifi.common.application import CSIBacklogMixin, ESPARGOSCSIApplication, SingleCSIFormatMixin
+from demos.wifi.common.application import CSIBacklogMixin, ESPARGOSWiFiApplication, SingleCSIFormatMixin
 from demos.common.application import CombinedArrayMixin
 
 
-class EspargosDemoPowerOverTime(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
+class EspargosDemoPowerOverTime(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSWiFiApplication):
     updatePowers = PyQt6.QtCore.pyqtSignal(float, list, float, float)
     maxAgeChanged = PyQt6.QtCore.pyqtSignal()
     modeChanged = PyQt6.QtCore.pyqtSignal()
@@ -82,7 +82,7 @@ class EspargosDemoPowerOverTime(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFo
     def _prepare_pool_init(self, additional_calibrate_args):
         if self._use_combined_array:
             return super()._prepare_pool_init(additional_calibrate_args)
-        return ESPARGOSCSIApplication._prepare_pool_init(self, additional_calibrate_args)
+        return ESPARGOSWiFiApplication._prepare_pool_init(self, additional_calibrate_args)
 
     def _on_update_app_state(self, newcfg):
         changed_keys = set(newcfg)

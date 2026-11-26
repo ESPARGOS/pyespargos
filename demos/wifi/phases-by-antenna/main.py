@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[3]))
 
-from demos.wifi.common.application import ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIFormatMixin
+from demos.wifi.common.application import ESPARGOSWiFiApplication, CSIBacklogMixin, SingleCSIFormatMixin
 from demos.common.application import CombinedArrayMixin
 
 import numpy as np
@@ -16,7 +16,7 @@ import argparse
 import PyQt6.QtCore
 
 
-class EspargosDemoPhasesByAntenna(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
+class EspargosDemoPhasesByAntenna(CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSWiFiApplication):
     updatePhases = PyQt6.QtCore.pyqtSignal(list)
 
     DEFAULT_CONFIG = {}
@@ -45,9 +45,7 @@ class EspargosDemoPhasesByAntenna(CSIBacklogMixin, CombinedArrayMixin, SingleCSI
             self.updatePhases.emit([{}] * (2 if split else 1))
             return
 
-        csi, rx_gain, fft_gain, feeds = (
-            espargos.combined_array.build_combined_array_data(self.indexing_matrix, data)
-            for data in result)
+        csi, rx_gain, fft_gain, feeds = (espargos.combined_array.build_combined_array_data(self.indexing_matrix, data) for data in result)
         csi = espargos.csi_processing.scale_csi_by_reported_gain(csi, rx_gain, fft_gain)
         if not split:
             csi = np.where(feeds[..., None] == route, csi, np.nan)

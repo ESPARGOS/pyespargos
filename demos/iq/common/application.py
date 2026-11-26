@@ -22,7 +22,7 @@ from espargos.iq_cluster import CHUNK_SAMPLES
 from espargos.iq_rx_stream import receive_sample_rate
 from espargos.iq_receiver import IQReceiver, iq_receiver_config
 
-__all__ = ["ESPARGOSIQApplication", "IQController"]
+__all__ = ["ESPARGOSIQApplication", "IQCaptureApplication", "IQController"]
 
 
 class IQController(PyQt6.QtCore.QObject):
@@ -397,6 +397,13 @@ class IQController(PyQt6.QtCore.QObject):
 
 
 class ESPARGOSIQApplication(ESPARGOSApplication):
+    """Shared controller profile for IQ capture, transmission and mixed-role demos."""
+
+    CONTROLLER_MODE = "iq"
+    SENSOR_MODE = None
+
+
+class IQCaptureApplication(ESPARGOSIQApplication):
     """
     ESPARGOS application whose sensing modality is raw synchronized IQ sampling.
 
@@ -408,6 +415,8 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
     create an :class:`IQController` (once the pool exists, e.g. on
     ``initComplete``) and expose it to QML for the shared IQ drawer.
     """
+
+    SENSOR_MODE = "iq_rx"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -423,7 +432,7 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
         self._interrupt_timer.start(200)
 
     def _create_receiver(self, owner) -> IQReceiver:
-        owner.configure(mode="iq_rx")
+        self.request_mode(owner)
         return owner.iq
 
     def _calibrate_pool(self, calibrate: bool, additional_calibrate_args: dict) -> bool:
@@ -431,6 +440,12 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
         # operation through the same controller used by the Sync button.
         self.pool.start_processing()
         return True
+
+    @staticmethod
+    def restore_wifi(pool):
+        from demos.wifi.common.application import ESPARGOSWiFiApplication
+
+        ESPARGOSWiFiApplication.request_mode(pool)
 
     def create_iq_controller(self, *, capture_config=None) -> IQController:
         """Create the QML adapter for this application's pool."""
@@ -451,7 +466,7 @@ class ESPARGOSIQApplication(ESPARGOSApplication):
             # Hand the array back to WiFi/CSI mode on exit (the firmware
             # force-disables a running reference tone on that transition).
             try:
-                self.pool.configure(mode="wifi")
+                self.restore_wifi(self.pool)
             except Exception as error:
                 self.logger.warning("Could not restore WiFi mode: %s", error)
         super().onAboutToQuit()

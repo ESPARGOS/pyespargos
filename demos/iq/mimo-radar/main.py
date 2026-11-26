@@ -22,7 +22,8 @@ import numpy as np
 from PyQt6 import QtCore, QtGui, QtQuick, QtQml
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
-from demos.common.application import ESPARGOSApplication
+from demos.iq.common.application import ESPARGOSIQApplication
+from espargos.iq_packet import DECIM_TO_FS
 from espargos.calibration import CalibrationState
 from mimo_processing import MIMOProcessor, pilots, C, RATE, SAMPLES, INTERVAL, DOPPLER_WINDOWS, DOPPLER_OVERSAMPLING, SAMPLE_RATES, Sampling, render_maps
 
@@ -77,7 +78,7 @@ class RadarImages(QtQuick.QQuickImageProvider):
             return image, image.size()
 
 
-class MIMORadar(ESPARGOSApplication):
+class MIMORadar(ESPARGOSIQApplication):
     stateChanged = QtCore.pyqtSignal()
     frameChanged = QtCore.pyqtSignal()
     workerState = QtCore.pyqtSignal(str, bool, bool)
@@ -358,14 +359,18 @@ class MIMORadar(ESPARGOSApplication):
         self._index = tuple(np.array(rx_positions).T)
 
         status(f"Configuring two transmitters and {len(self._rx_antennas)} receivers…")
-        self._pool.configure(
-            mode="iq_rx",
-            frequency_hz=self._frequency,
-            sample_rate_hz=self._sampling.rate,
-            rx_gain=self._settings["rx_gain"],
-            output=("antenna_l", "antenna_r")[self._rx_feed],
+        self.request_mode(self._pool)
+        self._pool.select(antennas=self._rx_antennas).configure(mode="iq_rx", frequency_hz=self._frequency, rx_gain=self._settings["rx_gain"])
+        decimation = next(key for key, rate in DECIM_TO_FS.items() if rate == self._sampling.rate)
+        self._pool.iq.apply_config(
+            {
+                "capture_path": "wifi",
+                "adc_decimation": decimation,
+                "filter_bw_mhz": 0,
+                "rf_switch": (3, 2)[self._rx_feed],
+                "trigger": {"mode": "interval"},
+            }
         )
-        self._pool.iq.apply_config({"filter_bw_mhz": 0})
 
         self._transmitters = self._pool.select(antennas=self._tx_antennas)
         self._transmitters.configure(

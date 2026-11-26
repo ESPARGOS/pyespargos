@@ -48,7 +48,7 @@ import PyQt6.QtCharts
 import espargos
 
 from espargos import CHUNK_SAMPLES, DECIM_TO_FS, IQAccumCluster, IQStreamBlock, SENSOR_COUNT
-from demos.iq.common.application import ESPARGOSIQApplication
+from demos.iq.common.application import IQCaptureApplication
 from demos.iq.common.iq_waterfall import WaterfallImageProvider, power_db_row
 
 DISPLAY_SETTLE_SECONDS = 0.2
@@ -70,7 +70,7 @@ def pool_complex_to_width(z, w):
     return z[..., (np.arange(w) * n) // w]
 
 
-class EspargosSignalAnalyzer(ESPARGOSIQApplication):
+class EspargosSignalAnalyzer(IQCaptureApplication):
     waterfallFrameReady = PyQt6.QtCore.pyqtSignal()
     displayModeChanged = PyQt6.QtCore.pyqtSignal()
     traceSampleCountChanged = PyQt6.QtCore.pyqtSignal()
@@ -608,7 +608,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
 
     def onAboutToQuit(self):
         self.render_running = False
-        super().onAboutToQuit()  # ESPARGOSIQApplication restores WiFi mode
+        super().onAboutToQuit()  # IQCaptureApplication restores WiFi mode
 
     # ---- entry point ----
 

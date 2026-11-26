@@ -2,14 +2,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 import numpy as np
-from demos.wifi.common.application import ESPARGOSCSIApplication, SingleCSIFormatMixin
+from demos.wifi.common.application import ESPARGOSWiFiApplication, SingleCSIFormatMixin
 from demos.wifi.common.polarization import PolarizationMixin
 from espargos.combined_array import AntennaOrientation
 
 
 class Demo(SingleCSIFormatMixin, PolarizationMixin):
-    CSI_FORMATS = ESPARGOSCSIApplication.CSI_FORMATS
-    _read_channel_fields = ESPARGOSCSIApplication._read_channel_fields
+    CSI_FORMATS = ESPARGOSWiFiApplication.CSI_FORMATS
+    _read_channel_fields = ESPARGOSWiFiApplication._read_channel_fields
 
 
 class ChannelTransitionTests(unittest.TestCase):

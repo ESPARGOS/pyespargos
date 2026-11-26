@@ -7,10 +7,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from PyQt6.QtCore import QPointF, pyqtSlot
 from espargos.wifi_iq.symbols import symbol_constellation
 from demos.wifi.common.instantaneous_csi import InstantaneousCSI
-from demos.wifi_iq.common.application import WiFiIQApplication
+from demos.wifi_iq.common.application import ESPARGOSWiFiIQApplication
 
 
-class WiFiIQInstantaneousCSI(InstantaneousCSI, WiFiIQApplication):
+class WiFiIQInstantaneousCSI(InstantaneousCSI, ESPARGOSWiFiIQApplication):
     DEFAULT_CONFIG = {**InstantaneousCSI.DEFAULT_CONFIG, "required_antennas": 1}
     qml_file = Path(__file__).with_name("Main.qml").resolve()
 

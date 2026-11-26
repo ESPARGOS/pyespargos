@@ -6,7 +6,7 @@ import time
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[3]))
 
-from demos.wifi.common.application import ESPARGOSCSIApplication, CSIBacklogMixin
+from demos.wifi.common.application import ESPARGOSWiFiApplication, CSIBacklogMixin
 
 import argparse
 import numpy as np
@@ -15,7 +15,7 @@ import PyQt6.QtCore
 import espargos.csi_processing
 
 
-class EspargosDemoCFOViewer(CSIBacklogMixin, ESPARGOSCSIApplication):
+class EspargosDemoCFOViewer(CSIBacklogMixin, ESPARGOSWiFiApplication):
     updateCFOs = PyQt6.QtCore.pyqtSignal(float, list, list)
     maxAgeChanged = PyQt6.QtCore.pyqtSignal()
     minAntennasChanged = PyQt6.QtCore.pyqtSignal()

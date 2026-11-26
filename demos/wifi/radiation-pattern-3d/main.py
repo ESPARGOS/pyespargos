@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[3]))
 
-from demos.wifi.common.application import ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIFormatMixin
+from demos.wifi.common.application import ESPARGOSWiFiApplication, CSIBacklogMixin, SingleCSIFormatMixin
 from demos.common.application import CombinedArrayMixin
 
 import matplotlib.colors
@@ -100,7 +100,7 @@ class RadiationPatternGeometry(PyQt6.QtQuick3D.QQuick3DGeometry):
         )
 
 
-class EspargosDemoRadiationPattern3D(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
+class EspargosDemoRadiationPattern3D(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSWiFiApplication):
     configChanged = PyQt6.QtCore.pyqtSignal()
 
     DEFAULT_CONFIG = {

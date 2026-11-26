@@ -35,7 +35,7 @@ from demos.common.application import CombinedArrayMixin
 from espargos import CHUNK_SAMPLES
 from espargos.iq_packet import IQ_SYNC_INFO_GRID_SYNCED
 from espargos.iq_rx_stream import receive_sample_rate
-from demos.iq.common.application import ESPARGOSIQApplication
+from demos.iq.common.application import IQCaptureApplication
 from demos.iq.camera.processing import DirectionHistory, peak_directions
 from demos.iq.camera.worker import process_capture, initialize_processor
 from demos.iq.common.iq_waterfall import WaterfallImageProvider
@@ -60,7 +60,7 @@ def _is_signal_preview(source):
     return isinstance(source, espargos.IQCluster) and source.signal_board_index is not None
 
 
-class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
+class EspargosIQCamera(CombinedArrayMixin, IQCaptureApplication):
     """IQ camera for a rectangular ESPARGOS combined array."""
 
     autoThresholdChanged = PyQt6.QtCore.pyqtSignal()
@@ -187,7 +187,7 @@ class EspargosIQCamera(CombinedArrayMixin, ESPARGOSIQApplication):
             # initialize_pool closes the connection when receiver setup fails.
             # Release the sensors while the controller is still reachable.
             try:
-                owner.configure(mode="wifi")
+                self.restore_wifi(owner)
             except Exception as cleanup:
                 error.add_note(f"Could not restore WiFi mode: {cleanup}")
             raise

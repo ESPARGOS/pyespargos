@@ -70,7 +70,7 @@ def test_late_repaired_capture_cannot_rewind_live_camera():
 
 @pytest.mark.parametrize("boards, mode, expected", [(1, "auto", "signal"), (4, "auto", "interval"), (1, "interval", "interval"), (4, "accumulate", "accumulate")])
 def test_camera_chooses_supported_trigger_and_sends_only_its_fields(monkeypatch, boards, mode, expected):
-    from demos.iq.common.application import ESPARGOSIQApplication
+    from demos.iq.common.application import IQCaptureApplication
 
     patches = []
     owner = SimpleNamespace(boards=[None] * boards)
@@ -81,7 +81,7 @@ def test_camera_chooses_supported_trigger_and_sends_only_its_fields(monkeypatch,
     app = EspargosIQCamera.__new__(EspargosIQCamera)
     app.appconfig = config
     receiver = SimpleNamespace(apply_config=patches.append)
-    monkeypatch.setattr(ESPARGOSIQApplication, "_create_receiver", lambda self, pool: receiver)
+    monkeypatch.setattr(IQCaptureApplication, "_create_receiver", lambda self, pool: receiver)
     assert app._create_receiver(owner) is receiver
     trigger = patches[0]["trigger"]
     assert trigger["mode"] == expected
@@ -155,14 +155,14 @@ def test_feed_change_discards_old_image_and_gain_edit_preserves_it():
 
 def test_rejected_startup_settings_release_hardware_before_pool_closes(monkeypatch):
     from unittest.mock import Mock
-    from demos.iq.common.application import ESPARGOSIQApplication
+    from demos.iq.common.application import IQCaptureApplication
 
-    owner = Mock(boards=[object()])
+    owner = Mock(boards=[Mock(host="a", api_version=(5, 0))])
     receiver = Mock()
     receiver.apply_config.side_effect = ValueError("holdoff outside range")
     app = EspargosIQCamera.__new__(EspargosIQCamera)
     app.appconfig = SimpleNamespace(get=lambda _: EspargosIQCamera.DEFAULT_CONFIG["capture"])
-    monkeypatch.setattr(ESPARGOSIQApplication, "_create_receiver", lambda self, pool: receiver)
+    monkeypatch.setattr(IQCaptureApplication, "_create_receiver", lambda self, pool: receiver)
     with pytest.raises(ValueError, match="holdoff"):
         app._create_receiver(owner)
     owner.configure.assert_called_once_with(mode="wifi")
@@ -171,13 +171,15 @@ def test_rejected_startup_settings_release_hardware_before_pool_closes(monkeypat
 def test_partial_array_role_change_is_unwound_before_pool_closes():
     from unittest.mock import Mock, call
 
-    pool = Mock(boards=[object(), object()])
+    pool = Mock(boards=[Mock(host=h, api_version=(5, 0)) for h in ("a", "b")])
     pool.configure.side_effect = [OSError("second board timed out"), None]
     camera = EspargosIQCamera.__new__(EspargosIQCamera)
     camera.appconfig = SimpleNamespace(get=lambda _: EspargosIQCamera.DEFAULT_CONFIG["capture"])
     with pytest.raises(OSError, match="second board"):
         camera._create_receiver(pool)
     assert pool.configure.call_args_list == [call(mode="iq_rx"), call(mode="wifi")]
+    for board in pool.boards:
+        assert board.control.post_json.call_args_list == [call("set_controller_mode", {"mode": m}) for m in ("iq", "wifi")]
     pool.iq.apply_config.assert_not_called()
 
 

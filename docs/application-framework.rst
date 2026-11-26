@@ -23,20 +23,24 @@ Choose a starting point
      - Application code
      - Example in ``demos/``
    * - Modem WiFi CSI
-     - ``ESPARGOSCSIApplication`` in ``wifi/common/application.py``
+     - ``ESPARGOSWiFiApplication`` in ``wifi/common/application.py``
      - ``wifi/instantaneous-csi``
    * - CSI from WiFi packet IQ
-     - ``WiFiIQApplication`` in ``wifi_iq/common/application.py``
+     - ``ESPARGOSWiFiIQApplication`` in ``wifi_iq/common/application.py``
      - ``wifi_iq/camera``, ``wifi_iq/instantaneous-csi``
    * - BLE packet IQ
-     - ``BLEMeasurementApplication`` in ``ble/common/application.py``
+     - ``ESPARGOSBluetoothApplication`` in ``ble/common/application.py``
      - ``ble/phases-by-antenna``
-   * - Raw IQ
+   * - Raw IQ receive, transmit, or both
      - ``ESPARGOSIQApplication`` in ``iq/common/application.py``
-     - ``iq/signal-analyzer``
-   * - IQ transmission
-     - ``ESPARGOSTxApplication`` in ``iq/transmit-beamforming/application.py``
-     - ``iq/transmit-beamforming``
+     - ``iq/signal-analyzer``, ``iq/transmit-beamforming``, ``iq/mimo-radar``
+
+Each application selects the controller profile on its sensing boards at
+startup. WiFi, WiFi IQ and Bluetooth demos also request the corresponding
+sensor mode. IQ demos share the ``iq`` controller profile and assign sensor
+roles for the measurement. For example, the MIMO radar assigns its two corner
+transmitters to ``iq_tx`` and its receiving antennas to ``iq_rx``.
+A dedicated reference controller is managed separately during calibration.
 
 Packet backlog controls
 -----------------------
@@ -115,7 +119,7 @@ assigns a different receiver drawer in its own ``Main.qml``.
   selection and a ``process_cluster()`` hook. Slow display processing runs on a
   worker that keeps the newest pending measurement per advertiser. The BLE
   camera also uses this controller and adds its own beamforming and video.
-* **Raw IQ.** ``ESPARGOSIQApplication`` starts the receiver's processing worker.
+* **Raw IQ.** ``IQCaptureApplication`` selects receive roles and starts the receiver's processing worker.
   Use ``create_iq_controller()`` for a drawer that controls capture and
   synchronization. The signal analyzer uses the same time and spectrum displays
   for triggered IQ and :doc:`iq-receive-streaming`.

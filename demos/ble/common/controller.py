@@ -7,6 +7,7 @@ selection, beamforming or rendering dependencies are required.
 from concurrent.futures import ThreadPoolExecutor
 import logging
 from PyQt6 import QtCore
+from demos.ble.common.application import ESPARGOSBluetoothApplication
 from espargos.board_ble import BLECapability
 
 
@@ -100,8 +101,7 @@ class BLEController(QtCore.QObject):
             self.pool.open()
             board = self.pool.boards[self.board_index]
             self._saved = (board.control.get_json("get_controller_mode"), board.iq.get_config()["modes"], board.ble.get_config())
-            board.control.post_json("set_controller_mode", {"mode": "ble"})
-            self.pool.select(boards=[board.host]).configure(mode="ble")
+            ESPARGOSBluetoothApplication.request_mode(self.pool, boards=[board])
             self.receiver = self.pool.ble
             if self.buffering is not None:
                 self._saved_buffer_policy = self.receiver.buffer_policy

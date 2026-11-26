@@ -7,6 +7,7 @@ import numpy as np
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtProperty, pyqtSignal, pyqtSlot
 
 from waveform import waveform, load_iq, default_beam_settings, synthesized_waveform
+from demos.iq.common.application import ESPARGOSIQApplication
 from espargos.steering import Beamspace
 from espargos.waveforms import IQSamples
 from pathlib import Path
@@ -105,6 +106,7 @@ class IQTxController(QObject):
             missing = [host for host, allowed in zip(self.pool.hosts, self.session.authorization) if not allowed]
             if missing:
                 raise RuntimeError("TX authorization is disabled on " + ", ".join(missing) + ". Enable it in the arrays' web Settings before starting this demo.")
+            ESPARGOSIQApplication.request_mode(self.pool)
             states = self.session.read()
             if self.all_tx and all(self.session.authorization):
                 modes = [["iq_tx"] * 8 for _ in self.pool.hosts]

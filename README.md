@@ -263,15 +263,17 @@ qsb --version
 </table>
 
 *pyespargos* comes with a selection of demo applications for testing ESPARGOS.
-Receive demos are built on a common application framework (`demos/common`) that provides:
-* A consistent command-line interface and YAML configuration support
-* A graphical pool management drawer for connecting to ESPARGOS devices
-* Selectable preamble formats (L-LTF, HT20, HT40)
-* Configurable CSI backlog settings
+The demos are organized by radio mode. Each application selects the controller
+profile and sensor roles it needs at startup.
 
-Demos are grouped by signal type: [`demos/wifi`](demos/wifi) for WiFi/CSI and
-[`demos/iq`](demos/iq) for raw IQ reception and transmission. Shared components
-are in `demos/common`. Use [`demos/custom`](demos/custom) for local experiments.
+* [WiFi](demos/wifi) measures CSI from the modem.
+* [WiFi IQ](demos/wifi_iq) estimates CSI from captured WiFi packet waveforms.
+* [Bluetooth](demos/ble) uses BLE packet IQ.
+* [IQ](demos/iq) supports raw sampling, transmission, and mixed TX/RX arrays.
+
+The demos share Qt controls, configuration and pool management in `demos/common`.
+See the [application framework guide](docs/application-framework.rst) when adding
+a demo. Use [demos/custom](demos/custom) for local experiments.
 
 Most demos support both single ESPARGOS arrays and combined multi-board setups via command-line arguments or YAML configuration files.
 

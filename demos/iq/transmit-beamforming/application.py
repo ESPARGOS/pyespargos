@@ -2,12 +2,13 @@
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtQml import qmlRegisterType
-from demos.common.application import ESPARGOSApplication, CombinedArrayMixin
+from demos.common.application import CombinedArrayMixin
+from demos.iq.common.application import ESPARGOSIQApplication
 from controller import IQTxController
 from plot import IQTxPlot
 
 
-class ESPARGOSTxApplication(CombinedArrayMixin, ESPARGOSApplication):
+class ESPARGOSTxApplication(CombinedArrayMixin, ESPARGOSIQApplication):
     def _add_config_arguments(self, parser):
         def single_host(value):
             if not value.strip() or "," in value:

@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[3]))
 
-from demos.wifi.common.application import ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIFormatMixin
+from demos.wifi.common.application import ESPARGOSWiFiApplication, CSIBacklogMixin, SingleCSIFormatMixin
 
 import numpy as np
 import espargos
@@ -15,7 +15,7 @@ import time
 import PyQt6.QtCore
 
 
-class EspargosDemoPhasesOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
+class EspargosDemoPhasesOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSWiFiApplication):
     updatePhases = PyQt6.QtCore.pyqtSignal(float, list)
     maxAgeChanged = PyQt6.QtCore.pyqtSignal()
     shiftPeakChanged = PyQt6.QtCore.pyqtSignal()

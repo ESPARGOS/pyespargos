@@ -91,11 +91,13 @@ class ReferenceControllerTests(unittest.TestCase):
         self.assertFalse(controller.referenceBusy)
 
     def test_iq_demo_selects_roles_before_creating_receiver(self):
-        from demos.iq.common.application import ESPARGOSIQApplication
+        from demos.iq.common.application import IQCaptureApplication
 
         calls = []
 
         class Owner:
+            boards = [SimpleNamespace(api_version=(4, 0), host="array")]
+
             def configure(self, **config):
                 calls.append(config)
 
@@ -106,7 +108,7 @@ class ReferenceControllerTests(unittest.TestCase):
 
         self_test = self
         receiver = object()
-        self.assertIs(ESPARGOSIQApplication._create_receiver(None, Owner()), receiver)
+        self.assertIs(IQCaptureApplication._create_receiver(IQCaptureApplication, Owner()), receiver)
 
     def test_manual_noise_uses_canonical_reference_api(self):
         from demos.iq.common.application import IQController

@@ -19,11 +19,13 @@ class _StreamFilter(CSIBacklogFilter):
         return measurement is not None and measurement.coefficients.shape[-2] >= self.number
 
 
-class WiFiIQApplication(CSIApplication):
+class ESPARGOSWiFiIQApplication(CSIApplication):
     """Configure a WiFi IQ receiver and expose its controls to the RX drawer."""
 
     CSI_FORMATS = ("lltf", "dsss")
     CSI_DEFAULT_CONFIG = {**CSIApplication.CSI_DEFAULT_CONFIG, "space_time_stream": 0}
+
+    CONTROLLER_MODE = SENSOR_MODE = "wifi_iq"
 
     @staticmethod
     def adc_normalized_channel(csi):
@@ -110,7 +112,7 @@ class WiFiIQApplication(CSIApplication):
             raise RuntimeError("Build the packet decoders with this Python interpreter: " f"{sys.executable} -m pip install -e . (from the pyespargos checkout)") from exc
         if len(owner.boards) != 1:
             raise ValueError("The WiFi IQ drawer controls one receiving board")
-        owner.configure(mode="wifi_iq")
+        self.request_mode(owner)
         receiver = owner.wifi_iq
         receiver.configure_buffering(BufferPolicy(capacity=256, max_age=0.4, batch_size=32))
         self.controls = WiFiIQControls(owner, self)

@@ -8,7 +8,7 @@ import numpy as np
 from PyQt6 import QtCore, QtCharts
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from demos.ble.common.application import BLEMeasurementApplication
+from demos.ble.common.measurement import BLEMeasurementApplication
 
 
 class BLEChannelApplication(BLEMeasurementApplication):

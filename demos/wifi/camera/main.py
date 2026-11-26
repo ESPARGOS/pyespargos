@@ -9,10 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from PyQt6 import QtCore
 from espargos.csi_processing import scale_csi_by_reported_gain
 from demos.wifi.camera.backend import CSICamera, run_camera
-from demos.wifi.common.application import ESPARGOSCSIApplication
+from demos.wifi.common.application import ESPARGOSWiFiApplication
 
 
-class CSICameraDemo(CSICamera, ESPARGOSCSIApplication):
+class CSICameraDemo(CSICamera, ESPARGOSWiFiApplication):
     qml_file = Path(__file__).with_name("Main.qml").resolve()
     level_fields = ("rssi", "rx_gain", "fft_gain")
     power_unit = "dBm"

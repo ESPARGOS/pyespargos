@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[3]))
 
-from demos.wifi.common.application import ESPARGOSCSIApplication, CSIBacklogMixin, SingleCSIFormatMixin
+from demos.wifi.common.application import ESPARGOSWiFiApplication, CSIBacklogMixin, SingleCSIFormatMixin
 
 import numpy as np
 import espargos
@@ -16,7 +16,7 @@ import time
 import PyQt6.QtCore
 
 
-class EspargosDemoTDOAOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
+class EspargosDemoTDOAOverTime(CSIBacklogMixin, SingleCSIFormatMixin, ESPARGOSWiFiApplication):
     updateTDOAs = PyQt6.QtCore.pyqtSignal(float, list)
     maxAgeChanged = PyQt6.QtCore.pyqtSignal()
     averageChanged = PyQt6.QtCore.pyqtSignal()

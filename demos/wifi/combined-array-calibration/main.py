@@ -13,12 +13,12 @@ import espargos
 import PyQt6.QtCharts
 import PyQt6.QtCore
 
-from demos.wifi.common.application import ESPARGOSCSIApplication, SingleCSIFormatMixin
+from demos.wifi.common.application import ESPARGOSWiFiApplication, SingleCSIFormatMixin
 from demos.common.application import CombinedArrayMixin
 from demos.common.config_manager import ConfigManager
 
 
-class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSCSIApplication):
+class EspargosDemoCombinedArrayCalibration(CombinedArrayMixin, SingleCSIFormatMixin, ESPARGOSWiFiApplication):
     DEFAULT_CONFIG = {
         "color_by_sensor_index": False,
         "update_rate": 0.01,

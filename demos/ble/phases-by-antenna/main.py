@@ -7,7 +7,7 @@ import numpy as np
 from PyQt6 import QtCore
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from demos.ble.common.application import BLEMeasurementApplication
+from demos.ble.common.measurement import BLEMeasurementApplication
 from demos.common.application import CombinedArrayMixin
 from demos.common.phase_arrays import phase_arrays
 
@@ -21,12 +21,6 @@ class BLEPhaseApplication(CombinedArrayMixin, BLEMeasurementApplication):
     def __init__(self, argv):
         self._drawn = None
         super().__init__(argv)
-
-    def _open_pool(self):
-        self._prepare_pool_init({})
-        if len(self.pool.hosts) != 1:
-            raise ValueError("BLE phase measurements currently support one board, including rotated layouts")
-        return self.pool
 
     def _connected(self):
         self.layoutChanged.emit()

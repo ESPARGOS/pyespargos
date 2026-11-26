@@ -5,7 +5,7 @@ import sys
 
 sys.path.append(str(pathlib.Path(__file__).absolute().parents[3]))
 
-from demos.wifi.common.application import ESPARGOSCSIApplication
+from demos.wifi.common.application import ESPARGOSWiFiApplication
 
 import numpy as np
 import espargos
@@ -16,7 +16,7 @@ import threading
 import PyQt6.QtCore
 
 
-class EspargosDemoSpeedtest(ESPARGOSCSIApplication):
+class EspargosDemoSpeedtest(ESPARGOSWiFiApplication):
     throughputChanged = PyQt6.QtCore.pyqtSignal()
     minAntennasChanged = PyQt6.QtCore.pyqtSignal()
 

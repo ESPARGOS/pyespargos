@@ -13,7 +13,8 @@ from PyQt6 import QtCore
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from demos.common.latest_worker import LatestWorker
-from demos.common.application import CombinedArrayMixin, ESPARGOSApplication
+from demos.common.application import CombinedArrayMixin
+from demos.ble.common.application import ESPARGOSBluetoothApplication
 from demos.common.camera.view import CameraView
 from demos.common.camera.video import CameraUnavailableError
 from demos.common.camera.overlay import CameraOverlayModel
@@ -41,7 +42,7 @@ class BLEOverlay(CameraOverlayModel):
         self.publish_image("spatial", image)
 
 
-class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
+class BLECamera(CombinedArrayMixin, ESPARGOSBluetoothApplication):
     packetArrived = QtCore.pyqtSignal(dict)
     spectrumArrived = QtCore.pyqtSignal(str, object, float)
     stateChanged = QtCore.pyqtSignal()
@@ -130,12 +131,6 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
                 "bleController": self.controller,
             },
         )
-
-    def _open_pool(self):
-        self._prepare_pool_init({})
-        if len(self.pool.hosts) != 1:
-            raise ValueError("BLE camera currently supports one eight-sensor array")
-        return self.pool
 
     def _operation_started(self):
         self._measurement_after = time.monotonic()
@@ -227,7 +222,8 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
                 config,
                 amplitude=phase.amplitude[0] if phase.amplitude is not None else None,
                 orientations=self.antenna_orientations,
-                covariance=covariance, sample_counts=sample_counts,
+                covariance=covariance,
+                sample_counts=sample_counts,
             )
             power = render_spectrum(result, steering.shape[2:])
             directions, jones = result.directions.tolist(), render_polarization(result, steering.shape[2:])
@@ -273,7 +269,7 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
             for received, spectrum in self._spectra.values():
                 # Apply age to display opacity after cubic contrast, not to
                 # measurement power. No brightness ramp between fresh packets.
-                opacity = measurement_opacity(now-received, maximum_age)
+                opacity = measurement_opacity(now - received, maximum_age)
                 image += spectrum_intensity(spectrum) * opacity
         self._directions = {key: value for key, value in self._directions.items() if key in self._spectra}
         directions, labels = [], []
@@ -285,11 +281,11 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
             directions.extend(paths)
             labels.extend([key.split(":", 1)[1]] * len(paths))
             polarization = self._polarizations.get(key)
-            if coherency is not None and polarization is not None and now-polarization[0] < float(self.appconfig.get("beamformer", "backlog_age")):
+            if coherency is not None and polarization is not None and now - polarization[0] < float(self.appconfig.get("beamformer", "backlog_age")):
                 jones = polarization[1]
                 polarized_sources.append(jones)
                 received, power = self._spectra[key]
-                weight = power * measurement_opacity(now-received, maximum_age)
+                weight = power * measurement_opacity(now - received, maximum_age)
                 coherency += weight[..., None, None] * jones[..., :, None] * jones.conj()[..., None, :]
         self._polarizations = {key: value for key, value in self._polarizations.items() if key in self._spectra}
         self.overlay.publish_markers(directions, labels=labels)
@@ -305,7 +301,7 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
             # Match the WiFi overlay: weak beams have smaller ellipses.
             power = np.trace(coherency, axis1=-2, axis2=-1).real
             if not self.appconfig.get("beamformer", "normalize_polarization"):
-                dominant = dominant * np.sqrt(power / max(float(power.max()), 1e-30))[...,None]
+                dominant = dominant * np.sqrt(power / max(float(power.max()), 1e-30))[..., None]
             self.overlay.publish_polarization(dominant[..., 1], dominant[..., 0])
         self.overlay.publish_spatial_intensity(image)
 
@@ -315,11 +311,7 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
 
     def exec(self):
         self.camera_view.start()
-        self.controller.start(self._open_pool)
-        try:
-            return super().exec()
-        finally:
-            self.onAboutToQuit()
+        return super().exec()
 
     def onAboutToQuit(self):
         if getattr(self, "_closing", True):

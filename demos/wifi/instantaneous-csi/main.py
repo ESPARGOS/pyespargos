@@ -6,11 +6,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import numpy as np
 from demos.wifi.common.instantaneous_csi import InstantaneousCSI
-from demos.wifi.common.application import ESPARGOSCSIApplication
+from demos.wifi.common.application import ESPARGOSWiFiApplication
 from espargos.csi_processing import scale_csi_by_reported_gain
 
 
-class EspargosDemoInstantaneousCSI(InstantaneousCSI, ESPARGOSCSIApplication):
+class EspargosDemoInstantaneousCSI(InstantaneousCSI, ESPARGOSWiFiApplication):
     qml_file = Path(__file__).with_name("Main.qml").resolve()
     level_fields = ("rx_gain", "fft_gain", "lltf_8bit_mode")
 
