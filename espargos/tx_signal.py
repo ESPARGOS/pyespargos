@@ -220,8 +220,10 @@ class TXSignals:
                     if assigned:
                         raise ValueError(f"{antenna}: sensor must be in IQ TX mode")
                     continue
-                if len(self._assigned_to(antenna, loops_only=True)) > 4:
+                if len(assigned) > 4:
                     raise ValueError(f"{antenna}: at most four signals can contribute to one sensor")
+                if any(isinstance(signal.waveform, Stream) for signal in assigned[1:]):
+                    raise ValueError(f"{antenna}: only the first assigned signal can use Stream")
                 groups.setdefault(assigned, []).append(a)
             board_plan = []
             for assigned, antennas in groups.items():

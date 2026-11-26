@@ -199,9 +199,10 @@ You can change a beam’s direction or amplitude without uploading its waveform 
 
 We can add several signals with different waveforms and directions. The
 library does not divide amplitudes by the number of signals. Each sensor
-supports up to four contributions, and the sum of their amplitude-weight
-magnitudes must not exceed one. Requests exceeding these limits raise an
-error rather than silently rescaling the signals.
+supports up to four contributions, including the optional live stream.
+Only the first signal assigned to a sensor can use ``Stream``.
+The sum of the amplitude-weight magnitudes must not exceed one. The library
+raises an error if either limit is exceeded.
 
 Beamspace steering across boards requires their antenna positions, a shared
 clock and reference distribution. For a combined aperture, load its layout::

@@ -99,6 +99,25 @@ class SignalTests(unittest.TestCase):
             self.assertEqual(writer.call_args.kwargs["amplitude"], .25)
             self.assertIs(writer.call_args.kwargs["steering"], direction)
 
+    def test_stream_slot_and_capacity_are_per_sensor(self):
+        tx = transmitter()
+        tx.states[0]["sample_rate_hz"] = 16_000_000
+        a, b = Antenna("board0", 0), Antenna("board0", 1)
+        with tx.update():
+            tx.signals.add(waveform=CW(), antennas=[a])
+            live = tx.signals.add(waveform=Stream(), antennas=[b])
+            for _ in range(3):
+                tx.signals.add(waveform=CW(), antennas=[b])
+
+        tx._apply_signals.reset_mock()
+        with self.assertRaisesRegex(ValueError, "at most four"):
+            tx.signals.add(waveform=CW(), antennas=[b])
+        with self.assertRaisesRegex(ValueError, "first assigned signal"):
+            live.update(antennas=[a, b])
+        self.assertEqual(live.antennas, (b,))
+        self.assertEqual(len(tx.signals), 5)
+        tx._apply_signals.assert_not_called()
+
     def test_steering_changes_preserve_source(self):
         tx = transmitter()
         source = IQSamples(np.ones(1024, complex) * 0.5)

@@ -19,8 +19,10 @@ controller, which forwards them to the sensors ahead of playback.
    computer can stream up to 50 kSa/s of fresh samples. The two digital modes
    send symbols or bits and build the waveform on the sensors.
 
-One beam per transmit scene can use a live Stream source. Other beams can
-play stored waveforms at the same time, subject to the mixing limits below.
+One beam per transmit scene can use a live ``Stream`` source. On each sensor
+it uses beam 1, leaving up to three beams for stored waveforms. In Python,
+add the stream before any stored signal that shares an antenna with it.
+Signals on disjoint antennas can be added in either order.
 Both live and stored beams support scheduled direction changes.
 See :doc:`iq-beam-steering`.
 
@@ -86,7 +88,7 @@ Stream a file from the command line
 -----------------------------------
 
 In the controller web interface, open **IQ Transmission**, select 16 MSa/s
-playback, choose **Stream** as the beam source and calibrate the transmitters.
+playback, choose **Stream** as the source for **Beam 1** and calibrate the transmitters.
 On **TX Streaming**, select **Raw IQ** and **8 kSa/s** for the test file above.
 Run the client on the host computer::
 
