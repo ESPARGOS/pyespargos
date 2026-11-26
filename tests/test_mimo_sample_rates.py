@@ -101,6 +101,14 @@ class SampleRateTests(unittest.TestCase):
                 self.assertEqual(p.missing, 0)
                 self.assertFalse(p.push(frame, p.last_index))
 
+    def test_active_window_and_emitted_spacing_at_each_rate(self):
+        cases = [(80e6, 128, 1792), (40e6, 224, 896), (20e6, 224, 448), (10e6, 112, 224), (8e6, 90, 180), (4e6, 90, 90)]
+        for rate, active, spacing in cases:
+            with self.subTest(rate=rate):
+                sampling = radar.Sampling(rate)
+                self.assertEqual(sampling.accumulation_chunks, active)
+                self.assertEqual(sampling.interval_chunks, spacing)
+
     def test_unsupported_rate_is_rejected(self):
         with self.assertRaises(ValueError):
             radar.MIMOProcessor(POSITIONS, sample_rate=12e6)

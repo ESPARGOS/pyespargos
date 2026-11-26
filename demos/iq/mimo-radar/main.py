@@ -393,7 +393,7 @@ class MIMORadar(ESPARGOSIQApplication):
         status("Measuring TX–RX timing through Reference…")
         self._timing = self._pool.calibrate_tx_rx_delay()
 
-        self._pool.iq.apply_config({"trigger": {"mode": "accumulate", "vector_chunks": 1, "interval_chunks": self._processor.interval_chunks}})
+        self._pool.iq.apply_config({"trigger": {"mode": "accumulate", "vector_chunks": 1, "interval_chunks": self._sampling.accumulation_chunks}})
         self._callback = self._pool.iq.add_accumulation_callback(self._capture)
         self._set_running(True)
 
@@ -432,7 +432,7 @@ class MIMORadar(ESPARGOSIQApplication):
                 index, channels = self._next_frame(timeout=max(0, deadline - time.monotonic()))
                 captures.setdefault(index, channels)
         except queue.Empty as error:
-            raise RuntimeError("Timed out measuring the range response") from error
+            raise RuntimeError(f"Timed out measuring the range response: received {len(captures)}/32 usable windows from all {p.receiver_count} receivers") from error
 
         self._check_transmitters()
         p.set_range_response(np.mean(list(captures.values()), axis=0))

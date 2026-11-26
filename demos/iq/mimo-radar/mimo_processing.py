@@ -17,17 +17,18 @@ from scipy import fft
 from scipy.signal import resample
 
 from espargos.waveforms import IQSamples
-from espargos.iq_packet import DECIM_TO_FS
 
 SAMPLES = 256
 EDGE_BINS = 8  # Leave 2.5 MHz at each band edge at 80 MSa/s.
 RATE = 80e6
 C = 299792458.0
-INTERVAL = 1792  # Stay below the firmware's 180 accumulated records/s limit.
 DOPPLER_WINDOWS = 72
 DOPPLER_OVERSAMPLING = 4
 COUNTER_MODULUS = 1 << 24  # Counter units are 256 received samples.
-SAMPLE_RATES = tuple(sorted(set(DECIM_TO_FS.values()), reverse=True))
+# Active window lengths tested on the 30-receiver array. Short windows let
+# the sensor finish the sums and send the record before the next exposure.
+ACCUMULATION_CHUNKS = {80e6: 128, 40e6: 224, 20e6: 224, 10e6: 112, 8e6: 90, 4e6: 90}
+SAMPLE_RATES = tuple(ACCUMULATION_CHUNKS)
 
 
 @dataclass(frozen=True)
@@ -62,9 +63,16 @@ class Sampling:
         return SAMPLES * self.sample_step // self.pilot_period
 
     @property
+    def accumulation_chunks(self):
+        return ACCUMULATION_CHUNKS[self.rate]
+
+    @property
     def interval_chunks(self):
-        # Keep the capture cadence near 174 Hz at every RX rate.
-        return max(64, round(INTERVAL * self.rate / RATE))
+        # The sensor admits every Nth window to cap one-lane output at
+        # 180 records/s. Doppler uses the distance between admitted windows.
+        offered = int(self.rate) // SAMPLES // self.accumulation_chunks
+        stride = max(1, math.ceil(offered / 180))
+        return stride * self.accumulation_chunks
 
     @property
     def dt(self):
@@ -87,6 +95,9 @@ class Sampling:
 
     def history(self, seconds):
         return round(seconds / self.dt)
+
+
+INTERVAL = Sampling().interval_chunks
 
 
 def corner_transmitters(positions):

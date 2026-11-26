@@ -25,6 +25,13 @@ To use this demo, enable transmit authorization in each controller's web interfa
 
 The demo calibrates at startup and mutes transmission when closed.
 
+The radar accumulates short bursts of pilot repetitions. At the default
+80 MSa/s it requests 128-chunk windows. The sensors emit every 14th window,
+giving them time to finish each accumulation and send it over the array
+connection. The Doppler calculation uses the resulting 1792-chunk spacing.
+Every accepted window contains the same repetitions from every receiving
+antenna.
+
 All settings are available in the GUI and the YAML `app` section. Use `-o` to
 override them, and `--help` to list keys and defaults:
 

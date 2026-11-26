@@ -275,6 +275,9 @@ def test_radar_rejects_buffered_pre_start_windows_across_boards():
     cluster.config_generation[0, 0, 0] = 10
     MIMORadar._capture(s, cluster)
     assert s._captures.qsize() == 1 and s._coverage == 0.125
+    cluster.coverage_hashes[1] = 2
+    MIMORadar._capture(s, cluster)
+    assert s._captures.qsize() == 1
 
 
 def test_each_virtual_row_contributes_to_angle_map():
