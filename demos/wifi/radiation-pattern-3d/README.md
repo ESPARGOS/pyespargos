@@ -2,21 +2,17 @@
 
 ## Additional Requirements
 
-This demo requires `PyQt6-3D` for QtQuick3D support:
+Install the [standard demo dependencies](../../../README.md#installation). PyQt6 provides the `PyQt6.QtQuick3D` binding used to draw the radiation pattern. To display the antenna array, the demo loads `array-3dmodel.glb` with the `QtQuick3D.AssetUtils` QML module and Qt Quick 3D’s Assimp asset importer. [Qt RuntimeLoader documentation](https://doc.qt.io/qt-6/qml-qtquick3d-assetutils-runtimeloader.html)
 
-```bash
-pip install PyQt6-3D
-```
-
-For loading the antenna array 3D model (`.glb`), the `assimp` library must be installed on the system:
+The Linux PyPI wheels include the QML module and importer. If you use distribution-provided Qt instead, install the importer for that Qt installation:
 
 ```bash
 # Debian / Ubuntu
-sudo apt install libassimp-dev
+sudo apt install qml6-module-quick3d-assetutils qt6-quick3d-assetimporters-plugin
 
 # Fedora
-sudo dnf install assimp
+sudo dnf install qt6-qtquick3d
 
 # Arch Linux
-sudo pacman -S assimp
+sudo pacman -S qt6-quick3d
 ```

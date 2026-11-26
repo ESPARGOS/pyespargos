@@ -472,10 +472,17 @@ class CombinedArrayMixin:
         parser.add_argument(
             "-s",
             "--single-array",
-            type=str,
+            type=self._single_array_host,
+            metavar="HOST",
             default="",
             help="Array consists of a single ESPARGOS device in horizontal orientation, specify host address (IP or hostname) of device",
         )
+
+    @staticmethod
+    def _single_array_host(value):
+        if value.lower().endswith((".yml", ".yaml")) and not value.startswith("uart:"):
+            raise argparse.ArgumentTypeError(f"use -c {value} to load an array configuration")
+        return value
 
     def _process_args(self):
         super()._process_args()

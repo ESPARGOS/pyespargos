@@ -217,6 +217,8 @@ def _iq_rx(ctx, options):
             raise ValueError("Continuous downsampling requires Bluetooth with the 1.2 MHz filter")
         if ctx.snapshot.get("trigger", {}).get("mode") == "downsample" and (path != "bluetooth" or options.get("bandwidth_mhz", 1.2) != 1.2):
             settings["trigger"] = {"mode": "interval"}
+            if receive_sample_rate(ctx.snapshot | settings) != receive_sample_rate(ctx.snapshot):
+                invalidated.update(_identities(ctx))
     if "capture_path" in options:
         _board_wide(ctx)
         settings["capture_path"] = path
@@ -241,11 +243,6 @@ def _iq_rx(ctx, options):
             if bw != 0 and (bw != int(bw) or not 13 <= bw <= 54):
                 raise ValueError("WiFi filter bandwidth must be 0 or 13 to 54 MHz")
             settings["filter_bw_mhz"] = int(bw)
-        key = "bluetooth_filter_khz" if path == "bluetooth" else "filter_bw_mhz"
-        steps = ctx.snapshot.get("bluetooth_filter_steps_khz") if path == "bluetooth" else None
-        applied = min(steps, key=lambda step: (abs(step - settings[key]), step)) if steps else settings[key]
-        if applied != ctx.snapshot.get(key):
-            invalidated.update(_identities(ctx))
     if "sample_rate_hz" in options:
         _board_wide(ctx)
         rates = {v: k for k, v in DECIM_TO_FS.items()}

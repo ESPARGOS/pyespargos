@@ -412,7 +412,8 @@ class WiFiIQReceiver(ClusterAssembler):
             p.clock_epoch,
             p.frequency_hz,
             p.generation,
-            p.rf_switch,
+            # R and L are simultaneous observations of the same over-air frame.
+            2 if p.rf_switch in (2, 3) else p.rf_switch,
             p.source_mac if identified else None,
             p.sequence_control if identified else 0,
             p.length,
@@ -522,8 +523,10 @@ class WiFiIQReceiver(ClusterAssembler):
             after = self._apply_config(board_index, settings)
             correction = self._corrections.get(board_index)
             if correction is not None:
-                same_path = all(before.get(k) == after.get(k) for k in ("channel", "filter_bw_mhz"))
-                if correction.generation == before["generation"] and same_path and after["gain_mode"] in ("manual", "auto") and before["gain_mode"] != "expert":
+                same_channel = before.get("channel") == after.get("channel")
+                same_gain = all(before.get(k) == after.get(k) for k in ("gain_mode", "rx_gain", "expert_gain_words"))
+                compatible_gain = same_gain or (after["gain_mode"] in ("manual", "auto") and before["gain_mode"] != "expert")
+                if correction.generation == before["generation"] and same_channel and compatible_gain:
                     updated = copy(correction)
                     updated.generation = after["generation"]
                     self._corrections[board_index] = updated

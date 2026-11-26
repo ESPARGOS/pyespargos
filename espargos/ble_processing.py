@@ -62,21 +62,19 @@ _INTERPOLATION_OFFSETS = np.arange(-7, 9)
 _INTERPOLATION_WINDOW = np.kaiser(16, 6)
 
 
-def _interpolate(z, t):
+def _interpolate(z, start, length):
     """Band-limited fractional delay for the filtered BLE waveform.
 
     Cubic interpolation biases fractional timing depending on the sample phase.
     At a 2 MHz IF even a small delay bias becomes a visible spatial phase error.
     All alignment windows are contiguous, so one short FIR evaluates the delay.
     """
-    n = np.floor(t).astype(int)
-    fraction = float(t[0] - n[0])
+    first = int(np.floor(start))
+    fraction = start - first
     offsets = _INTERPOLATION_OFFSETS
     weights = np.sinc(offsets - fraction) * _INTERPOLATION_WINDOW
     weights /= weights.sum()
-    if np.all(np.diff(n) == 1):
-        return np.correlate(z[n[0]-7:n[-1]+9], weights, mode="valid")
-    return np.sum(z[n[:, None] + offsets] * weights, axis=1)
+    return np.correlate(z[first-7:first+length+8], weights, mode="valid")
 
 
 def align_waveforms(reference, other, recovery=False):
@@ -95,10 +93,10 @@ def align_waveforms(reference, other, recovery=False):
     x_power = np.vdot(x, x).real
 
     def fit(delay, section=slice(None)):
-        t = indices[section] + delay
-        if t[0] < 8 or t[-1] >= len(other.samples) - 9:
+        interval = indices[section]
+        if interval[0] + delay < 8 or interval[-1] + delay >= len(other.samples) - 9:
             return 0.0, 0.0
-        y = _interpolate(other.samples, t)
+        y = _interpolate(other.samples, interval[0] + delay, len(interval))
         a = x[section]
         product = np.vdot(a, y)
         norm = np.sqrt((x_power if section == slice(None) else np.vdot(a, a).real) * np.vdot(y, y).real)

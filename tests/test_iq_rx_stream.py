@@ -260,7 +260,7 @@ def test_pilot_rejects_clipping_before_frequency_estimation(monkeypatch):
 
 
 @pytest.mark.parametrize("rejection", [400, 409, 500, None])
-def test_partial_filter_change_preserves_only_definitively_rejected_boards(rejection, request):
+def test_partial_path_change_preserves_only_definitively_rejected_boards(rejection, request):
     from unittest.mock import Mock
     from espargos.board import EspargosHTTPStatusError
     from espargos.calibration import Antenna
@@ -276,6 +276,10 @@ def test_partial_filter_change_preserves_only_definitively_rejected_boards(rejec
     receiver._calibration = SimpleNamespace(phase_offsets=np.zeros((2, 2, 4)))
     with pytest.raises(RuntimeError, match="second"):
         receiver.apply_config({"bluetooth_filter_khz": 8300})
+    models.without.assert_not_called()
+    assert np.isfinite(receiver._calibration.phase_offsets).all()
+    with pytest.raises(RuntimeError, match="second"):
+        receiver.apply_config({"capture_path": "wifi"})
     changed_hosts = ["first"] if rejection in (400, 409) else ["first", "second"]
     models.without.assert_called_once_with({Antenna(host, a) for host in changed_hosts for a in range(8)})
     assert np.isnan(receiver._calibration.phase_offsets[0]).all()

@@ -55,6 +55,9 @@ class BLEController(QtCore.QObject):
             result, error = None, ""
             try:
                 result = action()
+            except (ConnectionError, TimeoutError) as exception:
+                error = str(exception)
+                self.logger.error("BLE receiver operation failed: %s", error, exc_info=self.logger.isEnabledFor(logging.DEBUG))
             except Exception as exception:
                 self.logger.exception("BLE receiver operation failed")
                 error = str(exception)
@@ -156,7 +159,7 @@ class BLEController(QtCore.QObject):
         self.receiver.calibrate(board_index=self.board_index, reference_address=self._config.get("reference_address"))
 
     def report_error(self, message):
-        if not self._closed:
+        if not self._closed and message != self._status:
             self._status = message
             self.stateChanged.emit()
 

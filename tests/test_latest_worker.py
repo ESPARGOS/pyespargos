@@ -31,6 +31,32 @@ class LatestWorkerTests(unittest.TestCase):
             worker.close()
         self.assertEqual(seen, ["first", "newest", "other"])
 
+    def test_burst_keeps_latest_n_per_advertiser_and_interleaves_sources(self):
+        started, release, finished = (threading.Event() for _ in range(3))
+        seen = []
+
+        def process(value):
+            seen.append(value)
+            if value == "first":
+                started.set()
+                release.wait(2)
+            if len(seen) == 5:
+                finished.set()
+
+        worker = LatestWorker(process)
+        try:
+            worker.submit("a", "first")
+            self.assertTrue(started.wait(1))
+            for i in range(5):
+                worker.submit("a", i, keep=3)
+            worker.submit("b", "other", keep=3)
+            release.set()
+            self.assertTrue(finished.wait(1))
+        finally:
+            release.set()
+            worker.close()
+        self.assertEqual(seen, ["first", 2, "other", 3, 4])
+
     def test_clear_discards_pending_measurements(self):
         started, release = threading.Event(), threading.Event()
         seen = []

@@ -86,6 +86,8 @@ If you want to run the demo applications:
 pip install pyqt6 pyqt6-charts matplotlib
 ```
 
+The [3D radiation pattern demo](demos/wifi/radiation-pattern-3d/README.md) also uses Qt Quick 3D and its Assimp asset importer to load the antenna model. The demo README lists the packages for system Qt installations.
+
 Demos such as `camera` and `azimuth-delay` use shaders, which are shipped in pre-compiled form (`.qsb` files) in this repository, so normally no additional steps are required. Only if these demos do not work should you re-compile the shaders yourself using the `compile_shader.sh` scripts, which requires the Qt Shader Baker (`qsb`):
 
 ```bash
@@ -156,6 +158,8 @@ If you want to run the demo applications:
 pip install pyqt6 pyqt6-charts matplotlib
 ```
 
+The [3D radiation pattern demo](demos/wifi/radiation-pattern-3d/README.md) also uses Qt Quick 3D and its Assimp asset importer to load the antenna model. The demo README lists the packages for system Qt installations.
+
 Demos such as `camera` and `azimuth-delay` use shaders, which are shipped in pre-compiled form (`.qsb` files) in this repository, so normally no additional steps are required. Only if these demos do not work should you re-compile the shaders yourself using the `.bat` scripts, which requires Qt 6 so that `qsb.exe` (Qt Shader Baker) is available. The simplest option is to use the Qt Online Installer and install a desktop Qt 6 kit.
 
 > **Note:** The shader batch scripts currently default to `C:\Qt\6.10.2\mingw_64\bin\qsb.exe`. If your Qt installation is in a different location, either update the `QSB` path in the `.bat` scripts or add the Qt `bin` directory to `PATH`.
@@ -220,6 +224,8 @@ If you want to run the demo applications:
 ```bash
 pip install pyqt6 pyqt6-charts matplotlib
 ```
+
+The [3D radiation pattern demo](demos/wifi/radiation-pattern-3d/README.md) also uses Qt Quick 3D and its Assimp asset importer to load the antenna model. The demo README lists the packages for system Qt installations.
 
 Demos such as `camera` and `azimuth-delay` use shaders, which are shipped in pre-compiled form (`.qsb` files) in this repository, so normally no additional steps are required. Only if these demos do not work should you re-compile the shaders yourself using the `compile_shader.sh` scripts, which requires the Qt Shader Baker (`qsb`). One option is:
 

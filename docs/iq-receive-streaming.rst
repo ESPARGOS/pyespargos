@@ -153,9 +153,9 @@ Signal analyzer
 ---------------
 
 From the SDK checkout, run the signal analyzer to inspect the time trace,
-spectrum or waterfall. Use ``--stream`` by itself for 16 kSa/s, or give the
-rate in samples per second.
+spectrum or waterfall. In the RX controls, select **Digital downsampling** as the
+trigger mode and choose the **Output rate**.
 
 .. code-block:: console
 
-   $ python demos/iq/signal-analyzer/main.py myspargel.local --stream 16000
+   $ python demos/iq/signal-analyzer/main.py myspargel.local

@@ -593,7 +593,7 @@ def mask_csi_by_feed(csi_data: np.ndarray, rf_switch_states: np.ndarray, desired
     return csi_data * mask[..., np.newaxis] * datapoint_count / mask_count[np.newaxis, ..., np.newaxis]
 
 
-def separate_feeds(csi_data: np.ndarray, rf_switch_state: np.ndarray):
+def separate_feeds(csi_data: np.ndarray, rf_switch_state: np.ndarray, *, allow_partial=False):
     """
     Separate the CSI data by antenna feeds (R/L) based on the RF switch states.
     Also takes care of scaling the CSI data for each feed to account for the fact that only a fraction of the datapoints are kept for each feed, so that the overall power level is preserved.
@@ -602,8 +602,32 @@ def separate_feeds(csi_data: np.ndarray, rf_switch_state: np.ndarray):
     :param csi_data: The CSI data to separate. Complex-valued NumPy array with shape (datapoints, ..., subcarriers), usually (datapoints, arrays, rows, columns, subcarriers).
     :param rf_switch_state: The RF switch states for each antenna and datapoint. NumPy array with shape (datapoints, ...), usually (datapoints, arrays, rows, columns).
 
+    :param allow_partial: Combine antennas with both feeds in a connected set of observations and zero the other antennas.
+
     :return: The separated CSI data. Complex-valued NumPy array with shape (datapoints, ..., subcarriers, 2), where the last dimension corresponds to the R/L feeds. Returns None if no datapoints have the desired RF switch state for any antenna.
     """
+    if allow_partial:
+        # A missing feed removes that antenna from both H/V apertures. A
+        # mixed-feed packet is needed to tie the two packet-phase references.
+        present = np.any(np.isfinite(csi_data) & (csi_data != 0), axis=-1)
+        routes = (rf_switch_state[..., None] == (2, 3)) & present[..., None]
+        counts = routes.sum(axis=0)
+        paired = np.all(counts > 0, axis=-1)
+        routes &= paired[..., None]
+        mixed = routes.reshape(len(routes), -1, 2).any(axis=1).all(axis=1)
+        if np.count_nonzero(paired) < 2 or not mixed.any():
+            return None
+        support = routes.reshape(len(routes), -1)
+        observed = support.any(axis=0)
+        connected = support[np.argmax(support.sum(axis=1))].copy()
+        while not np.array_equal(connected, observed):
+            expanded = support[np.any(support & connected, axis=1)].any(axis=0)
+            if np.array_equal(expanded, connected):
+                return None
+            connected = expanded
+        weights = routes * (len(routes) / np.maximum(counts, 1))
+        return np.where(routes[..., None, :], csi_data[..., None] * weights[..., None, :], 0)
+
     csi_r = mask_csi_by_feed(csi_data, rf_switch_state, sensor.RFSwitchState.SENSOR_RFSWITCH_ANTENNA_R)
     csi_l = mask_csi_by_feed(csi_data, rf_switch_state, sensor.RFSwitchState.SENSOR_RFSWITCH_ANTENNA_L)
 

@@ -722,13 +722,11 @@ class IQReceiver(ClusterAssembler):
             shared = {
                 "capture_path",
                 "bluetooth_sample_rate_hz",
-                "bluetooth_filter_khz",
                 "bluetooth_filter_mode",
                 "adc_decimation",
                 "adc_source_sel",
                 "bw_mhz",
                 "second_chan",
-                "filter_bw_mhz",
                 "loopback",
                 "tx_tone_enable",
                 "tx_tone0_step",
@@ -741,15 +739,10 @@ class IQReceiver(ClusterAssembler):
                 for board in self.boards:
                     old = board.iq.get_config()
                     updated = old | config
-                    if "bluetooth_filter_khz" in config and old.get("bluetooth_filter_steps_khz"):
-                        khz = config["bluetooth_filter_khz"]
-                        updated["bluetooth_filter_khz"] = min(old["bluetooth_filter_steps_khz"], key=lambda step: (abs(step - khz), step))
                     if updated.get("capture_path") == "bluetooth":
-                        active_fields = {"capture_path", "bluetooth_sample_rate_hz", "bluetooth_filter_khz", "bluetooth_filter_mode"}
+                        active_fields = {"capture_path", "bluetooth_sample_rate_hz", "bluetooth_filter_mode"}
                     else:
-                        active_fields = shared - {"bluetooth_sample_rate_hz", "bluetooth_filter_khz", "bluetooth_filter_mode"}
-                    if 0 < updated.get("filter_bw_mhz", 0) < 13:
-                        updated["filter_bw_mhz"] = 13
+                        active_fields = shared - {"bluetooth_sample_rate_hz", "bluetooth_filter_mode"}
                     if "trigger" in config and receive_sample_rate(old) != receive_sample_rate(updated) or any(updated[k] != old.get(k) for k in active_fields.intersection(config)):
                         invalid.update(Antenna(board.host, a) for a, mode in enumerate(old["modes"]) if mode == "iq_rx")
                     modes = old["modes"]

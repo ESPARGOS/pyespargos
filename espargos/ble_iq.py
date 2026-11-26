@@ -40,14 +40,17 @@ class BLEPacketIQ:
         """
         from dataclasses import replace
         samples = np.full_like(self.samples, np.nan+1j*np.nan)
+        corrections = {}
         for position in np.ndindex(self.samples.shape[:-1]):
             indices = np.flatnonzero(np.isfinite(self.samples[position]))
             if not len(indices):
                 continue
             start, end = indices[0], indices[-1]+1
             nfft = 1 << int(end-start+32).bit_length()
-            frequencies = self.frequency - np.fft.fftfreq(nfft, 1/self.sample_rate)
-            correction = model.phase_time_correction(frequencies)[position]
+            if nfft not in corrections:
+                frequencies = self.frequency - np.fft.fftfreq(nfft, 1/self.sample_rate)
+                corrections[nfft] = model.phase_time_correction(frequencies)
+            correction = corrections[nfft][position]
             padded = np.pad(self.samples[position][start:end], (16, nfft-(end-start)-16))
             values = np.fft.ifft(np.fft.fft(padded) * correction)[16:16+end-start]
             samples[position][start:end] = values
@@ -132,42 +135,59 @@ def align_packet_iq(cluster):
     length = packet.prefix[1]
     waves = {a: waveform(p, packet.phy, length, coding=getattr(packet, "coding", 0)) for a in range(8)
              if (p := cluster.get_packet(b, a)) is not None and p.rx_gain is not None}
+    usable = [a for a in anchors if waves[a].end > waves[a].begin]
+    if usable:
+        anchor = usable[0]
     reference = waves[anchor]
     if reference.end <= reference.begin:
         return BLEPacketIQ(np.full((*cluster.shape, 0), np.nan+1j*np.nan, np.complex64),
                            reference.sps*1e6, channel_frequency(packet.channel), reference.if_hz,
                            np.full(cluster.shape, np.nan), np.full(cluster.shape, np.nan),
                            b, cluster.get_sensor_position(b, anchor), 2e6 if packet.phy == 1 else 1e6)
+
+    def fit_to(anchor):
+        reference = waves[anchor]
+        fits = {anchor: (0., 1.)}
+        for antenna, wave in waves.items():
+            if antenna != anchor:
+                fit = align_waveforms(reference, wave, recovery=not cluster.get_packet(b, antenna).crc_valid)
+                if fit is not None:
+                    fits[antenna] = (fit.delay, fit.coherence)
+        return fits
+
+    fits = fit_to(anchor)
+    if len(fits) == 1 and len(usable) >= 3:
+        # Occasionally the first sensor captures an unrelated burst in its IQ
+        # window. Try one qualified alternative near the typical packet end.
+        candidates = [a for a in usable if a != anchor]
+        median_end = np.median([waves[a].end for a in candidates])
+        backup = min(candidates, key=lambda a: abs(waves[a].end - median_end))
+        alternative = fit_to(backup)
+        if len(alternative) > 1:
+            anchor, fits = backup, alternative
+            reference = waves[anchor]
     delays = np.full(cluster.shape, np.nan)
     coherence = np.full(cluster.shape, np.nan)
-    fits = {}
-    for a, wave in waves.items():
-        p = cluster.get_packet(b, a)
-        fit = align_waveforms(reference, wave, recovery=not p.crc_valid) if a != anchor else None
-        if a != anchor and fit is None:
-            continue
-        delay, quality = (0., 1.) if a == anchor else (fit.delay, fit.coherence)
-        position = cluster.get_sensor_position(b, a)
-        delays[position], coherence[position] = delay, quality
-        fits[a] = delay
     # Union of usable intervals. Pairwise covariance uses each pair's actual
     # overlap, so a late trigger on one sensor does not trim every other sensor.
-    start = min(int(np.ceil(max(waves[a].begin, 8)-d)) for a, d in fits.items())
-    end = max(int(np.floor(min(waves[a].end, len(waves[a].samples)-9)-d)) for a, d in fits.items())
+    start = min(int(np.ceil(max(waves[a].begin, 8)-d)) for a, (d, _) in fits.items())
+    end = max(int(np.floor(min(waves[a].end, len(waves[a].samples)-9)-d)) for a, (d, _) in fits.items())
     grid = np.arange(start, end)
     samples = np.full((*cluster.shape, len(grid)), np.nan+1j*np.nan, np.complex64)
     rate = reference.sps * 1e6
-    for a, delay in fits.items():
+    for a, (delay, quality) in fits.items():
+        position = cluster.get_sensor_position(b, a)
+        delays[position], coherence[position] = delay, quality
         wave = waves[a]
         p = cluster.get_packet(b, a)
         t = grid + delay
         mask = (t >= max(wave.begin, 8)) & (t < min(wave.end, len(wave.samples)-9))
         if not mask.any():
             continue
-        aligned = _interpolate(wave.samples, t[mask])
+        aligned = _interpolate(wave.samples, t[mask][0], np.count_nonzero(mask))
         aligned *= np.exp(2j*np.pi*wave.if_hz/rate*delay)
         aligned = gain_phase_calibration.apply(aligned.conj(), p.rx_gain) * 10**(-p.rx_gain/20)
-        samples[cluster.get_sensor_position(b, a)][mask] = aligned
+        samples[position][mask] = aligned
     return BLEPacketIQ(samples, rate, channel_frequency(packet.channel), reference.if_hz,
                        delays, coherence, b, cluster.get_sensor_position(b, anchor), 2e6 if packet.phy == 1 else 1e6)
 
@@ -188,23 +208,30 @@ def channel_response(iq, nfft=128, *, correct_timing=True):
     auto = np.zeros((*shape, nfft))
     refpower = np.zeros((*shape, nfft))
     counts = np.zeros(shape, int)
+    full_window = np.hamming(nfft)
     for position in np.ndindex(shape):
         valid = np.isfinite(x[position]) & np.isfinite(reference)
         indices = np.flatnonzero(valid)
         if len(indices) < 32:
             continue
         # Both valid intervals are contiguous by construction.
-        for begin in range(indices[0], indices[-1]+1, nfft):
-            end = min(begin+nfft, indices[-1]+1)
-            if end-begin < 2:
-                continue
-            window = np.hamming(end-begin)
-            a = np.fft.fft(x[position][begin:end]*window, nfft)
-            r = np.fft.fft(reference[begin:end]*window, nfft)
-            cross[position] += a*r.conj()
-            auto[position] += abs(a)**2
-            refpower[position] += abs(r)**2
-            counts[position] += end-begin
+        start = indices[0]
+        length = indices[-1] - start + 1
+        full, tail = divmod(length, nfft)
+        if tail == 1:  # A single trailing sample cannot provide a spectrum.
+            length -= 1
+            tail = 0
+        segments = np.zeros((2, full + bool(tail), nfft), complex)
+        for windows, samples in zip(segments, (x[position], reference)):
+            windows.ravel()[:length] = samples[start:start + length]
+        segments[:, :full] *= full_window
+        if tail:
+            segments[:, -1, :tail] *= np.hamming(tail)
+        a, r = np.fft.fft(segments, axis=-1)
+        cross[position] = np.sum(a * r.conj(), axis=0)
+        auto[position] = np.sum(abs(a)**2, axis=0)
+        refpower[position] = np.sum(abs(r)**2, axis=0)
+        counts[position] = length
     offsets = -np.fft.fftshift(np.fft.fftfreq(nfft, 1/iq.sample_rate))[::-1]
     keep = abs(offsets) <= iq.bandwidth / 2
     cross, auto, refpower = (np.fft.fftshift(a, axes=-1)[..., ::-1][..., keep] for a in (cross, auto, refpower))

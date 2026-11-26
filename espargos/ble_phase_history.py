@@ -103,13 +103,16 @@ class BLEPhaseHistory:
                 weights = sample_counts * np.outer(valid, valid)
                 total += covariance * weights
                 counts += weights
+        # Per-antenna powers alone contain no direction information.
+        if not np.any(np.triu(counts, k=1)):
+            return None
         if require_complete and np.any(counts == 0):
             return None
         covariance = np.divide(total, counts, out=np.zeros_like(total), where=counts > 0)
         values, vectors = np.linalg.eigh(covariance)
         return (vectors * np.maximum(values, 0)) @ vectors.conj().T
 
-    def coherent_feeds(self):
+    def coherent_feeds(self, *, partial=False):
         """Reconstruct a common complex field over both antenna feeds.
 
         Each packet has an unknown common phase and amplitude. Mixed-feed
@@ -117,7 +120,8 @@ class BLEPhaseHistory:
         samples across packets. Disconnected coverage (including merely
         alternating whole-array R/L) cannot determine relative feed phase.
         Returns a flattened sensor-by-feed field, or None while coverage is
-        insufficient. Call with complex amplitudes, not unit phase vectors.
+        insufficient. Partial mode allows antennas missing a feed to be omitted
+        and returns zeros at their positions. Call with complex amplitudes.
         """
         observations = self._snapshot()
         if len(observations) < 2:
@@ -131,9 +135,18 @@ class BLEPhaseHistory:
             data[i, columns] = values[valid]
             mask[i, columns] = True
         counts = mask.sum(axis=0)
-        if np.any(counts < 2):
+        if partial:
+            # Use the same aperture for H and V. An antenna contributes only
+            # when both physical feeds were observed in this source's window.
+            paired = np.all(counts.reshape(n, 2) > 0, axis=1)
+            if paired.sum() < 2:
+                return None
+            columns = np.repeat(paired, 2)
+            mask, data = mask[:, columns], data[:, columns]
+        elif np.any(counts < 2):
             return None
-        connected = mask[0].copy()
+        seed = np.argmax(mask.sum(axis=1))
+        connected = mask[seed].copy()
         for _ in range(n * 2):
             expanded = connected | np.any(mask[np.any(mask & connected, axis=1)], axis=0)
             if np.array_equal(expanded, connected):
@@ -142,7 +155,7 @@ class BLEPhaseHistory:
         if not connected.all():
             return None
         # Alternating least squares removes each packet's common complex scale.
-        field = data[0].copy()
+        field = data[seed].copy()
         for _ in range(24):
             denominator = mask @ (abs(field) ** 2)
             scales = (data @ field.conj()) / np.maximum(denominator, 1e-30)
@@ -156,6 +169,10 @@ class BLEPhaseHistory:
         if error > .15 * np.sum(abs(data) ** 2):
             return None
         field *= np.exp(-1j * np.angle(field[np.argmax(abs(field))]))
+        if partial:
+            aperture = np.zeros((n, 2), complex)
+            aperture[paired] = field.reshape(-1, 2)
+            return aperture
         return field.reshape(n, 2)
 
     def polarized_covariance(self, feeds, inverse):

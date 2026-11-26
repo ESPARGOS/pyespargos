@@ -107,12 +107,12 @@ Drawer {
             Common.RFSwitchControl { id: feed; modes: [0, 2, 3, 4, 1]; onActivated: wifiIQControls.apply({rf_switch: value}) }
             FieldLabel { text: "Analog RX filter" }
             ComboBox { id: filter; onActivated: wifiIQControls.apply({filter_bw_mhz: [0, 255, bandwidth.value][currentIndex]}); model: ["Native", "Open", "Manual"]; enabled: wifiIQControls.settings.filter_bw_mhz !== undefined }
-            FieldLabel { text: "Bandwidth"; visible: filter.currentIndex === 2 }
+            FieldLabel { text: "Bandwidth" }
             Common.GainSlider {
                 id: bandwidth
                 onEdited: wifiIQControls.apply({filter_bw_mhz: value})
                 Layout.fillWidth: true
-                visible: filter.currentIndex === 2
+                enabled: filter.currentIndex === 2
                 from: 13; to: 40; valueText: Math.round(value) + " MHz"
             }
             Section { text: "Gain" }
@@ -129,14 +129,14 @@ Drawer {
             Section { text: "Packet capture" }
             FieldLabel { text: "Shared trigger" }
             Switch { id: shared; onToggled: wifiIQControls.apply({boot_sync: checked}) }
-            FieldLabel { text: "Trigger sensors"; visible: triggers.visible }
+            FieldLabel { text: "Trigger sensors" }
             GridLayout {
                 id: triggers
                 property int mask: 255
                 columns: 4
                 columnSpacing: 0
                 rowSpacing: 0
-                visible: shared.checked && wifiIQControls.settings.boot_trigger_mask !== undefined
+                enabled: shared.checked && wifiIQControls.settings.boot_trigger_mask !== undefined
                 Repeater {
                     model: 8
                     CheckBox {

@@ -1,22 +1,22 @@
 combined-array:
   boards:
     tl:
-      host: topleft
+      host: topleft.local
       cable:
         length: 0.0
         velocity_factor: 0.76
     tr:
-      host: topright
+      host: topright.local
       cable:
         length: 0.0
         velocity_factor: 0.76
     bl:
-      host: bottomleft
+      host: bottomleft.local
       cable:
         length: 0.0
         velocity_factor: 0.76
     br:
-      host: bottomright
+      host: bottomright.local
       cable:
         length: 0.0
         velocity_factor: 0.76

@@ -52,6 +52,7 @@ class CSICamera(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCS
         parser.add_argument("--no-camera", action="store_true", help="Show the radio overlay without a video camera")
 
     def __init__(self, argv):
+        self._rendered_packets = None
         CameraView.configure_rendering()
         super().__init__(argv)
         if self.args.no_camera:
@@ -84,26 +85,41 @@ class CSICamera(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCS
         self.camera_view.start()
         return super().exec()
 
+    def _clear_measurements(self):
+        if self._rendered_packets is None:
+            return
+        self._rendered_packets = None
+        width, height = self.steering_vectors_2d.shape[-2:]
+        self.overlay.publish_image("spatial", np.zeros((height, width, 4), np.uint8))
+        self.overlay.publish_receiver_statistics(-np.inf, self.power_unit, 0)
+        self.overlay.publish_mac_addresses(())
+        if self.overlay.polarizationVisible:
+            blank = np.zeros((width, height), complex)
+            self.overlay.publish_polarization(blank, blank)
+
     @PyQt6.QtCore.pyqtSlot()
     def updateSpatialSpectrum(self):
-        result = self.get_backlog_csi("host_timestamp", "mac", "rf_switch_state", *self.level_fields, allow_incomplete=True, remove_global_sto=False, return_format=True)
+        result = self.get_backlog_csi("host_timestamp", "mac", "rf_switch_state", *self.level_fields,
+                                      allow_incomplete=True, remove_global_sto=False, return_format=True)
         if result is None:
+            self._clear_measurements()
             return
         csi_format, csi, timestamps, macs, receiver_state, *levels = result
-        rssi = self.received_power(csi, levels)
-
         max_age = self.appconfig.get("beamformer", "max_age")
-        if max_age > 0.0:
-            recent = timestamps > (time.time() - max_age)
-            csi[~recent, ...] = 0
-            recent_rssi = rssi[recent, ...]
-        else:
-            recent_rssi = rssi
-
-        mean_power = 10 * np.log10(np.nanmean(10 ** (recent_rssi / 10)) + 1e-15) if recent_rssi.size else -np.inf
-        active_receivers = 0.0
-        if recent_rssi.shape[0] > 0:
-            active_receivers = np.prod(recent_rssi.shape[1:]) - np.mean(np.sum(np.isnan(recent_rssi), axis=(1, 2, 3)))
+        if max_age > 0:
+            recent = timestamps > time.time() - max_age
+            if not np.any(recent):
+                self._clear_measurements()
+                return
+            csi, timestamps, macs, receiver_state, *levels = (
+                field[recent] for field in (csi, timestamps, macs, receiver_state, *levels)
+            )
+        packets = (csi_format, timestamps.tobytes())
+        if packets == self._rendered_packets:
+            return
+        rssi = self.received_power(csi, levels)
+        mean_power = 10 * np.log10(np.nanmean(10 ** (rssi / 10)) + 1e-15)
+        active_receivers = np.isfinite(rssi).sum() / len(rssi)
         self.overlay.publish_receiver_statistics(mean_power, self.power_unit, active_receivers)
 
         if self.appconfig.get("receiver", "mac_list_enabled"):
@@ -146,66 +162,75 @@ class CSICamera(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCS
                 self.beamspace_power = espargos.array_processing.music_spectrum(R, self.steering_vectors_2d) if beamformer_type == "MUSIC" else espargos.array_processing.mvdr_spectrum(R, self.steering_vectors_2d)
 
             # Option 2: Beamspace via FFT
-            case "FFT":
+            case "FFT" | "Bartlett":
                 # csi_combined has shape (datapoints, boards, row, column, subcarriers)
                 if self.appconfig.get("beamformer", "polarization_mode") != "ignore":
                     if receiver_state_combined is None:
+                        self._clear_measurements()
                         self.logger.warning("Receiver-state metadata is required for polarization visualization")
                         return
                     # Separate CSI by feed
-                    csi_combined = espargos.csi_processing.separate_feeds(csi_combined, receiver_state_combined)  # (D, B, M, N, S, 2)
+                    csi_combined = espargos.csi_processing.separate_feeds(
+                        csi_combined, receiver_state_combined, allow_partial=beamformer_type == "Bartlett"
+                    )
                     if csi_combined is None:
-                        self.logger.warning("Must have measurements for both R and L feeds for polarization visualization")
+                        self._clear_measurements()
                         return
-
-                    # Apply per-antenna Jones correction to convert R/L feeds to global H/V polarization
-                    # in the antenna domain (before beamforming), since each antenna may be rotated differently.
-                    # csi_combined: (D, B=1, M, N, S, 2) where last dim is R/L
-                    # The inverse response maps R/L to global H/V, optionally per subcarrier.
-                    csi_combined = self.correct_polarization(csi_combined, csi_format)
 
                 # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
                 # This assumes a constant channel except for CFO-induced phase rotations and noise
                 csi_combined = espargos.csi_processing.csi_interp_iterative(csi_combined, iterations=5)
 
+                # Estimate packet-wide phase from observations of the same
+                # physical feed, then convert the combined field to global H/V.
+                if self.appconfig.get("beamformer", "polarization_mode") != "ignore":
+                    csi_combined = self.correct_polarization(csi_combined, csi_format)
+
                 # Now csi_combined can have two possible shapes:
                 # * Without polarization: (B=1, M, N, S)
                 # * With polarization: (B=1, M, N, S, 2)
 
-                # Exploit time-domain sparsity to reduce number of 2D FFTs from antenna space to beamspace
-                csi_tdomain = np.fft.ifftshift(
-                    np.fft.ifft(np.fft.fftshift(csi_combined, axes=3), axis=3),
-                    axes=3,
-                )
-                tap_count = csi_tdomain.shape[3]
-                # csi_tdomain_cut = csi_tdomain[..., tap_count // 2 + 1 - 16 : tap_count // 2 + 1 + 17]
-                csi_tdomain_cut = csi_tdomain.take(range(tap_count // 2 + 1 - 16, tap_count // 2 + 1 + 17), axis=3)
-                csi_fdomain_cut = np.fft.ifftshift(
-                    np.fft.fft(np.fft.fftshift(csi_tdomain_cut, axes=3), axis=3),
-                    axes=3,
-                )
+                if beamformer_type == "Bartlett":
+                    # Preserve the optional H/V dimension through the spatial scan.
+                    beam_frequency_space = np.einsum(
+                        "rcae,rcs...->aes...", self.steering_vectors_2d.conj(),
+                        csi_combined[0], optimize=True,
+                    )
+                else:
+                    # Exploit time-domain sparsity to reduce number of 2D FFTs from antenna space to beamspace
+                    csi_tdomain = np.fft.ifftshift(
+                        np.fft.ifft(np.fft.fftshift(csi_combined, axes=3), axis=3),
+                        axes=3,
+                    )
+                    tap_count = csi_tdomain.shape[3]
+                    # csi_tdomain_cut = csi_tdomain[..., tap_count // 2 + 1 - 16 : tap_count // 2 + 1 + 17]
+                    csi_tdomain_cut = csi_tdomain.take(range(tap_count // 2 + 1 - 16, tap_count // 2 + 1 + 17), axis=3)
+                    csi_fdomain_cut = np.fft.ifftshift(
+                        np.fft.fft(np.fft.fftshift(csi_tdomain_cut, axes=3), axis=3),
+                        axes=3,
+                    )
 
-                # Here, we only go to DFT beamspace, not directly azimuth / elevation space,
-                # but the shader can take care of fixing the distortion.
-                # csi_zeropadded either has shape
-                # * (azimuth / row, elevation / column, subcarriers) without polarization or
-                # * (azimuth / row, elevation / column, subcarriers, 2) with polarization
-                csi_zeropadded = np.zeros(
-                    (self.appconfig.get("beamformer", "resolution_azimuth"), self.appconfig.get("beamformer", "resolution_elevation")) + csi_fdomain_cut.shape[3:],
-                    dtype=csi_fdomain_cut.dtype,
-                )
-                real_rows_half = csi_fdomain_cut.shape[1] // 2
-                real_cols_half = csi_fdomain_cut.shape[2] // 2
-                zeropadded_rows_half = csi_zeropadded.shape[1] // 2
-                zeropadded_cols_half = csi_zeropadded.shape[0] // 2
-                csi_zeropadded[
-                    zeropadded_cols_half - real_cols_half : zeropadded_cols_half + real_cols_half,
-                    zeropadded_rows_half - real_rows_half : zeropadded_rows_half + real_rows_half,
-                    :,
-                ] = np.swapaxes(csi_fdomain_cut[0, ...], 0, 1)
-                csi_zeropadded = np.fft.ifftshift(csi_zeropadded, axes=(0, 1))
-                beam_frequency_space = np.fft.fft2(csi_zeropadded, axes=(0, 1))
-                beam_frequency_space = np.fft.fftshift(beam_frequency_space, axes=(0, 1))
+                    # Here, we only go to DFT beamspace, not directly azimuth / elevation space,
+                    # but the shader can take care of fixing the distortion.
+                    # csi_zeropadded either has shape
+                    # * (azimuth / row, elevation / column, subcarriers) without polarization or
+                    # * (azimuth / row, elevation / column, subcarriers, 2) with polarization
+                    csi_zeropadded = np.zeros(
+                        (self.appconfig.get("beamformer", "resolution_azimuth"), self.appconfig.get("beamformer", "resolution_elevation")) + csi_fdomain_cut.shape[3:],
+                        dtype=csi_fdomain_cut.dtype,
+                    )
+                    real_rows_half = csi_fdomain_cut.shape[1] // 2
+                    real_cols_half = csi_fdomain_cut.shape[2] // 2
+                    zeropadded_rows_half = csi_zeropadded.shape[1] // 2
+                    zeropadded_cols_half = csi_zeropadded.shape[0] // 2
+                    csi_zeropadded[
+                        zeropadded_cols_half - real_cols_half : zeropadded_cols_half + real_cols_half,
+                        zeropadded_rows_half - real_rows_half : zeropadded_rows_half + real_rows_half,
+                        :,
+                    ] = np.swapaxes(csi_fdomain_cut[0, ...], 0, 1)
+                    csi_zeropadded = np.fft.ifftshift(csi_zeropadded, axes=(0, 1))
+                    beam_frequency_space = np.fft.fft2(csi_zeropadded, axes=(0, 1))
+                    beam_frequency_space = np.fft.fftshift(beam_frequency_space, axes=(0, 1))
 
                 # Normalize by number of antenna elements so that beamspace power is
                 # independent of array size and comparable across beamformer types
@@ -288,28 +313,8 @@ class CSICamera(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCS
                     # axis 0, so both polarizations contribute constructively.
                     beam_frequency_space = np.moveaxis(beam_frequency_space, -1, 0)
 
-            case "Bartlett":
-                # For computational efficiency reasons, reduce number of datapoints to one by interpolating over all datapoints
-                # This assumes a constant channel except for CFO-induced phase rotations and noise
-                csi_combined = np.asarray([espargos.csi_processing.csi_interp_iterative(csi_combined, iterations=5)])
-
-                # Compute sum of received power per steering angle over all datapoints and subcarriers
-                # real 2d spatial spectrum is too slow...
-                # we can use 2D FFT to get to beamspace, which of course is technically not correct
-                # (cannot separate 2D steering vector into Kronecker product of azimuth / elevation steering vectors)
-                beam_frequency_space = np.einsum(
-                    "rcae,dbrcs->daes",
-                    np.conj(self.steering_vectors_2d),
-                    csi_combined,
-                    optimize=True,
-                )
-
-                # Normalize by number of antenna elements so that beamspace power is
-                # independent of array size and comparable across beamformer types
-                beam_frequency_space = beam_frequency_space / (self.n_rows * self.n_cols)
-                self.beamspace_power = np.mean(np.abs(beam_frequency_space) ** 2, axis=(0, 3))
-
         self.overlay.publish_spatial_spectrum(self.beamspace_power, beam_frequency_space)
+        self._rendered_packets = packets
 
     def _cb_predicate(self, cluster):
         csi_completion_state = cluster.completion
@@ -329,6 +334,8 @@ class CSICamera(PolarizationMixin, CSIBacklogMixin, CombinedArrayMixin, SingleCS
 
     @PyQt6.QtCore.pyqtSlot(dict)
     def _on_update_app_state(self, newcfg):
+        if self._rendered_packets is not None:
+            self._clear_measurements()
         beamformer_cfg = newcfg.get("beamformer", {}) if isinstance(newcfg, dict) else {}
         if isinstance(beamformer_cfg, dict) and ("resolution_azimuth" in beamformer_cfg or "resolution_elevation" in beamformer_cfg):
             if hasattr(self, "n_rows"):

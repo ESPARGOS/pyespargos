@@ -3,15 +3,18 @@
 import numpy as np
 
 import espargos.csi_processing
+from espargos._antenna_response import FREQUENCIES
 from espargos.polarization import inverse_jones_response
 
 
 class PolarizationMixin:
+    def _polarization_channels(self):
+        config = self.pooldrawer.configManager()
+        return int(config.get("channel")), int(config.get("secondary_channel"))
+
     def correct_polarization(self, csi, csi_format):
         """Correct (..., rows, columns, subcarriers, feeds) CSI into global H/V."""
-        config = self.pooldrawer.configManager()
-        channel = int(config.get("channel"))
-        secondary = int(config.get("secondary_channel"))
+        channel, secondary = self._polarization_channels()
         key = (csi_format, channel, secondary)
         if getattr(self, "_polarization_frequency_key", None) != key:
             if csi_format == "ht40":
@@ -19,12 +22,18 @@ class PolarizationMixin:
                     raise ValueError("HT40 Jones correction requires an above/below secondary channel")
                 secondary_channel = channel + (4 if secondary == 1 else -4)
                 frequencies = espargos.csi_processing.get_frequencies_ht40(channel, secondary_channel)
+            elif csi_format == "dsss":
+                frequencies = espargos.csi_processing.get_frequencies_lltf(channel)[9:-9]
             else:
                 functions = {"lltf": espargos.csi_processing.get_frequencies_lltf, "ht20": espargos.csi_processing.get_frequencies_ht20, "he20": espargos.csi_processing.get_frequencies_he20}
                 if csi_format not in functions:
                     raise ValueError(f"Unsupported CSI format: {csi_format}")
                 frequencies = functions[csi_format](channel)
-            self._polarization_frequency_inverse = inverse_jones_response(self.antenna_orientations, frequencies)
+            # Some channel 14 subcarriers extend beyond the measured antenna response.
+            covered = (frequencies >= FREQUENCIES[0]) & (frequencies <= FREQUENCIES[-1])
+            inverse = np.zeros((*self.antenna_orientations.shape, len(frequencies), 2, 2), complex)
+            inverse[:, :, covered] = inverse_jones_response(self.antenna_orientations, frequencies[covered])
+            self._polarization_frequency_inverse = inverse
             self._polarization_frequency_key = key
         if self._polarization_frequency_inverse.shape[2] != csi.shape[-2]:
             raise ValueError("CSI subcarrier count does not match the antenna response grid")

@@ -1,12 +1,12 @@
 """Bounded latest-per-source processing for live demos, independent of Qt."""
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 import logging
 from threading import Condition, Thread
 
 
 class LatestWorker:
-    """Keep one pending item per key and replace superseded work.
+    """Keep the newest pending items per key (one by default).
 
     The callback runs outside the submitting thread. Keys are served fairly in
     arrival order, so a busy source cannot starve another selected source.
@@ -21,11 +21,16 @@ class LatestWorker:
         self._thread = Thread(target=self._run, name="latest-measurement", daemon=True)
         self._thread.start()
 
-    def submit(self, key, value):
+    def submit(self, key, value, *, keep=1):
+        if keep < 1:
+            raise ValueError("keep must be positive")
         with self._condition:
             if self._closed:
                 return
-            self._pending[key] = value
+            pending = self._pending.setdefault(key, deque())
+            pending.append(value)
+            while len(pending) > keep:
+                pending.popleft()
             if len(self._pending) > self._limit:
                 self._pending.popitem(last=False)
             self._condition.notify()
@@ -47,7 +52,10 @@ class LatestWorker:
                 self._condition.wait_for(lambda: self._closed or self._pending)
                 if self._closed:
                     return
-                _, value = self._pending.popitem(last=False)
+                key, pending = self._pending.popitem(last=False)
+                value = pending.popleft()
+                if pending:
+                    self._pending[key] = pending
             try:
                 self._process(value)
             except Exception:

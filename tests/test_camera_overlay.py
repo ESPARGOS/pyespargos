@@ -109,3 +109,15 @@ def test_out_of_camera_field_signal_gets_an_explicit_edge_marker():
     cfg.set({"visualization": {"edge_markers": False}})
     overlay.publish_markers([(0.1, 0.65)])
     assert overlay.markers == []
+
+
+def test_delay_checkbox_survives_switch_to_subspace_beamformer():
+    from demos.wifi.camera.backend import CSICamera
+    from demos.wifi.camera.csi_overlay import CSIOverlay
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    cfg = ConfigManager(CSICamera.DEFAULT_CONFIG)
+    cfg.set({"beamformer": {"type": "MUSIC", "colorize_delay": True}})
+    overlay = CSIOverlay(cfg)
+    overlay.publish_spatial_spectrum(np.ones((8, 6)))
+    assert overlay.spatialImageSource.endswith("?1")

@@ -223,3 +223,26 @@ class PolarizationTests(unittest.TestCase):
             time.monotonic(), steering, 2402e6, BLEBeamformingConfig())
         self.assertTrue(np.isfinite(result.spectrum).all())
         self.assertEqual(np.unravel_index(result.spectrum.argmax(), result.spectrum.shape), (15, 10))
+
+
+def test_bartlett_recovers_relative_hv_from_partial_array():
+    class Orientation:
+        def rotation_matrix(self):
+            return np.eye(2)
+
+    center = 2402e6
+    grid = steering_vectors_2d(2, 4, 32, 24, frequency_hz=center, pixel_centers=True)
+    target = (18, 8)
+    jones = np.array([1., -.6j])
+    field = grid[:, :, target[0], target[1], None] * (antenna_response(np.array([center]))[0] @ jones)
+    processor = BLEBeamformer(clock=lambda: 1.)
+    config = BLEBeamformingConfig(history_size=8, history_age=.5, polarization=True)
+    rng = np.random.default_rng(81)
+    for i in range(8):
+        routes = rng.integers(2, 4, (2, 4))
+        routes[1, 3] = 2
+        values = np.take_along_axis(field, (routes - 2)[..., None], axis=-1)[..., 0] * np.exp(.7j*i)
+        result = processor.process("source", values/abs(values), routes, 1., grid, center, config,
+                                   amplitude=abs(values), orientations=np.full((2, 4), Orientation(), object))
+    np.testing.assert_allclose(result.jones[target]/result.jones[target][0], jones, atol=.015)
+    assert np.unravel_index(result.spectrum.argmax(), result.spectrum.shape) == target

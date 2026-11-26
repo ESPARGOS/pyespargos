@@ -29,7 +29,6 @@ Usage: main.py <controller-host>[,<controller-host>,...]
 (tests live in the repository tests/ directory)
 """
 
-import argparse
 from collections import deque
 import pathlib
 import sys
@@ -48,7 +47,6 @@ import PyQt6.QtCharts
 
 import espargos
 
-from espargos.iq_rx_stream import IQ_RX_STREAM_RATES
 from espargos import CHUNK_SAMPLES, DECIM_TO_FS, IQAccumCluster, IQStreamBlock, SENSOR_COUNT
 from demos.iq.common.application import ESPARGOSIQApplication
 from demos.iq.common.iq_waterfall import WaterfallImageProvider, power_db_row
@@ -85,10 +83,7 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
     }
 
     def __init__(self, argv):
-        parser = argparse.ArgumentParser(description="ESPARGOS Demo: live IQ signal analyzer", add_help=False)
-        parser.add_argument("--stream", type=int, choices=IQ_RX_STREAM_RATES, nargs="?", const=16000,
-                            help="Receive continuous narrowband IQ at this sample rate in Sa/s")
-        super().__init__(argv, argparse_parent=parser)
+        super().__init__(argv)
 
         self.iqcontrol = None  # IQController QML adapter, created once the pool is up
         self.active_board = 0
@@ -592,12 +587,6 @@ class EspargosSignalAnalyzer(ESPARGOSIQApplication):
 
     def _update_display_config(self, config):
         self._display_config = {**self._display_config, **config}
-
-    def _create_receiver(self, owner):
-        receiver = super()._create_receiver(owner)
-        if self.args.stream:
-            receiver.apply_config({"trigger": {"mode": "downsample", "sample_rate_hz": self.args.stream}})
-        return receiver
 
     def _start_iq_gui(self):
         """After the framework pool is up: expose the pool's QML adapter,

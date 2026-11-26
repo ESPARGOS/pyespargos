@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import RLock, Lock, Event, Thread, current_thread
 import time
 import math
+import socket
 import numpy as np
 import yaml
 
@@ -348,13 +349,18 @@ class Pool(AntennaSelection):
             if self._opened:
                 return self
             try:
-                for host in self.hosts:
+                for name, host in zip(self.names, self.hosts):
+                    target = f"board {host}" if name == host else f"board {name} ({host})"
+                    operation = "connect to"
                     board = self._provided.get(host)
                     if board is None:
                         board = Board(host)
                     self.boards.append(board)
+                    operation = "start the sensor stream on"
                     board.start(transports=transports)
                 if self.reference_controller_host is not None:
+                    target = f"reference controller {self.reference_controller_host}"
+                    operation = "connect to"
                     self.reference_controller = Board(self.reference_controller_host)
                 self._transports = transports
                 self._opened = True
@@ -363,6 +369,14 @@ class Pool(AntennaSelection):
                     self.close()
                 except Exception as cleanup:
                     error.add_note(str(cleanup))
+                if isinstance(error, (OSError, board_module.EspargosStreamConnectionError)):
+                    reason = str(error) or type(error).__name__
+                    if isinstance(error, socket.gaierror):
+                        reason = f"hostname lookup failed: {reason}"
+                    message = f"Could not {operation} {target}: {reason}"
+                    if isinstance(error, TimeoutError):
+                        raise TimeoutError(message) from error
+                    raise ConnectionError(message) from error
                 raise
             return self
 

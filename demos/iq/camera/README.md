@@ -15,8 +15,8 @@ the demo starts at 2472 MHz.
 
 **RX** controls the frequency, gain, input and trigger. Startup synchronizes
 and calibrates the array. After a change that invalidates calibration, open
-RX and press **Sync + Calibration**. Changes to manual gain preserve calibration.
-Expand **Show advanced settings** for the sample rate, capture path and filter.
+RX and press **Sync + Calibration**. Manual gain and analog bandwidth changes preserve calibration. The sample
+rate, capture path and filter settings are available directly in RX.
 If a controller reboots, the camera restores its capture settings. If another
 client switches a board out of IQ mode, **Sync + Calibration** restores the
 last requested settings across the array. Press it to resume direction

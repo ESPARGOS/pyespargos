@@ -59,25 +59,29 @@ and LE 2M with either automatic or fixed gain. LE Coded is unsupported.
 LE 2M calibration needs
 an external reference because the controller generates LE 1M only. Set its
 advertiser address with `-o 'app.receiver.reference_address="aa:bb:cc:dd:ee:ff"'`.
-Other advertisers are excluded from calibration even if their packets leak into REF. Each spatial
-observation requires all eight antennas. At least one sensor must report a
-valid packet CRC. Other sensors may contribute only after a unique, coherent
-waveform match. Scan requests and connection requests are excluded because
+Other advertisers are excluded from calibration even if their packets leak into REF. The advertiser list can count a packet heard by a single sensor. Direction
+estimation needs phase measurements from at least two sensors on the same
+packet. Complete events are available immediately; the camera also accepts
+partial events once they settle. Scan requests and connection requests are excluded because
 their transmitters are not the advertiser named in the request.
 
 App settings offer Bartlett, MUSIC and Root-MUSIC. MUSIC uses a spatial
 spectrum, while Root-MUSIC shows estimated direction markers. With Multipath enabled, both use forward/backward spatial smoothing,
 and Root-MUSIC estimates multiple significant paths per advertiser. Smoothing
 uses overlapping 2×3 subarrays, trading angular resolution for robustness to
-coherent reflections. A reported path is not necessarily the direct path. The BLE backlog defaults to at most 16 observations
-and 250 ms, whichever limit is reached first. Packets from different advertisers
+coherent reflections. A reported path is not necessarily the direct path. The BLE backlog defaults to at most eight observations
+and half a second, whichever limit is reached first. Packets from different advertisers
 never share a covariance. Measured amplitudes are retained for multipath
 processing instead of reducing every sensor to unit magnitude. A single complete
 fixed-feed observation can already provide a spatial covariance, which keeps
 slow advertisers usable. Without polarization reconstruction, Random contributes
 only same-feed pairs. MUSIC waits until the backlog covers all sensor pairs.
+For slower advertisers or sparse random-feed coverage, increase
+`app.beamformer.backlog_age` and `app.beamformer.backlog_size`. A longer window
+also averages over more of a moving transmitter’s previous positions.
 
-Live processing keeps only the newest pending observation per selected advertiser.
+When processing falls behind, the camera keeps up to the configured packet count
+per selected advertiser, discarding the oldest pending observations first.
 Phase fitting does not block packet assembly or the UI, and unselected advertisers
 are discovered without computing their directions. All three beamformers use the selected packet history and the full usable
 packet IQ covariance. Independent packet phases are combined incoherently.
@@ -117,8 +121,9 @@ Selecting either enables Random RF input. Automatic gain is supported.
 BLE packet RMS amplitudes are normalized for measured gain and retained
 alongside calibrated phases. Mixed-feed
 observations connect both feed domains across packets, removing each packet's
-unknown common complex scale. Results require connected coverage of all feeds
-within the bounded backlog. While coverage is incomplete, ordinary same-feed
+unknown common complex scale. Bartlett uses antennas with measurements on both feeds in the current backlog.
+At least two antennas must contribute, and the observations must link the feed
+phases across packets. MUSIC and Root-MUSIC require connected coverage of all feeds. While coverage is incomplete, ordinary same-feed
 beamforming remains available. A recent polarization estimate survives a short
 coverage gap, but expires after the configured backlog age. Missing or fully
 unpolarized estimates do not draw stationary dots. Alternating
@@ -160,6 +165,6 @@ the WiFi camera and do not reset the measurement backlog.
 Both MUSIC methods restrict automatic source selection to covariance modes
 within 10 dB of the strongest signal mode. This prevents weak calibration and
 random-feed reconstruction errors from consuming the noise subspace. It also
-limits the ability to distinguish much weaker reflected paths. Random-feed
-polarization still needs sufficient recent coverage of both feeds on every
+limits the ability to distinguish much weaker reflected paths. For the subspace methods, random-feed
+polarization needs sufficient recent coverage of both feeds on every
 sensor. An undersized or very short backlog can produce gaps in that estimate.

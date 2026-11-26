@@ -51,13 +51,14 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
         "receiver": dict(BLEController.DEFAULT_CONFIG, advertisers=[]),
         "beamformer": {
             "type": "Bartlett",
-            "backlog_size": 16,
-            "backlog_age": 0.25,
+            "backlog_size": 8,
+            "backlog_age": 0.5,
             "resolution_azimuth": 128,
             "resolution_elevation": 96,
             "polarization_mode": "ignore",
             "multipath": True,
             "polarization_speed": 2.0,
+            "normalize_polarization": False,
             "grid_spacing": 24,
             "colorize_delay": False,
         },
@@ -161,7 +162,9 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
         self.receiver = self.controller.receiver
         self._receiver_config_changed(self.controller.receiverConfig)
         self.receiver.add_callback(lambda cluster: self._packet(cluster.packet), lambda cluster: True)
-        self.receiver.add_callback(self._measured)
+        # Deliver partial arrays promptly enough for the live covariance window.
+        self.receiver.settle_timeout = 0.05
+        self.receiver.add_callback(self._measured, include_partial=True)
         self.ready = True
         self.initComplete.emit()
 
@@ -183,7 +186,9 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
         identity = packet.address_type + ":" + (packet.advertiser or "")
         if self.controller.busy or cluster.is_calibration or identity not in self._selected or not self.controller.calibrationSupported:
             return
-        self._phase_worker.submit(identity, (cluster, time.monotonic()))
+        if not packet.is_advertisement or np.count_nonzero(np.isfinite(cluster.rx_gain)) < 2:
+            return
+        self._phase_worker.submit(identity, (cluster, time.monotonic()), keep=int(self.appconfig.get("beamformer", "backlog_size")))
 
     def _process_measurement(self, item):
         cluster, received = item
@@ -192,7 +197,8 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
             self._beamformer_epoch = self._measurement_after
         packet = cluster.packet
         identity = packet.address_type + ":" + (packet.advertiser or "")
-        if self.controller.busy or identity not in self._selected:
+        config = processing_config(self.appconfig.get("beamformer"))
+        if self.controller.busy or identity not in self._selected or received < self._measurement_after or time.monotonic() - received >= config.history_age:
             return
         try:
             iq = self.receiver.packet_iq(cluster)
@@ -218,7 +224,7 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
                 received,
                 steering,
                 channel_frequency(packet.channel),
-                processing_config(self.appconfig.get("beamformer")),
+                config,
                 amplitude=phase.amplitude[0] if phase.amplitude is not None else None,
                 orientations=self.antenna_orientations,
                 covariance=covariance, sample_counts=sample_counts,
@@ -271,26 +277,35 @@ class BLECamera(CombinedArrayMixin, ESPARGOSApplication):
                 image += spectrum_intensity(spectrum) * opacity
         self._directions = {key: value for key, value in self._directions.items() if key in self._spectra}
         directions, labels = [], []
-        coherency = np.zeros((*image.shape, 2, 2), complex)
+        polarized_sources = []
+        coherency = np.zeros((*image.shape, 2, 2), complex) if self.overlay.polarizationVisible else None
         for key, paths in self._directions.items():
             if self.controller.busy:
                 break
             directions.extend(paths)
             labels.extend([key.split(":", 1)[1]] * len(paths))
             polarization = self._polarizations.get(key)
-            if polarization is not None and now-polarization[0] < float(self.appconfig.get("beamformer", "backlog_age")):
+            if coherency is not None and polarization is not None and now-polarization[0] < float(self.appconfig.get("beamformer", "backlog_age")):
                 jones = polarization[1]
+                polarized_sources.append(jones)
                 received, power = self._spectra[key]
                 weight = power * measurement_opacity(now-received, maximum_age)
                 coherency += weight[..., None, None] * jones[..., :, None] * jones.conj()[..., None, :]
         self._polarizations = {key: value for key, value in self._polarizations.items() if key in self._spectra}
         self.overlay.publish_markers(directions, labels=labels)
-        if self.overlay.polarizationVisible:
-            dominant = polarization_ellipse(coherency, self._polarization_field)
+        if coherency is not None:
+            if len(polarized_sources) == 1 and self.appconfig.get("beamformer", "type") == "Bartlett":
+                dominant = polarized_sources[0]
+                if self._polarization_field is not None:
+                    overlap = np.sum(self._polarization_field.conj() * dominant)
+                    dominant = dominant * np.exp(-1j * np.angle(overlap))
+            else:
+                dominant = polarization_ellipse(coherency, self._polarization_field)
             self._polarization_field = dominant
             # Match the WiFi overlay: weak beams have smaller ellipses.
             power = np.trace(coherency, axis1=-2, axis2=-1).real
-            dominant = dominant * np.sqrt(power / max(float(power.max()), 1e-30))[...,None]
+            if not self.appconfig.get("beamformer", "normalize_polarization"):
+                dominant = dominant * np.sqrt(power / max(float(power.max()), 1e-30))[...,None]
             self.overlay.publish_polarization(dominant[..., 1], dominant[..., 0])
         self.overlay.publish_spatial_intensity(image)
 

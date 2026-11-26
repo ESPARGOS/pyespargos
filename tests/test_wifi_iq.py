@@ -47,7 +47,7 @@ def test_csi_backlog_from_two_receivers(split):
     expected[:] = False
     for antenna in (0, 7):
         expected[board.revision.antenna_id_to_row_col(antenna)] = True
-    backlog = CSIBacklog(receiver, fields=["lltf", "mac"], apply_calibration=False)
+    backlog = CSIBacklog(receiver, fields=["lltf", "mac", "rf_switch_state"], apply_calibration=False)
     backlog.add_filter(MACFilter(MAC.hex()))
     for antenna in (0, 7):
         tags = [b"WFN2"] if split == "native" else [b"WFM1", b"WFC2"]
@@ -55,9 +55,13 @@ def test_csi_backlog_from_two_receivers(split):
             tags.reverse()
         for tag in tags:
             p = WiFiIQPacket(record(tag, 10000 + antenna * 5))
+            p.rf_switch = 2 if antenna == 0 else 3
             receiver._input_queue.put_nowait((0, SensorMessage(1, antenna, p)))
     receiver._run(0)
-    channels, mac = backlog.get_multiple(["lltf", "mac"])
+    channels, mac, feeds = backlog.get_multiple(["lltf", "mac", "rf_switch_state"])
+    for antenna, route in ((0, 2), (7, 3)):
+        row, col = board.revision.antenna_id_to_row_col(antenna)
+        assert feeds[0, 0, row, col] == route
     assert channels.shape == (1, 1, 2, 4, 53)
     assert mac.tobytes() == MAC
     assert np.isfinite(channels[0, 0, expected]).all()

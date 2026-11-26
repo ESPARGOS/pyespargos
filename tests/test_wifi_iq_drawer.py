@@ -130,3 +130,81 @@ def test_backlog_drawer_applies_only_fields_provided_by_receiver(receiver_type):
     finally:
         backlog.close()
         receiver._close()
+
+
+def test_camera_expires_last_packet_and_clears_power_display_only_once():
+    import numpy as np
+    from demos.wifi.camera.backend import CSICamera
+
+    now = 500
+    app = SimpleNamespace(
+        get_backlog_csi=Mock(return_value=("lltf", np.ones((1, 1, 2, 4, 53)), np.array([now - 2.0]), np.zeros((1, 6)), np.full((1, 1, 2, 4), 2))),
+        _rendered_packets=("lltf", b"previous"),
+        overlay=Mock(),
+        power_unit="dBFS",
+        level_fields=(),
+        steering_vectors_2d=np.zeros((2, 4, 16, 8)),
+        appconfig=Mock(),
+    )
+    app.appconfig.get.return_value = 0.5
+    app._clear_measurements = lambda: CSICamera._clear_measurements(app)
+    from unittest.mock import patch
+
+    with patch("demos.wifi.camera.backend.time.time", return_value=now):
+        CSICamera.updateSpatialSpectrum(app)
+        CSICamera.updateSpatialSpectrum(app)
+    app.overlay.publish_receiver_statistics.assert_called_once_with(-np.inf, "dBFS", 0)
+    name, rgba = app.overlay.publish_image.call_args.args
+    assert name == "spatial" and rgba.shape == (8, 16, 4) and not rgba.any()
+    app.overlay.publish_image.assert_called_once()
+
+
+def test_bartlett_renders_known_wifi_iq_polarization_with_missing_feed():
+    import numpy as np
+    from espargos.array_processing import steering_vectors_2d
+    from espargos.csi_processing import get_frequencies_lltf
+    from espargos.polarization import antenna_response
+    from demos.wifi_iq.camera.main import WiFiIQCamera
+    from demos.common.config_manager import ConfigManager
+
+    class Orientation:
+        def rotation_matrix(self):
+            return np.eye(2)
+
+    qt_app = QApplication.instance() or QApplication([])
+    cfg = ConfigManager(WiFiIQCamera.DEFAULT_CONFIG)
+    cfg.set({"beamformer": {"type": "Bartlett", "polarization_mode": "show"}})
+    frequencies = get_frequencies_lltf(6)
+    grid = steering_vectors_2d(2, 4, 32, 24, frequency_hz=frequencies[26], pixel_centers=True)
+    target = (18, 9)
+    incident = np.array([1, 0.5j])
+    feeds = grid[:, :, target[0], target[1], None, None] * (antenna_response(frequencies) @ incident)
+    patterns = np.indices((2, 4)).sum(axis=0) % 2
+    routes = np.stack([patterns, 1 - patterns, np.zeros_like(patterns), np.ones_like(patterns)])
+    routes[:, 1, 3] = 0
+    values = np.take_along_axis(feeds[None, ...], routes[..., None, None], axis=-1)[..., 0]
+    gains = np.where(routes == 0, 12, 18)
+    values *= 10.0 ** (gains[..., None] / 20)
+    app = SimpleNamespace(
+        appconfig=cfg,
+        controls=SimpleNamespace(settings={"channel": 6, "gain_mode": "auto"}),
+        antenna_orientations=np.full((2, 4), Orientation(), object),
+        additional_calibration=None,
+        indexing_matrix=np.arange(8).reshape(2, 4),
+        steering_vectors_2d=grid,
+        n_rows=2,
+        n_cols=4,
+        _rendered_packets=None,
+        overlay=Mock(),
+        level_fields=("rx_gain",),
+        power_unit="dBFS",
+        get_backlog_csi=lambda *_args, **_kwargs: ("lltf", values[:, None], np.arange(4.0), np.zeros((4, 6)), routes[:, None] + 2, gains[:, None]),
+        _polarization_channels=lambda: (6, 0),
+        received_power=lambda csi, levels: np.zeros(csi.shape[:-1]),
+    )
+    app.normalize_channel = lambda c, levels: WiFiIQCamera.normalize_channel(app, c, levels)
+    app.correct_polarization = lambda c, fmt: WiFiIQCamera.correct_polarization(app, c, fmt)
+    WiFiIQCamera.updateSpatialSpectrum(app)
+    assert np.unravel_index(app.beamspace_power.argmax(), grid.shape[-2:]) == target
+    vertical, horizontal = app.overlay.publish_polarization.call_args.args
+    np.testing.assert_allclose(vertical[target] / horizontal[target], incident[1], atol=0.03)

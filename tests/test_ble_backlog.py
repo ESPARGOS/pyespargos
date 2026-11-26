@@ -30,6 +30,16 @@ class BacklogTests(unittest.TestCase):
             backlog.append(vector * np.where(routes == 2, 1, np.exp(1.7j)), routes)
         np.testing.assert_allclose(backlog.covariance(), np.outer(vector, vector.conj()), atol=1e-12)
 
+    def test_partial_direction_needs_at_least_one_same_feed_pair(self):
+        history = BLEPhaseHistory()
+        field = np.array([1, 1j, np.nan])
+        history.append(field, [2, 3, 255])
+        self.assertIsNone(history.covariance(require_complete=False))
+        history.append(field, [2, 2, 255])
+        covariance = history.covariance(require_complete=False)
+        self.assertAlmostEqual(covariance[0, 1], -1j)
+        self.assertIsNone(history.covariance())
+
     def test_music_and_roots_follow_new_window(self):
         steering = steering_vectors_2d(2,4,64,48,frequency_hz=2402e6,pixel_centers=True)
         for kind in ('MUSIC','Root-MUSIC'):

@@ -41,6 +41,16 @@ _VIRIDIS_STOPS = np.asarray(
 )
 
 
+# The output is an 8-bit texture. A 1025-entry palette preserves each channel
+# to within one level and lets a whole capture share a single indexed lookup.
+_VIRIDIS_PALETTE = np.full((1025, 4), 255, np.uint8)
+for channel in range(3):
+    _VIRIDIS_PALETTE[:, channel] = 255 * np.interp(
+        np.linspace(0, 1, len(_VIRIDIS_PALETTE)),
+        np.linspace(0, 1, len(_VIRIDIS_STOPS)), _VIRIDIS_STOPS[:, channel]
+    )
+
+
 def max_pool_to_width(values: np.ndarray, width: int) -> np.ndarray:
     """Resize one spectrum to ``width`` pixels, preserving narrow peaks."""
 
@@ -59,14 +69,8 @@ def viridis_rgba(values: np.ndarray, vmin: float = DB_MIN, vmax: float = DB_MAX)
     """Map scalar values to uint8 viridis RGBA pixels."""
 
     values = np.asarray(values, dtype=np.float32)
-    normalized = np.clip((values - vmin) / max(vmax - vmin, 1e-12), 0.0, 1.0)
-    index = normalized * (_VIRIDIS_STOPS.shape[0] - 1)
-    low = np.floor(index).astype(np.intp)
-    high = np.ceil(index).astype(np.intp)
-    fraction = (index - low)[..., np.newaxis]
-    rgb = _VIRIDIS_STOPS[low] * (1.0 - fraction) + _VIRIDIS_STOPS[high] * fraction
-    alpha = np.ones((*rgb.shape[:-1], 1), dtype=np.float32)
-    return np.asarray(np.concatenate((rgb, alpha), axis=-1) * 255.0, dtype=np.uint8)
+    normalized = np.fmax(0., np.minimum((values - vmin) / max(vmax - vmin, 1e-12), 1.))
+    return _VIRIDIS_PALETTE[np.rint(normalized * (len(_VIRIDIS_PALETTE) - 1)).astype(np.intp)]
 
 
 def power_db_row(values_db: np.ndarray, width: int, vmin: float = DB_MIN, vmax: float = DB_MAX) -> np.ndarray:

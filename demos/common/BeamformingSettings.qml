@@ -53,6 +53,15 @@ GridLayout {
             root.polarizationRequested(modes[currentIndex])
         }
     }
+    Label { text: "Normalize"; visible: normalize.visible }
+    Switch {
+        id: normalize
+        visible: root.polarizationSupported && polarization.currentIndex === 2
+        property string configKey: "beamformer.normalize_polarization"
+        property string configProp: "checked"
+        Component.onCompleted: if (root.polarizationSupported) root.configManager.register(this)
+        onToggled: root.configManager.onControlChanged(this)
+    }
     PolarizationDisplaySettings {
         configManager: root.configManager
         visible: root.polarizationSupported && polarization.currentIndex === 2

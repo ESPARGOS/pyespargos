@@ -42,11 +42,10 @@ GridLayout {
 	property var thresholdControl: null
 	property var triggerDefaults: ({})
 	property bool compact: false
-	readonly property bool showAdvanced: !compact || advancedButton.checked
 	property bool allowSignal: true
 	property bool allowStreaming: false
 	readonly property var bluetoothRates: [32000000, 16000000, 8000000, 4000000, 3200000, 1600000]
-	readonly property var bluetoothFilters: [1200, 1500, 2100, 2900, 3800, 5200, 8300]
+	property var bluetoothFilters: [1200, 1500, 2100, 2900, 3800, 5200, 8300]
 	readonly property bool bluetooth: streaming || capturePath.currentIndex === 1
 	readonly property var streamRates: [16000, 32000, 64000, 80000, 100000]
 	readonly property bool streaming: triggerModes[triggerCombo.currentIndex]?.mode === "downsample"
@@ -98,7 +97,7 @@ GridLayout {
 		if (bluetooth) {
 			return {capture_path: "bluetooth",
 					bluetooth_sample_rate_hz: streaming ? 1600000 : bluetoothRates[btRate.currentIndex],
-					bluetooth_filter_khz: streaming ? 1200 : bluetoothFilters[btFilter.currentIndex]}
+					bluetooth_filter_khz: streaming ? 1200 : bluetoothFilters[Math.round(btFilter.value)]}
 		}
 		return {capture_path: "wifi", adc_decimation: decimationCombo.currentValue,
 				adc_source_sel: 15, filter_bw_mhz: lpfSwitch.checked ? lpfBwSlider.value : 0}
@@ -127,7 +126,12 @@ GridLayout {
 				freqField.text = String(rx.rf_freq_hz / 1e6)
 			capturePath.currentIndex = cfg.capture_path === "bluetooth" ? 1 : 0
 			btRate.currentIndex = Math.max(0, bluetoothRates.indexOf(cfg.bluetooth_sample_rate_hz))
-			btFilter.currentIndex = Math.max(0, bluetoothFilters.indexOf(cfg.bluetooth_filter_khz))
+			if (!btFilter.pressed && cfg.bluetooth_filter_khz !== undefined) {
+				const steps = cfg.bluetooth_filter_steps_khz
+				if (steps?.length) bluetoothFilters = steps
+				btFilter.value = bluetoothFilters.reduce((best, khz, i) =>
+					Math.abs(khz - cfg.bluetooth_filter_khz) < Math.abs(bluetoothFilters[best] - cfg.bluetooth_filter_khz) ? i : best, 0)
+			}
 			if (cfg.adc_decimation !== undefined) {
 				var di = decimationCombo.indexOfValue(cfg.adc_decimation)
 				if (di >= 0) decimationCombo.currentIndex = di
@@ -283,7 +287,6 @@ GridLayout {
 				required property int index
 				required property var modelData
 				visible: (modelData.k !== "threshold" || !iqsettings.thresholdControl?.autoThreshold)
-						 && (iqsettings.showAdvanced || ["threshold", "interval_chunks", "vector_chunks"].includes(modelData.k))
 				spacing: 0
 				Label { text: modelData.l; font.pixelSize: 10; color: "#9fb3c8" }
 				TextField {
@@ -304,21 +307,12 @@ GridLayout {
 			}
 		}
 	}
-	ToolButton {
-		id: advancedButton
-		Layout.columnSpan: 2
-		visible: iqsettings.compact
-		checkable: true
-		text: checked ? "Hide advanced settings" : "Show advanced settings"
-	}
-
 	GridLayout {
 		Layout.columnSpan: 2
 		Layout.fillWidth: true
 		columns: 2
 		columnSpacing: iqsettings.columnSpacing
 		rowSpacing: iqsettings.rowSpacing
-		visible: iqsettings.showAdvanced
 		Label { text: "Capture path"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
 		ComboBox {
 			id: capturePath
@@ -390,14 +384,13 @@ GridLayout {
 		}
 
 		Label { visible: iqsettings.bluetooth; text: "Analog bandwidth"; color: "#ffffff"; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true }
-		ComboBox {
+		Common.GainSlider {
 			id: btFilter
 			visible: iqsettings.bluetooth
 			enabled: !iqsettings.streaming
-			implicitWidth: 210
-			displayText: iqsettings.streaming ? "1.2 MHz" : currentText
-			model: iqsettings.bluetoothFilters.map(khz => (khz / 1000) + " MHz")
-			onActivated: pushConfig({bluetooth_filter_khz: bluetoothFilters[currentIndex]})
+			from: 0; to: iqsettings.bluetoothFilters.length - 1; stepSize: 1
+			valueText: (iqsettings.streaming ? 1.2 : iqsettings.bluetoothFilters[Math.round(value)] / 1000) + " MHz"
+			onEdited: iqsettings.pushConfig({bluetooth_filter_khz: iqsettings.bluetoothFilters[Math.round(value)]})
 		}
 
 		Label { visible: !iqsettings.streaming; Layout.columnSpan: 2; text: "Corrections"; color: "#9fb3c8" }

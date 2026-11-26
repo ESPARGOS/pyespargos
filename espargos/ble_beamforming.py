@@ -118,7 +118,7 @@ class BLEBeamformer:
         jones = None
         covariance = None
         if polarized:
-            feeds = backlog.coherent_feeds()
+            feeds = backlog.coherent_feeds(partial=kind == "Bartlett")
             polarized = feeds is not None
         if config.polarization and not polarized and identity in self._polarized_sources:
             # Do not alternate corrected and uncorrected covariance models when
@@ -128,11 +128,19 @@ class BLEBeamformer:
         if polarized:
             inverse = inverse_jones_response(orientations, np.array([frequency]))[..., 0, :, :]
             field = np.einsum("rcpq,rcq->rcp", inverse, feeds.reshape(*vector.shape, 2))
-            covariance = backlog.polarized_covariance(feeds, inverse)
             beams = np.einsum("rcae,rcp->aep", steering.conj(), field) / vector.size
             jones = beams / np.maximum(np.linalg.norm(beams, axis=-1, keepdims=True), 1e-30)
+            if kind == "Bartlett":
+                self._polarized_sources.add(identity)
+                power = np.sum(abs(beams)**2, axis=-1)
+                # One phase reference for the entire image preserves relative
+                # oscillation phase between beams, as in the WiFi camera.
+                peak = beams[np.unravel_index(power.argmax(), power.shape)]
+                jones *= np.exp(-1j * np.angle(peak[np.argmax(abs(peak))]))
+                return BLEBeamformingResult(spectrum=power, jones=jones)
             gauge = np.take_along_axis(jones, np.argmax(abs(jones), axis=-1)[..., None], axis=-1)
             jones *= np.exp(-1j * np.angle(gauge))
+            covariance = backlog.polarized_covariance(feeds, inverse)
         if not polarized and kind == "Bartlett":
             covariance = backlog.covariance(require_complete=False)
         elif not polarized:

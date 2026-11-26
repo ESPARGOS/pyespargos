@@ -110,9 +110,9 @@ class WiFiIQControls(QtCore.QObject):
             self._calibrated = calibrated
             self.changed.emit()
 
-    def start(self, channel, rx_gain, *, gain_mode="manual", boot_sync=True, estimator="headers", calibrate=True):
+    def start(self, channel, rx_gain, *, gain_mode="manual", boot_sync=True, estimator="headers", rf_switch=2, calibrate=True):
         self.setEstimator(estimator)
-        settings = dict(channel=channel, rx_gain=rx_gain, gain_mode=gain_mode, rf_switch=2, boot_sync=boot_sync)
+        settings = dict(channel=channel, rx_gain=rx_gain, gain_mode=gain_mode, rf_switch=rf_switch, boot_sync=boot_sync)
         return self._submit(settings, calibrate)
 
     @QtCore.pyqtSlot("QVariantMap")

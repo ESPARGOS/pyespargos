@@ -422,31 +422,37 @@ class Board(object):
             # the transport from accepting an otherwise complete burst.
             self._start_stream_dispatch()
 
+            failures = []
             for transport in transports:
                 if transport == "uart":
                     uart_error = self._try_start_uart()
                     if uart_error is None:
                         return
 
+                    failures.append(f"UART: {uart_error}")
                     self._logger.warning(f"UART sensor stream failed for {self.name}: {uart_error}")
                 elif transport == "udp":
                     udp_error = self._try_start_udp()
                     if udp_error is None:
                         return
 
+                    failures.append(f"UDP: {udp_error}")
                     self._logger.warning(f"UDP sensor stream failed for {self.name}: {udp_error}")
                 elif transport == "websocket":
                     ws_error = self._try_start_websocket()
                     if ws_error is None:
                         return
 
+                    failures.append(f"WebSocket: {ws_error}")
                     self._logger.warning(f"WebSocket sensor stream failed for {self.name}: {ws_error}")
                 else:
+                    failures.append(f"unknown transport {transport!r}")
                     self._logger.error(f"Unknown transport {transport} specified for {self.name}, skipping")
 
             self._cleanup_stream_session()
 
-        raise EspargosStreamConnectionError(f"Could not establish sensor stream to {self.host} via any of the enabled transports, tried transports: {transports}")
+        detail = "; ".join(failures) or "no transports enabled"
+        raise EspargosStreamConnectionError(f"Could not establish sensor stream to {self.host}: {detail}")
 
     def _try_start_uart(self) -> str | None:
         if self._uart_client is None:

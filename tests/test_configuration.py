@@ -43,8 +43,7 @@ class ConfigurationTests(unittest.TestCase):
                 self.assertEqual(path, "set_iq_tx")
                 self.assertEqual(payload["transmitters"], [dict(antid=a, output="isolated") for a in range(8)])
 
-    def test_iq_gain_and_equivalent_filters_preserve_calibration(self):
-        from espargos.calibration import Antenna
+    def test_iq_gain_and_analog_bandwidth_preserve_calibration(self):
         from espargos.configuration import ConfigurationContext, _iq_rx
 
         board = FakeBoard()
@@ -63,9 +62,12 @@ class ConfigurationTests(unittest.TestCase):
             update = _iq_rx(ctx, options)
             self.assertFalse(update.invalidated)
             self.assertNotEqual(update.iq_settings.get("trigger", {}).get("mode"), "interval")
+        self.assertTrue(_iq_rx(ctx, {"bandwidth_mhz": 2.1}).invalidated)  # Leaves digital downsampling.
         snapshot["trigger"] = {"mode": "interval"}
         self.assertFalse(_iq_rx(ctx, {"bandwidth_mhz": 1.209}).invalidated)
-        self.assertEqual(_iq_rx(ctx, {"bandwidth_mhz": 1.22}).invalidated, {Antenna(board.host, a) for a in range(8)})
+        self.assertFalse(_iq_rx(ctx, {"bandwidth_mhz": 2.1}).invalidated)
+        snapshot["capture_path"] = "wifi"
+        self.assertFalse(_iq_rx(ctx, {"bandwidth_mhz": 40}).invalidated)
 
     def test_validate_every_board_before_writing(self):
         a, b = FakeBoard("a"), FakeBoard("b")

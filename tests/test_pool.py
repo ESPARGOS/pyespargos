@@ -1,4 +1,5 @@
 import copy
+import socket
 import unittest
 from unittest.mock import Mock, patch, call
 
@@ -119,6 +120,22 @@ class PoolTests(unittest.TestCase):
         self.assertEqual(a.select(boards="rear").antennas[0], Antenna("y", 0))
         self.assertEqual(a.indexing_matrix.shape, (2, 8))
         self.boards.assert_not_called()
+
+    def test_failed_lookup_names_the_board_and_closes_previous_connections(self):
+        config = {"boards": {"front": {"host": "a"}, "rear": {"host": "b"}}, "array": [[f"{name}.{r}.{c}" for name in ("front", "rear") for c in range(4)] for r in range(2)]}
+        pool = Pool.from_config(config, hosts=["first.local", "second.local"])
+        first = FakeBoard("first.local")
+        failure = socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        self.boards.side_effect = [first, failure]
+        with self.assertRaisesRegex(ConnectionError, r"rear \(second\.local\).*hostname lookup failed.*Name or service not known") as caught:
+            pool.open()
+        self.assertIs(caught.exception.__cause__, failure)
+        first.close.assert_called_once()
+
+    def test_reference_timeout_identifies_the_reference_controller(self):
+        self.boards.side_effect = [FakeBoard("a"), TimeoutError("timed out")]
+        with self.assertRaisesRegex(TimeoutError, "reference controller ref.local: timed out"):
+            Pool("a", reference_controller="ref.local").open()
 
     def test_boardwide_request_is_rejected_before_any_write(self):
         a = Pool(["a", "b"])

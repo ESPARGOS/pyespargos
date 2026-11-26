@@ -13,6 +13,24 @@ from espargos.array_processing import steering_vectors_2d
 
 
 class TimingTests(unittest.TestCase):
+    def test_isolated_first_sensor_still_recovers_relative_phase(self):
+        rng = np.random.default_rng(34)
+        shared = rng.normal(size=950) + 1j*rng.normal(size=950)
+        noise = rng.normal(size=950) + 1j*rng.normal(size=950)
+        waves = [Waveform(noise if a == 0 else shared*np.exp(-1j*.2*a),
+                          100, 800, 4, 0) for a in range(8)]
+        packets = [SimpleNamespace(wave=w, crc_valid=True, qualified=True, rx_gain=0,
+                                   phy=0, channel=37, prefix=bytes([0, 20])) for w in waves]
+        cluster = SimpleNamespace(board_index=0, shape=(1, 2, 4),
+                                  get_packet=lambda b, a: packets[a],
+                                  get_sensor_position=lambda b, a: (b, a//4, a%4))
+        with patch("espargos.ble_iq.waveform", side_effect=lambda packet, *a, **kw: packet.wave):
+            iq = align_packet_iq(cluster)
+        np.testing.assert_array_equal(iq.valid.ravel(), [False] + [True]*7)
+        np.testing.assert_allclose(np.angle(iq.phase().vector.ravel()[1:]), np.arange(7)*.2, atol=.002)
+        response = channel_response(iq)
+        np.testing.assert_array_equal(np.any(response.coherence > .8, axis=-1), iq.valid)
+
     def test_fractional_capture_origins_and_if_sign(self):
         rng = np.random.default_rng(1)
         f = np.linspace(-.11,.11,71)

@@ -24,16 +24,24 @@ def phase_arrays(covariances, counts, feeds, split=False):
         colors = [[.20, .26, .30, 1.]] * n
         labels = ["—"] * n
         usable = (np.diag(total) > 0) & (np.diag(covariance).real > 0)
-        observed = np.flatnonzero(usable)
-        if len(observed):
+        # A singleton can only report its phase relative to itself. Display the
+        # largest connected group, using array order to break ties.
+        adjacent = (total > 0) & usable[:, None] & usable[None, :]
+        remaining = usable.copy()
+        indices = []
+        while np.any(remaining):
             connected = np.zeros(n, bool)
-            connected[observed[0]] = True
-            for _ in range(n):
-                expanded = (connected | np.any((total > 0)[connected], axis=0)) & usable
+            connected[np.flatnonzero(remaining)[0]] = True
+            while True:
+                expanded = np.any(adjacent[connected], axis=0)
                 if np.array_equal(expanded, connected):
                     break
                 connected = expanded
-            indices = np.flatnonzero(connected)
+            group = np.flatnonzero(connected)
+            if len(group) > len(indices):
+                indices = group
+            remaining[group] = False
+        if len(indices) >= 2:
             matrix = covariance[np.ix_(indices, indices)]
             _, vectors = np.linalg.eigh((matrix + matrix.conj().T) / 2)
             vector = vectors[:, -1]

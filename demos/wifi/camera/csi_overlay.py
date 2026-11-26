@@ -9,6 +9,7 @@ from demos.common.camera.overlay import CameraOverlayModel
 
 
 class CSIOverlay(CameraOverlayModel):
+    polarization_methods = ("FFT", "Bartlett")
     receiverPowerChanged = PyQt6.QtCore.pyqtSignal(float)
     receiverPowerUnitChanged = PyQt6.QtCore.pyqtSignal()
     activeAntennasChanged = PyQt6.QtCore.pyqtSignal(float)
@@ -61,9 +62,7 @@ class CSIOverlay(CameraOverlayModel):
             else:
                 color_value = visualized_power / (np.max(visualized_power) + 1e-15)
 
-            if self.appconfig.get("beamformer", "colorize_delay"):
-                if frequency_space is None:
-                    raise ValueError("frequency_space is required for delay colorization")
+            if self.appconfig.get("beamformer", "colorize_delay") and frequency_space is not None:
                 if frequency_space.ndim == 3:
                     frequency_space = frequency_space[np.newaxis, ...]
                 weighted_delay_phase = np.sum(

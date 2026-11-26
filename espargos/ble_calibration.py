@@ -87,7 +87,7 @@ def calibrate(receiver, board_index, samples, timeout, reference_address):
         generation = None
 
         def collect(cluster):
-            if cluster.board_index != board_index or not cluster.is_calibration or cluster.packet.generation != generation:
+            if ready.is_set() or cluster.board_index != board_index or not cluster.is_calibration or cluster.packet.generation != generation:
                 return
             # REF routing does not identify the source. Antenna leakage still
             # delivers valid packets from unrelated nearby BLE transmitters.
@@ -131,7 +131,11 @@ def calibrate(receiver, board_index, samples, timeout, reference_address):
                 receiver._generations[board_index] = generation
                 receiver._epochs = {k: v for k, v in receiver._epochs.items() if k[0] != board_index}
             if not ready.wait(timeout):
-                raise BLECalibrationError("Insufficient BLE reference measurements across the array. Check reference generation and routing")
+                with lock:
+                    observed = counts.tolist()
+                raise BLECalibrationError(f"Insufficient BLE reference measurements across the array "
+                                          f"(usable packets by row: {observed}, need {samples} per antenna). "
+                                          "Check reference generation and routing")
             with lock:
                 mean = phase_sum / counts
                 if np.min(abs(mean)) < 0.85:

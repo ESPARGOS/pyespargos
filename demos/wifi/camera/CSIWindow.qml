@@ -11,7 +11,6 @@ import "../../common/camera" as Camera
 Common.ESPARGOSApplication {
 	id: window
 	property bool selectablePreamble: true
-	property bool dualFeed: true
 	visible: true
 	minimumWidth: 800
 	minimumHeight: 500
@@ -22,6 +21,7 @@ Common.ESPARGOSApplication {
 	appDrawerComponent: Component {
 		Common.AppDrawer {
 			id: appDrawer
+			readonly property bool supportsPolarization: beamformerType.currentValue === "FFT" || beamformerType.currentValue === "Bartlett"
 			title: "App Settings"
 			endpoint: appconfig
 
@@ -137,8 +137,8 @@ Common.ESPARGOSApplication {
 				visible: beamformerType.currentIndex === 0
 			}
 
-			// polarization visualization only makes sense for FFT beamformer
-			Label { text: "Polarization"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: window.dualFeed && beamformerType.currentIndex === 0 }
+			// Both conventional beamformers retain the complex H/V components.
+			Label { text: "Polarization"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: appDrawer.supportsPolarization }
 			ComboBox {
 				id: showPolarization
 				property string configKey: "beamformer.polarization_mode"
@@ -154,10 +154,10 @@ Common.ESPARGOSApplication {
 				textRole: "text"
 				valueRole: "value"
 				currentValue: "ignore"
-				visible: window.dualFeed && beamformerType.currentIndex === 0
+				visible: appDrawer.supportsPolarization
 			}
 
-			Label { text: "Normalize"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: window.dualFeed && beamformerType.currentIndex === 0 && showPolarization.currentValue === "show" }
+			Label { text: "Normalize"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: appDrawer.supportsPolarization && showPolarization.currentValue === "show" }
 			Switch {
 				id: normalizePolarization
 				property string configKey: "beamformer.normalize_polarization"
@@ -166,14 +166,14 @@ Common.ESPARGOSApplication {
 				onCheckedChanged: appDrawer.configManager.onControlChanged(this)
 				implicitWidth: 80
 				checked: true
-				visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show"
+				visible: appDrawer.supportsPolarization && showPolarization.currentValue === "show"
 				ToolTip.visible: (ApplicationWindow.window ? ApplicationWindow.window.tooltipsEnabled : true) && hovered
 				ToolTip.text: "When enabled, all polarization dots oscillate with the same amplitude. When disabled, amplitude scales with received power."
 			}
 
             Common.PolarizationDisplaySettings {
                 configManager: appDrawer.configManager
-                visible: beamformerType.currentIndex === 0 && showPolarization.currentValue === "show"
+                visible: appDrawer.supportsPolarization && showPolarization.currentValue === "show"
             }
 
 			Label { text: "Max Delay"; color: "#ffffff"; horizontalAlignment: Text.AlignRight; Layout.alignment: Qt.AlignRight; Layout.fillWidth: true; visible: beamformerType.currentIndex === 0 && colorizeDelay.currentIndex === 1 }

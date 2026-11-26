@@ -168,7 +168,7 @@ their relative phase at a fixed reference gain and restores the antenna settings
 During reception, the SDK uses the gain recorded during each packet's training
 field to correct for gain-dependent phase shifts. An antenna whose gain changed
 during training is left out of the calibrated estimate. Use ``pool.wifi_iq.configure(settings)`` to change settings during reception.
-Recalibrate after changing channel or analog filter. Each board has its own phase reference.
+Recalibrate after changing channel. Analog bandwidth changes preserve calibration. Each board has its own phase reference.
 
 Demos
 -----
@@ -178,7 +178,7 @@ gain mode and analog filter there. Enable **Automatic** to let each sensor set i
 a common **RX Gain**. Under **Packet capture**, select the
 capture duration, packet rate limit and which sensors can trigger a shared capture.
 Edits take effect immediately. **Waveform fields** selects the estimator for both
-demos and defaults to training plus header. After a channel or analog filter change, **Trigger Calibration** turns red.
+demos and defaults to training plus header. After a channel change, **Trigger Calibration** turns red.
 Press it to measure a new reference. The demo calibrates automatically only at startup. The MAC
 filter selects a transmitter from the received packets and can be changed
 without recalibrating.

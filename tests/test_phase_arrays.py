@@ -37,3 +37,14 @@ class PhaseArraysTests(unittest.TestCase):
         covariance, counts = sample_covariances(samples)
         panel, = phase_arrays(covariance, counts, np.full((2, 8), 2))
         self.assertEqual(panel['labels'][4:], ['—']*4)
+
+    def test_isolated_reference_does_not_hide_connected_antennas(self):
+        phases = np.arange(8) * .2
+        samples = np.exp(1j*phases)[None, :, None] * np.ones((2, 8, 10))
+        samples[0, 1:] = np.nan
+        samples[1, 0] = np.nan
+        covariance, counts = sample_covariances(samples)
+        panel, = phase_arrays(covariance, counts, np.full((2, 8), 2))
+        self.assertEqual(panel["labels"][:3], ["—", "+0.00 rad", "+0.20 rad"])
+        panel, = phase_arrays(covariance[:1], counts[:1], np.full((1, 8), 2))
+        self.assertEqual(panel["labels"], ["—"] * 8)

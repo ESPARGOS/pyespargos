@@ -12,14 +12,14 @@ Item {
         anchors.centerIn: parent
         spacing: 24
         Repeater {
-            model: root.panels
+            model: root.panels.length
             PhaseArray {
-                required property var modelData
+                required property int index
                 rowCount: root.rowCount
                 columns: root.columns
                 tileSize: root.tileSize
-                colors: modelData.colors || []
-                labels: modelData.labels || []
+                colors: root.panels[index]?.colors || []
+                labels: root.panels[index]?.labels || []
             }
         }
     }
