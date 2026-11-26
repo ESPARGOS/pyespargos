@@ -120,7 +120,7 @@ Pool.register_receiver("wifi", WiFiTransceiver, sensor_mode="wifi")
 Pool.register_receiver("iq", IQReceiver, sensor_mode="iq_rx")
 Pool.register_receiver("ble", BLEReceiver, sensor_mode="ble")
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __title__ = "pyespargos"
 __description__ = "Python library for working with the ESPARGOS WiFi channel sounder"
 __uri__ = "http://github.com/ESPARGOS/pyespargos"

@@ -24,6 +24,17 @@ Full documentation, including runnable examples and the API reference, is availa
 
 <p align="center"><a href="https://espargos.net/espargos-one/"><img src="img/espargos-one-banner.svg" width="900" alt="ESPARGOS One: Digital Phased Array for 2.4 GHz"></a></p>
 
+## Release 0.2.0
+
+This release adds Bluetooth LE packet capture, WiFi IQ reception, continuous IQ
+receive streaming and IQ transmit streaming. These features are experimental
+and under development. Their demos are unstable and their APIs will change
+without notice.
+
+For these features, use the following ESPARGOS One firmware revisions together:
+[controller-firmware `0770317`](https://github.com/ESPARGOS/controller-firmware/commit/0770317359a175c21b9fca6eaaa17dae3db6d90f)
+and [sensor-firmware `fd96575`](https://github.com/ESPARGOS/sensor-firmware/commit/fd965752c99a1f442af3e00e764ad202cd46d179).
+
 ## Installation
 
 *pyespargos* requires **Python 3.11 or newer**. Follow the instructions for your operating system below.
