@@ -8,9 +8,11 @@ clutter rejection and range/Doppler/angle displays.
 """
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 import math
+import os
 
 import numpy as np
 from scipy import fft
@@ -149,6 +151,7 @@ class MIMOProcessor:
 
     def __init__(self, positions, frequency=2385e6, history=DOPPLER_WINDOWS, sample_rate=RATE, range_maximum=0):
         positions = np.asarray(positions).reshape(-1, 2)
+        self.plot_config = (tuple(map(tuple, positions)), frequency, history, sample_rate, range_maximum)
         self.tx_indices = corner_transmitters(positions)
         self.rx_indices = np.array([i for i in range(len(positions)) if i not in self.tx_indices])
         self.receiver_count = len(self.rx_indices)
@@ -169,7 +172,6 @@ class MIMOProcessor:
         self.slow_time = np.linspace(-1, 1, history)
         self.slow_window = np.hanning(history)
         self.clutter_basis = np.polynomial.polynomial.polyvander(self.slow_time, 2)
-        self.doppler_templates = np.exp(-2j * np.pi * np.arange(history)[:, None] * np.fft.fftfreq(self.doppler_bins)[None, :])
         self._complete_window_terms = self._slow_time_terms(self.slow_window)
 
         self.offsets = np.fft.fftfreq(SAMPLES, 1 / sample_rate)
@@ -193,7 +195,7 @@ class MIMOProcessor:
         self.delay_matrix = np.exp(2j * np.pi * self.offsets[:, None] * (2 * self.ranges[None, :] / C)).astype(np.complex64)
         # Each TX uses only its own tones. Keep compact matrices ready for the
         # range transform, including the sparse tone sets at 8/4 MSa/s.
-        self.range_matrices = tuple(np.ascontiguousarray(self.delay_matrix[mask], dtype=np.complex128) for mask in self.masks)
+        self.range_matrices = tuple(self.delay_matrix[mask] for mask in self.masks)
 
         # Find the grid coordinates of each virtual antenna.
         coordinates = []
@@ -217,10 +219,21 @@ class MIMOProcessor:
         visible = np.flatnonzero(abs(self.beam_directions) <= 1)
         self.visible_beams = slice(visible[0], visible[-1] + 1)
 
-        same_row = self.aperture_y[:, None] == self.aperture_y[None, :]
-        separation = self.aperture_x[:, None] - self.aperture_x[None, :]
-        self.spatial_pairs = [np.nonzero(same_row & (separation == lag)) for lag in range(self.aperture_shape[1])]
-
+        # Translating a row changes its beam phase but preserves its power.
+        # Batch rows of equal width so the lag sums skip unused aperture cells.
+        rows_by_width = {}
+        for row in np.unique(self.aperture_y):
+            ids = np.flatnonzero(self.aperture_y == row)
+            x = self.aperture_x[ids]
+            x = x - x.min()
+            rows_by_width.setdefault(int(x.max() + 1), []).append((x, ids))
+        self.row_groups = []
+        for width, rows in rows_by_width.items():
+            x = np.concatenate([cols for cols, _ in rows])
+            y = np.repeat(np.arange(len(rows)), [len(ids) for _, ids in rows])
+            ids = np.concatenate([ids for _, ids in rows])
+            self.row_groups.append(((width, len(rows)), (x, y), ids))
+        self.has_coincident_paths = len(np.unique(np.column_stack((self.aperture_x, self.aperture_y)), axis=0)) < self.path_count
         self.range_weights = np.ones(SAMPLES)
         self.reset()
 
@@ -276,134 +289,178 @@ class MIMOProcessor:
     def _slow_time_terms(self, weight):
         """Clutter fit and Doppler normalization for one capture-coverage mask."""
         basis = self.clutter_basis
-        fit = np.linalg.solve(basis.T @ (weight[:, None] * basis), basis.T * weight)
-        residual = self.doppler_templates - basis @ (fit @ self.doppler_templates)
-        response = weight @ abs(residual) ** 2 / weight.sum()
+        weighted_basis = basis.T * weight
+        gram = weighted_basis @ basis
+        fit = np.linalg.solve(gram, weighted_basis)
+        # Each unit-amplitude Doppler tone has total weighted power one.
+        # Subtract its projection onto the polynomial clutter basis. The FFT
+        # evaluates the three fit coefficients for every tone simultaneously.
+        coefficients = fft.fft(fit, n=self.doppler_bins, axis=-1)
+        projected_energy = (coefficients.conj() * (gram @ coefficients)).sum(axis=0).real
+        response = 1 - projected_energy / weight.sum()
         scale = np.divide(1, response, out=np.zeros_like(response), where=response > 1e-6)
         return fit, scale
 
-    def maps(self):
-        """Compute both power maps from the same capture window."""
+    def capture_window(self):
+        """Copy just the measured OFDM tones into a self-contained plot window."""
         if len(self.frames) < self.history:
             return None
-
-        valid = np.array([v is not None for v in self.frames])
+        valid = np.array([frame is not None for frame in self.frames])
         if valid.mean() < 0.8:
             return None
+        dtype = np.result_type(*(frame.dtype for frame in self.frames if frame is not None))
+        bands = []
+        for tx, mask in enumerate(self.masks):
+            paths = slice(tx * self.receiver_count, (tx + 1) * self.receiver_count)
+            data = np.zeros((self.receiver_count, self.history, np.count_nonzero(mask)), dtype)
+            for t, frame in enumerate(self.frames):
+                if frame is not None:
+                    data[:, t] = frame[paths, :][:, mask]
+            bands.append(data)
+        return valid, bands
 
-        data = np.asarray([v if v is not None else np.zeros((self.path_count, SAMPLES), np.complex64) for v in self.frames], dtype=np.complex128)
+    def maps(self):
+        """Compute both power maps from the same capture window."""
+        window = self.capture_window()
+        if window is None:
+            return None
+        return self._window_maps(*window)
 
+    def _window_maps(self, valid, bands):
         weight = self.slow_window * valid
         # The usual complete window has fixed terms. Missing captures need a
         # fresh fit and normalization, without changing the cached full window.
         fit, doppler_scale = self._complete_window_terms if valid.all() else self._slow_time_terms(weight)
-        # Split the range window around the clutter filter. Both data and
-        # templates must use the same Hermitian weighting to preserve peak range.
-        data *= np.sqrt(self.range_weights)[None, None, :]
-        energy = self._suppress_leakage(data, weight)
-        data *= np.sqrt(self.range_weights)[None, None, :]
-        # Remove the remaining stationary signal and smooth drift. Normalize
-        # each Doppler template so slow targets keep their velocity peak.
-        flat = data.reshape(self.history, -1)
-        flat -= self.clutter_basis @ (fit @ flat)
+        # The two pilot bands and the disjoint range blocks are independent.
+        # Bound parallelism so live IQ reception still gets CPU time.
+        with ThreadPoolExecutor(max_workers=min(3, os.cpu_count() or 1)) as workers:
+            jobs = [workers.submit(self._range_profile, tx, tones, weight, fit) for tx, tones in enumerate(bands)]
+            profiles, energies, clutter_weights = zip(*(job.result() for job in jobs))
+            self._clutter_weights = np.concatenate(clutter_weights)
+            doppler = self._doppler(np.concatenate(profiles), np.concatenate(energies), weight)
+            return self._display_power(doppler, doppler_scale, workers)
 
-        range_data = np.empty((self.history, self.path_count, len(self.ranges)), np.complex128)
-        for tx, (mask, matrix) in enumerate(zip(self.masks, self.range_matrices)):
-            paths = slice(tx * self.receiver_count, (tx + 1) * self.receiver_count)
-            compact = data[:, paths, :][:, :, mask]
-            range_data[:, paths] = (compact.reshape(-1, matrix.shape[0]) @ matrix).reshape(self.history, self.receiver_count, -1)
-
+    def _doppler(self, profiles, energy, weight):
+        # Match the range template normalization to the filtered signal, using
+        # one power normalization per virtual row to preserve its beam shape.
         template_energy = np.repeat(self.masks @ self.range_weights, self.receiver_count)
-        for row in np.unique(self.aperture_y):
-            ids = self.aperture_y == row
-            range_data[:, ids] /= np.sqrt(np.average(energy[ids], axis=0, weights=template_energy[ids]))[None, None, :]
+        row_total = np.bincount(self.aperture_y, weights=template_energy, minlength=self.aperture_shape[0])
+        row_energy = np.zeros((len(row_total), len(self.ranges)))
+        np.add.at(row_energy, self.aperture_y, energy * template_energy[:, None])
+        path_scale = np.sqrt(row_total[self.aperture_y, None] / row_energy[self.aperture_y])
+        # Interpolation at the clutter notch needs a double-precision Doppler FFT.
+        windowed = np.ascontiguousarray(profiles.transpose(0, 2, 1), dtype=np.complex128)
+        windowed *= weight / weight.sum()
+        windowed *= path_scale[:, :, None]
+        return fft.fft(windowed, n=self.processing_doppler_bins, axis=-1).transpose(2, 0, 1)
 
-        # Make slow time contiguous for the Doppler FFT.
-        windowed = np.ascontiguousarray(range_data.transpose(1, 2, 0))
-        windowed *= weight
-        doppler = fft.fft(windowed, n=self.processing_doppler_bins, axis=-1)
-        doppler /= weight.sum()
-        doppler = doppler.transpose(2, 0, 1)
-
+    def _display_power(self, doppler, doppler_scale, workers):
         rd = np.empty((len(self.ranges), self.doppler_bins), np.float32)
         ra = np.empty((len(self.ranges), len(self.angles)), np.float32)
+        scale = doppler_scale / self.path_count**2
+        # The visible angles straddle the wrap in the unshifted FFT.
+        positive_end = self.visible_beams.stop - len(self.angles) // 2
+        negative_start = self.visible_beams.start + len(self.angles) // 2
 
-        # Process eight ranges at a time to keep the working arrays small.
-        for start in range(0, len(self.ranges), 8):
-            stop = min(start + 8, len(self.ranges))
-            block = doppler[:, :, start:stop].transpose(0, 2, 1)
-            power = self._beam_power(block, self.doppler_bins) / self.path_count**2
-            power *= doppler_scale[:, None, None]
-            # Visible FFT bins lie on either side of the unshifted spectrum.
-            edge = self.visible_beams.stop - len(self.beam_directions) // 2
-            negative_start = self.visible_beams.start + len(self.beam_directions) // 2
-            rd[start:stop] = np.maximum(power[..., :edge].max(axis=-1), power[..., negative_start:].max(axis=-1)).T
-            ra[start:stop] = power.max(axis=0)
+        # Eight ranges at the default integration time, fewer for longer FFTs
+        # so each thread's beamspace cube still fits in cache.
+        cells_per_block = 8 * DOPPLER_WINDOWS * DOPPLER_OVERSAMPLING
+        block_size = max(2, min(16, cells_per_block // self.doppler_bins))
 
+        def render_block(start):
+            ranges = slice(start, start + block_size)
+            block = doppler[:, :, ranges].transpose(0, 2, 1)
+            power = self._beam_power(block, self.doppler_bins, scale)
+            rd[ranges] = np.maximum(power[..., :positive_end].max(axis=-1), power[..., negative_start:].max(axis=-1)).T
+            ra[ranges] = power.max(axis=0)
+
+        list(workers.map(render_block, range(0, len(self.ranges), block_size)))
         return np.fft.fftshift(rd, axes=1), np.fft.fftshift(ra, axes=1)
 
-    def _suppress_leakage(self, data, weight):
-        """Downweight leakage fluctuations in-place and return template energies."""
-        reference = np.einsum("t,tpf->pf", weight, data) / weight.sum()
-        # Gain/phase changes follow the stationary spectrum. Small timing
-        # changes also multiply it by frequency. Orthonormalize these two shapes.
+    def _range_profile(self, tx, tones, weight, fit):
+        """Filter one transmitter's active tones and match them to range templates."""
+        mask, matrix = self.masks[tx], self.range_matrices[tx]
+        band = np.sqrt(self.range_weights[mask])
+        # Subtract the stationary return in double precision before casting
+        # the much smaller residual. Split the band weighting around whitening.
+        reference = np.einsum("t,ptf->pf", weight / weight.sum(), tones)
+        data = (tones - reference[:, None]).astype(np.complex64)
+        data *= band
+        reference *= band
+        basis, alpha = self._suppress_leakage(data, reference, self.offsets[mask], weight)
+        data *= band
+        # Reject the remaining smooth slow-time drift before matching ranges.
+        data -= self.clutter_basis.astype(np.float32) @ (fit.astype(np.float32) @ data)
+
+        projection = (basis * band) @ matrix
+        energy = 1 - np.sum(alpha[..., None] * abs(projection) ** 2, axis=1) / self.range_weights[mask].sum()
+        return data @ matrix, energy, alpha
+
+    def _suppress_leakage(self, data, reference, offsets, weight):
+        """Suppress fluctuations parallel to the stationary return and its delay derivative."""
         q0 = reference / np.maximum(np.linalg.norm(reference, axis=-1, keepdims=True), 1e-20)
-        q1 = q0 * (self.offsets / self.sample_rate)
+        q1 = q0 * (offsets / self.sample_rate)
         q1 -= q0 * np.sum(q1 * q0.conj(), axis=-1, keepdims=True)
         q1 /= np.maximum(np.linalg.norm(q1, axis=-1, keepdims=True), 1e-20)
-        basis_f = np.stack((q0, q1), axis=1)
-        mask = np.repeat(self.masks, self.receiver_count, axis=0)
-        coefficients = np.einsum("tpf,pkf->tpk", data - reference, basis_f.conj())
-        # A small clock shift rotates the stationary return in proportion to
-        # frequency. Its slope is imaginary, while a moving echo rotates
-        # through both quadratures. Remove gain and phase changes correlated
-        # with that shift only when the imaginary slope dominates by 10 dB.
+        basis = np.stack((q0, q1), axis=1).astype(np.complex64)
+        coefficients = data @ basis.conj().transpose(0, 2, 1)
+
+        # A hardware clock shift has an imaginary slope. Moving echoes rotate
+        # through both quadratures. Regress out jitter only if it dominates by 10 dB.
         slope = coefficients[..., 1]
         delay = slope.imag
-        power = np.einsum("t,tp,tp->p", weight, delay, delay)
-        quadrature_power = np.einsum("t,tp,tp->p", weight, slope.real, slope.real)
+        power = np.einsum("pt,t,pt->p", delay, weight, delay)
+        quadrature_power = np.einsum("pt,t,pt->p", slope.real, weight, slope.real)
         confidence = np.clip(1 - 10 * quadrature_power / np.maximum(power, 1e-30), 0, 1)
         if confidence.any():
-            fit = np.einsum("t,tp,tpk->pk", weight, delay, coefficients)
-            drift = delay[..., None] * (fit * (confidence / np.maximum(power, 1e-30))[:, None])
-            data -= np.einsum("tpk,pkf->tpf", drift, basis_f)
+            drift_fit = np.einsum("t,pt,ptk->pk", weight, delay, coefficients)
+            drift_fit *= (confidence / np.maximum(power, 1e-30))[:, None]
+            drift = (delay[..., None] * drift_fit[:, None]).astype(np.complex64)
+            data -= drift @ basis
             coefficients -= drift
-        # Estimate their excess noise outside walking Doppler speeds, rather
-        # than treating every moving echo as a change in the hardware.
-        spectrum = fft.fft((data - reference) * weight[:, None, None], axis=0) / np.linalg.norm(weight)
+
+        # A fixed basis commutes with the temporal FFT. Transform the two
+        # coefficients directly instead of projecting every Doppler bin again.
         outer = abs(np.fft.fftfreq(self.history, self.dt) * C / (2 * self.frequency)) > 2.5
-        projected = np.einsum("tpf,pkf->tpk", spectrum[outer], basis_f.conj())
-        variance = np.median(abs(projected) ** 2, axis=0) / np.log(2)
-        residual_power = np.sum(abs(spectrum[outer]) ** 2, axis=-1) - np.sum(abs(projected) ** 2, axis=-1)
-        white_noise = np.median(residual_power, axis=0) / (mask.sum(axis=-1) - 2)
-        # Regularization prevents a numerical null and limits suppression to
-        # 40 dB. The relative floor protects nearly noiseless input.
+        taper = (weight / np.linalg.norm(weight)).astype(np.float32)[None, :, None]
+        spectrum = fft.fft(data * taper, axis=1)[:, outer]
+        projected = fft.fft(coefficients * taper, axis=1)[:, outer]
+        projected_power = abs(projected) ** 2
+        variance = np.median(projected_power, axis=1) / np.log(2)
+        residual_power = np.sum(abs(spectrum) ** 2, axis=-1) - projected_power.sum(axis=-1)
+        white_noise = np.median(residual_power, axis=1) / (len(offsets) - 2)
+        # Bound suppression to 40 dB and keep a relative floor for quiet inputs.
         floor = np.maximum(white_noise, 1e-10 * np.sum(abs(reference) ** 2, axis=-1))
         alpha = np.clip(1 - floor[:, None] / np.maximum(variance, 1e-30), 0, 0.9999)
-        self._clutter_weights = alpha
-        data -= np.einsum("tpk,pkf->tpf", coefficients * alpha, basis_f)
-        # Match the range templates to the SAME weighting. Omitting this
-        # normalization pushes nearby echoes toward the first range sidelobe.
-        projection = (basis_f * np.sqrt(self.range_weights)[None, None, :]) @ self.delay_matrix
-        total_energy = mask @ self.range_weights
-        energy = 1 - np.sum(alpha[..., None] * abs(projection) ** 2, axis=1) / total_energy[:, None]
-        return energy
+        data -= (coefficients * alpha.astype(np.float32)[:, None]) @ basis
+        return basis, alpha
 
-    def _beam_power(self, block, doppler_bins=None):
+    def _beam_power(self, block, doppler_bins=None, scale=None):
         # Correlate antennas within each row, then add row powers.
         # Interpolation near the clutter notch subtracts nearly equal terms.
         # Double precision keeps normalization from magnifying roundoff there.
-        block = np.asarray(block, dtype=np.complex128)
-        conjugate = block.conj()
-        correlations = np.empty((*block.shape[:2], self.aperture_shape[1]), np.complex128)
-        for lag, (left, right) in enumerate(self.spatial_pairs):
-            correlations[..., lag] = np.einsum("drp,drp->dr", block[..., left], conjugate[..., right])
+        n_doppler, n_range, _ = block.shape
+        paths = block.transpose(2, 1, 0)
+        correlations = np.zeros((self.aperture_shape[1], n_range, n_doppler), np.complex128)
+        for shape, cells, path_ids in self.row_groups:
+            width = shape[0]
+            grid = np.zeros((*shape, n_range, n_doppler), np.complex128)
+            if self.has_coincident_paths:
+                np.add.at(grid, cells, paths[path_ids])
+            else:
+                grid[cells] = paths[path_ids]
+            conjugate = grid.conj()
+            for lag in range(width):
+                correlations[lag] += np.einsum("xyrd,xyrd->rd", grid[lag:], conjugate[: width - lag])
 
-        # The 2N Doppler grid retains all correlation lags from N captures.
-        # Interpolating these coefficients is cheaper than a full beamspace cube.
-        if doppler_bins is not None and doppler_bins != len(correlations):
-            correlations = resample(correlations, doppler_bins, axis=0)
-        return np.maximum(fft.hfft(correlations, n=self.spatial_fft_shape[1], axis=-1), 0)
+        # N captures have correlation lags from -(N-1) to N-1. The 2N
+        # Doppler grid retains all of them, so interpolate before the angle FFT.
+        if doppler_bins is not None and doppler_bins != n_doppler:
+            correlations = resample(correlations, doppler_bins, axis=-1)
+        if scale is not None:
+            correlations *= scale
+        angular = np.ascontiguousarray(correlations.transpose(2, 1, 0), dtype=np.complex64)
+        return np.maximum(fft.hfft(angular, n=self.spatial_fft_shape[1], axis=-1), 0)
 
     def background_power(self, range_doppler):
         """Measure the noise floor outside typical hand and walking speeds."""
@@ -417,7 +474,12 @@ class MIMOProcessor:
         return result[0][:, ::-1], result[1]
 
 
-def render_maps(processor):
+# Each plotting process retains only the model for its current settings.
+_plot_processor = lru_cache(maxsize=1)(MIMOProcessor)
+
+
+def render_maps(config, range_weights, window):
     """Compute one display frame in the plotting process."""
-    maps = processor.maps()
-    return None if maps is None else processor.display_maps(maps)
+    processor = _plot_processor(*config)
+    processor.range_weights = range_weights
+    return processor.display_maps(processor._window_maps(*window))

@@ -408,6 +408,29 @@ class RangeDopplerTests(unittest.TestCase):
             for image in self.visible_maps(maps):
                 self.assertLess(np.mean(image > 12), 0.02)
 
+    def test_plot_worker_receives_independent_window_and_current_range_weights(self):
+        p = radar.MIMOProcessor([(x * 0.06, 0) for x in range(4)], history=20)
+        rng = np.random.default_rng(915)
+        mask = np.repeat(p.masks, p.receiver_count, axis=0)
+        frames = mask * (rng.normal(size=(p.history, *mask.shape)) + 1j * rng.normal(size=(p.history, *mask.shape)))
+        for index, frame in enumerate(frames):
+            if index != 3:
+                p.push(frame, index * p.interval_chunks)
+        window = p.capture_window()
+        weights = [p.range_weights, np.linspace(1, 1.5, radar.SAMPLES)]
+        expected = []
+        for correction in weights:
+            p.range_weights = correction
+            expected.append(p.display_maps(p.maps()))
+        self.assertTrue(p.push(frames[3], 3 * p.interval_chunks))
+        p.reset()
+        self.assertIsNone(p.capture_window())
+        # The late capture and reset must not affect the plot already submitted.
+        for correction, reference in zip(weights, expected):
+            for actual, wanted in zip(radar.render_maps(p.plot_config, correction, window), reference):
+                np.testing.assert_allclose(actual, wanted)
+        self.assertFalse(np.allclose(expected[0][0], expected[1][0]))
+
     def test_counter_wrap_duplicates_and_late_capture(self):
         p = self.processor
         p.reset()

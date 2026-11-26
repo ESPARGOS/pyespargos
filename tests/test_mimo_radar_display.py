@@ -392,6 +392,17 @@ def test_dense_doppler_matches_full_zero_padded_beamforming():
     np.testing.assert_allclose(p._beam_power(coarse, p.doppler_bins), expected, rtol=2e-5, atol=0.03)
 
 
+def test_doppler_interpolation_preserves_weak_sidelobes_of_bright_target():
+    p = radar.MIMOProcessor([(x * 0.06, 0) for x in range(4)])
+    t = np.arange(p.history)
+    tone = np.hanning(p.history) * np.exp(2j * np.pi * 5.27 * t / p.history)
+    # A single illuminated path has the same power at every steering angle.
+    block = np.zeros((p.processing_doppler_bins, 1, p.path_count), np.complex128)
+    block[:, 0, 0] = np.fft.fft(tone, n=p.processing_doppler_bins)
+    expected = abs(np.fft.fft(tone, n=p.doppler_bins)) ** 2
+    np.testing.assert_allclose(p._beam_power(block, p.doppler_bins)[:, 0, 0], expected, rtol=2e-5, atol=1e-12 * expected.max())
+
+
 def test_cached_pilot_weights_preserve_channel_estimation():
     p = radar.MIMOProcessor(np.array([(x * 0.06, y * 0.06) for y in range(4) for x in range(8)]))
     rng = np.random.default_rng(31)

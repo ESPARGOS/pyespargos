@@ -3,10 +3,8 @@
 
 import os
 import math
-import copy
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
-from collections import deque
 import pathlib
 import queue
 import signal
@@ -414,8 +412,11 @@ class MIMORadar(ESPARGOSIQApplication):
         active = rx_calibration.merge(tx_calibration)
 
         self._timing = self._timing.for_calibration(active)
-        tx_corrections = np.stack([self._timing.response(antenna, self._frequency + self._processor.offsets) for antenna in self._tx_antennas])
-        self._timing_correction = np.repeat(tx_corrections, len(self._rx_antennas), axis=0)
+        frequencies = self._frequency + self._processor.offsets
+        tx_response = np.stack([self._timing.response(antenna, frequencies) for antenna in self._tx_antennas])
+        # Each tone belongs to just one TX. Fold its range-zero correction
+        # into the receiver equalizer once per calibration.
+        timing_response = np.sum(tx_response * self._processor.masks, axis=0)
 
         states = {c.state.antenna: c.state for g in rx_calibration.groups for c in g.corrections}
         if set(states) != set(self._rx_antennas):
@@ -423,7 +424,8 @@ class MIMORadar(ESPARGOSIQApplication):
 
         self._calibration = active
         self._epochs = np.array([states[a].epoch for a in self._rx_antennas], np.uint64)
-        self._correction = rx_calibration.response([states[a] for a in self._rx_antennas], self._frequency + self._processor.offsets)
+        rx_response = rx_calibration.response([states[a] for a in self._rx_antennas], frequencies)
+        self._correction = (rx_response * timing_response).astype(np.complex64)
 
     def _measure_range_response(self, timeout=5):
         """Measure the filter rolloff for the range-response correction."""
@@ -568,7 +570,7 @@ class MIMORadar(ESPARGOSIQApplication):
 
     def _next_frame(self, timeout=1):
         index, iq = self._captures.get(timeout=timeout)
-        channels = self._processor.channels(iq, self._correction) * self._timing_correction
+        channels = self._processor.channels(iq, self._correction)
         self._processor.push(channels, index)
         return index, channels
 
@@ -654,10 +656,10 @@ class MIMORadar(ESPARGOSIQApplication):
                         plot_times = [t for t in plot_times if now - t < 2]
 
                 if pending_plot is None and now - last_plot >= 0.05 and len(p.frames) == p.history:
-                    snapshot = copy.copy(p)
-                    snapshot.frames = deque(p.frames)
-                    pending_plot = plot_worker.submit(render_maps, snapshot)
-                    plot_valid = True
+                    window = p.capture_window()
+                    if window is not None:
+                        pending_plot = plot_worker.submit(render_maps, p.plot_config, p.range_weights, window)
+                        plot_valid = True
                     last_plot = now
 
                 if now - last_status >= 0.5:
