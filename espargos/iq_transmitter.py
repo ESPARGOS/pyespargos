@@ -44,7 +44,7 @@ class IQTransmitter:
             self.uplink = Uplink(self.boards)
             self.receiver = owner.iq
             self.authorization = self.authorized()
-            self._parallel(lambda i, b: _rpc(b, "set_iq_tx", {"muted": True}) if self.authorization[i] else None)
+            self._parallel(lambda i, b: _rpc(b, "iq/tx", {"muted": True}) if self.authorization[i] else None)
             self.states = self.read()
         except Exception as error:
             try:
@@ -65,7 +65,7 @@ class IQTransmitter:
             concurrent.futures.wait(futures)
 
     def read(self):
-        self.states = self._parallel(lambda i, b: _rpc(b, "get_iq_tx"))
+        self.states = self._parallel(lambda i, b: _rpc(b, "iq/tx"))
         return self.states
 
     def schedule_steering(self, changes, *, start_sample=None, lead_time=0.5):
@@ -120,7 +120,7 @@ class IQTransmitter:
         from .stream_sources import SingleCarrier, GFSK
 
         with self.owner._lock:
-            profiles = [_rpc(board, "get_iq_tx_stream_config") for board in self.boards]
+            profiles = [_rpc(board, "config/iq-tx-stream") for board in self.boards]
             self.read()
             first = next((p for p in profiles if p.get("beam", {}).get("antennas")), None)
             if first is None:
@@ -162,7 +162,7 @@ class IQTransmitter:
             return stream
 
     def authorized(self):
-        return self._parallel(lambda i, b: _rpc(b, "get_transmit_authorization")["authorized"])
+        return self._parallel(lambda i, b: _rpc(b, "config/transmit-authorization")["authorized"])
 
     def reconnect(self):
         """Recover lost streams and device state, always leaving TX muted."""
@@ -192,7 +192,7 @@ class IQTransmitter:
                     if muted:
                         return
                     raise PermissionError(f"{b.host}: enable transmit authorization in controller Settings")
-                settings = _rpc(b, "set_iq_tx", {"muted": muted})
+                settings = _rpc(b, "iq/tx", {"muted": muted})
                 if self.capture is None:
                     return
                 targets = {a: 0 if muted else sensor["amplitude"] for a, sensor in enumerate(settings["sensors"]) if muted or sensor.get("enabled")}
@@ -218,13 +218,13 @@ class IQTransmitter:
                 raise stream_error
         except Exception:
             if not muted:
-                self._parallel(lambda i, b: _rpc(b, "set_iq_tx", {"muted": True}))
+                self._parallel(lambda i, b: _rpc(b, "iq/tx", {"muted": True}))
             raise
 
     def settings(self, payload):
         if self._stream is not None and not self._stream.closed:
             raise RuntimeError("Close the stream before changing TX settings")
-        self._parallel(lambda i, b: _rpc(b, "set_iq_tx", payload))
+        self._parallel(lambda i, b: _rpc(b, "iq/tx", payload))
         return self.read()
 
     def modes(self, modes):
@@ -232,7 +232,7 @@ class IQTransmitter:
             raise RuntimeError("Close the stream before changing sensor modes")
 
         def apply(i, b):
-            _rpc(b, "set_iq_tx", {"muted": True, "modes": modes[i]})
+            _rpc(b, "iq/tx", {"muted": True, "modes": modes[i]})
             self.capture.wait(b, lambda s: all(x["applied_mode"] == modes[i][a] for a, x in enumerate(s["sensors"])), 10)
 
         self._parallel(apply)
@@ -252,7 +252,7 @@ class IQTransmitter:
                 for offset in range(0, samples, 1000):
                     part = words[offset : offset + 1000]
                     header = struct.pack("<IBBBB7I", 0x31585449, 3, 7, sum(1 << a for a in antennas), slot, generation, offset, samples, crc, len(part), 0xFFFFFFFF, 0xFFFFFFFF)
-                    board.control.fetch("upload_iq_tx_waveform", header.ljust(68, b"\0") + part.tobytes())
+                    board._resources.upload(header.ljust(68, b"\0") + part.tobytes())
                 self._wait_generation(board, generation, antennas)
                 break
             except (ConnectionError, TimeoutError, _SensorTXError) as error:
@@ -282,7 +282,7 @@ class IQTransmitter:
         # Resizing requires the replay engine to release both sample banks.
         # The applied RX role acknowledges this even when no IQ is delivered.
         try:
-            _rpc(board, "set_iq_tx", {"muted": True, "modes": ["iq_rx" if a in antennas else mode for a, mode in enumerate(modes)]})
+            _rpc(board, "iq/tx", {"muted": True, "modes": ["iq_rx" if a in antennas else mode for a, mode in enumerate(modes)]})
             self.capture.wait(board, lambda s: all(s["sensors"][a]["applied_mode"] == "iq_rx" and not s["sensors"][a]["enabled"] for a in antennas), 10)
             yield
         finally:
@@ -356,7 +356,7 @@ class IQTransmitter:
                     else:
                         # Queue every disjoint sensor group before waiting for
                         # the shared boundary; waiting here would make later groups late.
-                        generation = _rpc(board, "set_iq_tx_waveform", payload)["generation"]
+                        generation = _rpc(board, "iq/tx/synthesize", payload)["generation"]
                         scheduled.append((generation, antennas, any(isinstance(source, Stream) for source, _ in sources)))
                 if resize:
                     self.capture.wait(board, lambda s: all(s["sensors"][a]["enabled"] and s["sensors"][a]["applied_mode"] == "iq_tx" for a in antennas), 10)

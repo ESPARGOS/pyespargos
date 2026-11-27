@@ -1,6 +1,5 @@
 """BLE configuration and packet-IQ delivery for one board."""
 
-import json
 
 from .board import BoardCapability, EspargosAPIVersionError
 from .ble_packet import BLEPacket, BLE_PACKET_TYPE_HEADER
@@ -30,25 +29,30 @@ class BLECapability(BoardCapability):
     def packet_settings(config):
         """Encode the receiver settings carried in a BLE packet header."""
         gain_mode = {"manual": 0, "auto": 1, "expert": 2}[config["gain_mode"]]
-        return config["channel"] | config["rf_switch"] << 8 | config["rx_gain"] << 16 | gain_mode << 24
+        common = config["channel"] | config["rx_gain"] << 16 | gain_mode << 24
+        paths = config["rf_switch"]
+        if isinstance(paths, list):
+            return tuple(common | path << 8 for path in paths)
+        return common | paths << 8
 
     def get_config(self):
         """Return live receiver settings, including their configuration generation."""
-        return self._board.control.get_json("get_bluetooth")
+        return self._board._resources.read_radio("ble/rx")
 
     def set_config(self, config):
-        """Apply partial board-wide BLE settings and return the resulting state.
+        """Update BLE receiver settings and return the resulting state.
 
-        This does not select sensor modes or change persistent reference settings.
+        Use a single ``rf_switch`` value for all eight inputs or an antenna-ID
+        mapping for individual inputs.
         The controller validates channel, PHY, gain and capture options.
         Sensors normally qualify candidates before sending their IQ. Set
         ``sensor_filter=False`` to receive all energy-triggered captures.
         """
-        return json.loads(self._board.control.post_json("set_bluetooth", config))
+        return self._board._resources.write_radio("ble/rx", config)
 
     def get_reference_status(self):
         """Return the controller's BLE reference generator status."""
-        return self._board.control.get_json("get_bluetooth_reference")
+        return self._board._resources.read("reference/ble")
 
     def subscribe_packets(self, callback):
         """Deliver parsed BLEPacket payloads with their SensorMessage metadata.

@@ -7,7 +7,7 @@ import "../../common" as Common
 Drawer {
     id: drawer
     property int headerHeight: 0
-    readonly property int rfSwitchMode: wifiIQControls.settings.rf_switch ?? -1
+    readonly property int rfSwitchMode: feed.value
     implicitHeight: parent ? parent.height - headerHeight : 0
     implicitWidth: 400
     y: headerHeight
@@ -37,7 +37,7 @@ Drawer {
         channel.currentIndex = cfg.channel - 1
         gainMode.checked = cfg.gain_mode === "auto"
         if (!gain.pressed) gain.value = cfg.rx_gain
-        feed.value = cfg.rf_switch
+        feed.value = typeof cfg.rf_switch === "number" ? cfg.rf_switch : -1
         shared.checked = cfg.boot_sync
         triggers.mask = cfg.boot_trigger_mask ?? 255
         rate.value = cfg.max_pps

@@ -4,6 +4,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos.calibration import Antenna, AntennaCorrection, Calibration, CalibrationGroup, CalibrationState
 from espargos.waveforms import CW, LFM
 from espargos.steering import Beamspace, Weights
@@ -163,6 +164,7 @@ def test_half_rate_reciprocity_is_rejected_before_hardware_changes():
         return {"sensors": [{"sample_rate_hz": 40_000_000}] * 8}
 
     board.control = SimpleNamespace(get_json=get_json)
+    board._resources = LegacyControllerResources(board.control)
     with pytest.raises(ValueError, match="tx_method='monitor'"):
         reciprocity.calibrate(pool, scope=scope)
     assert calls == ["get_iq_tx"]

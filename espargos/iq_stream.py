@@ -390,7 +390,7 @@ class IQStream:
             for target in self.targets:
                 board, ids, _ = target
                 read_started = time.monotonic()
-                state = _rpc(board, "get_iq_tx")
+                state = _rpc(board, "iq/tx")
                 self.transmitter.states[self.transmitter.boards.index(board)] = state
                 if state["muted"]:
                     raise ValueError("Unmute the prepared TX scene before starting its stream")
@@ -520,7 +520,7 @@ class IQStream:
                 except Exception as error:
                     errors.append(error)
                     try:
-                        _rpc(board, "set_iq_tx", {"muted": True})
+                        _rpc(board, "iq/tx", {"muted": True})
                     except Exception as mute_error:
                         error.add_note(f"Fallback mute also failed: {mute_error}")
             self.closed = True

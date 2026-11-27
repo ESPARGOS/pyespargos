@@ -13,7 +13,7 @@ def snapshot(pool, tx_result=None, method="rx", scope=None):
 
     scope = scope or CalibrationScope(pool)
     configs = _map(lambda b: b.iq.get_config(), pool.boards)
-    states = _map(lambda b: _rpc(b, "get_iq_tx"), pool.boards)
+    states = _map(lambda b: _rpc(b, "iq/tx"), pool.boards)
     rx, tx = [], []
     if tx_result is not None:
         selected = {(bi, a) for bi, c in enumerate(configs) for a, mode in enumerate(c["modes"]) if mode == "iq_tx" and a in scope.ids[bi]}
@@ -78,5 +78,5 @@ def calibrate(pool, *, method="monitor", path="reference", scope=None, **kwargs)
         return snapshot(pool, result, method, scope)
     except Exception:
         # A result without verified hardware scope must never leave TX active.
-        _map(lambda b: _rpc(b, "set_iq_tx", {"muted": True}), pool.boards if scope is None else [pool.boards[bi] for bi in scope.active])
+        _map(lambda b: _rpc(b, "iq/tx", {"muted": True}), pool.boards if scope is None else [pool.boards[bi] for bi in scope.active])
         raise

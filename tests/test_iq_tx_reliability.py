@@ -40,7 +40,7 @@ class AcknowledgementTests(unittest.TestCase):
             with patch("espargos.iq_tx_control._rpc", return_value=state) as rpc:
                 result = capture.wait(board, lambda s: all(x["generation"] == 42 for x in s["sensors"]), 0)
                 self.assertEqual(result, state)
-                rpc.assert_called_once_with(board, "get_iq_tx")
+                rpc.assert_called_once_with(board, "iq/tx")
         finally:
             capture.close()
 

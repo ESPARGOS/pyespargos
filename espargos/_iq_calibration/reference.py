@@ -104,22 +104,22 @@ def reference_session(pool, center_hz=None, rx_gain=None, scope=None, keep_bluet
         raise RuntimeError("Synchronization or calibration is already running")
     try:
         board = pool.master_board
-        previous_mode = board.control.get_json("get_controller_mode")
+        previous_mode = board._resources.read("roles/controller")
         with ExitStack() as cleanup:
             if previous_mode["mode"] != "iq":
-                board.control.post_json("set_controller_mode", {"mode": "iq"})
-                cleanup.callback(board.control.post_json, "set_controller_mode", previous_mode)
+                board._resources.post("roles/controller", {"mode": "iq"})
+                cleanup.callback(board._resources.post, "roles/controller", previous_mode)
             else:
-                monitor = board.control.get_json("get_iq_monitor")
+                monitor = board._resources.read("iq/monitor")
                 if monitor["enabled"]:
-                    board.control.post_json("set_iq_monitor", {"enabled": False})
-                    cleanup.callback(board.control.post_json, "set_iq_monitor", {"enabled": True})
+                    board._resources.post("iq/monitor", {"enabled": False})
+                    cleanup.callback(board._resources.post, "iq/monitor", {"enabled": True})
                 reference = board.iq.get_reference()
                 if reference["mode"] != "off":
                     if reference.get("gate_open") is False:
-                        cleanup.callback(board.control.command, "gate_iq_reference", {"open": False})
+                        cleanup.callback(board._resources.command, "reference/iq/gate", {"open": False})
                     settings = {k: reference[k] for k in ("mode", "freq_khz", "backoff_qdb", "cw_tuning") if k in reference}
-                    cleanup.callback(board.control.post_json, "set_iq_reference", settings)
+                    cleanup.callback(board._resources.post, "reference/iq", settings)
             with _reference_session(pool, center_hz, rx_gain, scope, keep_bluetooth_epoch) as state:
                 yield state
     finally:
@@ -169,11 +169,11 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None, keep_blue
     rx_gain = reference_gain(pool, rx_gain)
     from ..iq_tx_control import _rpc, _wait
 
-    muted = {bi: _rpc(pool.boards[bi], "get_iq_tx")["muted"] for bi in scope.active}
+    muted = {bi: _rpc(pool.boards[bi], "iq/tx")["muted"] for bi in scope.active}
     pool._calibrating = True
     try:
         for bi in scope.active:
-            _rpc(pool.boards[bi], "set_iq_tx", {"muted": True})
+            _rpc(pool.boards[bi], "iq/tx", {"muted": True})
             _wait(pool.boards[bi], lambda state: all(not x["enabled"] or abs(x["applied_amplitude"]) < 1e-8 for x in state["sensors"]), 3)
         pool.master_board.iq.set_reference()
         if keep_bluetooth_epoch:
@@ -209,7 +209,7 @@ def _reference_session(pool, center_hz=None, rx_gain=None, scope=None, keep_blue
             pool._calibrating = False
             for bi, was_muted in muted.items():
                 try:
-                    _rpc(pool.boards[bi], "set_iq_tx", {"muted": was_muted})
+                    _rpc(pool.boards[bi], "iq/tx", {"muted": was_muted})
                 except Exception as error:
                     errors.append(error)
             if errors:
@@ -304,13 +304,13 @@ def _acquire_grid(pool, center, timeout=3.0, scope=None, *, threshold=REFERENCE_
             board = pool.boards[bi]
             subscriptions.append((board, board.subscribe_sensor_messages(IQ_CHUNK_TYPE_HEADER, lambda m, bi=bi: receive(bi, m))))
         pool.master_board.iq.set_reference("iq", center, REFERENCE_BACKOFF)
-        pool.master_board.control.command("gate_iq_reference", {"open": False})
+        pool.master_board._resources.command("reference/iq/gate", {"open": False})
         scope.apply_rx({"adc_decimation": 1, "trigger": {"mode": "reference", "threshold": threshold}})
         configs = dict(zip(scope.active, _map(lambda i: pool.boards[i].iq.get_config(), scope.active)))
         generations = {i: cfg["config_generation"] for i, cfg in configs.items()}
         wait(lambda: all(ready.get((bi, a)) == generations[bi] for bi, a in scope.pairs), "quiet REF readiness")
         boots = {i: pool.boards[i].iq.get_rx_status()["boot_ids"] for i, cfg in configs.items() if cfg.get("format_version", 0) >= 4}
-        pool.master_board.control.command("gate_iq_reference", {"open": True})
+        pool.master_board._resources.command("reference/iq/gate", {"open": True})
         wait(lambda: all(len(snapshots.get(((bi, a), generations[bi]), {})) == 4 for bi, a in scope.pairs), "reference onset snapshots")
         ref_bi, ref_a = scope.pairs[0]
         ref_packets = snapshots[((ref_bi, ref_a), generations[ref_bi])]
@@ -350,7 +350,7 @@ def _acquire_grid(pool, center, timeout=3.0, scope=None, *, threshold=REFERENCE_
     finally:
         # Restore reference routing even when acquisition or transport fails.
         try:
-            pool.master_board.control.command("gate_iq_reference", {"open": True})
+            pool.master_board._resources.command("reference/iq/gate", {"open": True})
         finally:
             for board, handle in subscriptions:
                 board.unsubscribe_sensor_messages(handle)

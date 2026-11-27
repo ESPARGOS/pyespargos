@@ -71,7 +71,7 @@ class CalibrationTests(unittest.TestCase):
         with patch("espargos.pool._rpc", return_value={}) as rpc:
             with self.assertRaisesRegex(ValueError, "complete calibration group"):
                 AntennaSelection(owner, [self.states[0].antenna]).calibrate()
-            self.assertEqual([call.args[1] for call in rpc.call_args_list], ["get_iq_tx"])
+            self.assertEqual([call.args[1] for call in rpc.call_args_list], ["iq/tx"])
         self.assertIs(owner.calibrations, self.result)
 
     def test_geometric_beam_requires_common_tx_reference(self):

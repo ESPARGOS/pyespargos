@@ -76,13 +76,13 @@ def build_tx_config(
     tx_power: wifi.WiFiTxPower,
     tx_phy_mode: wifi.WiFiPhyMode,
     tx_rate: wifi.WiFiPhyRate,
-    rf_switch_state: sensor.RFSwitchState,
+    rf_switch_state: sensor.RFSwitchState | np.ndarray,
     mac_by_sensor=None,
 ) -> WiFiTxConfig:
     """
     Build low-level per-board WiFi TX controller configuration from a reference-time schedule.
 
-    ``active_by_sensor``, ``t0_by_sensor`` and ``period_by_sensor`` may be scalars,
+    ``active_by_sensor``, ``t0_by_sensor``, ``period_by_sensor`` and ``rf_switch_state`` may be scalars,
     board-local ``(row, column)`` arrays, or pool-wide ``(board, row, column)`` arrays.
 
     With a pool-wide clock reference, ``t0_by_sensor`` is interpreted relative
@@ -100,19 +100,24 @@ def build_tx_config(
     period_by_sensor = _broadcast_to_pool_shape(period_by_sensor, "period_by_sensor", calibration.boards, dtype=np.float64)
     mac_by_board = _macs_by_antenna_ids(mac_by_sensor, calibration.boards)
 
+    feeds = _broadcast_to_pool_shape(rf_switch_state, "rf_switch_state", calibration.boards)
+    if not np.isin(feeds, [0, 1, 2, 3, 4]).all():
+        raise ValueError("Invalid WiFi TX RF path")
+
     board_configs = []
     for board_index, board in enumerate(calibration.boards):
         start_by_antenna_id = board.revision.sensor_values_to_antenna_id_list(
             np.rint(sensor_local_times[board_index] * WIFI_TX_TIME_SCALE).astype(int),
             name="t0_by_sensor",
         )
+        paths = board.revision.sensor_values_to_antenna_id_list(feeds[board_index].astype(int), name="rf_switch_state")
         board_configs.append(
             {
                 "active_by_antid": board.revision.sensor_values_to_antenna_id_list(active_by_sensor[board_index].astype(bool), name="active_by_sensor"),
                 "start_by_antid": start_by_antenna_id,
                 "period_by_antid": board.revision.sensor_values_to_antenna_id_list(np.rint(period_by_sensor[board_index] * WIFI_TX_TIME_SCALE).astype(int), name="period_by_sensor"),
                 "mac_by_antid": mac_by_board[board_index],
-                "rfswitch_state": int(rf_switch_state),
+                "rfswitch_state": paths[0] if len(set(paths)) == 1 else paths,
                 "tx_power": int(tx_power),
                 "tx_phymode": int(tx_phy_mode),
                 "tx_rate": int(tx_rate),

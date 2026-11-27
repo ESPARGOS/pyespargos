@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos._iq_calibration import reference
 
 
@@ -28,7 +29,7 @@ class ReferenceModeTests(unittest.TestCase):
                     control.post_json.side_effect = select
                     iq = Mock()
                     iq.get_reference.return_value = {"mode": "off"}
-                    pool = SimpleNamespace(master_board=SimpleNamespace(control=control, iq=iq), _reference_lock=Lock())
+                    pool = SimpleNamespace(master_board=SimpleNamespace(_resources=LegacyControllerResources(control), control=control, iq=iq), _reference_lock=Lock())
 
                     @contextmanager
                     def session(*args):
@@ -55,7 +56,7 @@ class ReferenceModeTests(unittest.TestCase):
         control = Mock()
         control.get_json.return_value = {"mode": "ble"}
         control.post_json.side_effect = RuntimeError("controller busy")
-        pool = SimpleNamespace(master_board=SimpleNamespace(control=control), _reference_lock=Lock())
+        pool = SimpleNamespace(master_board=SimpleNamespace(_resources=LegacyControllerResources(control), control=control), _reference_lock=Lock())
         with patch.object(reference, "_reference_session") as session:
             with self.assertRaisesRegex(RuntimeError, "controller busy"):
                 with reference.reference_session(pool):

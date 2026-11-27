@@ -26,12 +26,12 @@ class WiFiTxCapability(BoardCapability):
         changed by the controller.
         """
 
-        self._board.control.command("set_tx_control", config)
+        self._board._resources.write_radio("wifi/tx", config)
 
     def get_config(self) -> dict:
         """Return the low-level per-sensor transmission schedule."""
 
-        return self._board.control.get_json("get_tx_control")
+        return self._board._resources.read_radio("wifi/tx")
 
     def subscribe_reports(
         self,

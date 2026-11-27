@@ -3,6 +3,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos import Board, Pool
 from espargos.controller_reference import prepare_packet_reference
 
@@ -16,6 +17,7 @@ def test_controller_only_master_is_outside_every_sensor_selection():
     boards = {name: Mock(spec=Board, host=name) for name in ("left", "right", "master")}
     for b in boards.values():
         b.api_version = (5, 0)
+        b._resources = LegacyControllerResources(Mock())
         b.revision = Mock()
         b.revision.antenna_id_to_row_col.side_effect = lambda a: divmod(a, 4)
         b.iq, b.ble, b.wifi_iq, b.wifi_rx, b.wifi_tx = (Mock() for _ in range(5))
@@ -42,6 +44,7 @@ def test_controller_only_master_is_outside_every_sensor_selection():
 @pytest.mark.parametrize("mode", ["wifi", "wifi_iq", "ble"])
 def test_packet_master_restored_when_acquisition_fails(mode):
     board = Mock(host="master")
+    board._resources = LegacyControllerResources(board.control)
     board.control.get_json.return_value = {"mode": "iq"}
     radio = board.wifi_rx if mode == "wifi" else getattr(board, mode)
     original = {"calib-mode": 1, "channel-primary": 1, "channel-secondary": 0} if mode == "wifi" else {"channel": 1, "reference_mode": 1, "rf_switch": 2, "reference_address": "02:00:00:00:00:01", "phy": "LE2M"}

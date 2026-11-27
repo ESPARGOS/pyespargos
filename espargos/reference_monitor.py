@@ -47,7 +47,7 @@ class ReferenceMonitor:
         count = index(count)
         if count < 1 or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("count and timeout must be positive")
-        config = _rpc(self.board, "get_iq_monitor")
+        config = _rpc(self.board, "iq/monitor")
         if not config["enabled"]:
             raise RuntimeError("Reference monitor is disabled")
         deadline = time.monotonic() + timeout

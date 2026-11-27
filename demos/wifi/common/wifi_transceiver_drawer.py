@@ -140,8 +140,11 @@ class WiFiTransceiverDrawer(PyQt6.QtCore.QObject):
             cfg_out["gain"] = gain_cfg
 
         # RF switch config -> UI fields
-        rf = self.receiver.get_rf_switch()
-        cfg_out["rf_switch"] = int(rf.value)
+        try:
+            rf = self.receiver.get_rf_switch()
+        except ValueError:  # Boards use different inputs.
+            rf = None
+        cfg_out["rf_switch"] = int(rf.value) if isinstance(rf, espargos.sensor.RFSwitchState) else -1
 
         # Pool-local reference CSI stream option -> UI fields
         cfg_out["show_reference"] = self.receiver.emit_calibration_csi

@@ -107,7 +107,7 @@ def test_pool_switch_keeps_active_frequency_and_both_directions():
         with patch.object(pool, "refresh_calibration") as refresh:
             pool.select(antennas=[0]).configure(mode="iq_tx")
             refresh.assert_called_once()
-            change = next(c.args[2] for c in rpc.call_args_list if c.args[1] == "set_iq_tx")
+            change = next(c.args[2] for c in rpc.call_args_list if c.args[1] == "iq/tx" and len(c.args) > 2)
             assert change["transmitters"][0]["frequency_hz"] == 2385e6
             assert change["transmitters"][0]["amplitude"] == 0
             assert len(pool.calibrations.groups) == 2

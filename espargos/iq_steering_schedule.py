@@ -115,7 +115,7 @@ class SteeringSchedule:
         return dict(zip(self._plans, results))
 
     def _read(self):
-        return self._parallel(lambda _, board: _rpc(board, "get_iq_tx"))
+        return self._parallel(lambda _, board: _rpc(board, "iq/tx"))
 
     def _compile(self, timelines, states):
         boards = {board.host: (i, board) for i, board in enumerate(self.tx.boards)}

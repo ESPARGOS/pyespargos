@@ -6,13 +6,17 @@ candidates are rejected rather than selecting the closest timestamp.
 """
 
 
+def receiver_context(packet):
+    # A frame can arrive simultaneously on both antenna feeds. Keep the
+    # reference network separate, including at the same frequency.
+    settings = packet.settings
+    if (settings >> 8) & 255 in (2, 3, 4):
+        settings = (settings & ~0xff00) | (2 << 8)
+    return packet.clock_epoch, packet.generation, settings
+
+
 def same_context(cluster, board_index, packet):
-    anchor = cluster.packet
-    return cluster.board_index == board_index and (anchor.clock_epoch, anchor.generation, anchor.settings) == (
-        packet.clock_epoch,
-        packet.generation,
-        packet.settings,
-    )
+    return cluster.board_index == board_index and receiver_context(cluster.packet) == receiver_context(packet)
 
 
 def nearby(cluster, packet, window_us):

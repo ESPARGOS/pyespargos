@@ -95,7 +95,7 @@ STREAM_MAGIC = bytes([0xE5, 0xA7, 0x60, 0x00])
 
 # Supported controller API major versions (inclusive).
 SUPPORTED_API_MAJOR_MIN = 3
-SUPPORTED_API_MAJOR_MAX = 5
+SUPPORTED_API_MAJOR_MAX = 6
 
 
 class BoardControl:
@@ -325,14 +325,25 @@ class Board(object):
         api_major = api_info["api-major"]
         api_minor = api_info.get("api-minor", 0)
 
+        # api_info also serves clients that only understand the old command names.
+        # The advertised resource root identifies the newer API in the same trip.
+        if api_info.get("control_api") == "/api/v6":
+            api_major, api_minor = 6, 0
         if not SUPPORTED_API_MAJOR_MIN <= api_major <= SUPPORTED_API_MAJOR_MAX:
             raise EspargosAPIVersionError(
                 f"ESPARGOS controller at {self.host} runs API version {api_major}.{api_minor}, "
-                f"but this version of pyespargos supports CSI with API majors {SUPPORTED_API_MAJOR_MIN}–{SUPPORTED_API_MAJOR_MAX} and IQ with majors 4–5. "
+                f"but this version of pyespargos supports CSI with API majors {SUPPORTED_API_MAJOR_MIN}–{SUPPORTED_API_MAJOR_MAX} and IQ with majors 4–6. "
                 + ("Please update pyespargos." if api_major > SUPPORTED_API_MAJOR_MAX else "Please update the controller firmware.")
             )
 
         self.api_version = (api_major, api_minor)
+        from .control_api import ControllerResources
+        from .control_legacy import LegacyControllerResources
+
+        if api_major == 6:
+            self._resources = ControllerResources(self.control)
+        else:
+            self._resources = LegacyControllerResources(self.control, api_major=api_major)
 
         self.revision = None
         device = api_info.get("device", "")
@@ -345,8 +356,8 @@ class Board(object):
         if self.revision is None:
             raise EspargosUnexpectedResponseError(f"Unknown ESPARGOS revision: device={device!r}, revision={revision_name!r}")
 
-        self.netconf = self.control.get_json("get_netconf")
-        self.ip_info = self.control.get_json("get_ip_info")
+        self.netconf = self._resources.network()
+        self.ip_info = self._resources.network_status()
 
         self._logger.info(f"Identified ESPARGOS at {self.ip_info['ip']} as {self.name}")
 
@@ -358,6 +369,19 @@ class Board(object):
         :return: The hostname of the ESPARGOS controller
         """
         return self.netconf["hostname"]
+
+    def get_controller_mode(self) -> str:
+        """Read the mode of the controller radio that supplies the reference."""
+        return self._resources.read("roles/controller")["mode"]
+
+    def set_controller_mode(self, mode: str):
+        """Select the controller radio independently of the eight sensor roles."""
+        self._resources.post("roles/controller", {"mode": mode})
+
+    @property
+    def transmit_authorized(self) -> bool:
+        """Whether the controller currently permits transmission."""
+        return self._resources.read("config/transmit-authorization")["authorized"]
 
     @property
     def is_stream_connected(self) -> bool:
@@ -791,7 +815,7 @@ class Board(object):
         :raises EspargosUnexpectedResponseError: If the server at the given host
             is not an ESPARGOS controller or the request was invalid
         """
-        self.control.command("reboot", {})
+        self._resources.command("device/reboot", {})
 
     def subscribe_sensor_messages(
         self,

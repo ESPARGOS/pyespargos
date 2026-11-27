@@ -23,26 +23,26 @@ def estimated_playback_sample(sensor):
 
 def _rpc(board, path, payload=None):
     if payload is None:
-        return board.control.get_json(path)
+        return board._resources.read(path)
     try:
-        result = board.control.post_json(path, payload)
+        result = board._resources.post(path, payload)
     except EspargosHTTPStatusError as error:
         # These errors occur while serializing status, after set_iq_tx has
         # applied the settings. Read status again without repeating the write.
-        if path == "set_iq_tx" and error.status == 503 and error.body in ("not enough memory for JSON response", "not enough memory for TX status"):
-            return board.control.get_json("get_iq_tx")
+        if path == "iq/tx" and error.status == 503 and error.body in ("not enough memory for JSON response", "not enough memory for TX status"):
+            return board._resources.read("iq/tx")
         raise
-    return None if result == "ok" else json.loads(result)
+    return None if result == "ok" else board._resources.decode(path, json.loads(result))
 
 
-def _wait(board, predicate, timeout):
+def _wait(board, predicate, timeout, *, resource="iq/tx"):
     deadline = time.monotonic() + timeout
     while True:
-        state = _rpc(board, "get_iq_tx")
+        state = _rpc(board, resource)
         if predicate(state):
             return state
         if time.monotonic() >= deadline:
-            raise TimeoutError(f"{board.host}: sensors did not acknowledge TX settings")
+            raise TimeoutError(f"{board.host}: sensors did not acknowledge {resource} settings")
         time.sleep(0.03)
 
 
@@ -52,7 +52,7 @@ def _waveform(board, recipe, timeout, wait=_wait):
     antennas = recipe["beams"][0]["waveform"]["antennas"] if "beams" in recipe else recipe["antennas"]
     for attempt in range(2):
         try:
-            generation = _rpc(board, "set_iq_tx_waveform", recipe)["generation"]
+            generation = _rpc(board, "iq/tx/synthesize", recipe)["generation"]
 
             def applied(state):
                 for a in antennas:
@@ -193,7 +193,7 @@ class TXStatus:
                     next_poll = min(deadline, now + 0.25)
                     continue
             # A missing stream packet does not mean the sensor rejected a command.
-            state = _rpc(board, "get_iq_tx")
+            state = _rpc(board, "iq/tx")
             fallback = state["sensors"]
             if predicate(state):
                 return state

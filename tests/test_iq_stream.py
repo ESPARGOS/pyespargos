@@ -159,9 +159,9 @@ class Device:
         return b"sent"
 
     def rpc(self, board, path, data=None):
-        if path == "get_iq_tx":
+        if path == "iq/tx" and data is None:
             return self.tx_state
-        if path == "set_iq_tx":
+        if path == "iq/tx":
             self.muted = data["muted"]
             return {}
         raise AssertionError("No HTTP status polling: " + path)
@@ -653,7 +653,7 @@ class MultiArrayStreamTests(TestCase):
         import copy
 
         d = self.by_board[board]
-        if path == "get_iq_tx":
+        if path == "iq/tx" and data is None:
             # A reply contains the clock at request processing, but arrives
             # later. Different network delays must not shorten the lead.
             snapshot = copy.deepcopy(d.tx_state)

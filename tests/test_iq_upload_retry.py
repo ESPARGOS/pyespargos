@@ -3,6 +3,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos.iq_transmitter import IQTransmitter
 from espargos.iq_tx_control import _SensorTXError
 
@@ -11,6 +12,7 @@ class UploadTests(unittest.TestCase):
     def setUp(self):
         self.tx = object.__new__(IQTransmitter)
         self.board = Mock(host="array")
+        self.board._resources = LegacyControllerResources(self.board.control)
         self.tx.boards = [self.board]
         self.tx.states = [{"sensors": [{"boot_id": 42}] * 8}]
         self.tx.uploaded = {}

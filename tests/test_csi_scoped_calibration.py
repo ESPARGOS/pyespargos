@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch, Mock
 from types import SimpleNamespace
 import numpy as np
+from espargos.control_legacy import LegacyControllerResources
 from espargos.calibration import Antenna, Calibration, CalibrationGroup, AntennaCorrection, CalibrationState
 from espargos.csi_scoped_calibration import channels, estimate, apply_csi, states, calibrate
 from espargos.wifi_transceiver import CalibrationError
@@ -60,6 +61,7 @@ class ScopedCSITests(unittest.TestCase):
 
     def fake_pool(self):
         b = Mock()
+        b._resources = LegacyControllerResources(b.control)
         b.host = "a"
         b.api_version = (5, 0)
         b.revision.antenna_id_to_row_col = lambda a: divmod(a, 4)

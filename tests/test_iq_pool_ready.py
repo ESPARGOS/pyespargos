@@ -3,6 +3,7 @@ import threading
 import unittest
 from types import SimpleNamespace
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos.iq_receiver import _BoardSignalTransport
 
 
@@ -18,6 +19,7 @@ def test_reference_readiness_and_capture_generation():
     ids = [1, 5]
     for missing in ("ready", "chunk", None):
         board = Mock(host="test-board")
+        board._resources = LegacyControllerResources(board.control)
         pool = SimpleNamespace(boards=[board], master_board=board, _reference_sequence=7, clear_chunks=Mock(), _logger=Mock())
         scope = SimpleNamespace(active=[0], pairs=[(0, a) for a in ids], ids=[ids], apply_rx=Mock())
         board.iq.get_config.return_value = {"config_generation": gen}

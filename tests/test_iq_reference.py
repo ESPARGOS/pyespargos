@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos.iq_reference import fit, relative_lag
 
 
@@ -139,6 +140,7 @@ class ReferenceSessionTests(unittest.TestCase):
             host="test",
             revision=BoardRevisionDensiflorus(),
             control=control,
+            _resources=LegacyControllerResources(control),
             wifi_rx=SimpleNamespace(get_config=lambda: {"calib-source": source}),
             iq=SimpleNamespace(
                 get_config=lambda: dict(config, modes=["iq_rx"] * 8),
@@ -252,11 +254,11 @@ class ReferenceSessionTests(unittest.TestCase):
         from espargos.board import EspargosAPIVersionError
         from espargos.board_iq import IQCapability
 
-        for major in (4, 5):
+        for major in (4, 5, 6):
             IQCapability(SimpleNamespace(api_version=(major, 0)))
-        for major in (3, 6):
+        for major in (2, 3):
             with self.subTest(major=major):
-                with self.assertRaisesRegex(EspargosAPIVersionError, "major 4 or 5"):
+                with self.assertRaisesRegex(EspargosAPIVersionError, "API 4 or later"):
                     IQCapability(SimpleNamespace(api_version=(major, 0)))
 
 

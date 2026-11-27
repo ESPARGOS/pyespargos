@@ -108,7 +108,7 @@ class BLEController(QtCore.QObject):
             indices = range(len(self.pool.boards)) if self.board_index is None else [self.board_index]
             for i in indices:
                 board = self.pool.boards[i]
-                self._saved[i] = (board.control.get_json("get_controller_mode"), board.iq.get_config()["modes"], board.ble.get_config())
+                self._saved[i] = (board.get_controller_mode(), board.iq.get_config()["modes"], board.ble.get_config())
             ESPARGOSBluetoothApplication.request_mode(self.pool, boards=[self.pool.boards[i] for i in indices])
             self.receiver = self.pool.ble
             if self.buffering is not None:
@@ -229,7 +229,7 @@ class BLEController(QtCore.QObject):
                 errors.append(error)
         for i, (controller, modes, config) in self._saved.items():
             board = self.pool.boards[i]
-            for restore in (lambda: board.ble.set_config({k: config[k] for k in board.ble.CONFIG_KEYS if k in config}), lambda: board.iq.set_config({"modes": modes}), lambda: board.control.post_json("set_controller_mode", controller)):
+            for restore in (lambda: board.ble.set_config({k: config[k] for k in board.ble.CONFIG_KEYS if k in config}), lambda: board.iq.set_config({"modes": modes}), lambda: board.set_controller_mode(controller)):
                 try:
                     restore()
                 except Exception as error:

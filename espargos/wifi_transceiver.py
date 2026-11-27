@@ -178,11 +178,11 @@ class WiFiTransceiver(ClusterAssembler):
 
         return apply_cluster(self, cluster, csi_format, self._owner.calibrations if calibration is None else calibration, self.get_calibration_states() if states is None else states)
 
-    def set_rf_switch(self, state: sensor.RFSwitchState):
+    def set_rf_switch(self, state: sensor.RFSwitchState | dict[int, sensor.RFSwitchState]):
         """
         Set RF switch state for all boards in the pool.
 
-        :param state: The RF switch state to set, must be one of :class:`sensor.RFSwitchState`
+        :param state: A common RF switch state or a mapping of antenna IDs to states on each board.
         """
         for board in self.boards + self._reference_generator_boards:
             board.wifi_rx.set_rf_switch(state)
@@ -202,11 +202,11 @@ class WiFiTransceiver(ClusterAssembler):
                 raise ValueError(f"{what}: boards 0 and {index} differ; read or configure each Board explicitly")
         return values[0]
 
-    def get_rf_switch(self) -> sensor.RFSwitchState:
+    def get_rf_switch(self) -> sensor.RFSwitchState | dict[int, sensor.RFSwitchState]:
         """
         Get the common RF switch state, raising if boards disagree.
 
-        :return: The RF switch state shared by the boards
+        :return: The common RF switch state or per-antenna mapping shared by the boards.
         """
         if not self.boards:
             raise ValueError("No boards in pool to get RF switch state from")
@@ -691,13 +691,13 @@ class WiFiTransceiver(ClusterAssembler):
         self._clear_cluster_cache(_CACHE_CALIBRATION)
 
         # Back up and clear MAC filter
-        previous_mac_filter = self.get_mac_filter()
-        previous_rf_switch_state = self.get_rf_switch()
+
 
         try:
-            self.clear_mac_filter()
-
             with ExitStack() as restore:
+                for board in self.boards:
+                    restore.callback(board.wifi_rx.set_mac_filter, board.wifi_rx.get_mac_filter())
+                    board.wifi_rx.clear_mac_filter()
                 from .controller_reference import prepare_local_wifi_references, prepare_packet_reference
 
                 if self._owner.reference_controller is not None:
@@ -708,7 +708,9 @@ class WiFiTransceiver(ClusterAssembler):
                     prepare_local_wifi_references(restore, self.boards + self._reference_generator_boards)
                 # Enable calibration mode
                 self._logger.info("Starting calibration")
-                self.set_rf_switch(sensor.RFSwitchState.SENSOR_RFSWITCH_REFERENCE)
+                for board in self.boards + self._reference_generator_boards:
+                    restore.callback(board.wifi_rx.set_rf_switch, board.wifi_rx.get_rf_switch())
+                    board.wifi_rx.set_rf_switch(sensor.RFSwitchState.SENSOR_RFSWITCH_REFERENCE)
 
                 # Run calibration for specified duration
                 start = time.monotonic()
@@ -721,8 +723,6 @@ class WiFiTransceiver(ClusterAssembler):
         finally:
             # Disable calibration mode
             self._logger.info("Finished calibration")
-            self.set_rf_switch(previous_rf_switch_state)
-            self.set_mac_filter(previous_mac_filter)
             self._clear_cluster_cache(_CACHE_OTA)
 
         # Each antenna receives a delayed and phase-shifted version of the reference

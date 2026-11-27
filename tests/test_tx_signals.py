@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos import Antenna
 from espargos.calibration import Calibration
 from espargos.steering import Beamspace, Weights
@@ -195,6 +196,7 @@ class SignalTests(unittest.TestCase):
         tx = transmitter()
         tx.uploaded = {}
         tx.boards[0].control = Mock()
+        tx.boards[0]._resources = LegacyControllerResources(tx.boards[0].control)
         tx._wait_generation = Mock()
         first = IQSamples(np.ones(1024, complex) * 0.25)._words
         second = IQSamples(np.ones(1024, complex) * 0.5j)._words

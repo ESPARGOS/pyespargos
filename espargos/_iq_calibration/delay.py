@@ -74,7 +74,7 @@ def measure(owner, antennas, path, reference_delays_s, timeout, *, method="per_t
         raise ValueError("Antenna-path timing requires reference_delays_s for each TX/RX pair")
     boards = owner.boards
     configs = [b.iq.get_config() for b in boards]
-    tx_states = [_rpc(b, "get_iq_tx") for b in boards]
+    tx_states = [_rpc(b, "iq/tx") for b in boards]
     tx = [Antenna(b.host, a) for b, c in zip(boards, configs) for a, mode in enumerate(c["modes"]) if mode == "iq_tx" and Antenna(b.host, a) in antennas]
     rx = [Antenna(b.host, a) for b, c in zip(boards, configs) for a, mode in enumerate(c["modes"]) if mode == "iq_rx" and Antenna(b.host, a) in antennas]
     if not rx or not tx:
@@ -136,7 +136,7 @@ def measure(owner, antennas, path, reference_delays_s, timeout, *, method="per_t
     success = False
     try:
         for bi, b in enumerate(boards):
-            _rpc(b, "set_iq_tx", {"muted": True, "steering": {"phase_deg": [0] * 8, "delay_samples": [0] * 8}})
+            _rpc(b, "iq/tx", {"muted": True, "steering": {"phase_deg": [0] * 8, "delay_samples": [0] * 8}})
             decimation = 1 if any(a.host == b.host for a in rx) else configs[bi]["adc_decimation"]
             b.iq.set_config(
                 {
@@ -152,7 +152,7 @@ def measure(owner, antennas, path, reference_delays_s, timeout, *, method="per_t
             length = tx_states[bi]["sensors"][transmitter.antid]["samples"]
             prepared.add(transmitter)
             _waveform(b, {"type": "calibration", "samples": length, "amplitude": 0.25, "pilot_mask": 255, "pilot_samples": periods[transmitter][0], "antennas": [transmitter.antid]}, timeout, wait=capture.wait)
-            _rpc(b, "set_iq_tx", {"muted": False, "transmitters": [{"antid": a, "amplitude": 1 if a == transmitter.antid else 0, "output": path, "rf_gain": {"a": 0, "b": 0}} for a in range(8)]})
+            _rpc(b, "iq/tx", {"muted": False, "transmitters": [{"antid": a, "amplitude": 1 if a == transmitter.antid else 0, "output": path, "rf_gain": {"a": 0, "b": 0}} for a in range(8)]})
             capture.wait(b, lambda s: abs(s["sensors"][transmitter.antid]["applied_amplitude"] - 1) < 1e-6, timeout)
             board_generations = [b.iq.get_config()["config_generation"] for b in boards]
             generations = {i: board_generations[i // 8] for i in ids}
@@ -188,7 +188,7 @@ def measure(owner, antennas, path, reference_delays_s, timeout, *, method="per_t
                 h *= correction.response(correction.state.frequency_hz + frequencies) * np.exp(-2j * np.pi * frequencies * shift_s)
                 h *= np.exp(2j * np.pi * frequencies * delays[transmitter, receiver])
                 responses.append(h)
-            _rpc(b, "set_iq_tx", {"muted": True})
+            _rpc(b, "iq/tx", {"muted": True})
             ambiguity = rx_period / 80e6
             if group:
                 delay = _group_probe_delay(responses, capture_period, ambiguity)
@@ -211,7 +211,7 @@ def measure(owner, antennas, path, reference_delays_s, timeout, *, method="per_t
                 if abs((checked - delay + ambiguity / 2) % ambiguity - ambiguity / 2) > 1 / 80e6:
                     raise ValueError("TX–RX timing changed between reference captures")
                 measured[transmitter] = delay
-        final = [_rpc(b, "get_iq_tx") for b in boards]
+        final = [_rpc(b, "iq/tx") for b in boards]
         if any((s["boot_id"], s["origin_ns"]) != (v["boot_id"], v["origin_ns"]) for old, new in zip(tx_states, final) for s, v in zip(old["sensors"], new["sensors"])):
             raise RuntimeError("Sensor restarted during timing calibration")
         result = TxRxDelayCalibration(scoped, measured)
@@ -228,20 +228,20 @@ def measure(owner, antennas, path, reference_delays_s, timeout, *, method="per_t
 
         # Try every board even if one fails. Keep TX muted if restoration fails.
         for bi, b in enumerate(boards):
-            attempt(_rpc, b, "set_iq_tx", {"muted": True})
+            attempt(_rpc, b, "iq/tx", {"muted": True})
             for transmitter in prepared:
                 if transmitter.host == b.host:
                     attempt(_waveform, b, {"type": "restore", "samples": tx_states[bi]["sensors"][transmitter.antid]["samples"], "antennas": [transmitter.antid]}, timeout, wait=capture.wait)
             keys = ("antid", "output", "amplitude", "rf_gain")
-            attempt(_rpc, b, "set_iq_tx", {"steering": tx_states[bi]["steering"], "transmitters": [{k: s[k] for k in keys} for s in tx_states[bi]["sensors"]]})
+            attempt(_rpc, b, "iq/tx", {"steering": tx_states[bi]["steering"], "transmitters": [{k: s[k] for k in keys} for s in tx_states[bi]["sensors"]]})
             attempt(b.iq.set_config, {k: configs[bi][k] for k in ("rf_switch", "receivers", "trigger", "adc_decimation")})
         attempt(capture.close)
         if success and not errors:
             for b, state in zip(boards, tx_states):
-                attempt(_rpc, b, "set_iq_tx", {"muted": state["muted"]})
+                attempt(_rpc, b, "iq/tx", {"muted": state["muted"]})
                 if errors:
                     break
         if errors:
             for b in boards:
-                attempt(_rpc, b, "set_iq_tx", {"muted": True})
+                attempt(_rpc, b, "iq/tx", {"muted": True})
             raise ExceptionGroup("Could not restore settings after TX–RX delay calibration", errors)

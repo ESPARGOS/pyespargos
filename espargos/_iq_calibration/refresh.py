@@ -18,7 +18,7 @@ def refresh(owner, timeout):
     """Read sample start times and update the stored RX/TX corrections."""
     boards = owner.boards
     configs = [b.iq.get_config() for b in boards]
-    before = [_rpc(b, "get_iq_tx") for b in boards]
+    before = [_rpc(b, "iq/tx") for b in boards]
     calibration = owner.calibrations
     known = {(c.state.antenna, c.state.direction) for g in calibration.groups for c in g.corrections}
     receivers = [(bi, a) for bi, (b, config) in enumerate(zip(boards, configs)) for a, mode in enumerate(config["modes"]) if mode == "iq_rx" and (Antenna(b.host, a), "rx") in known]
@@ -33,7 +33,7 @@ def refresh(owner, timeout):
             generation = boards[bi].iq.get_config()["config_generation"]
             generations.update({8 * bi + a: generation for j, a in receivers if j == bi})
         packets = capture.collect(list(generations), 256, 1, timeout, generations)
-        after = [_rpc(b, "get_iq_tx") for b in boards]
+        after = [_rpc(b, "iq/tx") for b in boards]
         rebooted = {Antenna(b.host, a) for bi, b in enumerate(boards) for a in range(8) if before[bi]["sensors"][a]["boot_id"] != after[bi]["sensors"][a]["boot_id"]}
         # A reboot invalidates both RX and TX calibration, even if one is inactive.
         for g in calibration.groups:
@@ -66,7 +66,7 @@ def refresh(owner, timeout):
                     correction["phase_deg"][a], correction["delay_samples"][a] = phase, delay
                     touched.append(a)
             if touched:
-                _rpc(b, "set_iq_tx", {"calibration": correction})
+                _rpc(b, "iq/tx", {"calibration": correction})
                 steering = after[bi]["steering"]
                 capture.wait(
                     b,
@@ -76,7 +76,7 @@ def refresh(owner, timeout):
                     timeout,
                 )
         # Check for a restart while the TX corrections were being applied.
-        final = [_rpc(b, "get_iq_tx") for b in boards]
+        final = [_rpc(b, "iq/tx") for b in boards]
         if any((x["boot_id"], x["origin_ns"]) != (y["boot_id"], y["origin_ns"]) for old, new in zip(after, final) for x, y in zip(old["sensors"], new["sensors"])):
             raise RuntimeError("Sensor restarted while transferring calibration")
         owner.calibrations = updated
@@ -101,7 +101,7 @@ def refresh(owner, timeout):
         owner.calibrations = owner.calibrations.without(owner.antennas)
         for b in boards:
             try:
-                _rpc(b, "set_iq_tx", {"muted": True})
+                _rpc(b, "iq/tx", {"muted": True})
             except Exception:
                 pass
         raise

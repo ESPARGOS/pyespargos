@@ -179,7 +179,7 @@ def test_partial_array_role_change_is_unwound_before_pool_closes():
         camera._create_receiver(pool)
     assert pool.configure.call_args_list == [call(mode="iq_rx"), call(mode="wifi")]
     for board in pool.boards:
-        assert board.control.post_json.call_args_list == [call("set_controller_mode", {"mode": m}) for m in ("iq", "wifi")]
+        assert board.set_controller_mode.call_args_list == [call(m) for m in ("iq", "wifi")]
     pool.iq.apply_config.assert_not_called()
 
 

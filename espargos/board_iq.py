@@ -31,10 +31,10 @@ class IQCapability(BoardCapability):
     """Board capability for IQ-sampling capture control and chunk reception."""
 
     def __init__(self, board):
-        if board.api_version[0] not in (4, 5):
+        if board.api_version[0] < 4:
             from espargos.board import EspargosAPIVersionError
 
-            raise EspargosAPIVersionError("IQ mode requires controller API major 4 or 5 and matching sensor firmware. Update the array firmware!")
+            raise EspargosAPIVersionError("IQ mode requires controller API 4 or later and matching sensor firmware.")
         super().__init__(board)
 
     def set_config(self, config: dict):
@@ -43,16 +43,19 @@ class IQCapability(BoardCapability):
         Receiver updates use the canonical ``receivers`` list. Each entry must
         contain an ``antid`` and may contain ``rf_freq_hz``, ``gain_mode``
         (``"auto"``, ``"manual"`` or ``"expert"``), ``rx_gain``, and
-        ``expert_gain_words``. Capture-wide fields (e.g. ``mode``,
-        ``adc_decimation``, ``rf_switch``, ``trigger``) remain at the top level.
+        ``expert_gain_words``. Use a scalar ``rf_switch`` to set all inputs
+        or a mapping by antenna ID to change selected inputs on API 6.
+        Capture-wide settings such as ``adc_decimation`` and ``trigger``
+        apply to the whole board.
 
         ``trigger`` is a named object, e.g. ``{"mode": "interval",
-        "interval_chunks": 16384, "burst_chunks": 4}``. Supplying it replaces
-        the trigger settings with defaults for omitted fields. Omit it to
-        leave the trigger unchanged. ``get_config()`` returns all applied
+        "interval_chunks": 16384, "burst_chunks": 4}``. On API 6, changing one field retains
+        the other settings for that trigger mode. Changing modes starts from
+        the new mode's defaults. Older controllers start from defaults on
+        every trigger write. ``get_config()`` returns all applied
         defaults. The controller validates field names, types, and ranges.
         """
-        self._board.control.command("set_iq_control", config)
+        self._board._resources.write_radio("iq/rx", config)
 
     def set_config_and_wait(self, config: dict, timeout: float = 5.0) -> int:
         """Apply settings and wait for every selected IQ receiver to report the generation.
@@ -63,10 +66,10 @@ class IQCapability(BoardCapability):
         """
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive and finite")
-        response = self._board.control.post_json("set_iq_control", {**config, "return_generation": True})
-        if response == "ok":
+        response = self._board._resources.write_radio("iq/rx", {**config, "return_generation": True})
+        if response is None:
             raise RuntimeError("Controller accepted IQ settings but does not support generation receipts")
-        generation = json.loads(response)["config_generation"]
+        generation = response["config_generation"]
         deadline = time.monotonic() + timeout
         while True:
             current = self.get_rx_status()
@@ -88,15 +91,15 @@ class IQCapability(BoardCapability):
         Controllers exposing report_age_ms give the age of the corresponding
         acknowledgement in milliseconds, indexed by antenna ID.
         """
-        return self._board.control.get_json("get_iq_rx_status")
+        return self._board._resources.read("iq/rx/status")
 
     def get_config(self) -> dict:
         """Return the controller's canonical eight-receiver IQ configuration."""
-        return self._board.control.get_json("get_iq_control")
+        return self._board._resources.read_radio("iq/rx")
 
     def get_config_json(self) -> str:
         """Return the raw IQ configuration JSON string (e.g. for QML consumers)."""
-        return self._board.control.fetch("get_iq_control")
+        return json.dumps(self.get_config())
 
     def rearm_signal_capture(self):
         """Atomically discard retained Signal state on all eight sensors.
@@ -105,7 +108,7 @@ class IQCapability(BoardCapability):
         this array. Other arrays are unaffected. This does not synchronize
         Signal triggers across a combined multi-array setup.
         """
-        self._board.control.command("set_iq_control", {"rearm_signal": True})
+        self._board._resources.write_radio("iq/rx", {"rearm_signal": True})
 
     def acknowledge_signal_capture(self, config_generation: int, capture_id: int):
         """Acknowledge one fully validated Signal event to all array sensors.
@@ -114,8 +117,8 @@ class IQCapability(BoardCapability):
         samples. The acknowledgement applies only to this array.
         """
 
-        self._board.control.command(
-            "ack_iq_signal",
+        self._board._resources.command(
+            "iq/rx/signal/ack",
             {
                 "config_generation": int(config_generation),
                 "capture_id": int(capture_id),
@@ -149,7 +152,7 @@ class IQCapability(BoardCapability):
             payload["boot_ids"] = [None if boot is None else int(boot) for boot in boot_ids]
         if seq is not None:
             payload["seq"] = int(seq)
-        return self._board.control.post_json("set_iq_sync_anchor", payload)
+        return self._board._resources.post("iq/rx/sync-anchor", payload)
 
     def set_reference(self, mode="off", freq_hz=None, backoff_qdb=30, cw_tuning=None):
         """Set the controller reference source: off, cw, or broadband iq.
@@ -163,11 +166,11 @@ class IQCapability(BoardCapability):
             payload.update(freq_khz=round(freq_hz / 1000), backoff_qdb=backoff_qdb)
             if cw_tuning is not None:
                 payload["cw_tuning"] = cw_tuning
-        return self._board.control.post_json("set_iq_reference", payload)
+        return self._board._resources.post("reference/iq", payload)
 
     def get_reference(self):
         """Return the reference source state."""
-        return self._board.control.get_json("get_iq_reference")
+        return self._board._resources.read("reference/iq")
 
     def subscribe_chunks(
         self,

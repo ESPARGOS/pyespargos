@@ -65,12 +65,13 @@ class AntennaSelection:
         return AntennaSelection(owner, selected)
 
     def configure(
-        self, *, mode=None, capture_path=None, bluetooth_filter_mode=None, frequency_hz=None, sample_rate_hz=None, rx_gain=None, gain_mode=None, rf_gain=None, bandwidth_mhz=None, output=None, channel=None, secondary_channel=None, boot_sync=None
+        self, *, mode=None, capture_path=None, bluetooth_filter_mode=None, frequency_hz=None, sample_rate_hz=None, rx_gain=None, gain_mode=None, rf_gain=None, bandwidth_mhz=None, input=None, output=None, channel=None, secondary_channel=None, boot_sync=None
     ):
         """Update only selected antennas; mode changes do not calibrate or start TX.
 
-        RX sample rate and RX output routing require all eight antennas on a
-        board. For triggered IQ RX, capture_path selects the WiFi or Bluetooth
+        RX sample rate applies to all eight antennas. Select a receive feed
+        with input or a transmit feed with output. API 6 supports changing
+        individual sensors. Older firmware supports board-wide receive feeds. For triggered IQ RX, capture_path selects the WiFi or Bluetooth
         receiver. On Bluetooth, bluetooth_filter_mode selects the centered or
         below-LO response and bandwidth_mhz sets the filter width. Streaming
         rates from 16 to 100 kSa/s use a fixed Bluetooth front end.
@@ -92,6 +93,7 @@ class AntennaSelection:
             gain_mode=gain_mode,
             rf_gain=rf_gain,
             bandwidth_mhz=bandwidth_mhz,
+            input=input,
             output=output,
             channel=channel,
             secondary_channel=secondary_channel,
@@ -140,10 +142,10 @@ class AntennaSelection:
                 ids = {a.antid for a in self.antennas if a.host == board.host}
                 if not ids:
                     continue
-                state = _rpc(board, "get_iq_tx")
+                state = _rpc(board, "iq/tx")
                 if any(state["sensors"][a]["applied_mode"] != "iq_tx" or not state["sensors"][a]["samples"] for a in ids):
                     raise ValueError("Prepare a waveform and select IQ TX before starting transmission")
-                if not _rpc(board, "get_transmit_authorization")["authorized"]:
+                if not _rpc(board, "config/transmit-authorization")["authorized"]:
                     raise PermissionError(f"{board.host}: transmission is not authorized")
                 changes = [{"antid": a, "amplitude": amplitude if a in ids else 0} for a in range(8) if a in ids or state["muted"]]
                 expected = {v["antid"]: v["amplitude"] for v in changes if state["sensors"][v["antid"]]["applied_mode"] == "iq_tx"}
@@ -151,7 +153,7 @@ class AntennaSelection:
             try:
                 for board, changes, expected in plans:
                     owner._iq_tx_boards.add(board)
-                    _rpc(board, "set_iq_tx", {"transmitters": changes, "muted": False})
+                    _rpc(board, "iq/tx", {"transmitters": changes, "muted": False})
 
                     def applied(state):
                         return all(state["sensors"][a].get("applied_mode") == "iq_tx" and abs(state["sensors"][a]["applied_amplitude"] - level) < 1e-6 for a, level in expected.items())
@@ -160,7 +162,7 @@ class AntennaSelection:
             except Exception:
                 for board, _, _ in plans:
                     try:
-                        _rpc(board, "set_iq_tx", {"muted": True})
+                        _rpc(board, "iq/tx", {"muted": True})
                     except Exception:
                         pass
                 raise
@@ -173,15 +175,15 @@ class AntennaSelection:
             for board in owner.boards:
                 changes = [{"antid": a.antid, "amplitude": 0} for a in self.antennas if a.host == board.host]
                 if changes:
-                    _rpc(board, "set_iq_tx", {"transmitters": changes})
+                    _rpc(board, "iq/tx", {"transmitters": changes})
                     _wait(board, lambda s, changes=changes: all(not s["sensors"][v["antid"]]["enabled"] or abs(s["sensors"][v["antid"]]["applied_amplitude"]) < 1e-6 for v in changes), 10)
 
     def calibrate(self, *, tx_method="reciprocity", path="reference", duration=2, per_board=True):
         """Calibrate configured roles and return only the requested coverage.
 
         IQ measurement uses only selected sensors and restores their roles.
-        Selected IQ sensors need one frequency/rate. Capture routing and triggers
-        remain board-wide. With other IQ sensors on the same board, subgroup
+        Selected IQ sensors need one frequency/rate. RF inputs can be selected per sensor on API 6. Capture triggers
+        apply to the board. With other IQ sensors on the same board, subgroup
         calibration needs an existing synchronized grid at 80 MSa/s.
         Existing calibration groups must be selected in full for recalibration.
         WiFi groups retain their individual channels. Calibrating the whole pool
@@ -211,7 +213,7 @@ class AntennaSelection:
             iq_selected = {a for a in selected if roles[a] != "wifi"}
             wifi_selected = selected - iq_selected
             # Validate every role before either IQ or WiFi acquisition starts.
-            tx_states = [_rpc(b, "get_iq_tx") for b in owner.boards] if iq_selected else []
+            tx_states = [_rpc(b, "iq/tx") for b in owner.boards] if iq_selected else []
             keys = []
             iq_rates = set()
             for bi, (board, config) in enumerate(zip(owner.boards, configs)):
@@ -537,14 +539,14 @@ class Pool(AntennaSelection):
             self.open()
             board = self.iq.master_board
             if not config.get("enabled", True):
-                _rpc(board, "set_iq_monitor", {"enabled": False})
+                _rpc(board, "iq/monitor", {"enabled": False})
                 if self._monitor is not None:
                     self._monitor.close()
                     self._monitor = None
                 return None
             monitor = self._monitor or self._open_monitor(board)
             try:
-                _rpc(board, "set_iq_monitor", {**config, "enabled": True})
+                _rpc(board, "iq/monitor", {**config, "enabled": True})
             except Exception:
                 if self._monitor is None:
                     monitor.close()
@@ -640,14 +642,14 @@ class Pool(AntennaSelection):
                 errors.append(e)
 
         if self._monitor is not None:
-            attempt(lambda: _rpc(self._monitor.board, "set_iq_monitor", {"enabled": False}))
+            attempt(lambda: _rpc(self._monitor.board, "iq/monitor", {"enabled": False}))
             attempt(self._monitor.close)
             self._monitor = None
         if self._tx is not None and not self._tx.closed:
             attempt(self._tx.close)
         else:
             for b in self._iq_tx_boards:
-                attempt(lambda b=b: _rpc(b, "set_iq_tx", {"muted": True}))
+                attempt(lambda b=b: _rpc(b, "iq/tx", {"muted": True}))
         # Receive-only pools must not change unrelated transmitters or REF sources.
         for b in self._wifi_tx_boards:
             attempt(lambda b=b: b.wifi_tx.set_config({"active_by_antid": [False] * 8}))

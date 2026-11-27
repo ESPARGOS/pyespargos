@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos.cfo import correction_hz_to_raw, correction_raw_to_hz
 from espargos.board_wifi_rx import WiFiRxCapability
 from espargos.wifi_transceiver import WiFiTransceiver
@@ -28,7 +29,8 @@ class CFOCorrectionTest(unittest.TestCase):
         self.assertEqual(correction_raw_to_hz(253), -19302.3681640625)
 
     def test_board_uses_existing_wire_api(self):
-        rx = WiFiRxCapability(SimpleNamespace(control=Mock()))
+        control = Mock()
+        rx = WiFiRxCapability(SimpleNamespace(control=control, _resources=LegacyControllerResources(control)))
         rx.set_cfo_correction_hz(False, 10000)
         rx._board.control.command.assert_called_once_with("set_cfo_correction", {"auto": False, "value": -131})
         rx._board.control.get_json.return_value = {"auto": False, "value": -131}

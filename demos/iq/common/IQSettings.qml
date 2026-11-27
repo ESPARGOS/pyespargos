@@ -148,7 +148,7 @@ GridLayout {
 					lpfBwSlider.value = Math.min(Math.max(cfg.filter_bw_mhz, lpfBwSlider.from), lpfBwSlider.to)
 			}
 			if (cfg.rf_switch !== undefined)
-				rfSwitchCombo.value = cfg.rf_switch
+				rfSwitchCombo.value = typeof cfg.rf_switch === "number" ? cfg.rf_switch : -1
 			if (rx.gain_mode !== undefined)
 				agcSwitch.checked = rx.gain_mode === "auto"
 			if (rx.rx_gain !== undefined && !rxGainSlider.pressed)

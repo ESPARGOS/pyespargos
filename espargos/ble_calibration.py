@@ -23,7 +23,7 @@ class BLECalibration:
     model: SensorCalibration
     board_index: int
     generation: int
-    settings: int
+    settings: int | tuple[int, ...]
     phy: int
     epochs: dict
 
@@ -32,7 +32,8 @@ class BLECalibration:
             return False
         for a in range(8):
             p = cluster.get_packet(self.board_index, a)
-            if p is not None and (p.generation != self.generation or p.settings != self.settings or getattr(p, "capture_phy", p.phy) != self.phy or (p.clock_epoch, p.receiver_epoch) != self.epochs[a]):
+            settings = self.settings[a] if isinstance(self.settings, tuple) else self.settings
+            if p is not None and (p.generation != self.generation or p.settings != settings or getattr(p, "capture_phy", p.phy) != self.phy or (p.clock_epoch, p.receiver_epoch) != self.epochs[a]):
                 return False
         return True
 

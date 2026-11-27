@@ -151,7 +151,7 @@ def test_timing_failure_restores_every_board_and_keeps_tx_muted(restore_failure)
 
     def rpc(board, path, payload=None):
         calls.append((board.host, path, payload))
-        if path == "get_iq_tx":
+        if path == "iq/tx" and payload is None:
             return state
         if payload == {"muted": True, "steering": {"phase_deg": [0] * 8, "delay_samples": [0] * 8}}:
             raise RuntimeError("prepare failed")
@@ -164,7 +164,7 @@ def test_timing_failure_restores_every_board_and_keeps_tx_muted(restore_failure)
         captures.return_value.close.assert_called_once()
     for board in boards:
         board.iq.set_config.assert_called_once_with({k: config[k] for k in ("rf_switch", "receivers", "trigger", "adc_decimation")})
-        assert (board.host, "set_iq_tx", {"muted": True}) in calls
+        assert (board.host, "iq/tx", {"muted": True}) in calls
     assert not any(payload and payload.get("muted") is False for _, _, payload in calls)
 
 

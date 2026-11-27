@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from espargos import iq_tone
+from espargos.control_legacy import LegacyControllerResources
 from espargos.board_iq import IQCapability
 from espargos.iq_receiver import IQReceiver
 
@@ -14,6 +15,7 @@ from espargos.iq_receiver import IQReceiver
 def receiver():
     master = Mock()
     master.api_version = (5, 0)
+    master._resources = LegacyControllerResources(master.control)
     master.iq = IQCapability(master)
     rx = object.__new__(IQReceiver)
     rx._owner = SimpleNamespace(reference_controller=master, _reference_boards=set())

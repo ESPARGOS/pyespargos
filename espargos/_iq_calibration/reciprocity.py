@@ -88,7 +88,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                 values[a] = 0
     rx_modes = [scope.modes(bi, c["modes"]) for bi, c in enumerate(saved_rx)]
     pilots = set()
-    monitors = _map(lambda b: _rpc(b, "get_iq_monitor"), boards)
+    monitors = _map(lambda b: _rpc(b, "iq/monitor"), boards)
     capture = _Captures(boards)
     success = False
     try:
@@ -175,7 +175,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             pool._logger.info("TX calibration: simultaneous sensors %s/%s", board.host, ants)
             _rpc(
                 board,
-                "set_iq_tx",
+                "iq/tx",
                 {
                     "muted": False,
                     "transmitters": [{"antid": a, "output": pilot_output, "amplitude": 1} for a in ants],
@@ -225,7 +225,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             check = capture.wait(board, lambda s: True, timeout)
             if [s["boot_id"] for s in check["sensors"]] != boot_ids[bi] or any(check["sensors"][a]["origin_ns"] != origin for a, origin in zip(ants, origins)):
                 raise RuntimeError("A transmitter restarted during calibration")
-            _rpc(board, "set_iq_tx", {"muted": True, "modes": rx_modes[bi]})
+            _rpc(board, "iq/tx", {"muted": True, "modes": rx_modes[bi]})
             capture.wait(board, lambda s: all(s["sensors"][a]["applied_mode"] == "iq_rx" for a in scope.ids[bi]), timeout)
 
         for group in groups:
@@ -303,7 +303,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
 
         def apply(pair):
             bi, b = pair
-            _rpc(b, "set_iq_tx", {"calibration": corrections[bi]})
+            _rpc(b, "iq/tx", {"calibration": corrections[bi]})
             ants = [a for j, a in targets if j == bi]
             state = capture.wait(
                 b,
@@ -337,7 +337,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
         def resume(pair):
             bi, b = pair
             b.iq.set_config({"trigger": saved_rx[bi]["trigger"]})
-            _rpc(b, "set_iq_tx", {"muted": saved_tx[bi]["muted"]})
+            _rpc(b, "iq/tx", {"muted": saved_tx[bi]["muted"]})
 
         _map(resume, [(bi, boards[bi]) for bi in scope.active])
         pool._calibration = rx_cal if receivers else None
@@ -358,7 +358,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
                 try:
                     _rpc(
                         b,
-                        "set_iq_tx",
+                        "iq/tx",
                         {"muted": True, "modes": rx_modes[bi]},
                     )
                     ants = [a for j, a in pilots if j == bi]
@@ -385,7 +385,7 @@ def calibrate(pool, *, rx_gain=None, cable_lengths=None, cable_velocity_factors=
             pool._calibration = None
             for b in [boards[bi] for bi in scope.active]:
                 try:
-                    _rpc(b, "set_iq_tx", {"muted": True})
+                    _rpc(b, "iq/tx", {"muted": True})
                 except Exception as error:
                     errors.append(f"{b.host}: could not mute TX ({error})")
             raise RuntimeError("Calibration settings could not be restored: " + "; ".join(errors))

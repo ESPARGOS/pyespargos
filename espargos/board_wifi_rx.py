@@ -14,8 +14,6 @@ from . import csi_packet
 from . import sensor
 from .board import (
     BoardCapability,
-    EspargosHTTPStatusError,
-    EspargosUnexpectedResponseError,
     SensorMessageSubscription,
 )
 
@@ -61,26 +59,13 @@ class WiFiRxCapability(BoardCapability):
         "channel-secondary": [0] * 8,
     }
 
-    def set_rf_switch(self, state: sensor.RFSwitchState):
-        """Set the receive-path RF switch to an antenna or reference input."""
+    def set_rf_switch(self, state: sensor.RFSwitchState | dict[int, sensor.RFSwitchState]):
+        """Set every WiFi input, or update the antennas named in a mapping."""
+        self._board._resources.set_wifi_inputs(state)
 
-        response = self._board.control.fetch(
-            "set_rfswitch",
-            str(int(state)),
-        )
-        if response != "ok":
-            self._board._logger.error(f"Invalid response: {response}")
-            raise EspargosUnexpectedResponseError(str(response))
-
-    def get_rf_switch(self) -> sensor.RFSwitchState:
-        """Return the current receive-path RF switch state."""
-
-        response = self._board.control.fetch("get_rfswitch")
-        try:
-            return sensor.RFSwitchState(int(response))
-        except ValueError:
-            self._board._logger.error(f"Invalid response: {response}")
-            raise EspargosUnexpectedResponseError(str(response))
+    def get_rf_switch(self) -> sensor.RFSwitchState | dict[int, sensor.RFSwitchState]:
+        """Return the common input, or a mapping by antenna ID for mixed inputs."""
+        return self._board._resources.wifi_inputs()
 
     def set_mac_filter(self, mac_filter: dict):
         """Only receive frames whose sender MAC matches ``mac_filter``.
@@ -89,17 +74,17 @@ class WiFiRxCapability(BoardCapability):
         ``mac_mask``. MAC values use the ``"00:11:22:33:44:55"`` notation.
         """
 
-        self._board.control.command("set_mac_filter", mac_filter)
+        self._board._resources.set_wifi_field("mac_filter", mac_filter)
 
     def get_mac_filter(self) -> dict:
         """Return the current sender-MAC filter configuration."""
 
-        return self._board.control.get_json("get_mac_filter")
+        return self._board._resources.wifi_field("mac_filter")
 
     def clear_mac_filter(self):
         """Disable sender-MAC filtering."""
 
-        self._board.control.command("set_mac_filter", {"enable": False})
+        self._board._resources.set_wifi_field("mac_filter", {"enable": False})
 
     def set_config(self, config: dict):
         """Update the board's live WiFi receive and calibration configuration.
@@ -110,31 +95,20 @@ class WiFiRxCapability(BoardCapability):
         resets sensor channel overrides to the board's primary/secondary
         channel. Use :meth:`set_reference_config` to leave sensors tuned.
 
-        On firmware with ``set_wifi_runtime``, this leaves settings saved for
-        the next boot unchanged. Older firmware without that endpoint also
-        saves the settings when applying them.
+        This changes live settings on API 5 and later. Earlier controllers
+        that only expose saved WiFi settings also write them to flash.
         """
 
-        try:
-            self._board.control.command("set_wifi_runtime", config)
-        except EspargosHTTPStatusError as error:
-            if error.status != 404 or self._board.api_version[0] >= 5:
-                raise
-            self._board.control.command("set_wificonf", config)
+        self._board._resources.command("wifi/tune", config)
 
     def get_config(self) -> dict:
         """Return the live WiFi receive and calibration configuration.
 
-        Read ``get_wifi_runtime``, or ``get_wificonf`` on older firmware
-        without that endpoint. Saved boot defaults are not used for measurements.
+        The SDK reads the current reference profile and uses the saved profile
+        on earlier firmware that only exposes saved WiFi settings. Saved boot defaults are not used for measurements.
         """
 
-        try:
-            return self._board.control.get_json("get_wifi_runtime")
-        except EspargosHTTPStatusError as error:
-            if error.status != 404 or self._board.api_version[0] >= 5:
-                raise
-            return self._board.control.get_json("get_wificonf")
+        return self._board._resources.read("reference/wifi")
 
     def set_reference_config(self, config: dict):
         """Update the controller's WiFi reference without retuning sensors.
@@ -144,7 +118,7 @@ class WiFiRxCapability(BoardCapability):
         Use :meth:`get_config` to read the resulting reference configuration and
         :meth:`get_channel_overrides` for the actual sensor channels.
         """
-        self._board.control.command("set_wifi_reference_config", config)
+        self._board._resources.command("reference/wifi", config)
 
     def set_csi_acquisition_config(self, config: dict):
         """Update which WiFi training fields the sensors acquire as CSI.
@@ -154,18 +128,12 @@ class WiFiRxCapability(BoardCapability):
         provided fields are changed by the controller.
         """
 
-        payload = dict(config)
-        if "lltf_8bit_mode" in payload and "lltf_bit_mode" not in payload:
-            payload["lltf_bit_mode"] = payload["lltf_8bit_mode"]
-        self._board.control.command("set_csi_acquire_config", payload)
+        self._board._resources.set_wifi_field("csi", config)
 
     def get_csi_acquisition_config(self) -> dict:
         """Return the current CSI acquisition configuration."""
 
-        config = self._board.control.get_json("get_csi_acquire_config")
-        if "lltf_8bit_mode" not in config and "lltf_bit_mode" in config:
-            config["lltf_8bit_mode"] = config["lltf_bit_mode"]
-        return config
+        return self._board._resources.wifi_field("csi")
 
     def set_cfo_correction(self, auto: bool, value: int = 0):
         """Configure automatic or fixed receiver frequency-offset correction.
@@ -175,15 +143,14 @@ class WiFiRxCapability(BoardCapability):
         :meth:`set_cfo_correction_hz`.
         """
 
-        self._board.control.command(
-            "set_cfo_correction",
+        self._board._resources.set_wifi_field("cfo",
             {"auto": bool(auto), "value": int(value)},
         )
 
     def get_cfo_correction(self) -> dict:
         """Return the receiver frequency-offset correction configuration."""
 
-        return self._board.control.get_json("get_cfo_correction")
+        return self._board._resources.wifi_field("cfo")
 
     def set_cfo_correction_hz(self, auto: bool, value_hz: float = 0):
         """Select automatic CFO correction or a fixed CFO in Hz.
@@ -216,12 +183,12 @@ class WiFiRxCapability(BoardCapability):
         """
 
         payload = {key: self._gain_value_for_controller(key, value) for key, value in settings.items()}
-        self._board.control.command("set_gain_settings", payload)
+        self._board._resources.set_wifi_field("gain", payload)
 
     def get_gain_settings(self) -> dict:
         """Return the current receiver gain settings."""
 
-        return self._board.control.get_json("get_gain_settings")
+        return self._board._resources.wifi_field("gain")
 
     def set_channel_overrides(self, settings: dict):
         """Configure optional per-sensor primary and secondary channels.
@@ -230,12 +197,12 @@ class WiFiRxCapability(BoardCapability):
         ``channel-secondary`` lists in firmware antenna-ID order.
         """
 
-        self._board.control.command("set_wifi_channel_overrides", settings)
+        self._board._resources.set_wifi_channels(settings)
 
     def get_channel_overrides(self) -> dict:
         """Return the current per-sensor channel overrides."""
 
-        return self._board.control.get_json("get_wifi_channel_overrides")
+        return self._board._resources.wifi_channels()
 
     def subscribe_csi(
         self,

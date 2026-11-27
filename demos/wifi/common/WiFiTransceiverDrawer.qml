@@ -123,7 +123,7 @@ Drawer {
                 id: rfSwitchInput
                 property string configKey: "rf_switch"
                 property string configProp: "value"
-                property var decode: function(v) { return Math.max(0, Math.min(4, Number(v))) }
+                property var decode: function(v) { return Number(v) }
                 modes: [0, 2, 3, 4, 1]
                 Component.onCompleted: poolConfigManager.register(this)
                 onActivated: poolConfigManager.onControlChanged(this)

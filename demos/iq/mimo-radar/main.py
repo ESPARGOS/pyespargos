@@ -344,8 +344,7 @@ class MIMORadar(ESPARGOSIQApplication):
         # Keep reading packets during setup so they do not build up.
         self._pool.start_processing()
         for board in self._pool.boards:
-            authorization = board.control.get_json("get_transmit_authorization")
-            if not authorization["authorized"]:
+            if not board.transmit_authorized:
                 raise PermissionError(f"Enable transmit authorization on {board.host} before starting this demo.")
 
         tx = self._pool.tx

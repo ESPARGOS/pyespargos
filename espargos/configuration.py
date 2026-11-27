@@ -73,6 +73,15 @@ def _board_wide(ctx):
         raise ValueError("These receiver settings are board-wide. Select all eight sensors in this mode")
 
 
+def _selected_paths(ctx, output):
+    path = _ROUTES[output]
+    if len(ctx.antennas) == 8:
+        return path
+    if not ctx.board._resources.per_sensor_paths:
+        raise ValueError("This controller requires a board-wide RF path")
+    return {a: path for a in ctx.antennas}
+
+
 def _ble(ctx, options):
     from .ble_packet import channel_frequency
 
@@ -81,7 +90,7 @@ def _ble(ctx, options):
     if "rx_gain" in options:
         settings["gain_mode"] = options.get("gain_mode", "manual")
     if "output" in options:
-        settings["rf_switch"] = _ROUTES[options["output"]]
+        settings["rf_switch"] = _selected_paths(ctx, options["output"])
     if "frequency_hz" in options:
         channel = next((c for c in range(40) if channel_frequency(c) == options["frequency_hz"]), None)
         if channel is None or "channel" in settings and settings["channel"] != channel:
@@ -89,7 +98,7 @@ def _ble(ctx, options):
         settings["channel"] = channel
     if "channel" in settings and (type(settings["channel"]) is not int or not 0 <= settings["channel"] <= 39):
         raise ValueError("BLE channel must be 0–39")
-    if settings:
+    if settings.keys() - {"rf_switch"}:
         _board_wide(ctx)
 
     def apply():
@@ -132,8 +141,8 @@ def _wifi_iq(ctx, options):
     if "boot_sync" in settings and type(settings["boot_sync"]) is not bool:
         raise ValueError("boot_sync must be a boolean")
     if "output" in settings:
-        settings["rf_switch"] = _ROUTES[settings.pop("output")]
-    if settings and any(mode == "wifi_iq" and a not in ctx.antennas for a, mode in enumerate(ctx.modes)):
+        settings["rf_switch"] = _selected_paths(ctx, settings.pop("output"))
+    if settings.keys() - {"rf_switch"} and any(mode == "wifi_iq" and a not in ctx.antennas for a, mode in enumerate(ctx.modes)):
         raise ValueError("Select every WiFi IQ sensor on the board to change shared capture settings")
 
     def apply():
@@ -148,35 +157,27 @@ def _wifi_iq(ctx, options):
 
 def _wifi(ctx, options):
     _validate(options, ("frequency_hz", "channel", "secondary_channel", "output"))
-    channels = None
-    if any(k in options for k in ("frequency_hz", "channel", "secondary_channel")):
-        primary = _wifi_channel(options)
-        secondary = options.get("secondary_channel")
-        if secondary not in (None, -1, 0, 1):
-            raise ValueError("secondary_channel must be -1, 0 or 1")
-        channels = ctx.board.wifi_rx.get_channel_overrides()
-        if not channels["override_active"]:
-            base = ctx.board.wifi_rx.get_config()
-            channels = {"override_active": True, "channel-primary": [base["channel-primary"]] * 8, "channel-secondary": [base["channel-secondary"]] * 8}
-        for a in ctx.antennas:
-            if primary is not None:
-                channels["channel-primary"][a] = primary
-            if secondary is not None:
-                channels["channel-secondary"][a] = 2 if secondary == -1 else secondary
-    if "output" in options:
-        _board_wide(ctx)
+    primary = _wifi_channel(options) if "frequency_hz" in options or "channel" in options else None
+    secondary = options.get("secondary_channel")
+    if secondary not in (None, -1, 0, 1):
+        raise ValueError("secondary_channel must be -1, 0 or 1")
+    channel = {}
+    if primary is not None:
+        channel["primary"] = primary
+    if secondary is not None:
+        channel["secondary"] = 2 if secondary == -1 else secondary
+    paths = _selected_paths(ctx, options["output"]) if "output" in options else None
+    antennas = _identities(ctx) if channel else set()
 
     def apply():
-        if channels:
+        try:
+            ctx.board._resources.write_wifi_selection(ctx.antennas, channel, paths)
+        finally:
             receiver = ctx.pool._receivers.get("wifi")
-            if receiver is not None:
-                receiver.set_wifi_channel_overrides(channels, board_index=ctx.board_index, antennas=ctx.antennas)
-            else:
-                ctx.board.wifi_rx.set_channel_overrides(channels)
-        if "output" in options:
-            ctx.board.wifi_rx.set_rf_switch(_ROUTES[options["output"]])
+            if receiver is not None and antennas:
+                receiver.invalidate_calibration(antennas=antennas)
 
-    return ConfigurationUpdate(after_modes=apply, invalidated=_identities(ctx) if channels else set())
+    return ConfigurationUpdate(after_modes=apply if channel or paths is not None else None, invalidated=antennas)
 
 
 def _iq_rx(ctx, options):
@@ -191,7 +192,7 @@ def _iq_rx(ctx, options):
         receiver["gain_mode"] = options["gain_mode"]
     if receiver:
         receivers = {a: dict(antid=a, **receiver) for a in ctx.antennas}
-    tx = _rpc(ctx.board, "get_iq_tx") if any(ctx.before[a] == "iq_tx" for a in ctx.antennas) else None
+    tx = _rpc(ctx.board, "iq/tx") if any(ctx.before[a] == "iq_tx" for a in ctx.antennas) else None
     for a in ctx.antennas:
         old = tx["sensors"][a]["frequency_hz"] if ctx.before[a] == "iq_tx" else ctx.snapshot["receivers"][a]["rf_freq_hz"]
         if ctx.before[a] == "iq_tx" and "frequency_hz" not in options:
@@ -263,8 +264,9 @@ def _iq_rx(ctx, options):
         if rate != receive_sample_rate(ctx.snapshot):
             invalidated.update(_identities(ctx))
     if "output" in options:
-        _board_wide(ctx)
-        settings["rf_switch"] = _ROUTES[options["output"]]
+        if options["output"] == "random":
+            raise ValueError("Random switching is available for packet receivers")
+        settings["rf_switch"] = _selected_paths(ctx, options["output"])
     return ConfigurationUpdate(iq_settings=settings, invalidated=invalidated)
 
 
@@ -274,7 +276,7 @@ def _iq_tx(ctx, options):
         raise ValueError("Random RF input is a receiver setting")
     transmitters, invalidated = [], set()
     common = {}
-    tx = _rpc(ctx.board, "get_iq_tx") if options.keys() & {"frequency_hz", "sample_rate_hz"} else None
+    tx = _rpc(ctx.board, "iq/tx") if options.keys() & {"frequency_hz", "sample_rate_hz"} else None
     if "sample_rate_hz" in options:
         if any(mode == "iq_tx" and a not in ctx.antennas for a, mode in enumerate(ctx.modes)):
             raise ValueError("Transmit sample rate is board-wide; select every IQ TX sensor on the board")
@@ -298,7 +300,7 @@ def _iq_tx(ctx, options):
             transmitters.append(dict(antid=a, **settings))
     payload = {**common, **({"transmitters": transmitters} if transmitters else {})}
     return ConfigurationUpdate(
-        before_modes=(lambda: _rpc(ctx.board, "set_iq_tx", payload)) if payload else None,
+        before_modes=(lambda: _rpc(ctx.board, "iq/tx", payload)) if payload else None,
         invalidated=invalidated,
     )
 
@@ -311,8 +313,14 @@ def configure(selection, *, mode=None, **options):
     options = {k: v for k, v in options.items() if v is not None}
     if "frequency_hz" in options and (not math.isfinite(options["frequency_hz"]) or options["frequency_hz"] <= 0):
         raise ValueError("frequency_hz must be positive and finite")
-    if options.get("output") == "isolation":
-        options["output"] = "isolated"
+    receiving = "input" in options
+    if receiving:
+        if "output" in options:
+            raise ValueError("Choose either input or output for a selection")
+        options["output"] = options.pop("input")
+    if "output" in options:
+        aliases = {"isolation": "isolated", "right": "antenna_r", "left": "antenna_l"}
+        options["output"] = aliases.get(options["output"], options["output"])
     if "output" in options and options["output"] not in _ROUTES:
         raise ValueError(f"output must be one of {tuple(_ROUTES)}")
     with _LOCK:
@@ -331,8 +339,10 @@ def configure(selection, *, mode=None, **options):
             before = tuple(snapshot["modes"])
             modes = tuple(mode if mode is not None and a in ids else before[a] for a in range(8))
             updates = []
-            iq = {"modes": list(modes)} if mode is not None else {}
+            iq = {}
             for role in dict.fromkeys(modes[a] for a in ids):
+                if receiving and role == "iq_tx":
+                    raise ValueError("Use output for an IQ transmitter")
                 if role not in planners:
                     raise ValueError(f"No configuration planner registered for {role!r}")
                 ctx = ConfigurationContext(owner, board, bi, tuple(a for a in ids if modes[a] == role), before, modes, snapshot)
@@ -350,21 +360,30 @@ def configure(selection, *, mode=None, **options):
                         switched = True
                     else:
                         invalidated.add(Antenna(board.host, a))
-            plans.append((bi, board, before, modes, iq, updates))
+            if mode is not None:
+                if board._resources.per_sensor_paths:
+                    rows = {r["antid"]: r for r in iq.get("receivers", ())}
+                    for a in ids:
+                        rows.setdefault(a, {"antid": a})["mode"] = mode
+                    iq["receivers"] = list(rows.values())
+                else:
+                    iq["modes"] = list(modes)
+            plans.append((bi, board, ids, before, modes, iq, updates))
         # No writes occur until every board and mode planner has validated.
         owner.calibrations = owner.calibrations.without(invalidated)
         iq_receiver = owner._receivers.get("iq")
         if iq_receiver is not None and invalidated:
             iq_receiver._invalidate_rx_phases(invalidated)
         try:
-            for bi, board, before, modes, iq, updates in plans:
+            for bi, board, ids, _, modes, iq, updates in plans:
                 for update in updates:
                     if update.before_modes:
                         update.before_modes()
                 if iq:
                     board.iq.set_config(iq)
                 if mode is not None:
-                    _wait(board, lambda s, modes=modes: all(x["applied_mode"] == modes[a] for a, x in enumerate(s["sensors"])), 10)
+                    resource = "roles/sensors" if board._resources.per_sensor_paths else "iq/tx"
+                    _wait(board, lambda s: all(s["sensors"][a].get("applied_mode") == modes[a] for a in ids), 10, resource=resource)
                 for update in updates:
                     if update.after_modes:
                         update.after_modes()
@@ -372,12 +391,12 @@ def configure(selection, *, mode=None, **options):
             owner.calibrations = owner.calibrations.without(selection.antennas)
             for _, board, *_ in plans:
                 try:
-                    _rpc(board, "set_iq_tx", {"muted": True})
+                    _rpc(board, "iq/tx", {"muted": True})
                 except Exception:
                     pass
             raise
         finally:
-            for bi, board, before, modes, _, _ in plans:
+            for bi, board, _, before, modes, _, _ in plans:
                 if before != modes:
                     for receiver in tuple(owner._receivers.values()):
                         receiver.modes_changed(bi, before, modes)

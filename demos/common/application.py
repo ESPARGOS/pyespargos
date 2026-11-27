@@ -322,7 +322,7 @@ class ESPARGOSApplication(PyQt6.QtWidgets.QApplication):
         boards = pool.boards if boards is None else boards
         for board in boards:
             if board.api_version >= (4, 4):
-                board.control.post_json("set_controller_mode", {"mode": cls.CONTROLLER_MODE})
+                board.set_controller_mode(cls.CONTROLLER_MODE)
         if cls.SENSOR_MODE is None:
             return
         # Older WiFi-only boards already run CSI and have no sensor mode endpoint.

@@ -3,6 +3,7 @@
 import time
 import numpy as np
 
+from .ble_association import same_context
 from .ble_packet import BLEPacket
 from .sensor_cluster import SensorCluster, ClusterCollisionError
 
@@ -78,7 +79,7 @@ class BLECluster(SensorCluster):
         if not isinstance(p, BLEPacket):
             raise TypeError("BLECluster requires BLEPacket payloads")
         anchor = self.packet
-        if board_index != self.board_index or not p.synchronized or (p.clock_epoch, p.generation, p.settings) != (anchor.clock_epoch, anchor.generation, anchor.settings):
+        if not p.synchronized or not same_context(self, board_index, p):
             raise ClusterCollisionError("BLE capture belongs to a different board or receiver context")
         if p.qualified:
             if p.identity != anchor.identity:

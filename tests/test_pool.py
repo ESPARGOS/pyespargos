@@ -3,6 +3,7 @@ import socket
 import unittest
 from unittest.mock import Mock, patch, call
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos import Pool, Antenna
 import espargos.pool as api
 
@@ -31,7 +32,16 @@ class FakeBoard(api.board_module.Board):
         self.api_version = (4, 0)
         self.iq = FakeIQ()
         self.control = Mock()
-        self.control.get_json.side_effect = lambda path: {"sensors": [{"applied_mode": mode, "boot_id": a + 1} for a, mode in enumerate(self.iq.config["modes"])]} if path == "get_iq_tx" else {"mode": "wifi"}
+        self._resources = LegacyControllerResources(self.control)
+        def get_json(path):
+            if path == "get_iq_tx":
+                return {"sensors": [{"applied_mode": mode, "boot_id": a + 1} for a, mode in enumerate(self.iq.config["modes"])]}
+            if path == "get_wifi_channel_overrides":
+                return {"override_active": False}
+            if path == "get_wifi_runtime":
+                return {"channel-primary": 6, "channel-secondary": 0}
+            return {"mode": "wifi"}
+        self.control.get_json.side_effect = get_json
         self.revision = Mock()
         self.revision.antenna_id_to_row_col.side_effect = lambda a: divmod(a, 4)
         self.start = Mock()
@@ -151,14 +161,14 @@ class PoolTests(unittest.TestCase):
     def test_wifi_channels_only_change_selected_antennas(self):
         a = Pool("a")
         a.select(antennas=[2, 5]).configure(frequency_hz=2412000000)
-        args = a.boards[0].wifi_rx.set_channel_overrides.call_args.args[0]
+        args = a.boards[0].control.command.call_args.args[1]
         self.assertEqual(args["channel-primary"], [6, 6, 1, 6, 6, 1, 6, 6])
         self.assertTrue(args["override_active"])
 
     def test_secondary_below_uses_firmware_channel_encoding(self):
         a = Pool("a")
         a.select(antennas=[2]).configure(channel=6, secondary_channel=-1)
-        sent = a.boards[0].wifi_rx.set_channel_overrides.call_args.args[0]
+        sent = a.boards[0].control.command.call_args.args[1]
         self.assertEqual(sent["channel-secondary"], [0, 0, 2, 0, 0, 0, 0, 0])
 
     def test_entering_tx_does_not_start_previous_waveform(self):
@@ -222,12 +232,12 @@ class PoolTests(unittest.TestCase):
 
     def test_shutdown_mutes_only_boards_started_by_selection(self):
         state = {"muted": True, "sensors": [{"applied_mode": "iq_tx", "samples": 1024} for _ in range(8)]}
-        self.rpc.side_effect = lambda b, command, *args: ({"authorized": True} if command == "get_transmit_authorization" else state)
+        self.rpc.side_effect = lambda b, command, *args: ({"authorized": True} if command == "config/transmit-authorization" else state)
         owner = Pool(["a", "b"])
         owner.select(boards="b").start_transmission()
         self.rpc.reset_mock()
         owner.close()
-        self.rpc.assert_called_once_with(owner.boards[1], "set_iq_tx", {"muted": True})
+        self.rpc.assert_called_once_with(owner.boards[1], "iq/tx", {"muted": True})
 
     def test_shutdown_closes_owned_iq_transmitter(self):
         owner = Pool("a").open()
@@ -279,22 +289,22 @@ class PoolTests(unittest.TestCase):
 
     def test_subset_start_keeps_other_transmitters_silent(self):
         state = {"muted": True, "sensors": [{"applied_mode": "iq_tx", "samples": 1024} for _ in range(8)]}
-        self.rpc.side_effect = lambda b, command, *args: ({"authorized": True} if command == "get_transmit_authorization" else state)
+        self.rpc.side_effect = lambda b, command, *args: ({"authorized": True} if command == "config/transmit-authorization" else state)
         a = Pool("a")
         a.select(antennas=[1, 5]).start_transmission(amplitude=0.2)
-        writes = [c.args[2] for c in self.rpc.call_args_list if c.args[1] == "set_iq_tx"]
+        writes = [c.args[2] for c in self.rpc.call_args_list if c.args[1] == "iq/tx" and len(c.args) > 2]
         self.assertEqual(writes, [{"muted": False, "transmitters": [{"antid": i, "amplitude": 0.2 if i in (1, 5) else 0} for i in range(8)]}])
 
     def test_start_preflights_all_boards_before_unmuting(self):
         def rpc(board, command, *args):
-            if command == "get_transmit_authorization":
+            if command == "config/transmit-authorization":
                 return {"authorized": board.host == "a"}
             return {"muted": True, "sensors": [{"applied_mode": "iq_tx", "samples": 1024} for _ in range(8)]}
 
         self.rpc.side_effect = rpc
         with self.assertRaises(PermissionError):
             Pool(["a", "b"]).start_transmission()
-        self.assertFalse(any(c.args[1] == "set_iq_tx" for c in self.rpc.call_args_list))
+        self.assertFalse(any(c.args[1] == "iq/tx" and len(c.args) > 2 for c in self.rpc.call_args_list))
 
     def test_subset_stop_does_not_mute_other_antennas(self):
         Pool("a").select(antennas=[3]).stop_transmission()

@@ -1,10 +1,12 @@
 from unittest.mock import Mock, call
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos._iq_calibration.tx_settings import prepare_board
 
 
 def test_prepare_rx_only_board_without_transmitter_list():
     board = Mock()
+    board._resources = LegacyControllerResources(board.control)
     board.control.post_json.return_value = "ok"
     modes = ["iq_rx"] * 8
 
@@ -18,6 +20,7 @@ def test_prepare_rx_only_board_without_transmitter_list():
 
 def test_prepare_only_adjusts_selected_pilots_and_silences_other_transmitters():
     board = Mock()
+    board._resources = LegacyControllerResources(board.control)
     board.control.post_json.return_value = "ok"
     modes = ["iq_rx"] * 7 + ["iq_tx"]
 

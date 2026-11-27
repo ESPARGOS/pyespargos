@@ -26,7 +26,7 @@ def states(pool):
         config = b.wifi_rx.get_config()
         if b.api_version[0] >= 4:
             pairs = channels(config, b.wifi_rx.get_channel_overrides())
-            status = b.control.get_json("get_iq_tx")
+            status = b._resources.read("iq/tx")
         else:
             # API 3 has board-wide WiFi settings and no hardware boot IDs.
             # Its receive-stream clock checks maintain the pool-local epoch.

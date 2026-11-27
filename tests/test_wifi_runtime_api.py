@@ -3,6 +3,7 @@
 import unittest
 import json
 from unittest.mock import Mock, patch
+from espargos.control_legacy import LegacyControllerResources
 from espargos.board import Board, BoardControl, EspargosHTTPStatusError, EspargosAPIVersionError
 from espargos.board_wifi_rx import WiFiRxCapability
 
@@ -10,6 +11,7 @@ from espargos.board_wifi_rx import WiFiRxCapability
 class WiFiRuntimeAPITests(unittest.TestCase):
     def test_runtime_read_and_write_never_access_defaults(self):
         board = Mock()
+        board._resources = LegacyControllerResources(board.control)
         wifi = WiFiRxCapability(board)
         board.control.get_json.return_value = {"channel-primary": 8}
         self.assertEqual(wifi.get_config(), {"channel-primary": 8})
@@ -23,6 +25,7 @@ class WiFiRuntimeAPITests(unittest.TestCase):
                 for reading in (True, False):
                     with self.subTest(major=major, status=status, reading=reading):
                         board = Mock(api_version=(major, 0))
+                        board._resources = LegacyControllerResources(board.control, api_major=major)
                         wifi = WiFiRxCapability(board)
                         method = board.control.get_json if reading else board.control.command
                         method.side_effect = [EspargosHTTPStatusError(status), {"channel-primary": 5}]
@@ -36,15 +39,17 @@ class WiFiRuntimeAPITests(unittest.TestCase):
                             self.assertEqual(method.call_count, 1)
 
     def test_supported_firmware_versions_and_iq_access(self):
-        for major in (2, 3, 4, 5, 6):
+        for major in (2, 3, 4, 5, 6, 7):
             with self.subTest(major=major):
                 replies = {
                     "api_info": {"device": "espargos", "revision": "densiflorus", "api-major": major, "api-minor": 0},
                     "get_netconf": {"hostname": "test"},
+                    "api/v6/config/network": {"hostname": "test"},
+                    "api/v6/network/status": {"ip": "127.0.0.1"},
                     "get_ip_info": {"ip": "127.0.0.1"},
                 }
                 with patch.object(BoardControl, "fetch", side_effect=lambda path: json.dumps(replies[path])):
-                    if major in (2, 6):
+                    if major in (2, 7):
                         with self.assertRaises(EspargosAPIVersionError):
                             Board("127.0.0.1")
                         continue
@@ -58,6 +63,7 @@ class WiFiRuntimeAPITests(unittest.TestCase):
 
     def test_transport_failure_does_not_retry_as_persistent_write(self):
         board = Mock()
+        board._resources = LegacyControllerResources(board.control)
         board.control.command.side_effect = TimeoutError()
         with self.assertRaises(TimeoutError):
             WiFiRxCapability(board).set_config({"channel-primary": 6})

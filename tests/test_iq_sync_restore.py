@@ -6,6 +6,7 @@ from unittest.mock import Mock, call
 
 import pytest
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos._iq_calibration.reference import reference_session
 from espargos._iq_calibration.scope import CalibrationScope
 from espargos.calibration import Antenna
@@ -16,6 +17,8 @@ from espargos.revisions import BoardRevisionDensiflorus
 def test_scoped_reference_restores_board_and_master(fail):
     boards = [Mock(host=host, revision=BoardRevisionDensiflorus()) for host in ("master", "array")]
     master, array = boards
+    array._resources = LegacyControllerResources(array.control)
+    master._resources = LegacyControllerResources(master.control)
     master.control.get_json.return_value = {"mode": "wifi"}
     master.wifi_rx.get_config.return_value = {"calib-source": 1}
     selected = dict(antid=3, rf_freq_hz=2437000000, gain_mode="auto", rx_gain=54)
@@ -61,6 +64,7 @@ def test_existing_reference_or_monitor_resumes_after_failed_acquisition(referenc
     from unittest.mock import patch
 
     board = Mock()
+    board._resources = LegacyControllerResources(board.control)
     monitor_enabled = reference["mode"] == "off"
     board.iq.get_reference.return_value = reference
     board.control.get_json.side_effect = lambda path: ({"mode": "iq"} if path == "get_controller_mode" else {"enabled": monitor_enabled})

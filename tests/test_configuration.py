@@ -127,10 +127,12 @@ class ConfigurationTests(unittest.TestCase):
     def test_wifi_channel_plan_preserves_unselected_antennas(self):
         board = FakeBoard()
         board.modes = ["wifi"] * 8
-        board.wifi_rx = SimpleNamespace(get_channel_overrides=lambda: {"override_active": True, "channel-primary": [1] * 8, "channel-secondary": [0] * 8}, set_channel_overrides=Mock())
+        board.control.get_json = lambda path: {"override_active": True, "channel-primary": [1] * 8, "channel-secondary": [0] * 8}
+        board.control.command = Mock()
         with Pool([board]) as pool:
             pool.select(antennas=[2, 5]).configure(channel=6, secondary_channel=-1)
-            actual = board.wifi_rx.set_channel_overrides.call_args.args[0]
+            path, actual = board.control.command.call_args.args
+            self.assertEqual(path, "set_wifi_channel_overrides")
             self.assertEqual(actual["channel-primary"], [1, 1, 6, 1, 1, 6, 1, 1])
             self.assertEqual(actual["channel-secondary"], [0, 0, 2, 0, 0, 2, 0, 0])
 

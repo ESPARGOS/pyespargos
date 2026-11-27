@@ -21,7 +21,7 @@ class MonitorTests(unittest.TestCase):
             self.pool.configure_monitor({"enabled": False})
             monitor.close.assert_called_once()
             self.assertIsNone(self.pool._monitor)
-            rpc.assert_called_with(self.board, "set_iq_monitor", {"enabled": False})
+            rpc.assert_called_with(self.board, "iq/monitor", {"enabled": False})
 
     def test_configuration_failure_releases_new_subscription(self):
         with patch("espargos.pool._rpc", side_effect=TimeoutError), patch("espargos.reference_monitor.ReferenceMonitor") as capture:
@@ -36,5 +36,5 @@ class MonitorTests(unittest.TestCase):
         self.pool._receivers.clear()
         with patch("espargos.pool._rpc") as rpc:
             self.pool.close()
-            rpc.assert_called_once_with(self.board, "set_iq_monitor", {"enabled": False})
+            rpc.assert_called_once_with(self.board, "iq/monitor", {"enabled": False})
             monitor.close.assert_called_once()

@@ -2,10 +2,10 @@
 
 
 def select_reference_mode(restore, board, mode):
-    previous = board.control.get_json("get_controller_mode")["mode"]
+    previous = board._resources.read("roles/controller")["mode"]
     if previous != mode:
-        restore.callback(board.control.post_json, "set_controller_mode", {"mode": previous})
-        board.control.post_json("set_controller_mode", {"mode": mode})
+        restore.callback(board._resources.post, "roles/controller", {"mode": previous})
+        board._resources.post("roles/controller", {"mode": mode})
 
 
 def prepare_local_wifi_references(restore, boards):

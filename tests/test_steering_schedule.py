@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from espargos.control_legacy import LegacyControllerResources
 from espargos.calibration import Antenna, AntennaCorrection, Calibration, CalibrationGroup, CalibrationState
 from espargos.iq_transmitter import IQTransmitter
 from espargos.iq_stream import IQStream
@@ -44,6 +45,7 @@ class Board:
             ]
         }
         self.control = SimpleNamespace(fetch=lambda _, frame: self.send_stream_data(frame), get_json=lambda _: self.state)
+        self._resources = LegacyControllerResources(self.control)
         self.sessions = {}
         self.points = [[] for _ in range(8)]
         self.arms = []
