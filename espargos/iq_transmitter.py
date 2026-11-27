@@ -11,6 +11,7 @@ import zlib
 import numpy as np
 
 from .stream_sources import Stream
+from .control_legacy import iq_tx_settings
 from .calibration import Antenna
 from .iq_stream_protocol import Uplink
 from .iq_tx_control import TXStatus, _SensorTXError, _rpc, _waveform
@@ -224,7 +225,11 @@ class IQTransmitter:
     def settings(self, payload):
         if self._stream is not None and not self._stream.closed:
             raise RuntimeError("Close the stream before changing TX settings")
-        self._parallel(lambda i, b: _rpc(b, "iq/tx", payload))
+        if "sample_rate_hz" in payload:
+            updates = {board: iq_tx_settings(board.api_version[0], payload) for board in self.boards}
+            self._parallel(lambda i, b: _rpc(b, "iq/tx", updates[b]), boards={b for b, settings in updates.items() if settings})
+        else:
+            self._parallel(lambda i, b: _rpc(b, "iq/tx", payload))
         return self.read()
 
     def modes(self, modes):

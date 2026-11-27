@@ -12,6 +12,7 @@ from collections.abc import Callable
 import math
 
 from .calibration import Antenna
+from .control_legacy import check_iq_rx_settings, iq_tx_settings
 from .csi_processing import get_center_frequency
 from .iq_packet import DECIM_TO_FS
 from .iq_rx_stream import IQ_RX_STREAM_RATES, receive_sample_rate
@@ -267,6 +268,7 @@ def _iq_rx(ctx, options):
         if options["output"] == "random":
             raise ValueError("Random switching is available for packet receivers")
         settings["rf_switch"] = _selected_paths(ctx, options["output"])
+    check_iq_rx_settings(ctx.board.api_version[0], settings)
     return ConfigurationUpdate(iq_settings=settings, invalidated=invalidated)
 
 
@@ -274,6 +276,8 @@ def _iq_tx(ctx, options):
     _validate(options, ("frequency_hz", "sample_rate_hz", "rf_gain", "bandwidth_mhz", "output"))
     if options.get("output") == "random":
         raise ValueError("Random RF input is a receiver setting")
+    if "sample_rate_hz" in options:
+        options = iq_tx_settings(ctx.board.api_version[0], options)
     transmitters, invalidated = [], set()
     common = {}
     tx = _rpc(ctx.board, "iq/tx") if options.keys() & {"frequency_hz", "sample_rate_hz"} else None

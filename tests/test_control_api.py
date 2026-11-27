@@ -43,3 +43,14 @@ class ControlResourcesTest(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             legacy.set_wifi_inputs({3: RFSwitchState(2)})
         self.assertEqual(self.control.mock_calls, [])
+
+    def test_api4_rejects_bluetooth_iq_settings(self):
+        from espargos.board import EspargosAPIVersionError
+
+        legacy = LegacyControllerResources(self.control, api_major=4)
+        for settings in ({"capture_path": "bluetooth"}, {"bluetooth_filter_khz": 1200}, {"bluetooth_sample_rate_hz": 1600000}, {"trigger": {"mode": "downsample"}}):
+            with self.subTest(settings=settings), self.assertRaises(EspargosAPIVersionError):
+                legacy.write_radio("iq/rx", settings)
+        self.control.post_json.assert_not_called()
+        legacy.write_radio("iq/rx", {"adc_decimation": 2})
+        self.control.post_json.assert_called_once_with("set_iq_control", {"adc_decimation": 2})

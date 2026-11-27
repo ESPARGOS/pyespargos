@@ -2,8 +2,27 @@
 
 import json
 
+from .board import EspargosAPIVersionError
 from .control_api import _sensor_inputs, _input_name
 from .sensor import RFSwitchState
+
+
+def check_iq_rx_settings(api_major, settings):
+    if api_major >= 5:
+        return
+    trigger = settings.get("trigger")
+    downsample = isinstance(trigger, dict) and trigger.get("mode") == "downsample"
+    bluetooth = settings.get("capture_path") == "bluetooth" or any(key.startswith("bluetooth_") for key in settings)
+    if bluetooth or downsample:
+        raise EspargosAPIVersionError(f"Controller API {api_major} supports only WiFi IQ capture. Bluetooth IQ capture and continuous downsampling require API 5 or later.")
+
+
+def iq_tx_settings(api_major, settings):
+    if api_major >= 5 or "sample_rate_hz" not in settings:
+        return settings
+    if settings["sample_rate_hz"] != 80_000_000:
+        raise EspargosAPIVersionError(f"Controller API {api_major} has a fixed IQ transmit rate of 80 MSa/s. Other rates require API 5 or later.")
+    return {key: value for key, value in settings.items() if key != "sample_rate_hz"}
 
 
 class LegacyControllerResources:
@@ -18,6 +37,8 @@ class LegacyControllerResources:
         return self.control.get_json("get_" + self._radio[resource])
 
     def write_radio(self, resource, settings):
+        if resource == "iq/rx":
+            check_iq_rx_settings(self.api_major, settings)
         changes = settings.copy()
         key = "rfswitch_state" if resource == "wifi/tx" else "rf_switch"
         if key in changes:

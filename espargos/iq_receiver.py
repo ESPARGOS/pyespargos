@@ -25,6 +25,7 @@ from espargos.sensor_calibration import SensorCalibration, compute_reference_pat
 from espargos.calibration import Calibration
 
 from ._iq_calibration import reference as iq_reference
+from .control_legacy import check_iq_rx_settings
 from . import iq_tone
 from .iq_accum_cluster import IQAccumCluster
 from .iq_rx_stream import IQ_RX_STREAM_RATES, IQStreamBlock, IQStreamPacket, receive_sample_rate
@@ -699,6 +700,8 @@ class IQReceiver(ClusterAssembler):
         directly or use :meth:`espargos.board_iq.IQCapability.set_receiver`.
         """
         config = dict(config)
+        for board in self.boards:
+            check_iq_rx_settings(board.api_version[0], config)
         receiver_keys = ("rf_freq_hz", "gain_mode", "rx_gain", "expert_gain_words", "expert_gain_word")
         receiver_update = {}
         for key in receiver_keys:

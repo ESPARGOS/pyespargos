@@ -268,7 +268,7 @@ def test_partial_path_change_preserves_only_definitively_rejected_boards(rejecti
     from espargos.board import EspargosHTTPStatusError
     from espargos.calibration import Antenna
 
-    boards = [Mock(host=h) for h in ["first", "second"]]
+    boards = [Mock(host=h, api_version=(5, 1)) for h in ["first", "second"]]
     for board in boards:
         board.iq.get_config.return_value = dict(modes=["iq_rx"] * 8, capture_path="bluetooth", bluetooth_filter_khz=1580)
         board.revision.antenna_id_to_row_col.side_effect = lambda a: divmod(a, 4)

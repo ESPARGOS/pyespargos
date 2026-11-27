@@ -3,6 +3,7 @@ import socket
 import unittest
 from unittest.mock import Mock, patch, call
 
+from espargos.board import EspargosAPIVersionError
 from espargos.control_legacy import LegacyControllerResources
 from espargos import Pool, Antenna
 import espargos.pool as api
@@ -29,7 +30,7 @@ class FakeIQ:
 class FakeBoard(api.board_module.Board):
     def __init__(self, host):
         self.host = host
-        self.api_version = (4, 0)
+        self.api_version = (5, 0)
         self.iq = FakeIQ()
         self.control = Mock()
         self._resources = LegacyControllerResources(self.control)
@@ -77,6 +78,21 @@ class PoolTests(unittest.TestCase):
             iq.set_config({"trigger": {"mode": "signal", "threshold": 80}})
             pool.configure(sample_rate_hz=40e6)
             self.assertEqual(iq.config["trigger"], {"mode": "signal", "threshold": 80})
+
+    def test_api4_iq_configuration(self):
+        with Pool(["new", "stable"]) as pool:
+            stable = pool.boards[1]
+            stable.api_version = (4, 4)
+            stable._resources = LegacyControllerResources(stable.control, api_major=4)
+            for options in ({"mode": "iq_rx", "capture_path": "bluetooth"}, {"mode": "iq_rx", "sample_rate_hz": 16000}, {"mode": "iq_tx", "sample_rate_hz": 40e6}):
+                with self.subTest(options=options), self.assertRaises(EspargosAPIVersionError):
+                    pool.configure(**options)
+            self.assertTrue(all(not b.iq.writes for b in pool.boards))
+            self.assertTrue(all(len(c.args) == 2 for c in self.rpc.call_args_list))
+            pool.select(boards=stable).configure(mode="iq_tx", sample_rate_hz=80e6, output="reference")
+            payload = next(c.args[2] for c in self.rpc.call_args_list if len(c.args) == 3)
+            self.assertNotIn("sample_rate_hz", payload)
+            self.assertEqual([row["output"] for row in payload["transmitters"]], ["reference"] * 8)
 
     def test_selections_are_lazy_and_non_owning(self):
         a = Pool(["a", "b"])

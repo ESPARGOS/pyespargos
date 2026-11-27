@@ -78,6 +78,11 @@ new controller. A legacy scalar read returns HTTP 409 when the sensors
 have different paths. IQ TX already reported per-sensor outputs in the old
 interface and continues to do so.
 
+On API 4, IQ transmission runs at a fixed 80 MSa/s. SDK calls can omit
+the rate or explicitly request 80 MSa/s. Requesting another transmit rate,
+Bluetooth IQ capture, or continuous downsampling raises
+``EspargosAPIVersionError``.
+
 Live and saved settings
 -----------------------
 

@@ -95,7 +95,7 @@ def test_rate_only_configuration_has_no_empty_transmitter_list(monkeypatch):
 
     writes = []
     monkeypatch.setattr(configuration, "_rpc", lambda *args: (writes.append(args), {"sample_rate_hz": 80_000_000})[1])
-    ctx = SimpleNamespace(board=SimpleNamespace(host="board"), antennas=list(range(8)), before=["iq_tx"] * 8, modes=["iq_tx"] * 8, snapshot={})
+    ctx = SimpleNamespace(board=SimpleNamespace(host="board", api_version=(5, 0)), antennas=list(range(8)), before=["iq_tx"] * 8, modes=["iq_tx"] * 8, snapshot={})
     update = configuration._iq_tx(ctx, {"sample_rate_hz": 40_000_000})
     update.before_modes()
     assert writes[-1][2] == {"sample_rate_hz": 40_000_000, "muted": True}
@@ -109,6 +109,32 @@ def test_rate_only_configuration_has_no_empty_transmitter_list(monkeypatch):
     assert len(configuration._iq_tx(ctx, {"sample_rate_hz": 40_000_000}).invalidated) == 2
     with pytest.raises(ValueError, match="Unsupported"):
         configuration._iq_tx(ctx, {"sample_rate_hz": 20_000_000})
+
+
+def test_explicit_rate_on_a_mixed_version_pool():
+    from unittest.mock import Mock
+    from espargos.board import EspargosAPIVersionError
+    from espargos.iq_transmitter import IQTransmitter
+
+    tx = transmitter()
+    new, stable = (Mock(api_version=(v, 0)) for v in (5, 4))
+    tx.boards = [new, stable]
+    tx._stream = None
+    tx.read = Mock()
+    tx._parallel = lambda fn, boards: [fn(i, b) for i, b in enumerate(tx.boards) if b in boards]
+    for board in tx.boards:
+        board._resources = LegacyControllerResources(board.control, api_major=board.api_version[0])
+        board.control.post_json.return_value = "ok"
+
+    with pytest.raises(EspargosAPIVersionError):
+        IQTransmitter.settings(tx, {"sample_rate_hz": 16_000_000})
+    for board in tx.boards:
+        board.control.post_json.assert_not_called()
+    IQTransmitter.settings(tx, {"sample_rate_hz": 80_000_000})
+    stable.control.post_json.assert_not_called()
+    new.control.post_json.assert_called_once_with("set_iq_tx", {"sample_rate_hz": 80_000_000})
+    IQTransmitter.settings(tx, {"sample_rate_hz": 80_000_000, "muted": True})
+    stable.control.post_json.assert_called_once_with("set_iq_tx", {"muted": True})
 
 
 def test_streamed_playback_clock_and_steering_credit():
