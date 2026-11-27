@@ -39,8 +39,10 @@ class WiFiRuntimeAPITests(unittest.TestCase):
                             self.assertEqual(method.call_count, 1)
 
     def test_supported_firmware_versions_and_iq_access(self):
-        for major in (2, 3, 4, 5, 6, 7):
-            with self.subTest(major=major):
+        versions = [(major, None, major) for major in (2, 3, 4, 5, 6, 7)]
+        versions.append((5, "/api/v6", 6))
+        for major, root, negotiated in versions:
+            with self.subTest(major=major, root=root):
                 replies = {
                     "api_info": {"device": "espargos", "revision": "densiflorus", "api-major": major, "api-minor": 0},
                     "get_netconf": {"hostname": "test"},
@@ -48,13 +50,19 @@ class WiFiRuntimeAPITests(unittest.TestCase):
                     "api/v6/network/status": {"ip": "127.0.0.1"},
                     "get_ip_info": {"ip": "127.0.0.1"},
                 }
-                with patch.object(BoardControl, "fetch", side_effect=lambda path: json.dumps(replies[path])):
+                if root:
+                    replies["api_info"]["control_api"] = root
+                with patch.object(BoardControl, "fetch", side_effect=lambda path: json.dumps(replies[path])) as fetch:
                     if major in (2, 7):
                         with self.assertRaises(EspargosAPIVersionError):
                             Board("127.0.0.1")
                         continue
                     board = Board("127.0.0.1")
-                    self.assertEqual(board.api_version, (major, 0))
+                    self.assertEqual(board.api_version, (negotiated, 0))
+                    used_paths = [c.args[0] for c in fetch.call_args_list]
+                    self.assertEqual(used_paths.count("api_info"), 1)
+                    expected = "api/v6/config/network" if negotiated == 6 else "get_netconf"
+                    self.assertIn(expected, used_paths)
                     if major == 3:
                         with self.assertRaises(EspargosAPIVersionError):
                             _ = board.iq

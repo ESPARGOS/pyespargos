@@ -40,6 +40,12 @@ and request bodies work over the controller's serial RPC transport.
    * - ``reference/wifi``, ``reference/ble``, ``reference/iq``
      - The controller's reference generator. POST to ``wifi/tune`` to retune the WiFi reference and all CSI receivers together.
 
+The mode settings are independent. For example, changing ``wifi/tx`` selects
+the feed used for a WiFi transmission. Between transmissions the sensor
+returns to the input selected in ``wifi/rx``. To check a role change, read
+``roles/sensors``. It reports both the requested modes and the mode each
+sensor has acknowledged.
+
 Selecting antenna feeds
 -----------------------
 
@@ -82,7 +88,8 @@ generator. Saving ``config/network`` and rebooting the controller are
 separate operations. Web firmware updates and partition uploads use the
 controller's HTTP maintenance endpoints.
 
-The bidirectional sensor stream still uses ``/stream`` for WebSocket or
-``/stream_udp`` for UDP setup. Waveform data and scheduled steering
-commands travel on that stream. See :doc:`iq-transmit-streaming` and
+For looping IQ playback, upload a buffer through ``iq/tx/upload`` and
+prepare the waveform through ``iq/tx/synthesize``. Live sample data and
+scheduled steering updates use the bidirectional sensor stream. Connect to
+``/stream`` for WebSocket or use ``/stream_udp`` to set up UDP. See :doc:`iq-transmit-streaming` and
 :doc:`iq-beam-steering`.
