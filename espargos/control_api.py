@@ -63,7 +63,8 @@ def _decode_radio(resource, result):
 
 
 class ControllerResources:
-    def __init__(self, control):
+    def __init__(self, control, *, minor=1):
+        self.minor = minor
         self.control = control
 
     per_sensor_paths = True
@@ -120,6 +121,8 @@ class ControllerResources:
         return state
 
     def read(self, resource):
+        if resource == "iq/tx/stream" and self.minor == 0:
+            resource = "config/iq-tx-stream"
         return self.decode(resource, self.control.get_json("api/v6/" + resource))
 
     def post(self, resource, settings):

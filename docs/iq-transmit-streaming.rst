@@ -99,7 +99,7 @@ Run the client on the host computer::
 
    python -m espargos.tx_stream 192.168.1.2 --file samples.cs8
 
-The client uses the prepared beam and saved modulation settings. It reads
+The client uses the prepared beam and current modulation settings. On API 6.1 the settings apply until the controller restarts. It reads
 standard input if you omit ``--file``. UDP is the default transport. For a
 multi-board beam, pass the controller addresses as separate arguments.
 

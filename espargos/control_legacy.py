@@ -43,7 +43,7 @@ class LegacyControllerResources:
         "iq/tx": ("get_iq_tx", "set_iq_tx"),
         "iq/tx/synthesize": (None, "set_iq_tx_waveform"),
         "iq/monitor": ("get_iq_monitor", "set_iq_monitor"),
-        "config/iq-tx-stream": ("get_iq_tx_stream_config", "set_iq_tx_stream_config"),
+        "iq/tx/stream": ("get_iq_tx_stream_config", "set_iq_tx_stream_config"),
         "config/transmit-authorization": ("get_transmit_authorization", "set_transmit_authorization"),
     }
     _wifi_fields = {"gain": "gain_settings", "csi": "csi_acquire_config", "mac_filter": "mac_filter", "cfo": "cfo_correction"}

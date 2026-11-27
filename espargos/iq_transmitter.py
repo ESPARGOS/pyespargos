@@ -115,12 +115,12 @@ class IQTransmitter:
         return self._stream
 
     def open_configured_stream(self):
-        """Open the prepared Stream beam using the controllers' saved modulation settings."""
+        """Open the prepared Stream beam using the controllers' live modulation settings."""
         from .steering import Weights
         from .stream_sources import SingleCarrier, GFSK
 
         with self.owner._lock:
-            profiles = [_rpc(board, "config/iq-tx-stream") for board in self.boards]
+            profiles = [_rpc(board, "iq/tx/stream") for board in self.boards]
             self.read()
             first = next((p for p in profiles if p.get("beam", {}).get("antennas")), None)
             if first is None:
@@ -131,15 +131,15 @@ class IQTransmitter:
                 if not beam.get("antennas"):
                     continue
                 if any(profile.get(k) != first.get(k) for k in ("mode", "sample_rate_hz", "table_hex")):
-                    raise ValueError("Save matching stream modulation settings on every controller")
+                    raise ValueError("Select matching stream modulation settings on every controller")
                 if not beam.get("ready"):
                     raise ValueError(f"{board.host}: waiting for the prepared Stream beam")
                 ids = beam["antennas"]
                 if len(set(ids)) != len(ids) or any(not isinstance(a, int) or not 0 <= a < 8 for a in ids):
-                    raise ValueError("Invalid saved stream antenna selection")
+                    raise ValueError("Invalid prepared stream antenna selection")
                 for key in ("real", "imag", "boot_id", "crc32", "samples"):
                     if len(beam.get(key, [])) != 8:
-                        raise ValueError("Incomplete saved stream beam")
+                        raise ValueError("Incomplete prepared stream beam")
                 for a in ids:
                     state = self.states[bi]["sensors"][a]
                     if any(state.get(k) != beam[k][a] for k in ("boot_id", "crc32", "samples")):

@@ -39,9 +39,9 @@ class WiFiRuntimeAPITests(unittest.TestCase):
                             self.assertEqual(method.call_count, 1)
 
     def test_supported_firmware_versions_and_iq_access(self):
-        versions = [(major, None, major) for major in (2, 3, 4, 5, 6, 7)]
-        versions.append((5, "/api/v6", 6))
-        for major, root, negotiated in versions:
+        versions = [(major, None, major, 0) for major in (2, 3, 4, 5, 6, 7)]
+        versions.extend([(5, "/api/v6", 6, 0), (5, "/api/v6", 6, 1)])
+        for major, root, negotiated, minor in versions:
             with self.subTest(major=major, root=root):
                 replies = {
                     "api_info": {"device": "espargos", "revision": "densiflorus", "api-major": major, "api-minor": 0},
@@ -52,13 +52,16 @@ class WiFiRuntimeAPITests(unittest.TestCase):
                 }
                 if root:
                     replies["api_info"]["control_api"] = root
+                    if minor:
+                        replies["api_info"]["control_api_minor"] = minor
                 with patch.object(BoardControl, "fetch", side_effect=lambda path: json.dumps(replies[path])) as fetch:
                     if major in (2, 7):
                         with self.assertRaises(EspargosAPIVersionError):
                             Board("127.0.0.1")
                         continue
                     board = Board("127.0.0.1")
-                    self.assertEqual(board.api_version, (negotiated, 0))
+                    self.assertEqual(board.api_version, (negotiated, minor))
+                    self.assertEqual(board._websocket_paths[0], "api/v6/stream" if minor else "stream")
                     used_paths = [c.args[0] for c in fetch.call_args_list]
                     self.assertEqual(used_paths.count("api_info"), 1)
                     expected = "api/v6/config/network" if negotiated == 6 else "get_netconf"

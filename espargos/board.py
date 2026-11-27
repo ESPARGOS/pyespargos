@@ -205,6 +205,8 @@ class BoardCapability:
 
 
 class Board(object):
+    _udp_control_paths = UDP_STREAM_CONTROL_PATHS
+    _websocket_paths = WEBSOCKET_STREAM_PATHS
     _stream_timeout = 5
     _capability_factories: dict[str, Callable[[Board], BoardCapability]] = {}
     _capability_factories_lock = threading.Lock()
@@ -328,7 +330,7 @@ class Board(object):
         # api_info also serves clients that only understand the old command names.
         # The advertised resource root identifies the newer API in the same trip.
         if api_info.get("control_api") == "/api/v6":
-            api_major, api_minor = 6, 0
+            api_major, api_minor = 6, int(api_info.get("control_api_minor", api_minor if api_major == 6 else 0))
         if not SUPPORTED_API_MAJOR_MIN <= api_major <= SUPPORTED_API_MAJOR_MAX:
             raise EspargosAPIVersionError(
                 f"ESPARGOS controller at {self.host} runs API version {api_major}.{api_minor}, "
@@ -337,11 +339,14 @@ class Board(object):
             )
 
         self.api_version = (api_major, api_minor)
+        if self.api_version >= (6, 1):
+            self._udp_control_paths = ("api/v6/stream/udp",)
+            self._websocket_paths = ("api/v6/stream",)
         from .control_api import ControllerResources
         from .control_legacy import LegacyControllerResources
 
         if api_major == 6:
-            self._resources = ControllerResources(self.control)
+            self._resources = ControllerResources(self.control, minor=api_minor)
         else:
             self._resources = LegacyControllerResources(self.control, api_major=api_major)
 
@@ -577,7 +582,7 @@ class Board(object):
 
     def _enable_udp_stream(self, local_port: int) -> str | None:
         errors = []
-        for path in UDP_STREAM_CONTROL_PATHS:
+        for path in self._udp_control_paths:
             try:
                 self.control.command(path, {"enable": True, "port": local_port})
             except Exception as exc:
@@ -595,7 +600,7 @@ class Board(object):
         """Prefer the WebSocket endpoint served by ESPARGOS controllers."""
 
         errors = []
-        for path in WEBSOCKET_STREAM_PATHS:
+        for path in self._websocket_paths:
             error = self._try_start_websocket_path(path)
             if error is None:
                 return None
@@ -626,7 +631,7 @@ class Board(object):
     def _disable_udp_stream(self, local_port: int):
         """Tell the server to stop the UDP stream (best-effort)."""
         try:
-            path = getattr(self, "_udp_stream_control_path", UDP_STREAM_CONTROL_PATHS[0])
+            path = getattr(self, "_udp_stream_control_path", self._udp_control_paths[0])
             self.control.command(path, {"enable": False, "port": local_port})
         except Exception:
             pass

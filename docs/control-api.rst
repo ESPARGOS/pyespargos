@@ -85,11 +85,17 @@ Mode resources control the running radios. Resources under ``config/``
 store settings in nonvolatile memory. For example, ``config/wifi`` saves
 defaults for the next boot, while ``reference/wifi`` changes the live
 generator. Saving ``config/network`` and rebooting the controller are
-separate operations. Web firmware updates and partition uploads use the
-controller's HTTP maintenance endpoints.
+separate operations. HTTP maintenance endpoints under ``/api/v6/updates/`` handle firmware
+transfers and streamed progress. GET ``check`` to check for a release
+and ``status`` to read progress. POST to ``start`` to begin an update.
+The upload targets are ``controller``, ``sensors/application`` and
+``partition?partition=<label>``. POST to ``sensors/flash`` to flash sensors
+from the controller's bundled image.
 
 For looping IQ playback, upload a buffer through ``iq/tx/upload`` and
 prepare the waveform through ``iq/tx/synthesize``. Live sample data and
-scheduled steering updates use the bidirectional sensor stream. Connect to
-``/stream`` for WebSocket or use ``/stream_udp`` to set up UDP. See :doc:`iq-transmit-streaming` and
+scheduled steering updates use the bidirectional sensor stream. On API 6.1, connect to
+``/api/v6/stream`` for WebSocket or POST to ``/api/v6/stream/udp``
+to set up UDP. The live modulation settings at ``/api/v6/iq/tx/stream``
+reset to CS8 at 16 kSa/s when the controller restarts. See :doc:`iq-transmit-streaming` and
 :doc:`iq-beam-steering`.
