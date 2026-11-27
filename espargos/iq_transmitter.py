@@ -226,7 +226,7 @@ class IQTransmitter:
         if self._stream is not None and not self._stream.closed:
             raise RuntimeError("Close the stream before changing TX settings")
         if "sample_rate_hz" in payload:
-            updates = {board: iq_tx_settings(board.api_version[0], payload) for board in self.boards}
+            updates = {board: iq_tx_settings(board.api_version, status, payload) for board, status in zip(self.boards, self.states)}
             self._parallel(lambda i, b: _rpc(b, "iq/tx", updates[b]), boards={b for b, settings in updates.items() if settings})
         else:
             self._parallel(lambda i, b: _rpc(b, "iq/tx", payload))

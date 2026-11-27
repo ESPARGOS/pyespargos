@@ -17,11 +17,14 @@ def check_iq_rx_settings(api_major, settings):
         raise EspargosAPIVersionError(f"Controller API {api_major} supports only WiFi IQ capture. Bluetooth IQ capture and continuous downsampling require API 5 or later.")
 
 
-def iq_tx_settings(api_major, settings):
-    if api_major >= 5 or "sample_rate_hz" not in settings:
+def iq_tx_settings(api_version, tx_status, settings):
+    if "sample_rate_hz" not in settings:
+        return settings
+    # API 5.0 gained writable TX rates and per-sensor rate readback together.
+    if api_version > (5, 0) or (api_version == (5, 0) and any("sample_rate_hz" in sensor for sensor in tx_status["sensors"])):
         return settings
     if settings["sample_rate_hz"] != 80_000_000:
-        raise EspargosAPIVersionError(f"Controller API {api_major} has a fixed IQ transmit rate of 80 MSa/s. Other rates require API 5 or later.")
+        raise EspargosAPIVersionError("This controller has a fixed IQ transmit rate of 80 MSa/s. Update the firmware to select another rate.")
     return {key: value for key, value in settings.items() if key != "sample_rate_hz"}
 
 

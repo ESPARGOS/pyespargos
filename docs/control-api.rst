@@ -81,7 +81,9 @@ interface and continues to do so.
 On API 4, IQ transmission runs at a fixed 80 MSa/s. SDK calls can omit
 the rate or explicitly request 80 MSa/s. Requesting another transmit rate,
 Bluetooth IQ capture, or continuous downsampling raises
-``EspargosAPIVersionError``.
+``EspargosAPIVersionError``. Early API 5.0 builds also have a fixed TX rate.
+For API 5.0 the SDK checks whether the controller reports the configured
+rate for each transmitter before sending a rate setting.
 
 Live and saved settings
 -----------------------

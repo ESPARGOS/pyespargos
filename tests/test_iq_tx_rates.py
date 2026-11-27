@@ -94,7 +94,7 @@ def test_rate_only_configuration_has_no_empty_transmitter_list(monkeypatch):
     from espargos import configuration
 
     writes = []
-    monkeypatch.setattr(configuration, "_rpc", lambda *args: (writes.append(args), {"sample_rate_hz": 80_000_000})[1])
+    monkeypatch.setattr(configuration, "_rpc", lambda *args: (writes.append(args), {"sample_rate_hz": 80_000_000, "sensors": [{"sample_rate_hz": 80_000_000}] * 8})[1])
     ctx = SimpleNamespace(board=SimpleNamespace(host="board", api_version=(5, 0)), antennas=list(range(8)), before=["iq_tx"] * 8, modes=["iq_tx"] * 8, snapshot={})
     update = configuration._iq_tx(ctx, {"sample_rate_hz": 40_000_000})
     update.before_modes()
@@ -117,8 +117,9 @@ def test_explicit_rate_on_a_mixed_version_pool():
     from espargos.iq_transmitter import IQTransmitter
 
     tx = transmitter()
-    new, stable = (Mock(api_version=(v, 0)) for v in (5, 4))
-    tx.boards = [new, stable]
+    new, early, stable = (Mock(api_version=v) for v in ((5, 0), (5, 0), (4, 4)))
+    tx.boards = [new, early, stable]
+    tx.states = [{"sample_rate_hz": 80_000_000, "sensors": [row] * 8} for row in ({"sample_rate_hz": 80_000_000}, {}, {})]
     tx._stream = None
     tx.read = Mock()
     tx._parallel = lambda fn, boards: [fn(i, b) for i, b in enumerate(tx.boards) if b in boards]
@@ -132,6 +133,7 @@ def test_explicit_rate_on_a_mixed_version_pool():
         board.control.post_json.assert_not_called()
     IQTransmitter.settings(tx, {"sample_rate_hz": 80_000_000})
     stable.control.post_json.assert_not_called()
+    early.control.post_json.assert_not_called()
     new.control.post_json.assert_called_once_with("set_iq_tx", {"sample_rate_hz": 80_000_000})
     IQTransmitter.settings(tx, {"sample_rate_hz": 80_000_000, "muted": True})
     stable.control.post_json.assert_called_once_with("set_iq_tx", {"muted": True})
