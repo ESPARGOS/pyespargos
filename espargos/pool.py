@@ -65,7 +65,22 @@ class AntennaSelection:
         return AntennaSelection(owner, selected)
 
     def configure(
-        self, *, mode=None, capture_path=None, bluetooth_filter_mode=None, frequency_hz=None, sample_rate_hz=None, rx_gain=None, gain_mode=None, rf_gain=None, bandwidth_mhz=None, input=None, output=None, channel=None, secondary_channel=None, boot_sync=None
+        self,
+        *,
+        mode=None,
+        capture_path=None,
+        bluetooth_filter_mode=None,
+        frequency_hz=None,
+        sample_rate_hz=None,
+        rx_gain=None,
+        gain_mode=None,
+        rf_gain=None,
+        bandwidth_mhz=None,
+        input=None,
+        output=None,
+        channel=None,
+        secondary_channel=None,
+        boot_sync=None,
     ):
         """Update only selected antennas; mode changes do not calibrate or start TX.
 

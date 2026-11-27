@@ -24,6 +24,7 @@ class HTTPTests(unittest.TestCase):
         b = self.board()
         b.control = BoardControl(b)
         from espargos.control_legacy import LegacyControllerResources
+
         b._resources = LegacyControllerResources(b.control)
         c = self.connection()
         with patch("espargos.board.http.client.HTTPConnection", return_value=c):

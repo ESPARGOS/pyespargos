@@ -35,8 +35,7 @@ def _paths_payload(key, state):
     return {key: _input_name(state)}
 
 
-_TX_FIELDS = {"active_by_antid": "active", "start_by_antid": "start_us",
-              "period_by_antid": "period_us", "mac_by_antid": "mac"}
+_TX_FIELDS = {"active_by_antid": "active", "start_by_antid": "start_us", "period_by_antid": "period_us", "mac_by_antid": "mac"}
 
 
 def _decode_radio(resource, result):
@@ -127,6 +126,7 @@ class ControllerResources:
 
     def post(self, resource, settings):
         if resource == "iq/tx":
+
             def output(entry):
                 if "output" not in entry:
                     return entry
@@ -156,8 +156,7 @@ class ControllerResources:
                 raise ValueError("Expected eight per-sensor gain values")
             common = {key: v for key, v in value.items() if not isinstance(v, list)}
             columns = {key: v for key, v in value.items() if isinstance(v, list)}
-            self.command("wifi/rx", {**({"gain": common} if common else {}), "sensors": [
-                {"antid": a, "gain": {key: v[a] for key, v in columns.items()}} for a in range(8)]})
+            self.command("wifi/rx", {**({"gain": common} if common else {}), "sensors": [{"antid": a, "gain": {key: v[a] for key, v in columns.items()}} for a in range(8)]})
         else:
             self.command("wifi/rx", {field: value})
 
@@ -179,18 +178,17 @@ class ControllerResources:
     def wifi_channels(self):
         state = self.read("wifi/rx")
         ref = self.read("reference/wifi")
-        channels = ([state["channel"]] * 8 if "channel" in state else
-                    [s["channel"] for s in sorted(state["sensors"], key=lambda s: s["antid"])])
+        channels = [state["channel"]] * 8 if "channel" in state else [s["channel"] for s in sorted(state["sensors"], key=lambda s: s["antid"])]
         primary = [c["primary"] for c in channels]
         secondary = [c["secondary"] for c in channels]
-        return {"channel-primary": primary, "channel-secondary": secondary, "override_active":
-                any(p != ref["channel-primary"] or s != ref["channel-secondary"] for p, s in zip(primary, secondary))}
+        return {"channel-primary": primary, "channel-secondary": secondary, "override_active": any(p != ref["channel-primary"] or s != ref["channel-secondary"] for p, s in zip(primary, secondary))}
 
     def set_wifi_channels(self, value):
         if not value["override_active"]:
             ref = self.read("reference/wifi")
             self.command("wifi/rx", {"channel": {"primary": ref["channel-primary"], "secondary": ref["channel-secondary"]}})
             return
+
         def channels(key):
             items = value["channel-" + key]
             if isinstance(items, int):
@@ -198,9 +196,9 @@ class ControllerResources:
             if len(items) != 8:
                 raise ValueError(f"Expected eight {key} channels")
             return items
+
         pairs = zip(channels("primary"), channels("secondary"))
-        self.command("wifi/rx", {"sensors": [{"antid": a, "channel": {"primary": p, "secondary": s}}
-                                             for a, (p, s) in enumerate(pairs)]})
+        self.command("wifi/rx", {"sensors": [{"antid": a, "channel": {"primary": p, "secondary": s}} for a, (p, s) in enumerate(pairs)]})
 
     def network(self):
         return self.control.get_json("api/v6/config/network")

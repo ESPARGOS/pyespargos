@@ -33,6 +33,7 @@ class FakeBoard(api.board_module.Board):
         self.iq = FakeIQ()
         self.control = Mock()
         self._resources = LegacyControllerResources(self.control)
+
         def get_json(path):
             if path == "get_iq_tx":
                 return {"sensors": [{"applied_mode": mode, "boot_id": a + 1} for a, mode in enumerate(self.iq.config["modes"])]}
@@ -41,6 +42,7 @@ class FakeBoard(api.board_module.Board):
             if path == "get_wifi_runtime":
                 return {"channel-primary": 6, "channel-secondary": 0}
             return {"mode": "wifi"}
+
         self.control.get_json.side_effect = get_json
         self.revision = Mock()
         self.revision.antenna_id_to_row_col.side_effect = lambda a: divmod(a, 4)

@@ -692,7 +692,6 @@ class WiFiTransceiver(ClusterAssembler):
 
         # Back up and clear MAC filter
 
-
         try:
             with ExitStack() as restore:
                 for board in self.boards:

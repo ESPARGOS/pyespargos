@@ -143,7 +143,8 @@ class WiFiRxCapability(BoardCapability):
         :meth:`set_cfo_correction_hz`.
         """
 
-        self._board._resources.set_wifi_field("cfo",
+        self._board._resources.set_wifi_field(
+            "cfo",
             {"auto": bool(auto), "value": int(value)},
         )
 

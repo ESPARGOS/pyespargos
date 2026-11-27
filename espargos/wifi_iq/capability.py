@@ -1,6 +1,5 @@
 """Controller configuration and subscriptions for WiFi IQ capture."""
 
-
 from ..board import BoardCapability
 from .packet import RECORD_TYPES, WiFiIQPacket
 

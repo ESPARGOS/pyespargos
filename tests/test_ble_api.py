@@ -49,6 +49,7 @@ class FakeBoard(Board):
         self.iq = SimpleNamespace(get_config=lambda: {"modes": self.modes})
         self.control = SimpleNamespace(get_json=lambda path: {"mode": self.controller_mode} if path == "get_controller_mode" else dict(self.config), post_json=self.post)
         from espargos.control_legacy import LegacyControllerResources
+
         self._resources = LegacyControllerResources(self.control)
         self.closed = False
 

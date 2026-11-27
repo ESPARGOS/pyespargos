@@ -11,7 +11,7 @@ def receiver_context(packet):
     # reference network separate, including at the same frequency.
     settings = packet.settings
     if (settings >> 8) & 255 in (2, 3, 4):
-        settings = (settings & ~0xff00) | (2 << 8)
+        settings = (settings & ~0xFF00) | (2 << 8)
     return packet.clock_epoch, packet.generation, settings
 
 

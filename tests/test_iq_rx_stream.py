@@ -155,6 +155,7 @@ def test_applied_generation_waits_for_each_selected_receiver():
 
     board = Mock(api_version=(5, 0))
     from espargos.control_legacy import LegacyControllerResources
+
     board._resources = LegacyControllerResources(board.control)
     iq = IQCapability(board)
     board.control.post_json.return_value = '{"config_generation":12}'

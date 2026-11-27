@@ -1,6 +1,5 @@
 """BLE configuration and packet-IQ delivery for one board."""
 
-
 from .board import BoardCapability, EspargosAPIVersionError
 from .ble_packet import BLEPacket, BLE_PACKET_TYPE_HEADER
 
