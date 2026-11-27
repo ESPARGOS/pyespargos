@@ -29,7 +29,7 @@ and request bodies work over the controller's serial RPC transport.
      - CSI acquisition, gain, RF input, channels and receive filters.
    * - ``wifi/tx``
      - WiFi packet format, transmit power, per-sensor schedule and RF output.
-   * - ``wifi/iq``, ``ble/rx``
+   * - ``wifi_iq/rx``, ``ble/rx``
      - Packet capture settings and RF inputs for each receiver profile.
    * - ``iq/rx``
      - Raw IQ capture path, sample rate, trigger, receiver gains, frequencies and inputs.

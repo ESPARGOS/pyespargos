@@ -34,7 +34,7 @@ class LegacyControllerResources:
         self.api_major = api_major
 
     per_sensor_paths = False
-    _radio = {"iq/rx": "iq_control", "wifi/iq": "wifi_iq", "ble/rx": "bluetooth", "wifi/tx": "tx_control"}
+    _radio = {"iq/rx": "iq_control", "wifi_iq/rx": "wifi_iq", "ble/rx": "bluetooth", "wifi/tx": "tx_control"}
 
     def read_radio(self, resource):
         return self.control.get_json("get_" + self._radio[resource])
