@@ -38,9 +38,43 @@ def _paths_payload(key, state):
 _TX_FIELDS = {"active_by_antid": "active", "start_by_antid": "start_us", "period_by_antid": "period_us", "mac_by_antid": "mac"}
 
 
+_WIFI_IQ_GAIN = {"gain_mode": "mode", "rx_gain": "index", "expert_gain_words": "expert_words"}
+
+
+def _wifi_iq_gain_payload(changes):
+    rows = {row["antid"]: dict(row) for row in changes.pop("sensors", ())}
+    for field, wire in _WIFI_IQ_GAIN.items():
+        if field not in changes:
+            continue
+        value = changes.pop(field)
+        if isinstance(value, (list, tuple)) and (field != "expert_gain_words" or len(value) == 8):
+            if len(value) != 8:
+                raise ValueError(f"{field} requires eight antenna entries")
+            value = dict(enumerate(value))
+        if isinstance(value, dict):
+            for a, v in value.items():
+                if type(a) != int or not 0 <= a < 8:
+                    raise ValueError("Invalid antenna ID for WiFi IQ gain")
+                rows.setdefault(a, {"antid": a}).setdefault("gain", {})[wire] = v
+        else:
+            changes.setdefault("gain", {})[wire] = value
+    if rows:
+        changes["sensors"] = list(rows.values())
+
+
 def _decode_radio(resource, result):
     key = "output" if resource == "wifi/tx" else "input"
     switch = "rfswitch_state" if key == "output" else "rf_switch"
+    if resource == "wifi_iq/rx":
+        common = result.pop("gain", None)
+        rows = sorted(result.get("sensors", ()), key=lambda row: row["antid"])
+        for field, wire in _WIFI_IQ_GAIN.items():
+            if common is not None:
+                result[field] = common[wire]
+            elif rows:
+                result[field] = [row["gain"][wire] for row in rows]
+        if "input" in result:
+            result.pop("sensors", None)
     if resource == "wifi/tx" and "sensors" in result:
         entries = sorted(result.pop("sensors"), key=lambda e: e["antid"])
         for field, wire in _TX_FIELDS.items():
@@ -77,6 +111,8 @@ class ControllerResources:
         switch = "rfswitch_state" if key == "output" else "rf_switch"
         if switch in changes:
             changes.update(_paths_payload(key, changes.pop(switch)))
+        if resource == "wifi_iq/rx":
+            _wifi_iq_gain_payload(changes)
         if resource == "wifi/tx" and changes.keys() & _TX_FIELDS.keys():
             updates = {s["antid"]: s for s in changes.pop("sensors", ())}
             for field, wire in _TX_FIELDS.items():

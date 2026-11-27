@@ -515,6 +515,11 @@ class WiFiIQReceiver(ClusterAssembler):
         state = self._applied_settings.get(board_index)
         return state is None or state[:2] == (correction.clock_epoch, correction.generation)
 
+    @staticmethod
+    def _normal_gain(config, ids):
+        modes = config["gain_mode"]
+        return all((modes[a] if isinstance(modes, list) else modes) in ("manual", "auto") for a in ids)
+
     def configure(self, settings, board_index=0):
         """Apply radio settings and retain a compatible phase reference."""
         radio = self.boards[board_index].wifi_iq
@@ -525,7 +530,8 @@ class WiFiIQReceiver(ClusterAssembler):
             if correction is not None:
                 same_channel = before.get("channel") == after.get("channel")
                 same_gain = all(before.get(k) == after.get(k) for k in ("gain_mode", "rx_gain", "expert_gain_words"))
-                compatible_gain = same_gain or (after["gain_mode"] in ("manual", "auto") and before["gain_mode"] != "expert")
+                ids = [a for a, mode in enumerate(after.get("modes", ["wifi_iq"] * 8)) if mode == "wifi_iq"]
+                compatible_gain = same_gain or (self._normal_gain(after, ids) and self._normal_gain(before, ids))
                 if correction.generation == before["generation"] and same_channel and compatible_gain:
                     updated = copy(correction)
                     updated.generation = after["generation"]
@@ -547,7 +553,8 @@ class WiFiIQReceiver(ClusterAssembler):
         board = self.boards[board_index]
         config = board.wifi_iq.get_config()
         expected = self._expected[board_index].copy()
-        if config["gain_mode"] not in ("manual", "auto") or not expected.any():
+        ids = [a for a in range(8) if expected[board.revision.antenna_id_to_row_col(a)]]
+        if not ids or not self._normal_gain(config, ids):
             raise ValueError("WiFi IQ calibration requires active receivers in automatic or manual gain mode")
         address = config["reference_address"].replace(":", "").lower()
         self._corrections.pop(board_index, None)
@@ -575,6 +582,8 @@ class WiFiIQReceiver(ClusterAssembler):
         # antenna's longer capture or low reporting limit can otherwise leave
         # the receivers reporting different packets from the same generator.
         reference_config = dict(rf_switch=1, gain_mode="manual", rx_gain=30, boot_sync=False, ofdm_words=1024, dsss_words=1024, max_pps=250)
+        if "reference_gains" in config:  # Older controllers apply their own overrides on REF.
+            reference_config["reference_gains"] = [None] * 8
         antenna_config = {key: config[key] for key in reference_config}
 
         def restore_input():

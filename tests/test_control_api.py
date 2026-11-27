@@ -38,6 +38,14 @@ class ControlResourcesTest(unittest.TestCase):
         self.api.set_wifi_field("gain", {"rx_gain_value": values, "rx_gain_enable": True})
         self.control.command.assert_called_once_with("api/v6/wifi/rx", {"gain": {"rx_gain_enable": True}, "sensors": [{"antid": i, "gain": {"rx_gain_value": v}} for i, v in enumerate(values)]})
 
+    def test_wifi_iq_mixed_gain_round_trip(self):
+        self.control.get_json.return_value = {"input": "right", "sensors": [{"antid": a, "gain": {"mode": "manual", "index": 20 + a, "expert_words": [0] * 3}} for a in reversed(range(8))]}
+        settings = self.api.read_radio("wifi_iq/rx")
+        self.assertEqual(settings["rx_gain"], list(range(20, 28)))
+        self.assertEqual(settings["rf_switch"], 2)
+        self.api.write_radio("wifi_iq/rx", {"rx_gain": {3: 25}, "rf_switch": {3: 1}, "gain_mode": "manual"})
+        self.control.post_json.assert_called_once_with("api/v6/wifi_iq/rx", {"gain": {"mode": "manual"}, "sensors": [{"antid": 3, "input": "reference", "gain": {"index": 25}}]})
+
     def test_legacy_cannot_broadcast_a_sparse_write(self):
         legacy = LegacyControllerResources(self.control, api_major=5)
         with self.assertRaises(NotImplementedError):

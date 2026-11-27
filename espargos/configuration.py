@@ -143,8 +143,17 @@ def _wifi_iq(ctx, options):
         raise ValueError("boot_sync must be a boolean")
     if "output" in settings:
         settings["rf_switch"] = _selected_paths(ctx, settings.pop("output"))
-    if settings.keys() - {"rf_switch"} and any(mode == "wifi_iq" and a not in ctx.antennas for a, mode in enumerate(ctx.modes)):
-        raise ValueError("Select every WiFi IQ sensor on the board to change shared capture settings")
+    subset = any(mode == "wifi_iq" and a not in ctx.antennas for a, mode in enumerate(ctx.modes))
+    if subset:
+        shared = settings.keys() - {"rf_switch", "gain_mode", "rx_gain"}
+        if shared:
+            raise ValueError("Select every WiFi IQ sensor on the board to change shared capture settings")
+    if len(ctx.antennas) != 8 and (subset or ctx.board._resources.per_sensor_paths):
+        for key in ("gain_mode", "rx_gain"):
+            if key in settings:
+                if not ctx.board._resources.per_sensor_paths:
+                    raise ValueError("This controller requires a board-wide WiFi IQ gain")
+                settings[key] = {a: settings[key] for a in ctx.antennas}
 
     def apply():
         receiver = ctx.pool._receivers.get("wifi_iq")

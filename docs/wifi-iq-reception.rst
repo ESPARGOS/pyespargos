@@ -55,9 +55,11 @@ dispatch thread. Copy or queue the reports you want to process later::
 samples. To use :doc:`packet-decoders` directly, pass ``packet.raw``, which
 preserves the ADC words in the decoder's input format. A shared trigger
 can produce separate waveform and modem reports for the same packet.
-``board.wifi_iq.get_config()`` returns the capture settings. Change the
-channel, gain and trigger for all participating WiFi IQ sensors on that
-board together.
+``board.wifi_iq.get_config()`` returns the capture settings. All WiFi IQ receivers on a board share a channel and trigger. On API 6,
+each sensor can use a different gain or input. For example, to set manual
+gain on antennas 1 and 3 while leaving the other six alone::
+
+   board.wifi_iq.set_config({"gain_mode": {1: "manual", 3: "manual"}, "rx_gain": {1: 20, 3: 32}})
 
 Collect channel estimates
 -------------------------
@@ -169,7 +171,7 @@ for generation during calibration, run::
    pool.start_processing()
 
 Calibration temporarily routes the sensors to the reference input, measures
-their relative phase at a fixed reference gain and restores the antenna settings.
+their relative phase at manual gain index 30, then restores each antenna’s input and gain.
 During reception, the SDK uses the gain recorded during each packet's training
 field to correct for gain-dependent phase shifts. An antenna whose gain changed
 during training is left out of the calibrated estimate. Use ``pool.wifi_iq.configure(settings)`` to change settings during reception.

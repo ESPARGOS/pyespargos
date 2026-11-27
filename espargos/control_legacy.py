@@ -42,6 +42,11 @@ class LegacyControllerResources:
     def write_radio(self, resource, settings):
         if resource == "iq/rx":
             check_iq_rx_settings(self.api_major, settings)
+        if resource == "wifi_iq/rx":
+            for field in ("gain_mode", "rx_gain", "expert_gain_words"):
+                value = settings.get(field)
+                if isinstance(value, dict) or (isinstance(value, (list, tuple)) and (field != "expert_gain_words" or len(value) != 3)):
+                    raise NotImplementedError("This controller supports only a shared WiFi IQ gain")
         changes = settings.copy()
         key = "rfswitch_state" if resource == "wifi/tx" else "rf_switch"
         if key in changes:

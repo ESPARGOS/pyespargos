@@ -71,6 +71,11 @@ The path names are ``left``, ``right``, ``reference`` and ``isolation``.
 WiFi RX, WiFi TX, WiFi IQ and BLE also support ``random``. Raw IQ capture
 and playback use a fixed path on each sensor.
 
+WiFi IQ reception also accepts a common or per-sensor ``gain``. For example,
+``{"sensors": [{"antid": 3, "gain": {"mode": "manual", "index": 24}}]}``
+changes only sensor 3. Switching to the reference input preserves its gain.
+The client sets the gain it needs while measuring the phase reference.
+
 With an older controller, the SDK uses its original commands. A request
 for a per-sensor feature that the old firmware cannot express raises an
 error. An older client can still broadcast its usual RF-switch value to a
