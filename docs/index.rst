@@ -38,4 +38,5 @@ Table of contents
    iq-radar
    application-framework
    packet-decoders
+   control-api
    source/modules

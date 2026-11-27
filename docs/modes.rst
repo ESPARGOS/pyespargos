@@ -67,9 +67,8 @@ them in IQ RX.
 
 Selecting a mode makes the corresponding reference available. Whether it
 transmits depends on the reference settings. In Python, read the current
-selection with ``board.control.get_json("get_controller_mode")``. To change
-just the controller radio, use, for example,
-``board.control.post_json("set_controller_mode", {"mode": "wifi_iq"})``.
+selection with ``board.get_controller_mode()`` and change it with
+``board.set_controller_mode("wifi_iq")``.
 The other values are ``wifi``, ``ble`` and ``iq``.
 
 A controller-only master
@@ -126,6 +125,23 @@ after assigning the modes. See :doc:`calibration` for the reference connections.
 
 Each sensor has one role at a time. If two selections overlap, the later
 mode change takes effect on the shared antennas. Some settings apply to the
-whole board. In particular, select all eight antennas when changing the IQ
-receive sample rate or input port. That is why the example sets the sample
-rate before assigning the four WiFi receivers.
+whole board, including the IQ receive sample rate. Set the rate before
+assigning the four WiFi receivers.
+
+Antenna feeds
+-------------
+
+A feed belongs to a sensor and its radio profile. A WiFi sensor can use
+one feed to transmit a packet and another to receive between packets. On
+API 6 controllers you can change individual feeds while collecting data::
+
+   from espargos import Pool
+
+   with Pool(["myspargel.local"]) as pool:
+       pool.configure(mode="wifi_iq", channel=11, input="right")
+       pool.select(antennas=[1, 3, 5, 7]).configure(input="left")
+
+The same selection works for WiFi CSI, BLE and raw IQ reception. For IQ
+transmission use ``output="left"`` or ``output="right"``. An older
+controller can still set a common receive feed for the whole board.
+See :doc:`control-api` for the wire format and WiFi packet transmission settings.
